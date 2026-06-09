@@ -35,10 +35,6 @@ name = "dod-tools-dump"
 path = "src/bin/dump.rs"
 
 [[bin]]
-name = "dod-tools-benchmark"
-path = "src/bin/benchmark.rs"
-
-[[bin]]
 name = "dod-tools-inspect"
 path = "src/bin/inspect.rs"
 

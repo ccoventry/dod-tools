@@ -538,14 +538,14 @@ mod tests {
     #[ignore]
     fn test_optimized_vs_unoptimized() {
         let paths = [
-            "../bb-scrim-harr-h1.dem",
-            "bb-scrim-harr-h1.dem",
-            "../bb-scrim-harr-h2.dem",
-            "bb-scrim-harr-h2.dem",
-            "../bb-scrim-railyard-h1.dem",
-            "bb-scrim-railyard-h1.dem",
-            "../bewton-playoffs-round1-armory-allied.dem",
-            "bewton-playoffs-round1-armory-allied.dem",
+            "../demos/bb-scrim-harr-h1.dem",
+            "demos/bb-scrim-harr-h1.dem",
+            "../demos/bb-scrim-harr-h2.dem",
+            "demos/bb-scrim-harr-h2.dem",
+            "../demos/bb-scrim-railyard-h1.dem",
+            "demos/bb-scrim-railyard-h1.dem",
+            "../demos/bewton-playoffs-round1-armory-allied.dem",
+            "demos/bewton-playoffs-round1-armory-allied.dem",
         ];
         
         let mut tested_any = false;

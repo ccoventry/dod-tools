@@ -1,0 +1,13 @@
+[package]
+name = "dod-dedup"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "dod-dedup"
+path = "src/main.rs"
+
+[dependencies]
+analysis = { path = "../analysis" }
+clap = { workspace = true, features = ["derive"] }
+tabled = { workspace = true }
