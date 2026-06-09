@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="utf-8">
+        <title>DoD Demo Analyzer</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+            html, body {
+                margin: 0;
+                padding: 0;
+                width: 100%;
+                height: 100%;
+                overflow: hidden;
+                background-color: #1a1a1a;
+                font-family: sans-serif;
+            }
+            canvas {
+                display: block;
+                width: 100%;
+                height: 100%;
+            }
+        </style>
+        <link data-trunk rel="rust" href="Cargo.toml" data-bin="dod-tools-gui" />
+    </head>
+    <body>
+        <canvas id="the_canvas_id"></canvas>
+        <script>
+            window.selectFolder = async function() {
+                try {
+                    const dirHandle = await window.showDirectoryPicker();
+                    const files = [];
+                    
+                    async function readDir(handle, currentPath) {
+                        let iterator;
+                        try {
+                            iterator = handle.values();
+                        } catch (e) {
+                            console.warn("Failed to get iterator for directory handle:", currentPath, e);
+                            return;
+                        }
+
+                        while (true) {
+                            let nextItem;
+                            try {
+                                nextItem = await iterator.next();
+                            } catch (e) {
+                                console.warn("Failed to get next entry in directory:", currentPath, e);
+                                break;
+                            }
+
+                            if (nextItem.done) {
+                                break;
+                            }
+
+                            const entry = nextItem.value;
+                            if (!entry) {
+                                continue;
+                            }
+
+                            const nameLower = entry.name.toLowerCase();
+                            if (
+                                entry.name.startsWith('$') ||
+                                entry.name.startsWith('.') ||
+                                nameLower === 'system volume information' ||
+                                nameLower === 'recovery' ||
+                                nameLower === 'config.msi'
+                            ) {
+                                continue;
+                            }
+
+                            const relativePath = currentPath ? `${currentPath}/${entry.name}` : entry.name;
+                            if (entry.kind === 'file') {
+                                if (entry.name.endsWith('.dem')) {
+                                    try {
+                                        const file = await entry.getFile();
+                                        files.push({
+                                            name: entry.name,
+                                            path: relativePath,
+                                            file: file
+                                        });
+                                    } catch (fileErr) {
+                                        console.warn("Failed to get file contents for:", relativePath, fileErr);
+                                    }
+                                }
+                            } else if (entry.kind === 'directory') {
+                                try {
+                                    await readDir(entry, relativePath);
+                                } catch (dirErr) {
+                                    console.warn("Failed to read subdirectory:", relativePath, dirErr);
+                                }
+                            }
+                        }
+                    }
+                    
+                    await readDir(dirHandle, "");
+                    return files;
+                } catch (e) {
+                    console.error("Directory picker failed:", e);
+                    return [];
+                }
+            };
+        </script>
+    </body>
+</html>

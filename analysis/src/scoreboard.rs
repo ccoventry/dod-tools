@@ -1,6 +1,5 @@
 use crate::{AnalyzerEvent, AnalyzerState, time::GameTime};
 use dod::{Team, UserMessage};
-use std::cmp::Ordering;
 use std::collections::HashMap;
 
 #[derive(Debug, Default)]
@@ -62,6 +61,31 @@ pub fn use_scoreboard_updates(state: &mut AnalyzerState, event: &AnalyzerEvent) 
             }
         }
 
+        AnalyzerEvent::UserMessage(UserMessage::ScoreInfo(score_info)) => {
+            let player = state.find_player_by_client_index_mut(score_info.client_index - 1);
+
+            if let Some(player) = player {
+                player.class = Some(score_info.class.clone());
+                player.team = Some(score_info.team.clone());
+                player.stats = (
+                    score_info.points as i32,
+                    score_info.kills as i32,
+                    score_info.deaths as i32,
+                );
+            }
+        }
+
+        AnalyzerEvent::UserMessage(UserMessage::ScoreInfoLong(score_info_long)) => {
+            let player = state.find_player_by_client_index_mut(score_info_long.client_index - 1);
+
+            if let Some(player) = player {
+                player.class = Some(score_info_long.class.clone());
+                player.team = Some(score_info_long.team.clone());
+                player.stats.0 = score_info_long.score as i32;
+                player.stats.1 = score_info_long.frags as i32;
+            }
+        }
+
         AnalyzerEvent::UserMessage(UserMessage::ObjScore(obj_score)) => {
             let player = state.find_player_by_client_index_mut(obj_score.client_index - 1);
 
@@ -90,11 +114,16 @@ pub fn use_scoreboard_updates(state: &mut AnalyzerState, event: &AnalyzerEvent) 
                         by_points.then(by_kills).then(by_deaths)
                     }
 
-                    (Some(Team::Allies), _) => Ordering::Less,
-                    (Some(Team::Axis), Some(Team::Spectators)) => Ordering::Less,
-                    (Some(Team::Spectators) | None, _) => Ordering::Greater,
-
-                    _ => Ordering::Equal,
+                    (left_team, right_team) => {
+                        let rank = |team: &Option<Team>| match team {
+                            Some(Team::Allies) => 0,
+                            Some(Team::Axis) => 1,
+                            Some(Team::Spectators) => 2,
+                            Some(Team::Unassigned) => 3,
+                            None => 4,
+                        };
+                        rank(left_team).cmp(&rank(right_team))
+                    }
                 });
         }
 

@@ -1,1 +1,5 @@
 /target
+.vs/
+*.dem
+/demo_deduplication_report.md
+/native/dist/
