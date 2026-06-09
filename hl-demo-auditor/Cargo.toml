@@ -1,13 +1,15 @@
 [package]
-name = "dod-dedup"
+name = "hl-demo-auditor"
 version.workspace = true
 edition.workspace = true
 
+[lib]
+name = "hl_demo_auditor"
+path = "src/lib.rs"
+
 [[bin]]
-name = "dod-dedup"
+name = "hl-demo-auditor"
 path = "src/main.rs"
 
 [dependencies]
-analysis = { path = "../analysis" }
 clap = { workspace = true, features = ["derive"] }
-tabled = { workspace = true }
