@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["analysis", "dod", "native"]
+members = ["analysis", "dod", "native", "dedup"]
 
 [workspace.package]
 edition = "2024"
