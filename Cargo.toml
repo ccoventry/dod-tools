@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["analysis", "dod", "native", "dedup"]
+members = ["analysis", "dod", "native", "hl-demo-auditor", "benchmark"]
 
 [workspace.package]
 edition = "2024"
