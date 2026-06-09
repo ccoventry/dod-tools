@@ -16,7 +16,7 @@ impl Sub<GameTime> for GameTime {
     type Output = Duration;
 
     fn sub(self, rhs: GameTime) -> Self::Output {
-        self.viewdemo_offset - rhs.viewdemo_offset
+        self.viewdemo_offset.checked_sub(rhs.viewdemo_offset).unwrap_or(Duration::ZERO)
     }
 }
 
@@ -24,7 +24,7 @@ impl<'a> Sub<&'a GameTime> for &GameTime {
     type Output = Duration;
 
     fn sub(self, rhs: &'a GameTime) -> Self::Output {
-        self.viewdemo_offset - rhs.viewdemo_offset
+        self.viewdemo_offset.checked_sub(rhs.viewdemo_offset).unwrap_or(Duration::ZERO)
     }
 }
 

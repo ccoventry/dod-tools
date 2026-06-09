@@ -49,33 +49,30 @@ pub fn use_rounds_updates(state: &mut AnalyzerState, event: &AnalyzerEvent) {
                     });
                 }
 
-                RoundState::AlliesWin | RoundState::AxisWin => {
-                    let active_round = state
-                        .rounds
-                        .pop()
-                        .expect("Got a RoundState(Win) with no active round");
+                RoundState::AlliesWin | RoundState::AxisWin | RoundState::Draw => {
+                    if let Some(last_round) = state.rounds.last() {
+                        if matches!(last_round, Round::Active { .. }) {
+                            if let Some(Round::Active {
+                                start_time,
+                                allies_kills,
+                                axis_kills,
+                            }) = state.rounds.pop()
+                            {
+                                let winner_stats = match round_state {
+                                    RoundState::AlliesWin => Some((Team::Allies, allies_kills)),
+                                    RoundState::AxisWin => Some((Team::Axis, axis_kills)),
+                                    _ => None,
+                                };
 
-                    if let Round::Active {
-                        start_time,
-                        allies_kills,
-                        axis_kills,
-                    } = active_round
-                    {
-                        let winner_stats = if matches!(round_state, RoundState::AlliesWin) {
-                            (Team::Allies, allies_kills)
-                        } else {
-                            (Team::Axis, axis_kills)
-                        };
+                                let completed_round = Round::Completed {
+                                    start_time,
+                                    end_time: state.current_time.clone(),
+                                    winner_stats,
+                                };
 
-                        let completed_round = Round::Completed {
-                            start_time,
-                            end_time: state.current_time.clone(),
-                            winner_stats: Some(winner_stats),
-                        };
-
-                        state.rounds.push(completed_round);
-                    } else {
-                        panic!("Got a RoundState(Win) with no active round")
+                                state.rounds.push(completed_round);
+                            }
+                        }
                     }
                 }
 
@@ -84,7 +81,11 @@ pub fn use_rounds_updates(state: &mut AnalyzerState, event: &AnalyzerEvent) {
         }
 
         AnalyzerEvent::UserMessage(UserMessage::DeathMsg(death_msg)) => {
-            let killer = state.find_player_by_client_index(death_msg.killer_client_index - 1);
+            let killer = if death_msg.killer_client_index > 0 {
+                state.find_player_by_client_index(death_msg.killer_client_index - 1)
+            } else {
+                None
+            };
             let victim = state.find_player_by_client_index(death_msg.victim_client_index - 1);
 
             let kill_info = match (killer, victim) {

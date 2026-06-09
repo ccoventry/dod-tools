@@ -7,6 +7,7 @@ default-run = "dod-tools-gui"
 [dependencies]
 analysis = { path = "../analysis" }
 clap = { workspace = true, features = ["derive"] }
+dem = { workspace = true }
 eframe = { workspace = true }
 egui = { workspace = true }
 egui_extras = { workspace = true }
@@ -16,12 +17,34 @@ filetime = { workspace = true }
 humantime = { workspace = true }
 serde_json = { workspace = true, features = ["preserve_order"] }
 tabled = { workspace = true }
+chrono = "0.4.45"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }
 
 [[bin]]
 name = "dod-tools-gui"
-path = "src/bin/gui.rs"
+path = "src/bin/gui/main.rs"
 
 [[bin]]
 name = "dod-tools-cli"
 path = "src/bin/cli.rs"
+
+[[bin]]
+name = "dod-tools-dump"
+path = "src/bin/dump.rs"
+
+[[bin]]
+name = "dod-tools-benchmark"
+path = "src/bin/benchmark.rs"
+
+[[bin]]
+name = "dod-tools-inspect"
+path = "src/bin/inspect.rs"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2.100"
+wasm-bindgen-futures = "0.4.50"
+console_error_panic_hook = "0.1.7"
+js-sys = "0.3.77"
+web-sys = { version = "0.3.77", features = ["HtmlCanvasElement", "Window", "Document", "Element", "File"] }

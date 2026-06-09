@@ -93,7 +93,7 @@ impl TryFrom<&PlayerGlobalId> for SteamId {
         let server_id = if account_id % 2 == 0 { 0 } else { 1 };
         let account_id = (account_id - server_id) / 2;
 
-        let steam_id = format!("STEAM_{}:{}:{}", universe, account_id & 1, account_id);
+        let steam_id = format!("STEAM_{}:{}:{}", universe, server_id, account_id);
 
         Ok(SteamId(steam_id))
     }

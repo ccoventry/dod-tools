@@ -13,12 +13,20 @@ use tabled::{builder::Builder, settings::Style};
 fn main() {
     let args = Args::parse();
 
-    let analyses = args.demo_paths.iter().map(run_analyzer);
+    let mut analyses = vec![];
+    for p in &args.demo_paths {
+        match run_analyzer(p) {
+            Ok(res) => analyses.push(res),
+            Err(e) => {
+                eprintln!("Error analyzing {}: {}", p.display(), e);
+            }
+        }
+    }
 
     match args.output_format {
         OutputFormat::Json => println!("{}", Json::from_iter(analyses)),
 
-        OutputFormat::Markdown => analyses.map(Markdown::from).for_each(|output| {
+        OutputFormat::Markdown => analyses.into_iter().map(Markdown::from).for_each(|output| {
             println!("{output}");
         }),
     };
@@ -178,6 +186,7 @@ impl Display for Markdown {
                         Some(Team::Allies) => "Allies",
                         Some(Team::Axis) => "Axis",
                         Some(Team::Spectators) => "Spectators",
+                        Some(Team::Unassigned) => "Unassigned",
                     }
                     .to_string(),
                     match &player.class {
@@ -226,35 +235,32 @@ impl Display for Markdown {
                 "Kills by Winner",
             ]);
 
-            let mut rounds = self.1.state.rounds.iter().enumerate();
-
-            while let Some((
-                i,
-                Round::Completed {
+            for (i, round) in self.1.state.rounds.iter().enumerate() {
+                if let Round::Completed {
                     start_time,
                     end_time,
                     winner_stats,
-                },
-            )) = rounds.next()
-            {
-                let duration = Duration::new((end_time - start_time).as_secs(), 0);
-                let start_time = Duration::new(start_time.viewdemo_offset.as_secs(), 0);
+                } = round
+                {
+                    let duration = Duration::new((end_time - start_time).as_secs(), 0);
+                    let start_time = Duration::new(start_time.viewdemo_offset.as_secs(), 0);
 
-                table_builder.push_record([
-                    (i + 1).to_string(),
-                    format_duration(start_time).to_string(),
-                    format_duration(duration).to_string(),
-                    if let Some((winner, _)) = winner_stats {
-                        format!("{winner:?}")
-                    } else {
-                        String::new()
-                    },
-                    if let Some((_, kills)) = winner_stats {
-                        kills.to_string()
-                    } else {
-                        String::new()
-                    },
-                ]);
+                    table_builder.push_record([
+                        (i + 1).to_string(),
+                        format_duration(start_time).to_string(),
+                        format_duration(duration).to_string(),
+                        if let Some((winner, _)) = winner_stats {
+                            format!("{winner:?}")
+                        } else {
+                            String::new()
+                        },
+                        if let Some((_, kills)) = winner_stats {
+                            kills.to_string()
+                        } else {
+                            String::new()
+                        },
+                    ]);
+                }
             }
 
             writeln!(f, "## Rounds\n")?;
@@ -263,6 +269,61 @@ impl Display for Markdown {
             table.with(Style::markdown());
 
             writeln!(f, "{table}")?;
+        }
+
+        writeln!(f)?;
+
+        // Team weapon breakdowns
+        {
+            writeln!(f, "## Team Weapon Breakdowns\n")?;
+
+            let mut allies_breakdown = std::collections::HashMap::new();
+            let mut axis_breakdown = std::collections::HashMap::new();
+
+            for player in &self.1.state.players {
+                if let Some(team) = &player.team {
+                    let target_map = match team {
+                        Team::Allies => Some(&mut allies_breakdown),
+                        Team::Axis => Some(&mut axis_breakdown),
+                        _ => None,
+                    };
+
+                    if let Some(target_map) = target_map {
+                        for (weapon, (kills, teamkills)) in &player.weapon_breakdown {
+                            let entry = target_map.entry(weapon.clone()).or_insert((0, 0));
+                            entry.0 += kills;
+                            entry.1 += teamkills;
+                        }
+                    }
+                }
+            }
+
+            for (team_name, breakdown) in [("Allies", allies_breakdown), ("Axis", axis_breakdown)] {
+                if breakdown.is_empty() {
+                    continue;
+                }
+
+                writeln!(f, "### {team_name}\n")?;
+
+                let mut table_builder = Builder::default();
+                table_builder.push_record(["Weapon", "Kills", "Team Kills"]);
+
+                let mut breakdown_vec = Vec::from_iter(breakdown);
+                breakdown_vec.sort_by(|(_, l), (_, r)| l.cmp(r).reverse());
+
+                for (weapon, (kills, teamkills)) in breakdown_vec {
+                    table_builder.push_record([
+                        format!("{weapon:?}"),
+                        kills.to_string(),
+                        teamkills.to_string(),
+                    ]);
+                }
+
+                let mut table = table_builder.build();
+                table.with(Style::markdown());
+
+                writeln!(f, "{table}\n")?;
+            }
         }
 
         writeln!(f)?;

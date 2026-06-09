@@ -10,7 +10,11 @@ pub fn use_kill_streak_updates(state: &mut AnalyzerState, event: &AnalyzerEvent)
     if let AnalyzerEvent::UserMessage(UserMessage::DeathMsg(death_msg)) = event {
         let current_time = state.current_time.clone();
 
-        let killer = state.find_player_by_client_index(death_msg.killer_client_index - 1);
+        let killer = if death_msg.killer_client_index > 0 {
+            state.find_player_by_client_index(death_msg.killer_client_index - 1)
+        } else {
+            None
+        };
         let victim = state.find_player_by_client_index(death_msg.victim_client_index - 1);
 
         let is_teamkill = match (killer, victim) {
@@ -29,7 +33,11 @@ pub fn use_kill_streak_updates(state: &mut AnalyzerState, event: &AnalyzerEvent)
             return;
         }
 
-        let killer = state.find_player_by_client_index_mut(death_msg.killer_client_index - 1);
+        let killer = if death_msg.killer_client_index > 0 {
+            state.find_player_by_client_index_mut(death_msg.killer_client_index - 1)
+        } else {
+            None
+        };
 
         if let Some(killer) = killer {
             if killer.kill_streaks.is_empty() {
@@ -37,9 +45,12 @@ pub fn use_kill_streak_updates(state: &mut AnalyzerState, event: &AnalyzerEvent)
             }
 
             let streak = if killer.is_dead() && death_msg.weapon.is_grenade() {
-                let prev_streak_index = killer.kill_streaks.len() - 2;
-
-                killer.kill_streaks.get_mut(prev_streak_index)
+                if killer.kill_streaks.len() >= 2 {
+                    let prev_streak_index = killer.kill_streaks.len() - 2;
+                    killer.kill_streaks.get_mut(prev_streak_index)
+                } else {
+                    killer.kill_streaks.iter_mut().last()
+                }
             } else {
                 killer.kill_streaks.iter_mut().last()
             };
@@ -58,7 +69,11 @@ pub fn use_kill_streak_updates(state: &mut AnalyzerState, event: &AnalyzerEvent)
 
 pub fn use_weapon_breakdown_updates(state: &mut AnalyzerState, event: &AnalyzerEvent) {
     if let AnalyzerEvent::UserMessage(UserMessage::DeathMsg(death_msg)) = event {
-        let killer = state.find_player_by_client_index(death_msg.killer_client_index - 1);
+        let killer = if death_msg.killer_client_index > 0 {
+            state.find_player_by_client_index(death_msg.killer_client_index - 1)
+        } else {
+            None
+        };
         let victim = state.find_player_by_client_index(death_msg.victim_client_index - 1);
 
         let is_teamkill = match (killer, victim) {
@@ -66,7 +81,11 @@ pub fn use_weapon_breakdown_updates(state: &mut AnalyzerState, event: &AnalyzerE
             _ => false,
         };
 
-        let killer = state.find_player_by_client_index_mut(death_msg.killer_client_index - 1);
+        let killer = if death_msg.killer_client_index > 0 {
+            state.find_player_by_client_index_mut(death_msg.killer_client_index - 1)
+        } else {
+            None
+        };
 
         if let Some(killer) = killer {
             let (kills, teamkills) = killer

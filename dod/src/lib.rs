@@ -9,7 +9,7 @@ use nom::{
     combinator::{all_consuming, eof, fail, opt, success},
     error::context,
     multi::{length_count, many0},
-    number::complete::{le_i8, le_i16, le_i32, le_u8, le_u16},
+    number::complete::{le_f32, le_i8, le_i16, le_i32, le_u8, le_u16},
     sequence::terminated,
 };
 use std::convert::Infallible;
@@ -75,6 +75,8 @@ pub enum UserMessage {
     RoundState(RoundState),
     SayText(SayText),
     Scope(Scope),
+    ScoreInfo(ScoreInfo),
+    ScoreInfoLong(ScoreInfoLong),
     ScoreShort(ScoreShort),
     ScreenFade(ScreenFade),
     ScreenShake(ScreenShake),
@@ -110,6 +112,7 @@ pub enum Team {
     Allies,
     Axis,
     Spectators,
+    Unassigned,
 }
 
 #[derive(Clone, Debug)]
@@ -141,6 +144,7 @@ pub enum Class {
     Sturmtruppe,
     SupportInfantry,
     Unteroffizer,
+    Unassigned,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -887,7 +891,7 @@ fn null_string(i: &[u8]) -> IResult<&[u8], String> {
 fn class(i: &[u8]) -> IResult<&[u8], Class> {
     le_u8
         .map_res(|value| match value {
-            // FIXME Inaccurate!
+            0 => Ok(Class::Unassigned),
             1 => Ok(Class::Rifleman),
             2 => Ok(Class::StaffSergeant),
             3 => Ok(Class::MasterSergeant),
@@ -923,6 +927,7 @@ fn class(i: &[u8]) -> IResult<&[u8], Class> {
 fn team(i: &[u8]) -> IResult<&[u8], Team> {
     le_u8
         .map_res(|value| match value {
+            0 => Ok(Team::Unassigned),
             1 => Ok(Team::Allies),
             2 => Ok(Team::Axis),
             3 => Ok(Team::Spectators),
@@ -996,20 +1001,24 @@ fn ammo(i: &[u8]) -> IResult<&[u8], Ammo> {
 }
 
 impl UserMessage {
+    #[allow(deprecated)]
     pub fn new<'a>(msg_name: &'a [u8], msg_data: &'a [u8]) -> Result<UserMessage, Error> {
         let msg_name = from_utf8(msg_name).map_err(|_| Error::ParserError)?;
         let msg_name = msg_name.trim_end_matches('\x00');
         let i = msg_data;
 
         let (_, message) = match msg_name {
+            "AmmoPickup" => ammo_pickup.map(Self::AmmoPickup).parse(i),
             "AmmoShort" => ammo_short.map(Self::AmmoShort).parse(i),
             "AmmoX" => ammox.map(Self::AmmoX).parse(i),
             "BloodPuff" => blood_puff.map(Self::BloodPuff).parse(i),
+            "CameraView" => camera_view.map(Self::CameraView).parse(i),
             "CancelProg" => cancel_prog.map(Self::CancelProg).parse(i),
             "CapMsg" => cap_msg.map(Self::CapMsg).parse(i),
             "ClCorpse" => cl_corpse.map(Self::ClCorpse).parse(i),
             "ClanTimer" => clan_timer.map(Self::ClanTimer).parse(i),
             "ClientAreas" => client_areas.map(Self::ClientAreas).parse(i),
+            "CurMarker" => cur_marker.map(Self::CurMarker).parse(i),
             "CurWeapon" => cur_weapon.map(Self::CurWeapon).parse(i),
             "DeathMsg" => death_msg.map(Self::DeathMsg).parse(i),
             "Frags" => frags.map(Self::Frags).parse(i),
@@ -1021,9 +1030,12 @@ impl UserMessage {
             "HudText" => hud_text.map(Self::HudText).parse(i),
             "InitHUD" => init_hud.map(Self::InitHUD).parse(i),
             "InitObj" => init_obj.map(Self::InitObj).parse(i),
+            "MapMarker" => map_marker.map(Self::MapMarker).parse(i),
             "MOTD" => motd.map(Self::Motd).parse(i),
             "ObjScore" => obj_score.map(Self::ObjScore).parse(i),
+            "Object" => object.map(Self::Object).parse(i),
             "PClass" => p_class.map(Self::PClass).parse(i),
+            "PShoot" => p_shoot.map(Self::PShoot).parse(i),
             "PStatus" => p_status.map(Self::PStatus).parse(i),
             "PTeam" => p_team.map(Self::PTeam).parse(i),
             "PlayersIn" => players_in.map(Self::PlayersIn).parse(i),
@@ -1034,24 +1046,31 @@ impl UserMessage {
             "RoundState" => round_state.map(Self::RoundState).parse(i),
             "SayText" => say_text.map(Self::SayText).parse(i),
             "Scope" => scope.map(Self::Scope).parse(i),
+            "ScoreInfo" => score_info.map(Self::ScoreInfo).parse(i),
+            "ScoreInfoLong" => score_info_long.map(Self::ScoreInfoLong).parse(i),
             "ScoreShort" => score_short.map(Self::ScoreShort).parse(i),
             "ScreenFade" => screen_fade.map(Self::ScreenFade).parse(i),
             "ScreenShake" => screen_shake.map(Self::ScreenShake).parse(i),
             "ServerName" => server_name.map(Self::ServerName).parse(i),
             "SetFOV" => set_fov.map(Self::SetFOV).parse(i),
             "SetObj" => set_obj.map(Self::SetObj).parse(i),
+            "ShowMenu" => show_menu.map(Self::ShowMenu).parse(i),
             "Spectator" => spectator.map(Self::Spectator).parse(i),
             "StartProg" => start_prog.map(Self::StartProg).parse(i),
+            "StartProgF" => start_prog_f.map(Self::StartProgF).parse(i),
             "StatusValue" => status_value.map(Self::StatusValue).parse(i),
             "TeamScore" => team_score.map(Self::TeamScore).parse(i),
             "TextMsg" => text_msg.map(Self::TextMsg).parse(i),
             "TimeLeft" => time_left.map(Self::TimeLeft).parse(i),
+            "TimerStatus" => timer_status.map(Self::TimerStatus).parse(i),
             "UseSound" => use_sound.map(Self::UseSound).parse(i),
             "VGUIMenu" => vgui_menu.map(Self::VGUIMenu).parse(i),
             "VoiceMask" => voice_mask.map(Self::VoiceMask).parse(i),
             "WaveStatus" => wave_status.map(Self::WaveStatus).parse(i),
             "WaveTime" => wave_time.map(Self::WaveTime).parse(i),
             "WeaponList" => weapon_list.map(Self::WeaponList).parse(i),
+            "WeapPickup" => weap_pickup.map(Self::WeapPickup).parse(i),
+            "Weather" => weather.map(Self::Weather).parse(i),
             "YouDied" => you_died.map(Self::YouDied).parse(i),
             _ => context("Unknown message", fail::<&[u8], UserMessage, _>()).parse(i),
         }
@@ -1069,6 +1088,7 @@ impl TryFrom<&str> for Team {
             "allies" => Ok(Team::Allies),
             "axis" => Ok(Team::Axis),
             "spectators" => Ok(Team::Spectators),
+            "unassigned" => Ok(Team::Unassigned),
             _ => Err(()),
         }
     }
@@ -1376,6 +1396,31 @@ fn scope(i: &[u8]) -> IResult<&[u8], Scope> {
     all_consuming(le_u8).map(|_| Scope {}).parse(i)
 }
 
+fn score_info(i: &[u8]) -> IResult<&[u8], ScoreInfo> {
+    all_consuming((le_u8, le_i8, le_i8, le_i8, class, team, le_u8))
+        .map(|(client_index, points, kills, deaths, class, team, _)| ScoreInfo {
+            client_index,
+            points,
+            kills,
+            deaths,
+            class,
+            team,
+        })
+        .parse(i)
+}
+
+fn score_info_long(i: &[u8]) -> IResult<&[u8], ScoreInfoLong> {
+    all_consuming((le_u8, le_i16, le_i16, le_i16, class, team, le_u8))
+        .map(|(client_index, score, frags, _deaths, class, team, _)| ScoreInfoLong {
+            client_index,
+            score,
+            frags,
+            class,
+            team,
+        })
+        .parse(i)
+}
+
 fn score_short(i: &[u8]) -> IResult<&[u8], ScoreShort> {
     all_consuming((le_u8, le_i16, le_i16, le_i16, le_u8))
         .map(|(client_index, score, kills, deaths, _)| ScoreShort {
@@ -1561,4 +1606,74 @@ fn weapon_list(i: &[u8]) -> IResult<&[u8], WeaponList> {
 
 fn you_died(i: &[u8]) -> IResult<&[u8], YouDied> {
     all_consuming(take(1usize)).map(|_| YouDied {}).parse(i)
+}
+
+fn camera_view(i: &[u8]) -> IResult<&[u8], CameraView> {
+    all_consuming(null_string)
+        .map(|target_name| CameraView { target_name })
+        .parse(i)
+}
+
+fn cur_marker(i: &[u8]) -> IResult<&[u8], CurMarker> {
+    all_consuming(le_u8)
+        .map(|marker_id| CurMarker { marker_id })
+        .parse(i)
+}
+
+fn map_marker(i: &[u8]) -> IResult<&[u8], MapMarker> {
+    all_consuming(take(6usize))
+        .map(|_| MapMarker {})
+        .parse(i)
+}
+
+fn object(i: &[u8]) -> IResult<&[u8], Object> {
+    all_consuming(take(i.len()))
+        .map(|_| Object {})
+        .parse(i)
+}
+
+fn p_shoot(i: &[u8]) -> IResult<&[u8], PShoot> {
+    all_consuming(take(i.len()))
+        .map(|_| PShoot {})
+        .parse(i)
+}
+
+fn show_menu(i: &[u8]) -> IResult<&[u8], ShowMenu> {
+    all_consuming(take(i.len()))
+        .map(|_| ShowMenu {})
+        .parse(i)
+}
+
+fn start_prog_f(i: &[u8]) -> IResult<&[u8], StartProgF> {
+    all_consuming((le_u8, team, le_f32.map(Duration::from_secs_f32)))
+        .map(|(area_index, team, cap_duration)| StartProgF {
+            area_index,
+            team,
+            cap_duration,
+        })
+        .parse(i)
+}
+
+fn timer_status(i: &[u8]) -> IResult<&[u8], TimerStatus> {
+    all_consuming(take(3usize))
+        .map(|_| TimerStatus {})
+        .parse(i)
+}
+
+fn weather(i: &[u8]) -> IResult<&[u8], Weather> {
+    all_consuming(take(2usize))
+        .map(|_| Weather {})
+        .parse(i)
+}
+
+fn ammo_pickup(i: &[u8]) -> IResult<&[u8], AmmoPickup> {
+    all_consuming(take(i.len()))
+        .map(|_| AmmoPickup {})
+        .parse(i)
+}
+
+fn weap_pickup(i: &[u8]) -> IResult<&[u8], WeapPickup> {
+    all_consuming(take(i.len()))
+        .map(|_| WeapPickup {})
+        .parse(i)
 }
