@@ -1,5 +1,5 @@
 use crate::FileInfo;
-use crate::views::{PlayerHighlighting, TABLE_ROW_HEIGHT};
+use crate::views::{PlayerHighlighting, TABLE_ROW_HEIGHT, t};
 use analysis::{Analysis, Player};
 use egui::{Align, CollapsingHeader, Layout, ScrollArea, Ui};
 use egui_extras::{Column, TableBuilder};
@@ -12,7 +12,7 @@ pub fn kill_streaks_ui(
     player_highlighting: &PlayerHighlighting,
     ui: &mut Ui,
 ) {
-    ui.heading("Kill Streaks");
+    ui.heading(t("#app_streaks_heading"));
     ui.add_space(8.0);
     
     ui.scope(|ui| {
@@ -54,19 +54,19 @@ pub fn kill_streaks_table_ui(p: &Player, ui: &mut Ui) {
         .columns(Column::auto(), 5)
         .header(TABLE_ROW_HEIGHT, |mut row| {
             row.col(|ui| {
-                ui.strong("Wave");
+                ui.strong(t("#app_col_wave"));
             });
             row.col(|ui| {
-                ui.strong("Total Kills");
+                ui.strong(t("#app_col_total_kills"));
             });
             row.col(|ui| {
-                ui.strong("Start Time");
+                ui.strong(t("#app_col_start_time"));
             });
             row.col(|ui| {
-                ui.strong("Duration");
+                ui.strong(t("#app_col_duration"));
             });
             row.col(|ui| {
-                ui.strong("Weapons Used");
+                ui.strong(t("#app_col_weapons_used"));
             });
         })
         .body(|mut body| {

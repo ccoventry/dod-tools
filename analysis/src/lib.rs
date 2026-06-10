@@ -30,7 +30,7 @@ pub use crate::{
     mortality::MortalityState,
     player::{Connection, Player, PlayerGlobalId, SteamId},
     round::Round,
-    localization::{set_active_language, get_active_language},
+    localization::{set_active_language, get_active_language, translate_key},
 };
 pub use dod::Team;
 

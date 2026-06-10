@@ -1,6 +1,6 @@
 use crate::FileInfo;
-use crate::views::{PlayerHighlighting, TABLE_ROW_HEIGHT};
-use analysis::{Analysis, Team};
+use crate::views::{PlayerHighlighting, TABLE_ROW_HEIGHT, t};
+use analysis::{Analysis, Team, translate_key};
 use egui::{Align, CollapsingHeader, Layout, ScrollArea, Ui};
 use egui_extras::{Column, TableBuilder};
 
@@ -10,13 +10,13 @@ pub fn weapon_breakdowns_ui(
     player_highlighting: &PlayerHighlighting,
     ui: &mut Ui,
 ) {
-    ui.heading("Weapon Breakdowns");
+    ui.heading(t("#app_weapons_heading"));
     ui.add_space(8.0);
-    
+
     ui.scope(|ui| {
             team_weapon_breakdown_ui(r, ui);
 
-            CollapsingHeader::new("Player Breakdowns")
+            CollapsingHeader::new(t("#app_weapons_player_bd"))
                 .default_open(false)
                 .show(ui, |ui| {
                     if let Some(analysis) = r {
@@ -48,7 +48,7 @@ pub fn weapon_breakdowns_ui(
 }
 
 pub fn team_weapon_breakdown_ui(r: Option<&Analysis>, ui: &mut Ui) {
-    CollapsingHeader::new("Team Breakdowns")
+    CollapsingHeader::new(t("#app_weapons_team_bd"))
         .default_open(false)
         .show(ui, |ui| {
             let mut allies_breakdown = std::collections::HashMap::new();
@@ -74,13 +74,16 @@ pub fn team_weapon_breakdown_ui(r: Option<&Analysis>, ui: &mut Ui) {
                 }
             }
 
-            CollapsingHeader::new("Allies")
+            let allies_name = translate_key("#teamname_allies").unwrap_or_else(|| "Allies".to_string());
+            let axis_name = translate_key("#teamname_axis").unwrap_or_else(|| "Axis".to_string());
+
+            CollapsingHeader::new(allies_name)
                 .default_open(true)
                 .show(ui, |ui| {
                     weapon_breakdown_table_ui(&allies_breakdown, ui);
                 });
 
-            CollapsingHeader::new("Axis")
+            CollapsingHeader::new(axis_name)
                 .default_open(true)
                 .show(ui, |ui| {
                     weapon_breakdown_table_ui(&axis_breakdown, ui);
@@ -112,19 +115,19 @@ pub fn weapon_breakdown_table_ui<W: std::fmt::Debug>(
         .columns(Column::auto(), 5)
         .header(TABLE_ROW_HEIGHT, |mut row| {
             row.col(|ui| {
-                ui.strong("Weapon");
+                ui.strong(t("#app_col_weapon"));
             });
             row.col(|ui| {
-                ui.strong("Kills");
+                ui.strong(t("#app_col_kills"));
             });
             row.col(|ui| {
-                ui.strong("% of Total");
+                ui.strong(t("#app_col_pct_total"));
             });
             row.col(|ui| {
-                ui.strong("Team Kills");
+                ui.strong(t("#app_col_teamkills"));
             });
             row.col(|ui| {
-                ui.strong("% of Total");
+                ui.strong(t("#app_col_pct_total"));
             });
         })
         .body(|mut body| {

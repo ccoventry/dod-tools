@@ -1,7 +1,6 @@
 use crate::FileInfo;
-use crate::views::PlayerHighlighting;
-use crate::views::TABLE_ROW_HEIGHT;
-use analysis::{Analysis, Player, SteamId, Team, MortalityState};
+use crate::views::{PlayerHighlighting, TABLE_ROW_HEIGHT, t};
+use analysis::{Analysis, Player, SteamId, Team, MortalityState, translate_key};
 use egui::{Align, Label, Layout, Ui};
 use egui_extras::{Column, TableBody, TableBuilder};
 
@@ -17,6 +16,15 @@ impl Default for ScoreboardSortState {
     }
 }
 
+fn team_name(team: &Team) -> String {
+    match team {
+        Team::Allies => translate_key("#teamname_allies").unwrap_or_else(|| "Allies".to_string()),
+        Team::Axis => translate_key("#teamname_axis").unwrap_or_else(|| "Axis".to_string()),
+        Team::Spectators => translate_key("#teamname_spectators").unwrap_or_else(|| "Spectators".to_string()),
+        Team::Unassigned => t("#app_team_unassigned"),
+    }
+}
+
 pub fn scoreboard_ui(
     file_info: Option<&FileInfo>,
     r: Option<&Analysis>,
@@ -28,10 +36,14 @@ pub fn scoreboard_ui(
             analysis.state.team_scores.get_team_score(Team::Allies),
             analysis.state.team_scores.get_team_score(Team::Axis),
         );
+        let allies = translate_key("#teamname_allies").unwrap_or_else(|| "Allies".to_string());
+        let axis = translate_key("#teamname_axis").unwrap_or_else(|| "Axis".to_string());
         format!(
-            ": Allies ({}) {} Axis ({})",
+            ": {} ({}) {} {} ({})",
+            allies,
             allies_score,
             if allies_score > axis_score { ">" } else { "<" },
+            axis,
             axis_score
         )
     } else {
@@ -49,22 +61,22 @@ pub fn scoreboard_ui(
             .unwrap_or_default()
     });
 
-    ui.heading(format!("Scoreboard{match_result_fragment}"));
+    ui.heading(format!("{}{match_result_fragment}", t("#app_scoreboard_heading")));
     ui.add_space(8.0);
-    
+
     ui.scope(|ui| {
             let columns = [
                 "",
-                "ID",
-                "Name",
-                "Team",
-                "Class",
-                "Score",
-                "Kills",
-                "Deaths",
-                "Avg. Life",
-                "Min. Life",
-                "Max. Life",
+                "#app_col_id",
+                "#app_col_name",
+                "#app_col_team",
+                "#app_col_class",
+                "#app_col_score",
+                "#app_col_kills",
+                "#app_col_deaths",
+                "#app_col_avg_life",
+                "#app_col_min_life",
+                "#app_col_max_life",
             ];
 
             let table = TableBuilder::new(ui)
@@ -82,10 +94,15 @@ pub fn scoreboard_ui(
                             if i == 0 {
                                 ui.strong(column);
                             } else {
-                                let text = if sort_state.col_idx == i {
-                                    format!("{} {}", column, if sort_state.desc { "⏷" } else { "⏶" })
+                                let col_label = if column.starts_with('#') {
+                                    t(column)
                                 } else {
                                     column.to_string()
+                                };
+                                let text = if sort_state.col_idx == i {
+                                    format!("{} {}", col_label, if sort_state.desc { "⏷" } else { "⏶" })
+                                } else {
+                                    col_label
                                 };
 
                                 let resp = ui.add(
@@ -115,7 +132,7 @@ pub fn scoreboard_ui(
                         struct SortablePlayer<'a> {
                             player: &'a Player,
                             steam_id_str: String,
-                            team_str: &'static str,
+                            team_str: String,
                             class_str: String,
                         }
 
@@ -126,15 +143,12 @@ pub fn scoreboard_ui(
                                     .map(|s| s.to_string())
                                     .unwrap_or_else(|_| a.id.to_string());
                                 let team_str = match &a.team {
-                                    None => "Unknown",
-                                    Some(Team::Allies) => "Allies",
-                                    Some(Team::Axis) => "Axis",
-                                    Some(Team::Spectators) => "Spectators",
-                                    Some(Team::Unassigned) => "Unassigned",
+                                    None => t("#app_team_unknown"),
+                                    Some(team) => team_name(team),
                                 };
                                 let class_str = a.class.as_ref()
                                     .map(|c| format!("{c:?}"))
-                                    .unwrap_or_else(|| "Unknown".to_string());
+                                    .unwrap_or_else(|| t("#app_team_unknown"));
                                 SortablePlayer {
                                     player: a,
                                     steam_id_str,
@@ -148,7 +162,7 @@ pub fn scoreboard_ui(
                             let cmp = match sort_state.col_idx {
                                 1 => a.steam_id_str.cmp(&b.steam_id_str),
                                 2 => a.player.name.cmp(&b.player.name),
-                                3 => a.team_str.cmp(b.team_str),
+                                3 => a.team_str.cmp(&b.team_str),
                                 4 => a.class_str.cmp(&b.class_str),
                                 5 => a.player.stats.0.cmp(&b.player.stats.0),
                                 6 => a.player.stats.1.cmp(&b.player.stats.1),
@@ -212,17 +226,14 @@ pub fn scoreboard_row_ui(
 
         row.col(|ui| {
             ui.label(match &p.team {
-                None => "Unknown",
-                Some(Team::Allies) => "Allies",
-                Some(Team::Axis) => "Axis",
-                Some(Team::Spectators) => "Spectators",
-                Some(Team::Unassigned) => "Unassigned",
+                None => t("#app_team_unknown"),
+                Some(team) => team_name(team),
             });
         });
 
         row.col(|ui| {
             ui.label(match &p.class {
-                None => "Unknown".to_string(),
+                None => t("#app_team_unknown"),
                 Some(x) => format!("{x:?}"),
             });
         });

@@ -125,7 +125,9 @@ pub fn use_chat_updates(state: &mut AnalyzerState, event: &AnalyzerEvent) {
                     (name, None, is_dead_prefix)
                 }
             } else {
-                (Some("Console/Server".to_string()), None, false)
+                let console_name = crate::localization::translate_key("#app_console_server")
+                    .unwrap_or_else(|| "Console/Server".to_string());
+                (Some(console_name), None, false)
             };
 
             let is_team_message = is_team_prefix 
@@ -217,18 +219,23 @@ pub fn translate_system_message(
         result
     } else {
         // Fallback
+        let fallback_someone = crate::localization::translate_key("#app_fallback_someone")
+            .unwrap_or_else(|| "Someone".to_string());
+        let fallback_player = crate::localization::translate_key("#app_fallback_player")
+            .unwrap_or_else(|| "Player".to_string());
+
         if key.starts_with("#game_joined_team") {
-            let name = arg1.unwrap_or("Someone");
+            let name = arg1.unwrap_or(&fallback_someone);
             let team = arg2.unwrap_or("a team");
             format!("{} joined team {}", name, team)
         } else if key.starts_with("#game_joined_game") || key.starts_with("#game_join") {
-            let name = arg1.unwrap_or("Someone");
+            let name = arg1.unwrap_or(&fallback_someone);
             format!("{} joined the game", name)
         } else if key.starts_with("#game_connected") {
-            let name = arg1.unwrap_or("Someone");
+            let name = arg1.unwrap_or(&fallback_someone);
             format!("{} connected", name)
         } else if key.starts_with("#game_disconnected") {
-            let name = arg1.unwrap_or("Someone");
+            let name = arg1.unwrap_or(&fallback_someone);
             format!("{} disconnected", name)
         } else if key.starts_with("#game_will_restart_in") {
             let time = arg1.unwrap_or("?");
@@ -237,7 +244,7 @@ pub fn translate_system_message(
             let team = arg1.unwrap_or("Team");
             format!("{} is ready", team)
         } else if key.starts_with("#game_ready") {
-            let name = arg1.unwrap_or("Player");
+            let name = arg1.unwrap_or(&fallback_player);
             format!("{} is ready", name)
         } else {
             let mut parts = vec![token.to_string()];

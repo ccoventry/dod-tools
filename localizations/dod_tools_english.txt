@@ -1,0 +1,176 @@
+"lang"
+{
+"Language" "English"
+"Tokens"
+{
+
+// -----------------------------------------------------------------------
+// Main window / shell
+// -----------------------------------------------------------------------
+"#app_menu_file"                "File"
+"#app_menu_choose_dir"          "Choose Directory..."
+"#app_menu_select_folder"       "Select Demos Folder..."
+"#app_menu_clear_cache"         "Clear loaded cache"
+"#app_menu_preferences"         "Preferences..."
+"#app_menu_quit"                "Quit"
+
+"#app_panel_explorer"           "Explorer"
+"#app_panel_demos"              "Demos"
+"#app_panel_refresh"            "🔄 Refresh"
+"#app_this_pc"                  "💻 This PC"
+
+"#app_no_folder_loaded"         "No folder loaded."
+"#app_select_demos_folder"      "Select Demos Folder"
+"#app_please_choose_dir"        "Please choose a directory to begin."
+"#app_scanning_folder"          "Scanning folder..."
+"#app_updating_folder"          "Updating folder contents..."
+"#app_no_demos_found"           "No demos found in this folder."
+"#app_please_select_folder"     "Please select a demos folder to begin."
+
+"#app_col_name"                 "Name"
+"#app_col_type"                 "Type"
+"#app_col_map"                  "Map"
+"#app_col_date"                 "Date"
+"#app_col_status"               "Status"
+"#app_status_loading"           "Loading..."
+"#app_status_loaded"            "Loaded"
+"#app_status_not_loaded"        "Not Loaded"
+
+"#app_error_heading"            "⚠️ Analysis Error"
+
+// -----------------------------------------------------------------------
+// Preferences window
+// -----------------------------------------------------------------------
+"#app_prefs_title"              "Preferences"
+"#app_prefs_general"            "General Settings"
+"#app_prefs_language"           "Language:"
+"#app_prefs_lang_auto"          "Auto-Detect (OS Default)"
+"#app_prefs_close"              "Close"
+
+// -----------------------------------------------------------------------
+// Tab bar (views.rs)
+// -----------------------------------------------------------------------
+"#app_tab_summary"              "Summary"
+"#app_tab_scoreboard"           "Scoreboard"
+"#app_tab_timeline"             "Team score timeline"
+"#app_tab_rounds"               "Rounds"
+"#app_tab_weapons"              "Weapon breakdowns"
+"#app_tab_streaks"              "Kill streaks"
+"#app_tab_chat"                 "Chat log"
+
+// -----------------------------------------------------------------------
+// Summary view
+// -----------------------------------------------------------------------
+"#app_summary_file_path"        "File path"
+"#app_summary_file_size"        "File size"
+"#app_summary_file_created"     "File created at"
+"#app_summary_demo_type"        "Demo type"
+"#app_summary_game_mod"         "Game mod"
+"#app_summary_map_name"         "Map name"
+"#app_summary_demo_protocol"    "Demo protocol"
+"#app_summary_net_protocol"     "Network protocol"
+"#app_summary_game_version"     "Game version"
+"#app_summary_analyzer_ver"     "Analyzer version"
+"#app_game_dod"                 "Day of Defeat (dod)"
+"#app_game_cstrike"             "Counter-Strike (cstrike)"
+"#app_game_valve"               "Half-Life (valve)"
+"#app_ver_dod_13"               "v1.3 (Steam release)"
+"#app_ver_dod_10_12"            "v1.0 - v1.2 (WON release)"
+"#app_ver_cs_16"                "v1.6 (Steam release)"
+"#app_ver_cs_15"                "v1.5 or earlier (WON release)"
+"#app_ver_hl_steam"             "v1.1.2.0+ (Steam release)"
+"#app_ver_hl_won"               "v1.1.1.0 or earlier (WON release)"
+"#app_ver_steam_48"             "Steam release (Protocol 48)"
+"#app_ver_won_47"               "WON release (Protocol 47)"
+"#app_ver_legacy"               "Legacy release"
+
+// -----------------------------------------------------------------------
+// Scoreboard view
+// -----------------------------------------------------------------------
+"#app_scoreboard_heading"       "Scoreboard"
+"#app_col_id"                   "ID"
+"#app_col_team"                 "Team"
+"#app_col_class"                "Class"
+"#app_col_score"                "Score"
+"#app_col_kills"                "Kills"
+"#app_col_deaths"               "Deaths"
+"#app_col_avg_life"             "Avg. Life"
+"#app_col_min_life"             "Min. Life"
+"#app_col_max_life"             "Max. Life"
+"#app_team_unknown"             "Unknown"
+"#app_team_unassigned"          "Unassigned"
+
+// -----------------------------------------------------------------------
+// Rounds view
+// -----------------------------------------------------------------------
+"#app_rounds_heading"           "Rounds"
+"#app_col_round_num"            "#"
+"#app_col_start_time"           "Start Time"
+"#app_col_duration"             "Duration"
+"#app_col_winner"               "Winner"
+"#app_col_winner_kills"         "Kills by Winner"
+
+// -----------------------------------------------------------------------
+// Timeline view
+// -----------------------------------------------------------------------
+"#app_timeline_heading"         "Team Score Timeline"
+
+// -----------------------------------------------------------------------
+// Weapons view
+// -----------------------------------------------------------------------
+"#app_weapons_heading"          "Weapon Breakdowns"
+"#app_weapons_player_bd"        "Player Breakdowns"
+"#app_weapons_team_bd"          "Team Breakdowns"
+"#app_col_weapon"               "Weapon"
+"#app_col_pct_total"            "% of Total"
+"#app_col_teamkills"            "Team Kills"
+
+// -----------------------------------------------------------------------
+// Kill Streaks view
+// -----------------------------------------------------------------------
+"#app_streaks_heading"          "Kill Streaks"
+"#app_col_wave"                 "Wave"
+"#app_col_total_kills"          "Total Kills"
+"#app_col_weapons_used"         "Weapons Used"
+
+// -----------------------------------------------------------------------
+// Chat & System Logs view
+// -----------------------------------------------------------------------
+"#app_chat_heading"             "Chat & System Logs"
+"#app_chat_filter_actions"      "Filter Actions:"
+"#app_chat_select_all"          "Select All"
+"#app_chat_clear_all"           "Clear All"
+"#app_chat_player_chat"         "Player Chat:"
+"#app_chat_all_chat"            "All Chat"
+"#app_chat_team_chat"           "Team Chat"
+"#app_chat_alive_players"       "Alive Players"
+"#app_chat_dead_players"        "Dead Players"
+"#app_chat_system_logs"         "System Logs:"
+"#app_chat_joins_leaves"        "Joins & Leaves"
+"#app_chat_team_changes"        "Team Changes"
+"#app_chat_gameplay"            "Gameplay & Scoring"
+"#app_chat_other_system"        "Other System"
+"#app_chat_search"              "Search:"
+"#app_chat_no_analysis"         "No analysis loaded."
+"#app_chat_no_messages"         "No chat or system messages found in this demo."
+"#app_chat_no_match"            "No messages match the active filters."
+"#app_chat_team_prefix"         "(Team)"
+"#app_chat_system_prefix"       "(system)"
+"#app_chat_dead_prefix"         "*DEAD*"
+"#app_chat_unknown_sender"      "Unknown"
+
+// -----------------------------------------------------------------------
+// Fallback strings used in analysis/src/chat.rs
+// -----------------------------------------------------------------------
+"#app_fallback_someone"         "Someone"
+"#app_fallback_player"          "Player"
+"#app_console_server"           "Console/Server"
+
+// -----------------------------------------------------------------------
+// Progress Bar
+// -----------------------------------------------------------------------
+"#app_progress_reading"         "Reading and preparing %s1...%s2"
+"#app_progress_parsing"         "Parsing events for %s1: %s2%s3"
+
+}
+}

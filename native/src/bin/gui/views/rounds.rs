@@ -1,15 +1,15 @@
 use crate::FileInfo;
-use crate::views::{ALLIES_COLOR, AXIS_COLOR, NEUTRAL_COLOR, TABLE_ROW_HEIGHT};
-use analysis::{Analysis, Round, Team};
+use crate::views::{ALLIES_COLOR, AXIS_COLOR, NEUTRAL_COLOR, TABLE_ROW_HEIGHT, t};
+use analysis::{Analysis, Round, Team, translate_key};
 use egui::{Align, Layout, Ui};
 use egui_extras::{Column, TableBuilder};
 use humantime::format_duration;
 use std::time::Duration;
 
 pub fn rounds_ui(_file_info: Option<&FileInfo>, r: Option<&Analysis>, ui: &mut Ui) {
-    ui.heading("Rounds");
+    ui.heading(t("#app_rounds_heading"));
     ui.add_space(8.0);
-    
+
     ui.scope(|ui| {
             let table = TableBuilder::new(ui)
                 .striped(true)
@@ -22,19 +22,19 @@ pub fn rounds_ui(_file_info: Option<&FileInfo>, r: Option<&Analysis>, ui: &mut U
                         ui.add_space(ui.style().spacing.indent);
                     });
                     ui.col(|ui| {
-                        ui.strong("#");
+                        ui.strong(t("#app_col_round_num"));
                     });
                     ui.col(|ui| {
-                        ui.strong("Start Time");
+                        ui.strong(t("#app_col_start_time"));
                     });
                     ui.col(|ui| {
-                        ui.strong("Duration");
+                        ui.strong(t("#app_col_duration"));
                     });
                     ui.col(|ui| {
-                        ui.strong("Winner");
+                        ui.strong(t("#app_col_winner"));
                     });
                     ui.col(|ui| {
-                        ui.strong("Kills by Winner");
+                        ui.strong(t("#app_col_winner_kills"));
                     });
                 })
                 .body(|mut ui| {
@@ -85,11 +85,16 @@ pub fn rounds_ui(_file_info: Option<&FileInfo>, r: Option<&Analysis>, ui: &mut U
 
                                     if let Some((winner, kills)) = winner_stats {
                                         row.col(|ui| {
-                                            ui.label(if matches!(winner, Team::Allies) {
-                                                "Allies"
-                                            } else {
-                                                "Axis"
-                                            });
+                                            let name = match winner {
+                                                Team::Allies => translate_key("#teamname_allies")
+                                                    .unwrap_or_else(|| "Allies".to_string()),
+                                                Team::Axis => translate_key("#teamname_axis")
+                                                    .unwrap_or_else(|| "Axis".to_string()),
+                                                Team::Spectators => translate_key("#teamname_spectators")
+                                                    .unwrap_or_else(|| "Spectators".to_string()),
+                                                Team::Unassigned => t("#app_team_unassigned"),
+                                            };
+                                            ui.label(name);
                                         });
 
                                         row.col(|ui| {

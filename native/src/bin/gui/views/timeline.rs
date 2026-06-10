@@ -1,16 +1,19 @@
 use crate::FileInfo;
-use crate::views::{ALLIES_COLOR, AXIS_COLOR};
-use analysis::{Analysis, Team};
+use crate::views::{ALLIES_COLOR, AXIS_COLOR, t};
+use analysis::{Analysis, Team, translate_key};
 use egui::Ui;
 use egui_plot::{Corner, Legend, Line, Plot, PlotPoints};
 use humantime::format_duration;
 use std::time::Duration;
 
 pub fn team_score_timeline_ui(_file_info: Option<&FileInfo>, r: Option<&Analysis>, ui: &mut Ui) {
-    ui.heading("Team Score Timeline");
+    ui.heading(t("#app_timeline_heading"));
     ui.add_space(8.0);
-    
+
     ui.scope(|ui| {
+            let allies_label = translate_key("#teamname_allies").unwrap_or_else(|| "Allies".to_string());
+            let axis_label = translate_key("#teamname_axis").unwrap_or_else(|| "Axis".to_string());
+
             let plot = Plot::new("timeline_plot")
                 .allow_scroll(false)
                 .height(200.)
@@ -18,7 +21,7 @@ pub fn team_score_timeline_ui(_file_info: Option<&FileInfo>, r: Option<&Analysis
                 .legend(Legend::default().position(Corner::LeftTop))
                 .custom_x_axes(vec![]) // Remove the x-axis
                 .custom_y_axes(vec![]) // Remove the y-axis
-                .label_formatter(|team, point| {
+                .label_formatter(move |team, point| {
                     if !team.is_empty() {
                         let duration = Duration::from_secs_f64(point.x);
                         let duration = Duration::new(duration.as_secs(), 0);
@@ -45,12 +48,12 @@ pub fn team_score_timeline_ui(_file_info: Option<&FileInfo>, r: Option<&Analysis
                     };
 
                     let points = team_line_points(Team::Allies);
-                    let line = Line::new("Allies", PlotPoints::from_iter(points)).color(ALLIES_COLOR);
+                    let line = Line::new(allies_label, PlotPoints::from_iter(points)).color(ALLIES_COLOR);
 
                     plot_ui.line(line);
 
                     let points = team_line_points(Team::Axis);
-                    let line = Line::new("Axis", PlotPoints::from_iter(points)).color(AXIS_COLOR);
+                    let line = Line::new(axis_label, PlotPoints::from_iter(points)).color(AXIS_COLOR);
 
                     plot_ui.line(line);
                 }
