@@ -81,8 +81,11 @@ pub fn use_scoreboard_updates(state: &mut AnalyzerState, event: &AnalyzerEvent) 
             if let Some(player) = player {
                 player.class = Some(score_info_long.class.clone());
                 player.team = Some(score_info_long.team.clone());
-                player.stats.0 = score_info_long.score as i32;
-                player.stats.1 = score_info_long.frags as i32;
+                player.stats = (
+                    score_info_long.score as i32,
+                    score_info_long.frags as i32,
+                    score_info_long.deaths as i32,
+                );
             }
         }
 

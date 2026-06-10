@@ -3,7 +3,7 @@ use dem::types::EngineMessage;
 use std::{ops::Sub, time::Duration};
 
 /// A moment in time when something happened in game.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct GameTime {
     /// Timestamp that represents the amount opf time relative to 0 (recording start).
     pub real_offset: Duration,
@@ -34,8 +34,10 @@ pub fn use_timing_updates(state: &mut AnalyzerState, event: &AnalyzerEvent) {
     {
         state.current_time.viewdemo_offset = offset;
     } else if let AnalyzerEvent::Frame(frame) = event
-        && let Ok(offset) = Duration::try_from_secs_f32(frame.time)
     {
-        state.current_time.real_offset = offset;
+        state.frame_index += 1;
+        if let Ok(offset) = Duration::try_from_secs_f32(frame.time) {
+            state.current_time.real_offset = offset;
+        }
     }
 }
