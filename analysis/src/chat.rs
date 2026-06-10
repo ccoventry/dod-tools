@@ -97,23 +97,28 @@ pub fn use_chat_updates(state: &mut AnalyzerState, event: &AnalyzerEvent) {
 
         AnalyzerEvent::UserMessage(UserMessage::TextMsg(text_msg)) => {
             let raw_text = clean_control_chars(&text_msg.text);
+            let lower_text = raw_text.to_lowercase();
             
-            let formatted_text = if raw_text.starts_with("#Game_join") {
+            let formatted_text = if lower_text.starts_with("#game_joined_team") {
+                let name = text_msg.arg1.as_deref().unwrap_or("Someone");
+                let team = text_msg.arg2.as_deref().unwrap_or("a team");
+                format!("{} joined team {}", name, team)
+            } else if lower_text.starts_with("#game_joined_game") || lower_text.starts_with("#game_join") {
                 let name = text_msg.arg1.as_deref().unwrap_or("Someone");
                 format!("{} joined the game", name)
-            } else if raw_text.starts_with("#Game_connected") {
+            } else if lower_text.starts_with("#game_connected") {
                 let name = text_msg.arg1.as_deref().unwrap_or("Someone");
                 format!("{} connected", name)
-            } else if raw_text.starts_with("#Game_disconnected") {
+            } else if lower_text.starts_with("#game_disconnected") {
                 let name = text_msg.arg1.as_deref().unwrap_or("Someone");
                 format!("{} disconnected", name)
-            } else if raw_text.starts_with("#Game_will_restart_in") {
+            } else if lower_text.starts_with("#game_will_restart_in") {
                 let time = text_msg.arg1.as_deref().unwrap_or("?");
                 format!("Game will restart in {} seconds", time)
-            } else if raw_text.starts_with("#Game_ready_team") {
+            } else if lower_text.starts_with("#game_ready_team") {
                 let team = text_msg.arg1.as_deref().unwrap_or("Team");
                 format!("{} is ready", team)
-            } else if raw_text.starts_with("#Game_ready") {
+            } else if lower_text.starts_with("#game_ready") {
                 let name = text_msg.arg1.as_deref().unwrap_or("Player");
                 format!("{} is ready", name)
             } else {
