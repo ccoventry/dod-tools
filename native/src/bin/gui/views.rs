@@ -9,6 +9,18 @@ pub const ALLIES_COLOR: Color32 = Color32::DARK_GREEN;
 pub const AXIS_COLOR: Color32 = Color32::DARK_RED;
 pub const NEUTRAL_COLOR: Color32 = Color32::WHITE;
 
+/// Look up an app UI string by localization key.
+/// Falls back to a readable version of the key if no translation is found.
+pub fn t(key: &str) -> String {
+    analysis::translate_key(key).unwrap_or_else(|| {
+        // Strip the leading #app_ prefix and convert underscores to spaces as a
+        // readable last-resort fallback (should only happen during development).
+        key.trim_start_matches('#')
+            .trim_start_matches("app_")
+            .replace('_', " ")
+    })
+}
+
 #[derive(Default)]
 pub struct PlayerHighlighting {
     pub highlighted: HashSet<PlayerGlobalId>,
@@ -44,17 +56,17 @@ pub fn report_ui(
     let mut current_tab = ui.data(|d| d.get_temp::<String>(tab_id).unwrap_or_else(|| "Summary".to_string()));
 
     ui.horizontal(|ui| {
-        ui.selectable_value(&mut current_tab, "Summary".to_string(), "Summary");
-        ui.selectable_value(&mut current_tab, "Scoreboard".to_string(), "Scoreboard");
-        ui.selectable_value(&mut current_tab, "Timeline".to_string(), "Team score timeline");
-        ui.selectable_value(&mut current_tab, "Rounds".to_string(), "Rounds");
-        ui.selectable_value(&mut current_tab, "Weapon Breakdowns".to_string(), "Weapon breakdowns");
-        ui.selectable_value(&mut current_tab, "Kill Streaks".to_string(), "Kill streaks");
-        ui.selectable_value(&mut current_tab, "Chat Log".to_string(), "Chat log");
+        ui.selectable_value(&mut current_tab, "Summary".to_string(), t("#app_tab_summary"));
+        ui.selectable_value(&mut current_tab, "Scoreboard".to_string(), t("#app_tab_scoreboard"));
+        ui.selectable_value(&mut current_tab, "Timeline".to_string(), t("#app_tab_timeline"));
+        ui.selectable_value(&mut current_tab, "Rounds".to_string(), t("#app_tab_rounds"));
+        ui.selectable_value(&mut current_tab, "Weapon Breakdowns".to_string(), t("#app_tab_weapons"));
+        ui.selectable_value(&mut current_tab, "Kill Streaks".to_string(), t("#app_tab_streaks"));
+        ui.selectable_value(&mut current_tab, "Chat Log".to_string(), t("#app_tab_chat"));
     });
-    
+
     ui.separator();
-    
+
     ui.data_mut(|d| d.insert_temp(tab_id, current_tab.clone()));
 
     match current_tab.as_str() {

@@ -13,7 +13,7 @@ use native::FileInfo;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::mpsc;
-use views::{report_ui, PlayerHighlighting};
+use views::{report_ui, PlayerHighlighting, t};
 
 #[cfg(not(target_arch = "wasm32"))]
 use native::run_analyzer_with_progress;
@@ -630,22 +630,22 @@ impl eframe::App for Gui {
             .frame(Frame::side_top_panel(&ctx.style()).inner_margin(6.))
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.menu_button("File ⏷", |ui| {
+                    ui.menu_button(format!("{} ⏷", t("#app_menu_file")), |ui| {
                         #[cfg(not(target_arch = "wasm32"))]
-                        if ui.button("Choose Directory...").clicked() {
+                        if ui.button(t("#app_menu_choose_dir")).clicked() {
                             self.file_picker.pick_directory();
                             ui.close();
                         }
 
                         #[cfg(target_arch = "wasm32")]
-                        if ui.button("Select Demos Folder...").clicked() {
+                        if ui.button(t("#app_menu_select_folder")).clicked() {
                             pick_web_folder(ctx.clone(), self.tx.clone());
                             ui.close();
                         }
 
                         ui.separator();
 
-                        if ui.button("Clear loaded cache").clicked() {
+                        if ui.button(t("#app_menu_clear_cache")).clicked() {
                             self.analyses.clear();
                             self.selected_analysis_path = None;
                             #[cfg(not(target_arch = "wasm32"))]
@@ -653,13 +653,13 @@ impl eframe::App for Gui {
                             ui.close();
                         }
 
-                        if ui.button("Preferences...").clicked() {
+                        if ui.button(t("#app_menu_preferences")).clicked() {
                             self.show_settings_window = true;
                             ui.close();
                         }
 
                         #[cfg(not(target_arch = "wasm32"))]
-                        if ui.button("Quit").clicked() {
+                        if ui.button(t("#app_menu_quit")).clicked() {
                             std::process::exit(0);
                         }
                     });
@@ -712,14 +712,14 @@ impl eframe::App for Gui {
             .max_width(400.)
             .frame(Frame::side_top_panel(&ctx.style()).inner_margin(6.))
             .show(ctx, |ui| {
-                ui.heading("Explorer");
+                ui.heading(t("#app_panel_explorer"));
                 ui.separator();
 
                 // Native Directory Browser
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     ui.horizontal(|ui| {
-                        if ui.small_button("🔄 Refresh").clicked() {
+                        if ui.small_button(t("#app_panel_refresh")).clicked() {
                             self.subdir_cache.clear();
                             self.trigger_dir_scan(ctx);
                         }
@@ -743,7 +743,7 @@ impl eframe::App for Gui {
                                 state.toggle(ui);
                                 state.store(ui.ctx());
                             }
-                            ui.label("💻 This PC");
+                            ui.label(t("#app_this_pc"));
                         });
 
                         if is_open {
@@ -765,7 +765,7 @@ impl eframe::App for Gui {
                 {
                     if let Some(tree) = &self.web_tree {
                         ui.horizontal(|ui| {
-                            if ui.small_button("Select Folder...").clicked() {
+                            if ui.small_button(t("#app_menu_select_folder")).clicked() {
                                 pick_web_folder(ctx.clone(), self.tx.clone());
                             }
                         });
@@ -775,8 +775,8 @@ impl eframe::App for Gui {
                             render_web_dir_node(ui, tree, &mut temp_web_folder);
                         });
                     } else {
-                        ui.label("No folder loaded.");
-                        if ui.button("Select Demos Folder").clicked() {
+                        ui.label(t("#app_no_folder_loaded"));
+                        if ui.button(t("#app_select_demos_folder")).clicked() {
                             pick_web_folder(ctx.clone(), self.tx.clone());
                         }
                     }
@@ -791,25 +791,25 @@ impl eframe::App for Gui {
             .max_height(400.)
             .frame(Frame::side_top_panel(&ctx.style()).inner_margin(6.))
             .show(ctx, |ui| {
-                ui.heading("Demos");
+                ui.heading(t("#app_panel_demos"));
                 ui.separator();
 
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     if self.current_dir.is_none() {
-                        ui.weak("Please choose a directory to begin.");
+                        ui.weak(t("#app_please_choose_dir"));
                     } else if self.scanning_dir && self.desktop_files.is_empty() {
                         ui.horizontal(|ui| {
                             ui.spinner();
-                            ui.weak("Scanning folder...");
+                            ui.weak(t("#app_scanning_folder"));
                         });
                     } else if self.desktop_files.is_empty() {
-                        ui.weak("No demos found in this folder.");
+                        ui.weak(t("#app_no_demos_found"));
                     } else {
                         if self.scanning_dir {
                             ui.horizontal(|ui| {
                                 ui.spinner();
-                                ui.weak("Updating folder contents...");
+                                ui.weak(t("#app_updating_folder"));
                             });
                             ui.add_space(4.0);
                         }
@@ -824,10 +824,10 @@ impl eframe::App for Gui {
                             .column(Column::initial(150.0).resizable(true))            // Map
                             .column(Column::initial(150.0))                           // Date
                             .header(20.0, |mut header| {
-                                header.col(|ui| { ui.strong("Name"); });
-                                header.col(|ui| { ui.strong("Type"); });
-                                header.col(|ui| { ui.strong("Map"); });
-                                header.col(|ui| { ui.strong("Date"); });
+                                header.col(|ui| { ui.strong(t("#app_col_name")); });
+                                header.col(|ui| { ui.strong(t("#app_col_type")); });
+                                header.col(|ui| { ui.strong(t("#app_col_map")); });
+                                header.col(|ui| { ui.strong(t("#app_col_date")); });
                             })
                             .body(|mut body| {
                                 for item in &self.desktop_files {
@@ -875,9 +875,9 @@ impl eframe::App for Gui {
                 #[cfg(target_arch = "wasm32")]
                 {
                     if self.web_tree.is_none() {
-                        ui.weak("Please select a demos folder to begin.");
+                        ui.weak(t("#app_please_select_folder"));
                     } else if filtered_web_files.is_empty() {
-                        ui.weak("No demos found in this folder.");
+                        ui.weak(t("#app_no_demos_found"));
                     } else {
                         let selected_path = &self.selected_analysis_path;
                         let analyses = &self.analyses;
@@ -891,10 +891,10 @@ impl eframe::App for Gui {
                             .column(Column::initial(150.0).resizable(true))            // Map
                             .column(Column::initial(100.0))                           // Status
                             .header(20.0, |mut header| {
-                                header.col(|ui| { ui.strong("Name"); });
-                                header.col(|ui| { ui.strong("Type"); });
-                                header.col(|ui| { ui.strong("Map"); });
-                                header.col(|ui| { ui.strong("Status"); });
+                                header.col(|ui| { ui.strong(t("#app_col_name")); });
+                                header.col(|ui| { ui.strong(t("#app_col_type")); });
+                                header.col(|ui| { ui.strong(t("#app_col_map")); });
+                                header.col(|ui| { ui.strong(t("#app_col_status")); });
                             })
                             .body(|mut body| {
                                 for file in &filtered_web_files {
@@ -935,11 +935,11 @@ impl eframe::App for Gui {
                                         });
                                         row.col(|ui| {
                                             let status = if is_loading {
-                                                "Loading..."
+                                                t("#app_status_loading")
                                             } else if is_loaded {
-                                                "Loaded"
+                                                t("#app_status_loaded")
                                             } else {
-                                                "Not Loaded"
+                                                t("#app_status_not_loaded")
                                             };
                                             ui.label(status);
                                         });
@@ -971,9 +971,14 @@ impl eframe::App for Gui {
                     .unwrap_or(loading_path);
 
                 let text = if progress == 0.0 {
-                    format!("Reading and preparing {}...{}", filename, time_str)
+                    t("#app_progress_reading")
+                        .replace("%s1", filename)
+                        .replace("%s2", &time_str)
                 } else {
-                    format!("Parsing events for {}: {:.1}%{}", filename, pct, time_str)
+                    t("#app_progress_parsing")
+                        .replace("%s1", filename)
+                        .replace("%s2", &format!("{:.1}%", pct))
+                        .replace("%s3", &time_str)
                 };
 
                 ui.add(
@@ -987,7 +992,7 @@ impl eframe::App for Gui {
             if let Some(error) = &self.error_message {
                 ui.centered_and_justified(|ui| {
                     ui.vertical(|ui| {
-                        ui.label(egui::RichText::new("⚠️ Analysis Error").heading().color(egui::Color32::from_rgb(239, 68, 68)));
+                        ui.label(egui::RichText::new(t("#app_error_heading")).heading().color(egui::Color32::from_rgb(239, 68, 68)));
                         ui.add_space(8.0);
                         ui.label(error);
                     });
@@ -1100,21 +1105,21 @@ impl eframe::App for Gui {
         if self.show_settings_window {
             let mut open = true;
             let mut close_clicked = false;
-            egui::Window::new("Preferences")
+            egui::Window::new(t("#app_prefs_title"))
                 .open(&mut open)
                 .resizable(false)
                 .collapsible(false)
                 .show(ctx, |ui| {
                     ui.vertical(|ui| {
-                        ui.heading("General Settings");
+                        ui.heading(t("#app_prefs_general"));
                         ui.add_space(8.0);
 
                         ui.horizontal(|ui| {
-                            ui.label("Language:");
+                            ui.label(t("#app_prefs_language"));
                             let mut current_lang = self.settings.language.clone();
                             egui::ComboBox::from_id_salt("language_select")
                                 .selected_text(match current_lang.as_str() {
-                                    "auto" => "Auto-Detect (OS Default)".to_string(),
+                                    "auto" => t("#app_prefs_lang_auto"),
                                     other => {
                                         let mut chars = other.chars();
                                         match chars.next() {
@@ -1124,7 +1129,7 @@ impl eframe::App for Gui {
                                     }
                                 })
                                 .show_ui(ui, |ui| {
-                                    ui.selectable_value(&mut current_lang, "auto".to_string(), "Auto-Detect (OS Default)");
+                                    ui.selectable_value(&mut current_lang, "auto".to_string(), t("#app_prefs_lang_auto"));
                                     ui.separator();
                                     ui.selectable_value(&mut current_lang, "english".to_string(), "English");
                                     ui.selectable_value(&mut current_lang, "french".to_string(), "French");
@@ -1148,7 +1153,7 @@ impl eframe::App for Gui {
                         ui.separator();
                         ui.add_space(8.0);
                         ui.horizontal(|ui| {
-                            if ui.button("Close").clicked() {
+                            if ui.button(t("#app_prefs_close")).clicked() {
                                 close_clicked = true;
                             }
                         });

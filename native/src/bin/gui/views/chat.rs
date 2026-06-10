@@ -1,4 +1,5 @@
 use crate::FileInfo;
+use crate::views::t;
 use analysis::{Analysis, ChatType, Team};
 use egui::{Color32, RichText, ScrollArea, Ui};
 
@@ -12,7 +13,7 @@ fn format_game_time(d: &std::time::Duration) -> String {
 }
 
 pub fn chat_log_ui(file_info: Option<&FileInfo>, r: Option<&Analysis>, ui: &mut Ui) {
-    ui.heading("Chat & System Logs");
+    ui.heading(t("#app_chat_heading"));
     ui.add_space(8.0);
 
     let tab_id = if let Some(fi) = file_info {
@@ -43,8 +44,8 @@ pub fn chat_log_ui(file_info: Option<&FileInfo>, r: Option<&Analysis>, ui: &mut 
 
     let mut changed = false;
     ui.horizontal(|ui| {
-        ui.label("Filter Actions:");
-        if ui.button("Select All").clicked() {
+        ui.label(t("#app_chat_filter_actions"));
+        if ui.button(t("#app_chat_select_all")).clicked() {
             show_mm1 = true;
             show_mm2 = true;
             show_alive = true;
@@ -55,7 +56,7 @@ pub fn chat_log_ui(file_info: Option<&FileInfo>, r: Option<&Analysis>, ui: &mut 
             show_other_sys = true;
             changed = true;
         }
-        if ui.button("Clear All").clicked() {
+        if ui.button(t("#app_chat_clear_all")).clicked() {
             show_mm1 = false;
             show_mm2 = false;
             show_alive = false;
@@ -69,38 +70,38 @@ pub fn chat_log_ui(file_info: Option<&FileInfo>, r: Option<&Analysis>, ui: &mut 
     });
 
     ui.horizontal(|ui| {
-        ui.label("Player Chat:");
-        if ui.checkbox(&mut show_mm1, "All Chat").changed() || changed {
+        ui.label(t("#app_chat_player_chat"));
+        if ui.checkbox(&mut show_mm1, t("#app_chat_all_chat")).changed() || changed {
             ui.data_mut(|d| d.insert_temp(show_mm1_id, show_mm1));
         }
-        if ui.checkbox(&mut show_mm2, "Team Chat").changed() || changed {
+        if ui.checkbox(&mut show_mm2, t("#app_chat_team_chat")).changed() || changed {
             ui.data_mut(|d| d.insert_temp(show_mm2_id, show_mm2));
         }
-        if ui.checkbox(&mut show_alive, "Alive Players").changed() || changed {
+        if ui.checkbox(&mut show_alive, t("#app_chat_alive_players")).changed() || changed {
             ui.data_mut(|d| d.insert_temp(show_alive_id, show_alive));
         }
-        if ui.checkbox(&mut show_dead, "Dead Players").changed() || changed {
+        if ui.checkbox(&mut show_dead, t("#app_chat_dead_players")).changed() || changed {
             ui.data_mut(|d| d.insert_temp(show_dead_id, show_dead));
         }
     });
 
     ui.horizontal(|ui| {
-        ui.label("System Logs:");
-        if ui.checkbox(&mut show_joins, "Joins & Leaves").changed() || changed {
+        ui.label(t("#app_chat_system_logs"));
+        if ui.checkbox(&mut show_joins, t("#app_chat_joins_leaves")).changed() || changed {
             ui.data_mut(|d| d.insert_temp(show_joins_id, show_joins));
         }
-        if ui.checkbox(&mut show_teams, "Team Changes").changed() || changed {
+        if ui.checkbox(&mut show_teams, t("#app_chat_team_changes")).changed() || changed {
             ui.data_mut(|d| d.insert_temp(show_teams_id, show_teams));
         }
-        if ui.checkbox(&mut show_gameplay, "Gameplay & Scoring").changed() || changed {
+        if ui.checkbox(&mut show_gameplay, t("#app_chat_gameplay")).changed() || changed {
             ui.data_mut(|d| d.insert_temp(show_gameplay_id, show_gameplay));
         }
-        if ui.checkbox(&mut show_other_sys, "Other System").changed() || changed {
+        if ui.checkbox(&mut show_other_sys, t("#app_chat_other_system")).changed() || changed {
             ui.data_mut(|d| d.insert_temp(show_other_sys_id, show_other_sys));
         }
         
         ui.add_space(20.0);
-        ui.label("Search:");
+        ui.label(t("#app_chat_search"));
         if ui.text_edit_singleline(&mut filter_text).changed() {
             ui.data_mut(|d| d.insert_temp(filter_text_id, filter_text.clone()));
         }
@@ -125,12 +126,12 @@ pub fn chat_log_ui(file_info: Option<&FileInfo>, r: Option<&Analysis>, ui: &mut 
     let messages = if let Some(analysis) = r {
         &analysis.state.chat_messages
     } else {
-        ui.label("No analysis loaded.");
+        ui.label(t("#app_chat_no_analysis"));
         return;
     };
 
     if messages.is_empty() {
-        ui.label("No chat or system messages found in this demo.");
+        ui.label(t("#app_chat_no_messages"));
         return;
     }
 
@@ -187,7 +188,7 @@ pub fn chat_log_ui(file_info: Option<&FileInfo>, r: Option<&Analysis>, ui: &mut 
         .collect();
 
     if filtered.is_empty() {
-        ui.label("No messages match the active filters.");
+        ui.label(t("#app_chat_no_match"));
         return;
     }
 
@@ -204,7 +205,7 @@ pub fn chat_log_ui(file_info: Option<&FileInfo>, r: Option<&Analysis>, ui: &mut 
                     ui.colored_label(Color32::from_rgb(140, 140, 140), time_str);
 
                     if msg.sender_dead {
-                        ui.colored_label(Color32::from_rgb(220, 50, 50), "*DEAD*");
+                        ui.colored_label(Color32::from_rgb(220, 50, 50), t("#app_chat_dead_prefix"));
                     }
 
                     match msg.chat_type {
@@ -215,10 +216,10 @@ pub fn chat_log_ui(file_info: Option<&FileInfo>, r: Option<&Analysis>, ui: &mut 
                                 Some(Team::Spectators) => Color32::YELLOW, // Spectator yellow
                                 _ => Color32::LIGHT_BLUE, // Default / Console
                             };
-                            ui.colored_label(team_color, "(Team)");
+                            ui.colored_label(team_color, t("#app_chat_team_prefix"));
                         }
                         ChatType::System => {
-                            ui.colored_label(Color32::from_rgb(200, 150, 80), "(system)");
+                            ui.colored_label(Color32::from_rgb(200, 150, 80), t("#app_chat_system_prefix"));
                         }
                         _ => {}
                     }
@@ -246,7 +247,8 @@ pub fn chat_log_ui(file_info: Option<&FileInfo>, r: Option<&Analysis>, ui: &mut 
                                 _ => Color32::LIGHT_BLUE, // Default / Console
                             };
 
-                            let name = msg.sender_name.as_deref().unwrap_or("Unknown");
+                            let name_fallback = t("#app_chat_unknown_sender");
+                            let name = msg.sender_name.as_deref().unwrap_or(&name_fallback);
                             ui.colored_label(team_color, name);
                             ui.label(" :  ");
                             ui.colored_label(Color32::WHITE, &msg.text);
