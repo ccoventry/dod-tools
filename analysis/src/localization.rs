@@ -171,39 +171,20 @@ fn scan_dir_recursive(dir: &std::path::Path, map: &mut HashMap<String, String>, 
 
 #[cfg(not(target_arch = "wasm32"))]
 fn load_pass(map: &mut HashMap<String, String>, filter_lang: &str, amxx_code: &str) {
-    let paths = vec![
+    let mut paths = vec![
         std::path::PathBuf::from("localizations"),
         std::path::PathBuf::from("../localizations"),
-        std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|d| d.join("localizations")))
-            .unwrap_or_default(),
     ];
     
-    for base_path in paths {
-        if base_path.is_dir() {
-            scan_dir_recursive(&base_path, map, filter_lang, amxx_code);
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(parent) = exe_path.parent() {
+            paths.push(parent.join("localizations"));
         }
     }
-
-    if let Ok(entries) = std::fs::read_dir(".") {
-        for entry in entries.filter_map(Result::ok) {
-            let path = entry.path();
-            if path.is_file() {
-                let name = path.file_name().and_then(|s| s.to_str()).unwrap_or_default().to_lowercase();
-                if name.ends_with(".txt") {
-                    let should_load = if name.contains('_') {
-                        name.ends_with(&format!("_{}.txt", filter_lang))
-                    } else {
-                        true
-                    };
-                    if should_load {
-                        if let Ok(content) = read_to_string_lossy_utf16_or_utf8(&path) {
-                            parse_localization_content(&content, map, amxx_code);
-                        }
-                    }
-                }
-            }
+    
+    for base_path in paths {
+        if base_path.is_dir() && base_path.file_name().map(|n| n == "localizations").unwrap_or(false) {
+            scan_dir_recursive(&base_path, map, filter_lang, amxx_code);
         }
     }
 }
