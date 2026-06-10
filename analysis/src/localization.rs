@@ -38,17 +38,45 @@ fn parse_kv_line(line: &str) -> Option<(String, String)> {
 }
 
 fn parse_localization_content(content: &str, map: &mut HashMap<String, String>) {
+    let mut current_lang = "en".to_string(); // default to en in case there are no headers
+    
     for line in content.lines() {
         let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with("//") || trimmed.starts_with('{') || trimmed.starts_with('}') {
+        if trimmed.is_empty() || trimmed.starts_with("//") {
             continue;
         }
+        
+        // Check for language section like [en], [de]
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            current_lang = trimmed[1..trimmed.len() - 1].trim().to_lowercase();
+            continue;
+        }
+
+        // Skip Valve KeyValues blocks
+        if trimmed.starts_with('{') || trimmed.starts_with('}') {
+            continue;
+        }
+
+        // Try parsing as Valve KeyValues first (quoted key and value)
         if let Some((key, val)) = parse_kv_line(trimmed) {
             let mut key_clean = key.trim().to_lowercase();
             if !key_clean.starts_with('#') {
                 key_clean.insert(0, '#');
             }
             map.insert(key_clean, val);
+        } else if current_lang == "en" {
+            if let Some(pos) = trimmed.find('=') {
+                let key = trimmed[..pos].trim().to_lowercase();
+                let val = trimmed[pos + 1..].trim().to_string();
+                if !key.is_empty() {
+                    let mut key_with_hash = key.clone();
+                    if !key_with_hash.starts_with('#') {
+                        key_with_hash.insert(0, '#');
+                    }
+                    map.insert(key_with_hash, val.clone());
+                    map.insert(key, val);
+                }
+            }
         }
     }
 }
@@ -147,5 +175,33 @@ mod tests {
         assert_eq!(map.get("#game_joined_team"), Some(&"%s1 joined team %s2".to_string()));
         assert_eq!(map.get("#game_join"), Some(&"%s1 joined the game".to_string()));
         assert_eq!(map.get("#game_disconnected"), Some(&"%s1 disconnected".to_string()));
+    }
+
+    #[test]
+    fn test_parse_amxx_localization() {
+        let content = r#"
+            [en]
+            CHO_FIN_EXT = Choosing finished. Current map will be extended to next %.0f minutes
+            CHO_FIN_NEXT = Choosing finished. The nextmap will be %s
+            
+            [de]
+            CHO_FIN_EXT = Auswahl beendet. Laufende Map wird um %.0f Minuten verlängert.
+        "#;
+        
+        let mut map = HashMap::new();
+        parse_localization_content(content, &mut map);
+        
+        assert_eq!(
+            map.get("cho_fin_ext"),
+            Some(&"Choosing finished. Current map will be extended to next %.0f minutes".to_string())
+        );
+        assert_eq!(
+            map.get("#cho_fin_ext"),
+            Some(&"Choosing finished. Current map will be extended to next %.0f minutes".to_string())
+        );
+        assert_eq!(
+            map.get("cho_fin_next"),
+            Some(&"Choosing finished. The nextmap will be %s".to_string())
+        );
     }
 }
