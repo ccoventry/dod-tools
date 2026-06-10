@@ -67,6 +67,9 @@ pub struct DemoInfo {
 
     /// Game directory / mod name.
     pub game_directory: String,
+
+    /// Type of demo: "HLTV" or "POV"
+    pub demo_type: String,
 }
 
 impl From<Demo> for DemoInfo {
@@ -94,12 +97,32 @@ impl From<Demo> for DemoInfo {
             .map(|e| e.track_time)
             .unwrap_or(0.0);
 
+        let mut is_hltv = false;
+        'outer: for entry in &value.directory.entries {
+            for frame in &entry.frames {
+                if let FrameData::NetworkMessage(box_type) = &frame.frame_data {
+                    if let MessageData::Parsed(msgs) = &box_type.1.messages {
+                        for msg in msgs {
+                            if let NetMessage::EngineMessage(eng_msg) = msg {
+                                if matches!(**eng_msg, EngineMessage::SvcHltv(_) | EngineMessage::SvcDirector(_)) {
+                                    is_hltv = true;
+                                    break 'outer;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let demo_type = if is_hltv { "HLTV".to_string() } else { "POV".to_string() };
+
         Self {
             demo_protocol: value.header.demo_protocol,
             map_name,
             network_protocol: value.header.network_protocol,
             playback_time,
             game_directory,
+            demo_type,
         }
     }
 }
