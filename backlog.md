@@ -115,3 +115,9 @@ Based on raw network message inspections across 50 unique demos, several valuabl
 ### Localization & Translations
 * **WebAssembly (WASM) Embedded Localizations**: Currently, localizations are not loaded in WASM targets due to browser sandboxing constraints. Support WebAssembly translation loading by embedding the default localization resources (such as `dod_tools_english.txt`) into the compiled binary via `include_str!` or an embedded asset map.
 * **Lock-Free Concurrent Lookups**: If multi-threaded log parsing or concurrent UI thread render runs require localized text access, replace the single-writer `Mutex` wrapper with a read-mostly `RwLock` or a lock-free `ArcSwap` to eliminate widget rendering lock contention overhead.
+
+### Parser Performance & Memory Optimizations
+* **Zero-Copy String Decoding**: Refactor the `dod` parser to use `Cow<'a, str>` or `&'a str` instead of owning `String` allocations for strings parsed from the binary stream (e.g. chat messages, player names).
+* **Streaming Demo Parser**: Fork/rewrite `dem` crate to stream frames/messages off the disk/memory sequentially, replacing the current eager parser structure to achieve $O(1)$ parsing memory footprints instead of $O(N)$ memory allocations.
+* **Vec Capacity Pre-allocation**: Pre-allocate capacities for vectors in `AnalyzerState` (like `chat_messages` or `rounds`) using profile heuristics to eliminate dynamic relocation and reallocation overhead.
+

@@ -140,64 +140,30 @@ pub struct Analysis {
     pub state: AnalyzerState,
 }
 
-fn is_relevant_message(name_bytes: &[u8], is_warmup: bool) -> bool {
+fn is_relevant_message(name_bytes: &[u8]) -> bool {
     let mut len = name_bytes.len();
     while len > 0 && name_bytes[len - 1] == 0 {
         len -= 1;
     }
     let trimmed = &name_bytes[..len];
     
-    if is_warmup {
-        matches!(trimmed, b"RoundState" | b"ClanTimer" | b"TeamScore" | b"ScoreShort" | b"ObjScore" | b"Frags" | b"PClass" | b"PTeam" | b"ScoreInfo" | b"ScoreInfoLong" | b"SayText" | b"TextMsg")
-    } else {
-        matches!(trimmed, b"RoundState" | b"ClanTimer" | b"TeamScore" | b"ScoreShort" | b"ObjScore" | b"Frags" | b"ScoreInfo" | b"ScoreInfoLong" | b"SayText" | b"TextMsg")
-    }
-}
-
-fn find_last_match_start_frame(demo: &Demo) -> Option<usize> {
-    let mut state = AnalyzerState::default();
-    let mut last_live_frame = None;
-    let mut frame_index = 0;
-
-    for entry in &demo.directory.entries {
-        for frame in &entry.frames {
-            use_timing_updates(&mut state, &AnalyzerEvent::Frame(frame));
-
-            if let FrameData::NetworkMessage(box_type) = &frame.frame_data {
-                if let MessageData::Parsed(msgs) = &box_type.1.messages {
-                    for net_msg in msgs {
-                        match net_msg {
-                            NetMessage::EngineMessage(engine_msg) => {
-                                let event = AnalyzerEvent::EngineMessage(engine_msg);
-                                use_timing_updates(&mut state, &event);
-                                use_player_updates(&mut state, &event);
-                            }
-                            NetMessage::UserMessage(user_msg) => {
-                                if is_relevant_message(user_msg.name.as_ref(), false) {
-                                    if let Ok(msg) = UserMessage::new(&user_msg.name, &user_msg.data) {
-                                        let event = AnalyzerEvent::UserMessage(msg);
-                                        use_scoreboard_updates(&mut state, &event);
-                                        use_team_score_updates(&mut state, &event);
-                                        
-                                        let old_live = matches!(state.clan_match_detection, ClanMatchDetection::MatchIsLive);
-                                        use_clan_match_detection_updates(Duration::from_secs(10), &mut state, &event);
-                                        let new_live = matches!(state.clan_match_detection, ClanMatchDetection::MatchIsLive);
-                                        
-                                        if !old_live && new_live {
-                                            last_live_frame = Some(frame_index);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            frame_index += 1;
-        }
-    }
-
-    last_live_frame
+    matches!(
+        trimmed,
+        b"RoundState"
+            | b"ClanTimer"
+            | b"TeamScore"
+            | b"ScoreShort"
+            | b"ObjScore"
+            | b"Frags"
+            | b"PClass"
+            | b"PTeam"
+            | b"ScoreInfo"
+            | b"ScoreInfoLong"
+            | b"SayText"
+            | b"TextMsg"
+            | b"DeathMsg"
+            | b"PStatus"
+    )
 }
 
 impl Analysis {
@@ -221,7 +187,6 @@ impl Analysis {
             Ok(Err(e)) => return Err(format!("Parse error: {}", e)),
             Err(_) => return Err("Parser panicked during demo structural decoding".to_string()),
         };
-        let last_live_frame = find_last_match_start_frame(&demo);
 
         let mut state = AnalyzerState::default();
 
@@ -238,15 +203,6 @@ impl Analysis {
             use_clan_match_detection_updates(Duration::from_secs(10), state, event);
         };
 
-        let process_warmup_event = |state: &mut AnalyzerState, event: &AnalyzerEvent| {
-            use_timing_updates(state, event);
-            use_player_updates(state, event);
-            use_scoreboard_updates(state, event);
-            use_team_score_updates(state, event);
-            use_chat_updates(state, event);
-            use_clan_match_detection_updates(Duration::from_secs(10), state, event);
-        };
-
         process_event(&mut state, &AnalyzerEvent::Initialization);
 
         let total_frames: usize = demo.directory.entries.iter().map(|entry| entry.frames.len()).sum();
@@ -254,43 +210,16 @@ impl Analysis {
 
         for entry in &demo.directory.entries {
             for frame in &entry.frames {
-                let is_warmup = if let Some(live_frame_idx) = last_live_frame {
-                    processed_frames < live_frame_idx
-                } else {
-                    false
-                };
-
-                if is_warmup {
-                    process_warmup_event(&mut state, &AnalyzerEvent::Frame(frame));
-                    if let FrameData::NetworkMessage(box_type) = &frame.frame_data {
-                        if let MessageData::Parsed(msgs) = &box_type.1.messages {
-                            for net_msg in msgs {
-                                match net_msg {
-                                    NetMessage::EngineMessage(engine_msg) => {
-                                        let event = AnalyzerEvent::EngineMessage(engine_msg);
-                                        process_warmup_event(&mut state, &event);
-                                    }
-                                    NetMessage::UserMessage(user_msg) => {
-                                        if is_relevant_message(user_msg.name.as_ref(), true) {
-                                            if let Ok(msg) = UserMessage::new(&user_msg.name, &user_msg.data) {
-                                                process_warmup_event(&mut state, &AnalyzerEvent::UserMessage(msg));
-                                            }
-                                        }
-                                    }
+                process_event(&mut state, &AnalyzerEvent::Frame(frame));
+                if let FrameData::NetworkMessage(box_type) = &frame.frame_data {
+                    if let MessageData::Parsed(msgs) = &box_type.1.messages {
+                        for net_msg in msgs {
+                            match net_msg {
+                                NetMessage::EngineMessage(engine_msg) => {
+                                    process_event(&mut state, &AnalyzerEvent::EngineMessage(engine_msg));
                                 }
-                            }
-                        }
-                    }
-                } else {
-                    process_event(&mut state, &AnalyzerEvent::Frame(frame));
-                    if let FrameData::NetworkMessage(box_type) = &frame.frame_data {
-                        if let MessageData::Parsed(msgs) = &box_type.1.messages {
-                            for net_msg in msgs {
-                                match net_msg {
-                                    NetMessage::EngineMessage(engine_msg) => {
-                                        process_event(&mut state, &AnalyzerEvent::EngineMessage(engine_msg));
-                                    }
-                                    NetMessage::UserMessage(user_msg) => {
+                                NetMessage::UserMessage(user_msg) => {
+                                    if is_relevant_message(user_msg.name.as_ref()) {
                                         if let Ok(msg) = UserMessage::new(&user_msg.name, &user_msg.data) {
                                             process_event(&mut state, &AnalyzerEvent::UserMessage(msg));
                                         }
@@ -336,19 +265,14 @@ impl Analysis {
             use_clan_match_detection_updates(Duration::from_secs(10), state, event);
         };
 
-        let process_warmup_event = |state: &mut AnalyzerState, event: &AnalyzerEvent| {
-            use_timing_updates(state, event);
-            use_player_updates(state, event);
-            use_scoreboard_updates(state, event);
-            use_team_score_updates(state, event);
-            use_chat_updates(state, event);
-            use_clan_match_detection_updates(Duration::from_secs(10), state, event);
-        };
-
-        // 1. Unoptimized Parse
+        // 1. Unoptimized Parse (no filtering, processes every single user message)
         let start_unopt = std::time::Instant::now();
+        let mut _last_live_frame_unopt = None;
         let mut state_unopt = AnalyzerState::default();
         process_event(&mut state_unopt, &AnalyzerEvent::Initialization);
+        let total_frames: usize = demo.directory.entries.iter().map(|entry| entry.frames.len()).sum();
+        let mut processed_frames = 0;
+
         for entry in &demo.directory.entries {
             for frame in &entry.frames {
                 process_event(&mut state_unopt, &AnalyzerEvent::Frame(frame));
@@ -361,67 +285,50 @@ impl Analysis {
                                 }
                                 NetMessage::UserMessage(user_msg) => {
                                     if let Ok(msg) = UserMessage::new(&user_msg.name, &user_msg.data) {
+                                        let old_live = matches!(state_unopt.clan_match_detection, ClanMatchDetection::MatchIsLive);
                                         process_event(&mut state_unopt, &AnalyzerEvent::UserMessage(msg));
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        process_event(&mut state_unopt, &AnalyzerEvent::Finalization);
-        let unopt_duration = start_unopt.elapsed();
-
-        // 2. Optimized Parse
-        let start_opt = std::time::Instant::now();
-        let last_live_frame = find_last_match_start_frame(&demo);
-        let mut state_opt = AnalyzerState::default();
-        process_event(&mut state_opt, &AnalyzerEvent::Initialization);
-        let total_frames: usize = demo.directory.entries.iter().map(|entry| entry.frames.len()).sum();
-        let mut processed_frames = 0;
-
-        for entry in &demo.directory.entries {
-            for frame in &entry.frames {
-                let is_warmup = if let Some(live_frame_idx) = last_live_frame {
-                    processed_frames < live_frame_idx
-                } else {
-                    false
-                };
-
-                if is_warmup {
-                    process_warmup_event(&mut state_opt, &AnalyzerEvent::Frame(frame));
-                    if let FrameData::NetworkMessage(box_type) = &frame.frame_data {
-                        if let MessageData::Parsed(msgs) = &box_type.1.messages {
-                            for net_msg in msgs {
-                                match net_msg {
-                                    NetMessage::EngineMessage(engine_msg) => {
-                                        let event = AnalyzerEvent::EngineMessage(engine_msg);
-                                        process_warmup_event(&mut state_opt, &event);
-                                    }
-                                    NetMessage::UserMessage(user_msg) => {
-                                        if is_relevant_message(user_msg.name.as_ref(), true) {
-                                            if let Ok(msg) = UserMessage::new(&user_msg.name, &user_msg.data) {
-                                                process_warmup_event(&mut state_opt, &AnalyzerEvent::UserMessage(msg));
-                                            }
+                                        let new_live = matches!(state_unopt.clan_match_detection, ClanMatchDetection::MatchIsLive);
+                                        if !old_live && new_live {
+                                            _last_live_frame_unopt = Some(processed_frames);
                                         }
                                     }
                                 }
                             }
                         }
                     }
-                } else {
-                    process_event(&mut state_opt, &AnalyzerEvent::Frame(frame));
-                    if let FrameData::NetworkMessage(box_type) = &frame.frame_data {
-                        if let MessageData::Parsed(msgs) = &box_type.1.messages {
-                            for net_msg in msgs {
-                                match net_msg {
-                                    NetMessage::EngineMessage(engine_msg) => {
-                                        process_event(&mut state_opt, &AnalyzerEvent::EngineMessage(engine_msg));
-                                    }
-                                    NetMessage::UserMessage(user_msg) => {
+                }
+                processed_frames += 1;
+            }
+        }
+        process_event(&mut state_unopt, &AnalyzerEvent::Finalization);
+        let unopt_duration = start_unopt.elapsed();
+
+        // 2. Optimized Parse (with filtering, processes only the 14 relevant messages)
+        let start_opt = std::time::Instant::now();
+        let mut last_live_frame_opt = None;
+        let mut state_opt = AnalyzerState::default();
+        process_event(&mut state_opt, &AnalyzerEvent::Initialization);
+        processed_frames = 0;
+
+        for entry in &demo.directory.entries {
+            for frame in &entry.frames {
+                process_event(&mut state_opt, &AnalyzerEvent::Frame(frame));
+                if let FrameData::NetworkMessage(box_type) = &frame.frame_data {
+                    if let MessageData::Parsed(msgs) = &box_type.1.messages {
+                        for net_msg in msgs {
+                            match net_msg {
+                                NetMessage::EngineMessage(engine_msg) => {
+                                    process_event(&mut state_opt, &AnalyzerEvent::EngineMessage(engine_msg));
+                                }
+                                NetMessage::UserMessage(user_msg) => {
+                                    if is_relevant_message(user_msg.name.as_ref()) {
                                         if let Ok(msg) = UserMessage::new(&user_msg.name, &user_msg.data) {
+                                            let old_live = matches!(state_opt.clan_match_detection, ClanMatchDetection::MatchIsLive);
                                             process_event(&mut state_opt, &AnalyzerEvent::UserMessage(msg));
+                                            let new_live = matches!(state_opt.clan_match_detection, ClanMatchDetection::MatchIsLive);
+                                            if !old_live && new_live {
+                                                last_live_frame_opt = Some(processed_frames);
+                                            }
                                         }
                                     }
                                 }
@@ -444,7 +351,7 @@ impl Analysis {
 
         let diagnostics = ParseDiagnostics {
             total_frames,
-            live_frame_index: last_live_frame,
+            live_frame_index: last_live_frame_opt,
             unopt_duration,
             opt_duration,
             states_matched,
@@ -595,6 +502,8 @@ mod tests {
             // Unoptimized parse
             let demo = open_demo_from_bytes(&file_bytes).unwrap();
             let mut state_unopt = AnalyzerState::default();
+            let mut last_live_frame = None;
+            let mut processed_frames = 0;
             let process_event = |state: &mut AnalyzerState, event: &AnalyzerEvent| {
                 use_timing_updates(state, event);
                 use_player_updates(state, event);
@@ -604,11 +513,13 @@ mod tests {
                 use_weapon_breakdown_updates(state, event);
                 use_team_score_updates(state, event);
                 use_rounds_updates(state, event);
+                use_chat_updates(state, event);
                 use_clan_match_detection_updates(Duration::from_secs(10), state, event);
             };
             process_event(&mut state_unopt, &AnalyzerEvent::Initialization);
             for entry in &demo.directory.entries {
                 for frame in &entry.frames {
+                    let old_live = matches!(state_unopt.clan_match_detection, ClanMatchDetection::MatchIsLive);
                     process_event(&mut state_unopt, &AnalyzerEvent::Frame(frame));
                     if let FrameData::NetworkMessage(box_type) = &frame.frame_data {
                         if let MessageData::Parsed(msgs) = &box_type.1.messages {
@@ -626,6 +537,11 @@ mod tests {
                             }
                         }
                     }
+                    let new_live = matches!(state_unopt.clan_match_detection, ClanMatchDetection::MatchIsLive);
+                    if !old_live && new_live {
+                        last_live_frame = Some(processed_frames);
+                    }
+                    processed_frames += 1;
                 }
             }
             process_event(&mut state_unopt, &AnalyzerEvent::Finalization);
@@ -636,7 +552,6 @@ mod tests {
 
             // Compare debug print representation
             let total_frames: usize = demo.directory.entries.iter().map(|entry| entry.frames.len()).sum();
-            let last_live_frame = find_last_match_start_frame(&demo);
             println!("  -> Total frames: {}, Live frame index: {:?} (Warmup frames skipped: {:?})", 
                 total_frames, 
                 last_live_frame,
