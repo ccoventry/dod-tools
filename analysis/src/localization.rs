@@ -81,13 +81,13 @@ fn load_localizations_from_disk() -> HashMap<String, String> {
         }
     }
 
-    // 2. Scan current working directory for files starting with "dod_" or "valve_" and ending with ".txt"
+    // 2. Scan current working directory for files matching "<mod>_<language>.txt" (any .txt containing an underscore)
     if let Ok(entries) = std::fs::read_dir(".") {
         for entry in entries.filter_map(Result::ok) {
             let path = entry.path();
             if path.is_file() {
                 let name = path.file_name().and_then(|s| s.to_str()).unwrap_or_default().to_lowercase();
-                if (name.starts_with("dod_") || name.starts_with("valve_")) && name.ends_with(".txt") {
+                if name.contains('_') && name.ends_with(".txt") {
                     if let Ok(content) = std::fs::read_to_string(&path) {
                         parse_localization_content(&content, &mut map);
                     }
