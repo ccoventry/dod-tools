@@ -20,6 +20,7 @@ pub mod timeline;
 pub mod rounds;
 pub mod weapons;
 pub mod streaks;
+pub mod chat;
 
 pub use summary::header_ui;
 pub use scoreboard::scoreboard_ui;
@@ -27,6 +28,7 @@ pub use timeline::team_score_timeline_ui;
 pub use rounds::rounds_ui;
 pub use weapons::weapon_breakdowns_ui;
 pub use streaks::kill_streaks_ui;
+pub use chat::chat_log_ui;
 
 pub fn report_ui(
     file_info: Option<&FileInfo>,
@@ -48,6 +50,7 @@ pub fn report_ui(
         ui.selectable_value(&mut current_tab, "Rounds".to_string(), "Rounds");
         ui.selectable_value(&mut current_tab, "Weapon Breakdowns".to_string(), "Weapon breakdowns");
         ui.selectable_value(&mut current_tab, "Kill Streaks".to_string(), "Kill streaks");
+        ui.selectable_value(&mut current_tab, "Chat Log".to_string(), "Chat log");
     });
     
     ui.separator();
@@ -61,6 +64,7 @@ pub fn report_ui(
         "Rounds" => rounds_ui(file_info, r, ui),
         "Weapon Breakdowns" => weapon_breakdowns_ui(file_info, r, player_highlighting, ui),
         "Kill Streaks" => kill_streaks_ui(file_info, r, player_highlighting, ui),
+        "Chat Log" => chat_log_ui(file_info, r, ui),
         _ => {}
     }
 }

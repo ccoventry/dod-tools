@@ -1,4 +1,5 @@
 mod clan_match;
+mod chat;
 mod kill;
 mod mortality;
 mod player;
@@ -8,6 +9,7 @@ mod time;
 
 use crate::{
     clan_match::{ClanMatchDetection, use_clan_match_detection_updates},
+    chat::use_chat_updates,
     kill::{use_kill_streak_updates, use_weapon_breakdown_updates},
     mortality::with_mortality_detection,
     player::use_player_updates,
@@ -23,6 +25,7 @@ use dod::UserMessage;
 use std::time::Duration;
 
 pub use crate::{
+    chat::{ChatMessage, ChatType},
     mortality::MortalityState,
     player::{Connection, Player, PlayerGlobalId, SteamId},
     round::Round,
@@ -46,9 +49,11 @@ pub struct AnalyzerState {
     clan_match_detection: ClanMatchDetection,
     current_time: GameTime,
 
+    pub frame_index: usize,
     pub players: Vec<Player>,
     pub rounds: Vec<Round>,
     pub team_scores: TeamScores,
+    pub chat_messages: Vec<ChatMessage>,
 }
 
 #[derive(Default)]
@@ -141,9 +146,9 @@ fn is_relevant_message(name_bytes: &[u8], is_warmup: bool) -> bool {
     let trimmed = &name_bytes[..len];
     
     if is_warmup {
-        matches!(trimmed, b"RoundState" | b"ClanTimer" | b"TeamScore" | b"ScoreShort" | b"ObjScore" | b"Frags" | b"PClass" | b"PTeam" | b"ScoreInfo" | b"ScoreInfoLong")
+        matches!(trimmed, b"RoundState" | b"ClanTimer" | b"TeamScore" | b"ScoreShort" | b"ObjScore" | b"Frags" | b"PClass" | b"PTeam" | b"ScoreInfo" | b"ScoreInfoLong" | b"SayText" | b"TextMsg")
     } else {
-        matches!(trimmed, b"RoundState" | b"ClanTimer" | b"TeamScore" | b"ScoreShort" | b"ObjScore" | b"Frags" | b"ScoreInfo" | b"ScoreInfoLong")
+        matches!(trimmed, b"RoundState" | b"ClanTimer" | b"TeamScore" | b"ScoreShort" | b"ObjScore" | b"Frags" | b"ScoreInfo" | b"ScoreInfoLong" | b"SayText" | b"TextMsg")
     }
 }
 
@@ -227,6 +232,7 @@ impl Analysis {
             use_weapon_breakdown_updates(state, event);
             use_team_score_updates(state, event);
             use_rounds_updates(state, event);
+            use_chat_updates(state, event);
             use_clan_match_detection_updates(Duration::from_secs(10), state, event);
         };
 
@@ -235,6 +241,7 @@ impl Analysis {
             use_player_updates(state, event);
             use_scoreboard_updates(state, event);
             use_team_score_updates(state, event);
+            use_chat_updates(state, event);
             use_clan_match_detection_updates(Duration::from_secs(10), state, event);
         };
 
@@ -323,6 +330,7 @@ impl Analysis {
             use_weapon_breakdown_updates(state, event);
             use_team_score_updates(state, event);
             use_rounds_updates(state, event);
+            use_chat_updates(state, event);
             use_clan_match_detection_updates(Duration::from_secs(10), state, event);
         };
 
@@ -331,6 +339,7 @@ impl Analysis {
             use_player_updates(state, event);
             use_scoreboard_updates(state, event);
             use_team_score_updates(state, event);
+            use_chat_updates(state, event);
             use_clan_match_detection_updates(Duration::from_secs(10), state, event);
         };
 
@@ -683,6 +692,16 @@ mod tests {
                 assert_eq!(m_l.time().viewdemo_offset, m_r.time().viewdemo_offset, "Player {} mortality {} viewdemo_offset mismatched", i, j);
                 assert_eq!(m_l.mortality(), m_r.mortality(), "Player {} mortality {} status mismatched", i, j);
             }
+        }
+        
+        // Compare chat messages
+        assert_eq!(left.chat_messages.len(), right.chat_messages.len(), "Chat messages length mismatched");
+        for (i, (c_l, c_r)) in left.chat_messages.iter().zip(right.chat_messages.iter()).enumerate() {
+            assert_eq!(c_l.chat_type, c_r.chat_type, "Chat message {} type mismatched", i);
+            assert_eq!(c_l.sender_name, c_r.sender_name, "Chat message {} sender mismatched", i);
+            assert_eq!(c_l.sender_team, c_r.sender_team, "Chat message {} team mismatched", i);
+            assert_eq!(c_l.sender_dead, c_r.sender_dead, "Chat message {} dead flag mismatched", i);
+            assert_eq!(c_l.text, c_r.text, "Chat message {} text mismatched", i);
         }
     }
 }

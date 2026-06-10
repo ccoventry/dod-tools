@@ -85,7 +85,8 @@ impl TryFrom<&PlayerGlobalId> for SteamId {
     type Error = std::num::ParseIntError;
 
     fn try_from(value: &PlayerGlobalId) -> Result<Self, Self::Error> {
-        // https://github.com/jpcy/coldemoplayer/blob/9c97ab128ac889739c1643baf0d5fdf884d8a65f/compLexity%20Demo%20Player/Common.cs#L364-L383
+        // Standard SteamID64 to SteamID conversion formula
+        // Reference: https://developer.valvesoftware.com/wiki/SteamID
         let id64 = value.to_string().parse::<u64>()?;
         let universe = 0; // Public
 

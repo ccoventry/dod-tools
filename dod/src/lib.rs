@@ -666,6 +666,9 @@ pub struct SayText {
     /// Client index of the player that sent the message.
     pub client_index: u8,
 
+    /// Unknown second byte, often representing team status or message formatting.
+    pub unk: u8,
+
     /// Message sent by the player.
     pub text: String,
 }
@@ -705,6 +708,7 @@ pub struct ScoreInfoLong {
     pub client_index: u8,
     pub score: i16,
     pub frags: i16,
+    pub deaths: i16,
     pub class: Class,
     pub team: Team,
 }
@@ -1388,7 +1392,7 @@ fn say_text(i: &[u8]) -> IResult<&[u8], SayText> {
         le_u8, // unk
         null_string,
     ))
-    .map(|(client_index, _, text)| SayText { client_index, text })
+    .map(|(client_index, unk, text)| SayText { client_index, unk, text })
     .parse(i)
 }
 
@@ -1411,10 +1415,11 @@ fn score_info(i: &[u8]) -> IResult<&[u8], ScoreInfo> {
 
 fn score_info_long(i: &[u8]) -> IResult<&[u8], ScoreInfoLong> {
     all_consuming((le_u8, le_i16, le_i16, le_i16, class, team, le_u8))
-        .map(|(client_index, score, frags, _deaths, class, team, _)| ScoreInfoLong {
+        .map(|(client_index, score, frags, deaths, class, team, _)| ScoreInfoLong {
             client_index,
             score,
             frags,
+            deaths,
             class,
             team,
         })
