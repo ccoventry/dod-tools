@@ -1,6 +1,7 @@
 mod clan_match;
 mod chat;
 mod kill;
+mod localization;
 mod mortality;
 mod player;
 mod round;

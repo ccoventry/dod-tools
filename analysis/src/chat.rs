@@ -96,39 +96,13 @@ pub fn use_chat_updates(state: &mut AnalyzerState, event: &AnalyzerEvent) {
         }
 
         AnalyzerEvent::UserMessage(UserMessage::TextMsg(text_msg)) => {
-            let raw_text = clean_control_chars(&text_msg.text);
-            let lower_text = raw_text.to_lowercase();
-            
-            let formatted_text = if lower_text.starts_with("#game_joined_team") {
-                let name = text_msg.arg1.as_deref().unwrap_or("Someone");
-                let team = text_msg.arg2.as_deref().unwrap_or("a team");
-                format!("{} joined team {}", name, team)
-            } else if lower_text.starts_with("#game_joined_game") || lower_text.starts_with("#game_join") {
-                let name = text_msg.arg1.as_deref().unwrap_or("Someone");
-                format!("{} joined the game", name)
-            } else if lower_text.starts_with("#game_connected") {
-                let name = text_msg.arg1.as_deref().unwrap_or("Someone");
-                format!("{} connected", name)
-            } else if lower_text.starts_with("#game_disconnected") {
-                let name = text_msg.arg1.as_deref().unwrap_or("Someone");
-                format!("{} disconnected", name)
-            } else if lower_text.starts_with("#game_will_restart_in") {
-                let time = text_msg.arg1.as_deref().unwrap_or("?");
-                format!("Game will restart in {} seconds", time)
-            } else if lower_text.starts_with("#game_ready_team") {
-                let team = text_msg.arg1.as_deref().unwrap_or("Team");
-                format!("{} is ready", team)
-            } else if lower_text.starts_with("#game_ready") {
-                let name = text_msg.arg1.as_deref().unwrap_or("Player");
-                format!("{} is ready", name)
-            } else {
-                let mut parts = vec![raw_text];
-                if let Some(arg) = &text_msg.arg1 { parts.push(clean_control_chars(arg)); }
-                if let Some(arg) = &text_msg.arg2 { parts.push(clean_control_chars(arg)); }
-                if let Some(arg) = &text_msg.arg3 { parts.push(clean_control_chars(arg)); }
-                if let Some(arg) = &text_msg.arg4 { parts.push(clean_control_chars(arg)); }
-                parts.join(" ")
-            };
+            let formatted_text = translate_system_message(
+                &text_msg.text,
+                text_msg.arg1.as_deref(),
+                text_msg.arg2.as_deref(),
+                text_msg.arg3.as_deref(),
+                text_msg.arg4.as_deref(),
+            );
 
             state.chat_messages.push(ChatMessage {
                 time: state.current_time.clone(),
@@ -142,5 +116,91 @@ pub fn use_chat_updates(state: &mut AnalyzerState, event: &AnalyzerEvent) {
         }
 
         _ => {}
+    }
+}
+
+pub fn translate_system_message(
+    token: &str,
+    arg1: Option<&str>,
+    arg2: Option<&str>,
+    arg3: Option<&str>,
+    arg4: Option<&str>,
+) -> String {
+    let mut key = token.trim().to_lowercase();
+    if !key.starts_with('#') {
+        key.insert(0, '#');
+    }
+    
+    let localizations = crate::localization::get_localizations();
+    if let Some(template) = localizations.get(&key) {
+        let mut result = template.clone();
+        if let Some(a) = arg1 { result = result.replace("%s1", a); }
+        if let Some(a) = arg2 { result = result.replace("%s2", a); }
+        if let Some(a) = arg3 { result = result.replace("%s3", a); }
+        if let Some(a) = arg4 { result = result.replace("%s4", a); }
+        
+        if result.contains("%s") {
+            let args = [arg1, arg2, arg3, arg4];
+            let mut arg_idx = 0;
+            while let Some(pos) = result.find("%s") {
+                if arg_idx < args.len() {
+                    let replacement = args[arg_idx].unwrap_or("");
+                    result.replace_range(pos..pos+2, replacement);
+                    arg_idx += 1;
+                } else {
+                    result.replace_range(pos..pos+2, "");
+                }
+            }
+        }
+        result
+    } else {
+        // Fallback
+        if key.starts_with("#game_joined_team") {
+            let name = arg1.unwrap_or("Someone");
+            let team = arg2.unwrap_or("a team");
+            format!("{} joined team {}", name, team)
+        } else if key.starts_with("#game_joined_game") || key.starts_with("#game_join") {
+            let name = arg1.unwrap_or("Someone");
+            format!("{} joined the game", name)
+        } else if key.starts_with("#game_connected") {
+            let name = arg1.unwrap_or("Someone");
+            format!("{} connected", name)
+        } else if key.starts_with("#game_disconnected") {
+            let name = arg1.unwrap_or("Someone");
+            format!("{} disconnected", name)
+        } else if key.starts_with("#game_will_restart_in") {
+            let time = arg1.unwrap_or("?");
+            format!("Game will restart in {} seconds", time)
+        } else if key.starts_with("#game_ready_team") {
+            let team = arg1.unwrap_or("Team");
+            format!("{} is ready", team)
+        } else if key.starts_with("#game_ready") {
+            let name = arg1.unwrap_or("Player");
+            format!("{} is ready", name)
+        } else {
+            let mut parts = vec![token.to_string()];
+            if let Some(arg) = arg1 { parts.push(clean_control_chars(arg)); }
+            if let Some(arg) = arg2 { parts.push(clean_control_chars(arg)); }
+            if let Some(arg) = arg3 { parts.push(clean_control_chars(arg)); }
+            if let Some(arg) = arg4 { parts.push(clean_control_chars(arg)); }
+            parts.join(" ")
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_translate_system_message_fallback() {
+        let res = translate_system_message("#Game_joined_team", Some("Warchyld"), Some("Allies"), None, None);
+        assert_eq!(res, "Warchyld joined team Allies");
+
+        let res2 = translate_system_message("#Game_disconnected", Some("scrd"), None, None, None);
+        assert_eq!(res2, "scrd disconnected");
+
+        let res_unknown = translate_system_message("#Unknown_Token", Some("arg1"), Some("arg2"), None, None);
+        assert_eq!(res_unknown, "#Unknown_Token arg1 arg2");
     }
 }
