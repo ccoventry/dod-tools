@@ -53,6 +53,17 @@ pub fn get_file_key(path: &Path) -> Result<FileKey, std::io::Error> {
 /// Identifies duplicates within a list of file paths.
 /// Returns unique files, structured duplicate groups, total duplicates count, and total wasted space in bytes.
 pub fn find_duplicates(files: Vec<PathBuf>) -> (Vec<PathBuf>, Vec<DuplicateGroup>, usize, u64) {
+    // Canonicalize and deduplicate paths to prevent counting/grouping a file with itself
+    let mut unique_paths = std::collections::HashSet::new();
+    for path in files {
+        if let Ok(canonical) = fs::canonicalize(&path) {
+            unique_paths.insert(canonical);
+        } else {
+            unique_paths.insert(path);
+        }
+    }
+    let files: Vec<PathBuf> = unique_paths.into_iter().collect();
+
     let mut groups: HashMap<FileKey, Vec<PathBuf>> = HashMap::new();
     for path in files {
         if let Ok(key) = get_file_key(&path) {
@@ -102,4 +113,45 @@ pub fn find_duplicates(files: Vec<PathBuf>) -> (Vec<PathBuf>, Vec<DuplicateGroup
     });
 
     (unique_files, duplicate_groups, duplicate_count, space_wasted_bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_demos_are_unique() {
+        let demos_dir = Path::new("../demos");
+        if !demos_dir.exists() {
+            return;
+        }
+        let mut files = vec![];
+        scan_dir(demos_dir, &mut files);
+        
+        let (_, duplicates, dup_count, wasted) = find_duplicates(files);
+        
+        // Assert that none of our test demos (including both allied/axis POVs) are duplicates
+        assert_eq!(dup_count, 0, "Demos in test folder should all be unique, but found duplicates: {:?}", duplicates);
+        assert_eq!(wasted, 0);
+    }
+
+    #[test]
+    fn test_duplicate_paths_deduplicated() {
+        let demos_dir = Path::new("../demos");
+        if !demos_dir.exists() {
+            return;
+        }
+        let mut files = vec![];
+        scan_dir(demos_dir, &mut files);
+        
+        // Intentionally duplicate the entire list of file paths
+        let mut duplicated_list = files.clone();
+        duplicated_list.extend(files);
+        
+        let (_, duplicates, dup_count, wasted) = find_duplicates(duplicated_list);
+        
+        // They should be deduplicated by path, resulting in 0 duplicate groups
+        assert_eq!(dup_count, 0, "Duplicate paths should be resolved and not reported as duplicates: {:?}", duplicates);
+        assert_eq!(wasted, 0);
+    }
 }
