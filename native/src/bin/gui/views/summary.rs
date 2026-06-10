@@ -28,6 +28,14 @@ pub fn header_ui(file_info: Option<&FileInfo>, analysis: Option<&Analysis>, ui: 
         }
         ui.end_row();
 
+        ui.strong("Demo type");
+        if let Some(a) = analysis {
+            ui.label(&a.demo_info.demo_type);
+        } else {
+            ui.label("");
+        }
+        ui.end_row();
+
         ui.strong("Game mod");
         if let Some(a) = analysis {
             let game_dir = &a.demo_info.game_directory;

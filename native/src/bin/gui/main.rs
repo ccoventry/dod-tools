@@ -681,10 +681,12 @@ impl eframe::App for Gui {
                             .striped(true)
                             .cell_layout(Layout::left_to_right(Align::Center))
                             .column(Column::initial(300.0).resizable(true).clip(true)) // Name
+                            .column(Column::initial(80.0).resizable(true))             // Type
                             .column(Column::initial(150.0).resizable(true))            // Map
                             .column(Column::initial(150.0))                           // Date
                             .header(20.0, |mut header| {
                                 header.col(|ui| { ui.strong("Name"); });
+                                header.col(|ui| { ui.strong("Type"); });
                                 header.col(|ui| { ui.strong("Map"); });
                                 header.col(|ui| { ui.strong("Date"); });
                             })
@@ -708,6 +710,16 @@ impl eframe::App for Gui {
                                                     }
                                                 }
                                             });
+                                        });
+                                        row.col(|ui| {
+                                            let demo_type = if let Some((_, analysis)) = self.analyses.get(&path_str) {
+                                                analysis.demo_info.demo_type.as_str()
+                                            } else if item.name.to_lowercase().contains("hltv") {
+                                                "HLTV"
+                                            } else {
+                                                "POV"
+                                            };
+                                            ui.label(demo_type);
                                         });
                                         row.col(|ui| {
                                             ui.label(&item.map_name);
@@ -736,10 +748,12 @@ impl eframe::App for Gui {
                             .striped(true)
                             .cell_layout(Layout::left_to_right(Align::Center))
                             .column(Column::initial(300.0).resizable(true).clip(true)) // Name
+                            .column(Column::initial(80.0).resizable(true))             // Type
                             .column(Column::initial(150.0).resizable(true))            // Map
                             .column(Column::initial(100.0))                           // Status
                             .header(20.0, |mut header| {
                                 header.col(|ui| { ui.strong("Name"); });
+                                header.col(|ui| { ui.strong("Type"); });
                                 header.col(|ui| { ui.strong("Map"); });
                                 header.col(|ui| { ui.strong("Status"); });
                             })
@@ -761,6 +775,16 @@ impl eframe::App for Gui {
                                                     parse_file_target = Some(file.clone());
                                                 }
                                             }
+                                        });
+                                        row.col(|ui| {
+                                            let demo_type = if let Some((_, analysis)) = analysis_opt {
+                                                analysis.demo_info.demo_type.as_str()
+                                            } else if name.to_lowercase().contains("hltv") {
+                                                "HLTV"
+                                            } else {
+                                                "POV"
+                                            };
+                                            ui.label(demo_type);
                                         });
                                         row.col(|ui| {
                                             let map = if let Some((_, analysis)) = analysis_opt {
