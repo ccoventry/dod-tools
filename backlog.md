@@ -96,3 +96,18 @@ Based on raw network message inspections across 50 unique demos, several valuabl
 ### 3. "Objective Gameplay" Metrics (`CapMsg` & `CancelProg`)
 * **Frequency**: 2,260 `CapMsg` captures and 286 `CancelProg` capture interruptions.
 * **Feature**: Display objective capture statistics (e.g. "Most Flags Captured", capture timelines) on a new "Objectives" tab.
+
+---
+
+## Backlog & Feature Ideas
+
+### HL Demo Auditor (HLDA)
+* **Duplicate Detection Accuracy**: Verify that POV (Point-of-View) demos recorded by different players in the same match are not flagged as duplicates. (Confirm that differences in initial client handshakes, command streams, and viewpoints result in distinct sizes/hashes).
+* **Double Listing Bug**: Fix cases where the same demo file name is listed twice in reports.
+
+### GUI & Core Analysis (`hl-tools` / `dod-tools`)
+* **Project Renaming**: Find a better, generic name to replace `dod-tools` to reflect generic Half-Life demo analysis as it expands to CS 1.6, TFC, other GoldSrc mods, and eventually Source/Source2 engines.
+* **Kill Streak UI Improvements**: Add spacing/timing intervals inside kill streaks to show how close together kills are within a single streak.
+* **Game Version Relocation**: Move the game version out of the Summary tab details. Consider placing it in the `.exe` application title bar, or in a Help -> "About" menu option.
+* **Advanced Charts & Visuals**: Integrate more charts and graphs for gameplay stats.
+* **"Fun Facts / Stats" Tab**: Add a page for fun metrics (e.g., *"Warchyld killed the most teammates with grenades!"*, most self-kills, longest life, quickest death).
