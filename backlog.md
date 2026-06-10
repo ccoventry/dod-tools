@@ -111,3 +111,7 @@ Based on raw network message inspections across 50 unique demos, several valuabl
 * **Game Version Relocation**: Move the game version out of the Summary tab details. Consider placing it in the `.exe` application title bar, or in a Help -> "About" menu option.
 * **Advanced Charts & Visuals**: Integrate more charts and graphs for gameplay stats.
 * **"Fun Facts / Stats" Tab**: Add a page for fun metrics (e.g., *"Warchyld killed the most teammates with grenades!"*, most self-kills, longest life, quickest death).
+
+### Localization & Translations
+* **WebAssembly (WASM) Embedded Localizations**: Currently, localizations are not loaded in WASM targets due to browser sandboxing constraints. Support WebAssembly translation loading by embedding the default localization resources (such as `dod_tools_english.txt`) into the compiled binary via `include_str!` or an embedded asset map.
+* **Lock-Free Concurrent Lookups**: If multi-threaded log parsing or concurrent UI thread render runs require localized text access, replace the single-writer `Mutex` wrapper with a read-mostly `RwLock` or a lock-free `ArcSwap` to eliminate widget rendering lock contention overhead.
