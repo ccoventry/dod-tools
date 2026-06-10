@@ -70,6 +70,21 @@ impl Player {
         self.team = team;
         self
     }
+
+    #[cfg(test)]
+    pub fn new_mock(client_id: u8, name: &str) -> Self {
+        Self {
+            id: PlayerGlobalId(format!("STEAM_0:0:12345:{}", name)),
+            connection: Connection::Connected { client_id },
+            name: name.to_string(),
+            team: None,
+            class: None,
+            stats: (0, 0, 0),
+            kill_streaks: vec![],
+            weapon_breakdown: HashMap::new(),
+            mortality: vec![],
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

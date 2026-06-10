@@ -18,6 +18,8 @@ pub struct ChatMessage {
     pub sender_team: Option<Team>,
     pub sender_dead: bool,
     pub text: String,
+    pub system_token: Option<String>,
+    pub system_args: Vec<Option<String>>,
 }
 
 fn clean_control_chars(s: &str) -> String {
@@ -32,14 +34,67 @@ pub fn use_chat_updates(state: &mut AnalyzerState, event: &AnalyzerEvent) {
             let raw_text = &say_text.text;
             let cleaned_raw = clean_control_chars(raw_text);
 
-            let (sender_block, message_text) = if let Some(pos) = cleaned_raw.find(" :  ") {
-                (&cleaned_raw[..pos], &cleaned_raw[pos + 4..])
-            } else if let Some(pos) = cleaned_raw.find(" : ") {
-                (&cleaned_raw[..pos], &cleaned_raw[pos + 3..])
-            } else if let Some(pos) = cleaned_raw.find(":") {
-                (&cleaned_raw[..pos], &cleaned_raw[pos + 1..])
+            // 1. Try to find the split position based on player name first (if player is resolved)
+            let mut split_pos = None;
+            if say_text.client_index > 0 {
+                if let Some(player) = state.find_player_by_client_index(say_text.client_index - 1) {
+                    let p_name = &player.name;
+                    if let Some(name_pos) = cleaned_raw.find(p_name) {
+                        let after_name = &cleaned_raw[name_pos + p_name.len()..];
+                        if after_name.starts_with(" :  ") {
+                            split_pos = Some(name_pos + p_name.len() + 1);
+                        } else if after_name.starts_with(" : ") {
+                            split_pos = Some(name_pos + p_name.len() + 1);
+                        } else if after_name.starts_with(":") {
+                            split_pos = Some(name_pos + p_name.len());
+                        }
+                    }
+                }
+            }
+
+            let (sender_block, message_text) = if let Some(pos) = split_pos {
+                let sender = &cleaned_raw[..pos];
+                let after_colon = &cleaned_raw[pos + 1..];
+                let skip = if after_colon.starts_with("  ") {
+                    3
+                } else if after_colon.starts_with(' ') {
+                    2
+                } else {
+                    1
+                };
+                (sender, &cleaned_raw[pos + skip..])
             } else {
-                ("", cleaned_raw.as_str())
+                // Fallback splitting logic: ignore colons inside brackets/parentheses (e.g. tag dicE[: :])
+                if let Some(pos) = cleaned_raw.find(" :  ") {
+                    (&cleaned_raw[..pos], &cleaned_raw[pos + 4..])
+                } else if let Some(pos) = cleaned_raw.find(" : ") {
+                    (&cleaned_raw[..pos], &cleaned_raw[pos + 3..])
+                } else {
+                    let mut bracket_depth = 0;
+                    let mut paren_depth = 0;
+                    let mut found_pos = None;
+                    for (idx, c) in cleaned_raw.char_indices() {
+                        if c == '[' {
+                            bracket_depth += 1;
+                        } else if c == ']' {
+                            if bracket_depth > 0 { bracket_depth -= 1; }
+                        } else if c == '(' {
+                            paren_depth += 1;
+                        } else if c == ')' {
+                            if paren_depth > 0 { paren_depth -= 1; }
+                        } else if c == ':' && bracket_depth == 0 && paren_depth == 0 {
+                            found_pos = Some(idx);
+                            break;
+                        }
+                    }
+                    if let Some(pos) = found_pos {
+                        let after_colon = &cleaned_raw[pos + 1..];
+                        let skip = if after_colon.starts_with(' ') { 2 } else { 1 };
+                        (&cleaned_raw[..pos], &cleaned_raw[pos + skip..])
+                    } else {
+                        ("", cleaned_raw.as_str())
+                    }
+                }
             };
 
             let sender_block_trimmed = sender_block.trim();
@@ -73,10 +128,9 @@ pub fn use_chat_updates(state: &mut AnalyzerState, event: &AnalyzerEvent) {
                 (Some("Console/Server".to_string()), None, false)
             };
 
-            let is_team_message = say_text.unk != 0 
-                || is_team_prefix 
+            let is_team_message = is_team_prefix 
                 || is_spec_prefix 
-                || (sender_team == Some(Team::Spectators) && is_team_prefix);
+                || sender_team == Some(Team::Spectators);
 
             let chat_type = if is_team_message {
                 ChatType::Mm2
@@ -92,6 +146,8 @@ pub fn use_chat_updates(state: &mut AnalyzerState, event: &AnalyzerEvent) {
                 sender_team,
                 sender_dead: is_dead_prefix || is_dead_state,
                 text: message_text.trim().to_string(),
+                system_token: None,
+                system_args: Vec::new(),
             });
         }
 
@@ -112,6 +168,13 @@ pub fn use_chat_updates(state: &mut AnalyzerState, event: &AnalyzerEvent) {
                 sender_team: None,
                 sender_dead: false,
                 text: formatted_text,
+                system_token: Some(text_msg.text.clone()),
+                system_args: vec![
+                    text_msg.arg1.clone(),
+                    text_msg.arg2.clone(),
+                    text_msg.arg3.clone(),
+                    text_msg.arg4.clone(),
+                ],
             });
         }
 
@@ -131,8 +194,7 @@ pub fn translate_system_message(
         key.insert(0, '#');
     }
     
-    let localizations = crate::localization::get_localizations();
-    if let Some(template) = localizations.get(&key) {
+    if let Some(template) = crate::localization::translate_key(&key) {
         let mut result = template.clone();
         if let Some(a) = arg1 { result = result.replace("%s1", a); }
         if let Some(a) = arg2 { result = result.replace("%s2", a); }
@@ -195,12 +257,72 @@ mod tests {
     #[test]
     fn test_translate_system_message_fallback() {
         let res = translate_system_message("#Game_joined_team", Some("Warchyld"), Some("Allies"), None, None);
-        assert_eq!(res, "Warchyld joined team Allies");
+        if crate::localization::translate_key("#game_joined_team").is_some() {
+            assert_eq!(res, "*Warchyld joined Allies");
+        } else {
+            assert_eq!(res, "Warchyld joined team Allies");
+        }
 
         let res2 = translate_system_message("#Game_disconnected", Some("scrd"), None, None, None);
-        assert_eq!(res2, "scrd disconnected");
+        if crate::localization::translate_key("#game_disconnected").is_some() {
+            assert_eq!(res2, "scrd has left the game");
+        } else {
+            assert_eq!(res2, "scrd disconnected");
+        }
 
         let res_unknown = translate_system_message("#Unknown_Token", Some("arg1"), Some("arg2"), None, None);
         assert_eq!(res_unknown, "#Unknown_Token arg1 arg2");
+    }
+
+    #[test]
+    fn test_chat_splitter() {
+        use crate::Player;
+        use dod::{SayText, UserMessage};
+
+        let mut state = AnalyzerState::default();
+        // Add a mock player with colons in name
+        state.players.push(Player::new_mock(3, "dicE[: :]"));
+
+        // 1. Test standard message with mock player
+        let event = AnalyzerEvent::UserMessage(UserMessage::SayText(SayText {
+            client_index: 4, // 1-based, so matches player index/client_id 3
+            text: "dicE[: :] :  hello there".to_string(),
+        }));
+        use_chat_updates(&mut state, &event);
+        assert_eq!(state.chat_messages.len(), 1);
+        assert_eq!(state.chat_messages[0].sender_name.as_deref(), Some("dicE[: :]"));
+        assert_eq!(state.chat_messages[0].text, "hello there");
+        assert_eq!(state.chat_messages[0].chat_type, ChatType::Mm1); // all chat
+
+        // 2. Test team message with mock player
+        let event2 = AnalyzerEvent::UserMessage(UserMessage::SayText(SayText {
+            client_index: 4,
+            text: "(TEAM) dicE[: :] :  team chat message".to_string(),
+        }));
+        use_chat_updates(&mut state, &event2);
+        assert_eq!(state.chat_messages.len(), 2);
+        assert_eq!(state.chat_messages[1].sender_name.as_deref(), Some("dicE[: :]"));
+        assert_eq!(state.chat_messages[1].text, "team chat message");
+        assert_eq!(state.chat_messages[1].chat_type, ChatType::Mm2); // team chat
+
+        // 3. Test fallback with no known player but colons in tag
+        let event3 = AnalyzerEvent::UserMessage(UserMessage::SayText(SayText {
+            client_index: 99, // unknown player
+            text: "Some[Other:Tag]Player :  hello world".to_string(),
+        }));
+        use_chat_updates(&mut state, &event3);
+        assert_eq!(state.chat_messages.len(), 3);
+        assert_eq!(state.chat_messages[2].sender_name.as_deref(), Some("Some[Other:Tag]Player"));
+        assert_eq!(state.chat_messages[2].text, "hello world");
+
+        // 4. Test fallback with no spaces around colon
+        let event4 = AnalyzerEvent::UserMessage(UserMessage::SayText(SayText {
+            client_index: 99,
+            text: "dicE[: :]:hello".to_string(),
+        }));
+        use_chat_updates(&mut state, &event4);
+        assert_eq!(state.chat_messages.len(), 4);
+        assert_eq!(state.chat_messages[3].sender_name.as_deref(), Some("dicE[: :]"));
+        assert_eq!(state.chat_messages[3].text, "hello");
     }
 }

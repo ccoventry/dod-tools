@@ -666,9 +666,6 @@ pub struct SayText {
     /// Client index of the player that sent the message.
     pub client_index: u8,
 
-    /// Unknown second byte, often representing team status or message formatting.
-    pub unk: u8,
-
     /// Message sent by the player.
     pub text: String,
 }
@@ -1389,10 +1386,9 @@ fn round_state(i: &[u8]) -> IResult<&[u8], RoundState> {
 fn say_text(i: &[u8]) -> IResult<&[u8], SayText> {
     all_consuming((
         le_u8,
-        le_u8, // unk
         null_string,
     ))
-    .map(|(client_index, unk, text)| SayText { client_index, unk, text })
+    .map(|(client_index, text)| SayText { client_index, text })
     .parse(i)
 }
 

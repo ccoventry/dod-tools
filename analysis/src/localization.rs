@@ -1,12 +1,59 @@
 use std::collections::HashMap;
-use std::sync::OnceLock;
+use std::sync::Mutex;
 
-static LOCALIZATIONS: OnceLock<HashMap<String, String>> = OnceLock::new();
+static ACTIVE_LANGUAGE: Mutex<&'static str> = Mutex::new("english");
+static LOCALIZATIONS: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
 
-pub fn get_localizations() -> &'static HashMap<String, String> {
-    LOCALIZATIONS.get_or_init(|| {
-        load_localizations_from_disk()
-    })
+pub fn get_active_language() -> &'static str {
+    *ACTIVE_LANGUAGE.lock().unwrap()
+}
+
+pub fn set_active_language(lang: &'static str) {
+    let mut active_lock = ACTIVE_LANGUAGE.lock().unwrap();
+    if *active_lock != lang {
+        *active_lock = lang;
+        let mut loc_lock = LOCALIZATIONS.lock().unwrap();
+        *loc_lock = None; // clear cache to force reload
+    }
+}
+
+pub fn translate_key(key: &str) -> Option<String> {
+    let mut lock = LOCALIZATIONS.lock().unwrap();
+    if lock.is_none() {
+        let active = *ACTIVE_LANGUAGE.lock().unwrap();
+        *lock = Some(load_localizations_from_disk(active));
+    }
+    lock.as_ref().unwrap().get(key).cloned()
+}
+
+fn get_amxx_code(lang: &str) -> &str {
+    match lang {
+        "german" => "de",
+        "french" => "fr",
+        "spanish" => "es",
+        "russian" => "ru",
+        "serbian" => "sr",
+        "turkish" => "tr",
+        "swedish" => "sv",
+        "danish" => "da",
+        "polish" => "pl",
+        "dutch" => "nl",
+        "portuguese" => "pt",
+        "brazilian" => "bp",
+        "czech" => "cz",
+        "finnish" => "fi",
+        "bulgarian" => "bg",
+        "romanian" => "ro",
+        "hungarian" => "hu",
+        "lithuanian" => "lt",
+        "slovak" => "sk",
+        "macedonian" => "mk",
+        "croatian" => "hr",
+        "bosnian" => "bs",
+        "chinese" => "cn",
+        "albanian" => "al",
+        _ => "en",
+    }
 }
 
 fn parse_kv_line(line: &str) -> Option<(String, String)> {
@@ -37,7 +84,7 @@ fn parse_kv_line(line: &str) -> Option<(String, String)> {
     }
 }
 
-fn parse_localization_content(content: &str, map: &mut HashMap<String, String>) {
+fn parse_localization_content(content: &str, map: &mut HashMap<String, String>, target_lang: &str) {
     let mut current_lang = "en".to_string(); // default to en in case there are no headers
     
     for line in content.lines() {
@@ -64,7 +111,7 @@ fn parse_localization_content(content: &str, map: &mut HashMap<String, String>) 
                 key_clean.insert(0, '#');
             }
             map.insert(key_clean, val);
-        } else if current_lang == "en" {
+        } else if current_lang == target_lang {
             if let Some(pos) = trimmed.find('=') {
                 let key = trimmed[..pos].trim().to_lowercase();
                 let val = trimmed[pos + 1..].trim().to_string();
@@ -82,12 +129,26 @@ fn parse_localization_content(content: &str, map: &mut HashMap<String, String>) 
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn load_localizations_from_disk() -> HashMap<String, String> {
+fn load_localizations_from_disk(active_lang: &str) -> HashMap<String, String> {
     let mut map = HashMap::new();
+    let amxx_code = get_amxx_code(active_lang);
     
-    // 1. Scan "./localizations" and executable folder's "./localizations"
+    // Pass 1: English baseline
+    load_pass(&mut map, "english", "en");
+    
+    // Pass 2: Active language overlay (if not English)
+    if active_lang != "english" {
+        load_pass(&mut map, active_lang, amxx_code);
+    }
+    
+    map
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn load_pass(map: &mut HashMap<String, String>, filter_lang: &str, amxx_code: &str) {
     let paths = vec![
         std::path::PathBuf::from("localizations"),
+        std::path::PathBuf::from("../localizations"),
         std::env::current_exe()
             .ok()
             .and_then(|p| p.parent().map(|d| d.join("localizations")))
@@ -100,8 +161,17 @@ fn load_localizations_from_disk() -> HashMap<String, String> {
                 for entry in entries.filter_map(Result::ok) {
                     let path = entry.path();
                     if path.is_file() && path.extension().map(|s| s == "txt").unwrap_or(false) {
-                        if let Ok(content) = std::fs::read_to_string(&path) {
-                            parse_localization_content(&content, &mut map);
+                        let name = path.file_name().and_then(|s| s.to_str()).unwrap_or_default().to_lowercase();
+                        let should_load = if name.contains('_') {
+                            name.ends_with(&format!("_{}.txt", filter_lang))
+                        } else {
+                            true
+                        };
+                        
+                        if should_load {
+                            if let Ok(content) = read_to_string_lossy_utf16_or_utf8(&path) {
+                                parse_localization_content(&content, map, amxx_code);
+                            }
                         }
                     }
                 }
@@ -109,26 +179,68 @@ fn load_localizations_from_disk() -> HashMap<String, String> {
         }
     }
 
-    // 2. Scan current working directory for files matching "<mod>_<language>.txt" (any .txt containing an underscore)
     if let Ok(entries) = std::fs::read_dir(".") {
         for entry in entries.filter_map(Result::ok) {
             let path = entry.path();
             if path.is_file() {
                 let name = path.file_name().and_then(|s| s.to_str()).unwrap_or_default().to_lowercase();
-                if name.contains('_') && name.ends_with(".txt") {
-                    if let Ok(content) = std::fs::read_to_string(&path) {
-                        parse_localization_content(&content, &mut map);
+                if name.ends_with(".txt") {
+                    let should_load = if name.contains('_') {
+                        name.ends_with(&format!("_{}.txt", filter_lang))
+                    } else {
+                        true
+                    };
+                    if should_load {
+                        if let Ok(content) = read_to_string_lossy_utf16_or_utf8(&path) {
+                            parse_localization_content(&content, map, amxx_code);
+                        }
                     }
                 }
             }
         }
     }
-    
-    map
 }
 
+fn read_to_string_lossy_utf16_or_utf8(path: &std::path::Path) -> std::io::Result<String> {
+    let bytes = std::fs::read(path)?;
+    if bytes.len() >= 2 {
+        if bytes[0] == 0xFF && bytes[1] == 0xFE {
+            // UTF-16 LE
+            let u16_chars: Vec<u16> = bytes[2..]
+                .chunks_exact(2)
+                .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+                .collect();
+            return Ok(String::from_utf16_lossy(&u16_chars));
+        } else if bytes[0] == 0xFE && bytes[1] == 0xFF {
+            // UTF-16 BE
+            let u16_chars: Vec<u16> = bytes[2..]
+                .chunks_exact(2)
+                .map(|chunk| u16::from_be_bytes([chunk[0], chunk[1]]))
+                .collect();
+            return Ok(String::from_utf16_lossy(&u16_chars));
+        }
+    }
+    
+    match String::from_utf8(bytes.clone()) {
+        Ok(s) => Ok(s),
+        Err(_) => {
+            let has_nulls = bytes.iter().enumerate().any(|(i, &b)| b == 0 && i % 2 == 1);
+            if has_nulls && bytes.len() % 2 == 0 {
+                let u16_chars: Vec<u16> = bytes
+                    .chunks_exact(2)
+                    .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+                    .collect();
+                Ok(String::from_utf16_lossy(&u16_chars))
+            } else {
+                Ok(String::from_utf8_lossy(&bytes).into_owned())
+            }
+        }
+    }
+}
+
+
 #[cfg(target_arch = "wasm32")]
-fn load_localizations_from_disk() -> HashMap<String, String> {
+fn load_localizations_from_disk(_active_lang: &str) -> HashMap<String, String> {
     HashMap::new()
 }
 
@@ -170,7 +282,7 @@ mod tests {
         "##;
         
         let mut map = HashMap::new();
-        parse_localization_content(content, &mut map);
+        parse_localization_content(content, &mut map, "en");
         
         assert_eq!(map.get("#game_joined_team"), Some(&"%s1 joined team %s2".to_string()));
         assert_eq!(map.get("#game_join"), Some(&"%s1 joined the game".to_string()));
@@ -189,7 +301,7 @@ mod tests {
         "#;
         
         let mut map = HashMap::new();
-        parse_localization_content(content, &mut map);
+        parse_localization_content(content, &mut map, "en");
         
         assert_eq!(
             map.get("cho_fin_ext"),
@@ -203,5 +315,16 @@ mod tests {
             map.get("cho_fin_next"),
             Some(&"Choosing finished. The nextmap will be %s".to_string())
         );
+    }
+
+    #[test]
+    fn test_real_localization_loading() {
+        // Force reload from disk
+        set_active_language("english");
+        let score_allies = translate_key("#game_score_allie_points");
+        assert_eq!(score_allies.as_deref(), Some("Allies score %s1 points."));
+
+        let joined_team = translate_key("#game_joined_team");
+        assert_eq!(joined_team.as_deref(), Some("*%s1 joined %s2"));
     }
 }

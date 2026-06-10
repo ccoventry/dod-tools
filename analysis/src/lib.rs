@@ -26,10 +26,11 @@ use dod::UserMessage;
 use std::time::Duration;
 
 pub use crate::{
-    chat::{ChatMessage, ChatType},
+    chat::{ChatMessage, ChatType, translate_system_message},
     mortality::MortalityState,
     player::{Connection, Player, PlayerGlobalId, SteamId},
     round::Round,
+    localization::{set_active_language, get_active_language},
 };
 pub use dod::Team;
 
@@ -703,6 +704,8 @@ mod tests {
             assert_eq!(c_l.sender_team, c_r.sender_team, "Chat message {} team mismatched", i);
             assert_eq!(c_l.sender_dead, c_r.sender_dead, "Chat message {} dead flag mismatched", i);
             assert_eq!(c_l.text, c_r.text, "Chat message {} text mismatched", i);
+            assert_eq!(c_l.system_token, c_r.system_token, "Chat message {} system_token mismatched", i);
+            assert_eq!(c_l.system_args, c_r.system_args, "Chat message {} system_args mismatched", i);
         }
     }
 }
