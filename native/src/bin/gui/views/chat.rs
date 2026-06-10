@@ -21,26 +21,82 @@ pub fn chat_log_ui(file_info: Option<&FileInfo>, r: Option<&Analysis>, ui: &mut 
         egui::Id::new("blank_report").with("chat_log")
     };
 
-    let mm1_id = tab_id.with("show_mm1");
-    let mm2_id = tab_id.with("show_mm2");
-    let system_id = tab_id.with("show_system");
+    let show_mm1_id = tab_id.with("show_mm1");
+    let show_mm2_id = tab_id.with("show_mm2");
+    let show_alive_id = tab_id.with("show_alive");
+    let show_dead_id = tab_id.with("show_dead");
+    let show_joins_id = tab_id.with("show_joins");
+    let show_teams_id = tab_id.with("show_teams");
+    let show_gameplay_id = tab_id.with("show_gameplay");
+    let show_other_sys_id = tab_id.with("show_other_sys");
     let filter_text_id = tab_id.with("filter_text");
 
-    let mut show_mm1 = ui.data(|d| d.get_temp::<bool>(mm1_id).unwrap_or(true));
-    let mut show_mm2 = ui.data(|d| d.get_temp::<bool>(mm2_id).unwrap_or(true));
-    let mut show_system = ui.data(|d| d.get_temp::<bool>(system_id).unwrap_or(true));
+    let mut show_mm1 = ui.data(|d| d.get_temp::<bool>(show_mm1_id).unwrap_or(true));
+    let mut show_mm2 = ui.data(|d| d.get_temp::<bool>(show_mm2_id).unwrap_or(true));
+    let mut show_alive = ui.data(|d| d.get_temp::<bool>(show_alive_id).unwrap_or(true));
+    let mut show_dead = ui.data(|d| d.get_temp::<bool>(show_dead_id).unwrap_or(true));
+    let mut show_joins = ui.data(|d| d.get_temp::<bool>(show_joins_id).unwrap_or(true));
+    let mut show_teams = ui.data(|d| d.get_temp::<bool>(show_teams_id).unwrap_or(true));
+    let mut show_gameplay = ui.data(|d| d.get_temp::<bool>(show_gameplay_id).unwrap_or(true));
+    let mut show_other_sys = ui.data(|d| d.get_temp::<bool>(show_other_sys_id).unwrap_or(true));
     let mut filter_text = ui.data(|d| d.get_temp::<String>(filter_text_id).unwrap_or_default());
 
+    let mut changed = false;
     ui.horizontal(|ui| {
-        ui.label("Filter types:");
-        if ui.checkbox(&mut show_mm1, "All Chat (mm1)").changed() {
-            ui.data_mut(|d| d.insert_temp(mm1_id, show_mm1));
+        ui.label("Filter Actions:");
+        if ui.button("Select All").clicked() {
+            show_mm1 = true;
+            show_mm2 = true;
+            show_alive = true;
+            show_dead = true;
+            show_joins = true;
+            show_teams = true;
+            show_gameplay = true;
+            show_other_sys = true;
+            changed = true;
         }
-        if ui.checkbox(&mut show_mm2, "Team Chat (mm2)").changed() {
-            ui.data_mut(|d| d.insert_temp(mm2_id, show_mm2));
+        if ui.button("Clear All").clicked() {
+            show_mm1 = false;
+            show_mm2 = false;
+            show_alive = false;
+            show_dead = false;
+            show_joins = false;
+            show_teams = false;
+            show_gameplay = false;
+            show_other_sys = false;
+            changed = true;
         }
-        if ui.checkbox(&mut show_system, "System Messages").changed() {
-            ui.data_mut(|d| d.insert_temp(system_id, show_system));
+    });
+
+    ui.horizontal(|ui| {
+        ui.label("Player Chat:");
+        if ui.checkbox(&mut show_mm1, "All Chat").changed() || changed {
+            ui.data_mut(|d| d.insert_temp(show_mm1_id, show_mm1));
+        }
+        if ui.checkbox(&mut show_mm2, "Team Chat").changed() || changed {
+            ui.data_mut(|d| d.insert_temp(show_mm2_id, show_mm2));
+        }
+        if ui.checkbox(&mut show_alive, "Alive Players").changed() || changed {
+            ui.data_mut(|d| d.insert_temp(show_alive_id, show_alive));
+        }
+        if ui.checkbox(&mut show_dead, "Dead Players").changed() || changed {
+            ui.data_mut(|d| d.insert_temp(show_dead_id, show_dead));
+        }
+    });
+
+    ui.horizontal(|ui| {
+        ui.label("System Logs:");
+        if ui.checkbox(&mut show_joins, "Joins & Leaves").changed() || changed {
+            ui.data_mut(|d| d.insert_temp(show_joins_id, show_joins));
+        }
+        if ui.checkbox(&mut show_teams, "Team Changes").changed() || changed {
+            ui.data_mut(|d| d.insert_temp(show_teams_id, show_teams));
+        }
+        if ui.checkbox(&mut show_gameplay, "Gameplay & Scoring").changed() || changed {
+            ui.data_mut(|d| d.insert_temp(show_gameplay_id, show_gameplay));
+        }
+        if ui.checkbox(&mut show_other_sys, "Other System").changed() || changed {
+            ui.data_mut(|d| d.insert_temp(show_other_sys_id, show_other_sys));
         }
         
         ui.add_space(20.0);
@@ -49,6 +105,19 @@ pub fn chat_log_ui(file_info: Option<&FileInfo>, r: Option<&Analysis>, ui: &mut 
             ui.data_mut(|d| d.insert_temp(filter_text_id, filter_text.clone()));
         }
     });
+
+    if changed {
+        ui.data_mut(|d| {
+            d.insert_temp(show_mm1_id, show_mm1);
+            d.insert_temp(show_mm2_id, show_mm2);
+            d.insert_temp(show_alive_id, show_alive);
+            d.insert_temp(show_dead_id, show_dead);
+            d.insert_temp(show_joins_id, show_joins);
+            d.insert_temp(show_teams_id, show_teams);
+            d.insert_temp(show_gameplay_id, show_gameplay);
+            d.insert_temp(show_other_sys_id, show_other_sys);
+        });
+    }
 
     ui.separator();
     ui.add_space(4.0);
@@ -72,12 +141,36 @@ pub fn chat_log_ui(file_info: Option<&FileInfo>, r: Option<&Analysis>, ui: &mut 
             match msg.chat_type {
                 ChatType::Mm1 => {
                     if !show_mm1 { return false; }
+                    let alive_dead_ok = if msg.sender_dead { show_dead } else { show_alive };
+                    if !alive_dead_ok { return false; }
                 }
                 ChatType::Mm2 => {
                     if !show_mm2 { return false; }
+                    let alive_dead_ok = if msg.sender_dead { show_dead } else { show_alive };
+                    if !alive_dead_ok { return false; }
                 }
                 ChatType::System => {
-                    if !show_system { return false; }
+                    let sys_category = if let Some(ref token) = msg.system_token {
+                        let token_lower = token.to_lowercase();
+                        if token_lower.contains("connect") || token_lower.contains("join_game") || token_lower.contains("joined_game") || token_lower.contains("kick") || token_lower.contains("disconnect") {
+                            "join_leave"
+                        } else if token_lower.contains("joined_team") || token_lower.contains("team") {
+                            "team_change"
+                        } else if token_lower.contains("score") || token_lower.contains("capture") || token_lower.contains("cap") || token_lower.contains("reinforce") {
+                            "gameplay"
+                        } else {
+                            "other"
+                        }
+                    } else {
+                        "other"
+                    };
+
+                    match sys_category {
+                        "join_leave" => { if !show_joins { return false; } }
+                        "team_change" => { if !show_teams { return false; } }
+                        "gameplay" => { if !show_gameplay { return false; } }
+                        _ => { if !show_other_sys { return false; } }
+                    }
                 }
             }
 
@@ -115,20 +208,35 @@ pub fn chat_log_ui(file_info: Option<&FileInfo>, r: Option<&Analysis>, ui: &mut 
                     }
 
                     match msg.chat_type {
-                        ChatType::Mm1 => {
-                            ui.colored_label(Color32::from_rgb(160, 160, 160), "(mm1)");
-                        }
                         ChatType::Mm2 => {
-                            ui.colored_label(Color32::from_rgb(160, 160, 160), "(mm2)");
+                            let team_color = match msg.sender_team {
+                                Some(Team::Allies) => Color32::from_rgb(34, 139, 34), // Forest Green
+                                Some(Team::Axis) => Color32::from_rgb(178, 34, 34), // Firebrick Red
+                                Some(Team::Spectators) => Color32::YELLOW, // Spectator yellow
+                                _ => Color32::LIGHT_BLUE, // Default / Console
+                            };
+                            ui.colored_label(team_color, "(Team)");
                         }
                         ChatType::System => {
                             ui.colored_label(Color32::from_rgb(200, 150, 80), "(system)");
                         }
+                        _ => {}
                     }
 
                     match msg.chat_type {
                         ChatType::System => {
-                            ui.label(RichText::new(&msg.text).italics().color(Color32::from_rgb(180, 220, 220)));
+                            let display_text = if let Some(ref token) = msg.system_token {
+                                analysis::translate_system_message(
+                                    token,
+                                    msg.system_args.get(0).and_then(|o| o.as_deref()),
+                                    msg.system_args.get(1).and_then(|o| o.as_deref()),
+                                    msg.system_args.get(2).and_then(|o| o.as_deref()),
+                                    msg.system_args.get(3).and_then(|o| o.as_deref()),
+                                )
+                            } else {
+                                msg.text.clone()
+                            };
+                            ui.label(RichText::new(&display_text).italics().color(Color32::from_rgb(180, 220, 220)));
                         }
                         _ => {
                             let team_color = match msg.sender_team {

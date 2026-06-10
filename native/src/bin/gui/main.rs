@@ -92,11 +92,141 @@ pub async fn start() -> Result<(), JsValue> {
 #[cfg(target_arch = "wasm32")]
 fn main() {}
 
+#[derive(Debug, Clone)]
+struct AppSettings {
+    language: String,
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            language: "auto".to_string(),
+        }
+    }
+}
+
+fn load_settings() -> AppSettings {
+    let path = std::path::PathBuf::from("settings.json");
+    if path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
+                let language = val.get("language")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("auto")
+                    .to_string();
+                return AppSettings { language };
+            }
+        }
+    }
+    AppSettings::default()
+}
+
+fn save_settings(settings: &AppSettings) {
+    let mut map = serde_json::Map::new();
+    map.insert("language".to_string(), serde_json::Value::String(settings.language.clone()));
+    let val = serde_json::Value::Object(map);
+    if let Ok(content) = serde_json::to_string_pretty(&val) {
+        let _ = std::fs::write("settings.json", content);
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn detect_os_language() -> String {
+    for var in &["LANG", "LC_ALL", "LC_MESSAGES"] {
+        if let Ok(val) = std::env::var(var) {
+            let val_lower = val.to_lowercase();
+            if val_lower.starts_with("de") { return "german".to_string(); }
+            if val_lower.starts_with("fr") { return "french".to_string(); }
+            if val_lower.starts_with("es") { return "spanish".to_string(); }
+            if val_lower.starts_with("ru") { return "russian".to_string(); }
+            if val_lower.starts_with("en") { return "english".to_string(); }
+        }
+    }
+
+    if let Ok(output) = std::process::Command::new("reg")
+        .args(&["query", "HKCU\\Control Panel\\International", "/v", "LocaleName"])
+        .output()
+    {
+        if output.status.success() {
+            let s = String::from_utf8_lossy(&output.stdout).to_lowercase();
+            for line in s.lines() {
+                if line.contains("localename") {
+                    let parts: Vec<&str> = line.split_whitespace().collect();
+                    if let Some(locale) = parts.last() {
+                        let loc = locale.to_lowercase();
+                        if loc.starts_with("de") { return "german".to_string(); }
+                        if loc.starts_with("fr") { return "french".to_string(); }
+                        if loc.starts_with("es") { return "spanish".to_string(); }
+                        if loc.starts_with("ru") { return "russian".to_string(); }
+                        if loc.starts_with("sr") { return "serbian".to_string(); }
+                        if loc.starts_with("tr") { return "turkish".to_string(); }
+                        if loc.starts_with("pl") { return "polish".to_string(); }
+                    }
+                }
+            }
+        }
+    }
+
+    if let Ok(output) = std::process::Command::new("powershell")
+        .args(&["-NoProfile", "-Command", "[System.Globalization.CultureInfo]::CurrentUICulture.Name"])
+        .output()
+    {
+        if output.status.success() {
+            let s = String::from_utf8_lossy(&output.stdout).trim().to_lowercase();
+            if s.starts_with("de") { return "german".to_string(); }
+            if s.starts_with("fr") { return "french".to_string(); }
+            if s.starts_with("es") { return "spanish".to_string(); }
+            if s.starts_with("ru") { return "russian".to_string(); }
+            if s.starts_with("sr") { return "serbian".to_string(); }
+            if s.starts_with("tr") { return "turkish".to_string(); }
+            if s.starts_with("pl") { return "polish".to_string(); }
+        }
+    }
+
+    "english".to_string()
+}
+
+#[cfg(not(target_os = "windows"))]
+fn detect_os_language() -> String {
+    for var in &["LANG", "LC_ALL", "LC_MESSAGES"] {
+        if let Ok(val) = std::env::var(var) {
+            let val_lower = val.to_lowercase();
+            if val_lower.starts_with("de") { return "german".to_string(); }
+            if val_lower.starts_with("fr") { return "french".to_string(); }
+            if val_lower.starts_with("es") { return "spanish".to_string(); }
+            if val_lower.starts_with("ru") { return "russian".to_string(); }
+            if val_lower.starts_with("en") { return "english".to_string(); }
+        }
+    }
+    "english".to_string()
+}
+
+fn apply_language_setting(settings_lang: &str) {
+    let target_lang = if settings_lang == "auto" {
+        detect_os_language()
+    } else {
+        settings_lang.to_string()
+    };
+    let static_lang = match target_lang.as_str() {
+        "german" => "german",
+        "french" => "french",
+        "spanish" => "spanish",
+        "russian" => "russian",
+        "serbian" => "serbian",
+        "polish" => "polish",
+        "turkish" => "turkish",
+        _ => "english",
+    };
+    analysis::set_active_language(static_lang);
+}
+
 struct Gui {
     analyses: HashMap<String, (FileInfo, Analysis)>,
     selected_analysis_path: Option<String>,
     player_highlight: PlayerHighlighting,
     error_message: Option<String>,
+    settings: AppSettings,
+    show_settings_window: bool,
 
     rx: mpsc::Receiver<GuiMessage>,
     tx: mpsc::Sender<GuiMessage>,
@@ -186,6 +316,8 @@ impl Gui {
 impl Default for Gui {
     fn default() -> Self {
         let (tx, rx) = mpsc::channel();
+        let settings = load_settings();
+        apply_language_setting(&settings.language);
 
         Self {
             analyses: HashMap::default(),
@@ -194,6 +326,8 @@ impl Default for Gui {
             error_message: None,
             rx,
             tx,
+            settings,
+            show_settings_window: false,
 
             #[cfg(not(target_arch = "wasm32"))]
             file_picker: FileDialog::default(),
@@ -516,6 +650,11 @@ impl eframe::App for Gui {
                             self.selected_analysis_path = None;
                             #[cfg(not(target_arch = "wasm32"))]
                             self.subdir_cache.clear();
+                            ui.close();
+                        }
+
+                        if ui.button("Preferences...").clicked() {
+                            self.show_settings_window = true;
                             ui.close();
                         }
 
@@ -956,6 +1095,66 @@ impl eframe::App for Gui {
                     parse_web_file(ctx.clone(), self.tx.clone(), file);
                 }
             }
+        }
+
+        if self.show_settings_window {
+            let mut open = true;
+            let mut close_clicked = false;
+            egui::Window::new("Preferences")
+                .open(&mut open)
+                .resizable(false)
+                .collapsible(false)
+                .show(ctx, |ui| {
+                    ui.vertical(|ui| {
+                        ui.heading("General Settings");
+                        ui.add_space(8.0);
+
+                        ui.horizontal(|ui| {
+                            ui.label("Language:");
+                            let mut current_lang = self.settings.language.clone();
+                            egui::ComboBox::from_id_salt("language_select")
+                                .selected_text(match current_lang.as_str() {
+                                    "auto" => "Auto-Detect (OS Default)".to_string(),
+                                    other => {
+                                        let mut chars = other.chars();
+                                        match chars.next() {
+                                            None => String::new(),
+                                            Some(f) => f.to_uppercase().collect::<String>() + chars.as_str(),
+                                        }
+                                    }
+                                })
+                                .show_ui(ui, |ui| {
+                                    ui.selectable_value(&mut current_lang, "auto".to_string(), "Auto-Detect (OS Default)");
+                                    ui.separator();
+                                    ui.selectable_value(&mut current_lang, "english".to_string(), "English");
+                                    ui.selectable_value(&mut current_lang, "french".to_string(), "French");
+                                    ui.selectable_value(&mut current_lang, "german".to_string(), "German");
+                                    ui.selectable_value(&mut current_lang, "spanish".to_string(), "Spanish");
+                                    ui.selectable_value(&mut current_lang, "russian".to_string(), "Russian");
+                                    ui.selectable_value(&mut current_lang, "serbian".to_string(), "Serbian");
+                                    ui.selectable_value(&mut current_lang, "polish".to_string(), "Polish");
+                                    ui.selectable_value(&mut current_lang, "turkish".to_string(), "Turkish");
+                                });
+
+                            if current_lang != self.settings.language {
+                                self.settings.language = current_lang;
+                                apply_language_setting(&self.settings.language);
+                                save_settings(&self.settings);
+                                ctx.request_repaint();
+                            }
+                        });
+
+                        ui.add_space(16.0);
+                        ui.separator();
+                        ui.add_space(8.0);
+                        ui.horizontal(|ui| {
+                            if ui.button("Close").clicked() {
+                                close_clicked = true;
+                            }
+                        });
+                    });
+                });
+            self.show_settings_window = open && !close_clicked;
         }
     }
 }
