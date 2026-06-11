@@ -91,7 +91,11 @@ impl FromIterator<AnalyzerOutput> for Json {
                 "file": file.path,
 
                 "teams": {
-                    "allies": analysis.state.team_scores.get_team_score(Team::Allies),
+                    "allies": if analysis.state.allies_are_british {
+                        analysis.state.team_scores.get_team_score(Team::British)
+                    } else {
+                        analysis.state.team_scores.get_team_score(Team::Allies)
+                    },
                     "axis": analysis.state.team_scores.get_team_score(Team::Axis),
                 },
 
@@ -184,6 +188,7 @@ impl Display for Markdown {
                     match &player.team {
                         None => "Unknown",
                         Some(Team::Allies) => "Allies",
+                        Some(Team::British) => "British",
                         Some(Team::Axis) => "Axis",
                         Some(Team::Spectators) => "Spectators",
                         Some(Team::Unassigned) => "Unassigned",
@@ -203,12 +208,19 @@ impl Display for Markdown {
             }
 
             let (allies_score, axis_score) = (
-                self.1.state.team_scores.get_team_score(Team::Allies),
+                if self.1.state.allies_are_british {
+                    self.1.state.team_scores.get_team_score(Team::British)
+                } else {
+                    self.1.state.team_scores.get_team_score(Team::Allies)
+                },
                 self.1.state.team_scores.get_team_score(Team::Axis),
             );
 
+            let allies_name = if self.1.state.allies_are_british { "British" } else { "Allies" };
+
             let match_result_fragment = format!(
-                ": Allies ({}) {} Axis ({})",
+                ": {} ({}) {} Axis ({})",
+                allies_name,
                 allies_score,
                 if allies_score > axis_score { ">" } else { "<" },
                 axis_score
@@ -278,12 +290,14 @@ impl Display for Markdown {
             writeln!(f, "## Team Weapon Breakdowns\n")?;
 
             let mut allies_breakdown = std::collections::HashMap::new();
+            let mut british_breakdown = std::collections::HashMap::new();
             let mut axis_breakdown = std::collections::HashMap::new();
 
             for player in &self.1.state.players {
                 if let Some(team) = &player.team {
                     let target_map = match team {
                         Team::Allies => Some(&mut allies_breakdown),
+                        Team::British => Some(&mut british_breakdown),
                         Team::Axis => Some(&mut axis_breakdown),
                         _ => None,
                     };
@@ -298,7 +312,11 @@ impl Display for Markdown {
                 }
             }
 
-            for (team_name, breakdown) in [("Allies", allies_breakdown), ("Axis", axis_breakdown)] {
+            for (team_name, breakdown) in [
+                ("Allies", allies_breakdown),
+                ("British", british_breakdown),
+                ("Axis", axis_breakdown),
+            ] {
                 if breakdown.is_empty() {
                     continue;
                 }

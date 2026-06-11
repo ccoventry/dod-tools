@@ -88,6 +88,7 @@ pub struct AnalyzerState {
     pub pov_player_index: Option<u8>,
     pub pov_stats: PovStats,
     pub hltv_name: Option<String>,
+    pub allies_are_british: bool,
 }
 
 #[derive(Default)]
@@ -339,6 +340,40 @@ pub fn use_pov_stats_updates(state: &mut AnalyzerState, event: &AnalyzerEvent) {
         }
     }
 }
+fn check_and_promote_british(state: &mut AnalyzerState) {
+    if state.allies_are_british {
+        for player in &mut state.players {
+            if player.team == Some(Team::Allies) {
+                player.team = Some(Team::British);
+            }
+        }
+    } else {
+        let any_british = state.players.iter().any(|p| {
+            p.class.as_ref().map(|c| c.is_british()).unwrap_or(false)
+        });
+        if any_british {
+            state.allies_are_british = true;
+            for player in &mut state.players {
+                if player.team == Some(Team::Allies) {
+                    player.team = Some(Team::British);
+                }
+            }
+            state.team_scores.convert_allies_to_british();
+            for round in &mut state.rounds {
+                if let Round::Completed { winner_stats: Some((winner_team, _)), .. } = round {
+                    if *winner_team == Team::Allies {
+                        *winner_team = Team::British;
+                    }
+                }
+            }
+            for chat in &mut state.chat_messages {
+                if chat.sender_team == Some(Team::Allies) {
+                    chat.sender_team = Some(Team::British);
+                }
+            }
+        }
+    }
+}
 
 impl Analysis {
     fn new(demo_info: DemoInfo, state: AnalyzerState) -> Self {
@@ -375,6 +410,7 @@ impl Analysis {
             use_chat_updates(state, event);
             use_clan_match_detection_updates(Duration::from_secs(10), state, event);
             use_pov_stats_updates(state, event);
+            check_and_promote_british(state);
         };
 
         process_event(&mut state, &AnalyzerEvent::Initialization);
@@ -450,6 +486,7 @@ impl Analysis {
             use_chat_updates(state, event);
             use_clan_match_detection_updates(Duration::from_secs(10), state, event);
             use_pov_stats_updates(state, event);
+            check_and_promote_british(state);
         };
 
         // 1. Unoptimized Parse (no filtering, processes every single user message)

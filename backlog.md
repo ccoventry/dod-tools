@@ -4,6 +4,23 @@ This document tracks upcoming features, performance optimizations, and UI improv
 
 ---
 
+
+Adding some tasks here and will sort out where they go in the backlog later.
+- Add "Victim" column to the kill streak where it's broken down by each kill?
+- Fix the "POV analytics" tab so it's not different than the rest. why does it have a rectangle around the text?
+- Add "Server Name" to summary. and maybe "IP/Port"?
+- Change scoreboard so team column is removed and there's a label for the team above the team's players. So "Allies" then all allies players, a gap, then "Axis" and all axis players. Just like how the scoreboard looks in-game.
+- Add links to popular sites linked to each player, like legit-proof, steamcommunity (already exists as the ID), etc.
+- Can we add "Axis Forces Have Capped Out" or whatever it says in the middle of the screen, but add it to the chat log?
+- Demos list: Can we fix Type, POV vs HLTV. It seems to be guessing then when I click that demo it will re-evaluate and could change from POV to HLTV or vice versa.
+- Can we add flag captures to chat log? single points and double points? can this be found in the parser?
+- Revisit the loading message when clicking on a demo. The spinning circle covers up the text at the start, and it doesn't update until the demo is done loading. Can we move the parsing to another thread and return steps as they're done so we could be like (1/5) "Checking player data" (2/5) "Parsing player data" etc. and the progress bar could move as well? Or something simpler, I know Chuck's parser already has a working progress bar that actually moves as a %.
+- Summary: Add a button to copy demo name beside the field? Add a button to open directory beside File Path?
+- Demos list: Add search box to filter down the list based on demo name. Filter by POV/HLTV? Map? Date Range? Add a reset filters button?
+- Explorer: Allow collapsing a folder even though you're in a folder that's a child of the one you're trying to close. It should select the folder you minimize if you're in a child folder of that one.
+- Something to consider soon. KTP Season 8 or 9, can't remember, introduced updating the team score at the start of 2nd half. So we might need to account for a sudden score change right at the start of the game when the match goes live. I don't remember if it's before or after it goes live. But yeah, the score updates for both teams at the same time.
+- Chat Log: "[00:40:61][system] Match will restart when both\nteams give the ready signal: 'ready'ready2 3 4\n" what is "ready2 3 4\n" at the end of this system line? It's in demo "wsod25-grp_r2-hltv_left_soli_h2.dem". Look into that, maybe we need to clean up some of the chat logs if it has some markup like \n?
+
 ## ⚡ Task Board (Sorted by Difficulty)
 
 Below is the consolidated backlog, structured as a clean, scannable table sorted from easiest to hardest with unique reference IDs and developer implementation notes.
@@ -31,6 +48,7 @@ Below is the consolidated backlog, structured as a clean, scannable table sorted
 | **M10** | 🟡 **Medium** | **Project Renaming** | Project / Core | Rename the repository to support a broader set of Half-Life mods (e.g., CS 1.6, Team Fortress Classic). | Perform workspace-wide search & replace of `"dod-tools"` to the new project identifier and rename root config/directories. |
 | **M11** | 🟡 **Medium** | **Server Mod Detection** | Parser / GUI | Detect common server-side mods (AMX/AMXX, Warcraft 3, Super Hero) present during a recorded demo and surface them in the UI. | Scan `TextMsg` / `HudText` / `Motd` content for known plugin signatures (e.g., `[AMX]`, `[ADMIN]`, XP/gold HUD text). Store detected mods as `Vec<DetectedMod>` on `AnalyzerState`. **Important**: presence of AMX must *not* influence match-type classification — KTP is a competitive league that uses AMX heavily. Decide placement (Summary section? tooltip? dedicated field?) before implementing. |
 | **M12** | 🟡 **Medium** | **Kill/Death Counting Accuracy Across Reconnects** | Parser / Core | Fix scoreboard kill/death stats for players who disconnect and rejoin mid-demo. Detailed options below [M12]. | See detailed spec. Three implementation options with different accuracy/complexity trade-offs. |
+| **[x] M13** | 🟡 **Medium** | **British Team Support** | Parser / GUI / Core | Add `Team::British` throughout the codebase. British maps are rare in clan matches but common on pub servers with custom maps. Currently British players are mis-assigned to `Allies` or left `Unassigned`, causing incorrect scoreboard grouping, wrong team colours, and missing team score tracking. | *Completed:* Added `Team::British` variant, `Class::is_british()` helper, and dynamically promoted `Team::Allies` to `Team::British` in the analyzer state when a player chooses a British class. Updated GUI/CLI formatting, timeline plot, rounds, chat, and weapon breakdowns with British Gold/Yellow colors. |
 | **H1** | 🔴 **Hard** | **Combine Weapon & POV Tabs** | GUI / Layout | Merge "Weapon Breakdowns" and "POV Analytics" into a player dropdown selector. Show extra POV stats with visual notes only when the POV player is chosen. | Merge `views/weapons.rs` and `views/pov.rs` into a unified player details view. Add dynamic checks to append the POV analytics grid when the POV player is active. |
 | **H2** | 🔴 **Hard** | **Objective Capture Timelines** | Parser / GUI | Track flags captured (`CapMsg`) and interruptions (`CancelProg`) to display objective capture timelines. | Track `CapMsg` and `CancelProg` network messages in `analysis/src/lib.rs` and build a horizontal time-based timeline widget in the GUI. |
 | **H3** | 🔴 **Hard** | **Objective Capture Timelines** | Parser / Core | Trace POV ammo box creation/pickup/decay timelines by decoding delta packet updates (`SvcDeltaPacketEntities`). | Parse `SvcPacketEntities` updates and `SvcDeltaPacketEntities` decoders in `analysis/src/lib.rs` to map `models/w_ammobox.mdl` lifetimes. |
@@ -174,3 +192,49 @@ graph TD
 
 > [!WARNING]
 > **POV vs HLTV Demos**: POV demos contain personal console commands and client inputs, while HLTV contains director messages and camera slots. Timings must be validated on both architectures.
+
+---
+
+### 3. British Team Support [M13 - 🟡 Medium]
+
+DoD 1.3 supports three playable factions: **Allies (US)**, **Axis (German)**, and **British**. British is a third team used on certain custom maps in pub play (e.g., `dod_anzio`, `dod_jagd`, British-themed maps). It is almost never seen in clan matches but needs to be handled correctly for pub demos.
+
+#### Current State
+
+The `Team` enum in `dod/src/lib.rs` has only:
+```rust
+pub enum Team { Allies, Axis, Spectators, Unassigned }
+```
+
+The `Class` enum **already** has `BritishRifleman` and `BritishMortar` variants, confirming the parser is aware British classes exist. However, there is no `Team::British` variant, so British players are silently mis-assigned.
+
+In `dod/src/lib.rs`, team assignment from network messages comes from a numeric value (`1 = Allies`, `2 = Axis`, ...). The British team value needs to be identified from protocol (likely `3` or another value) and mapped.
+
+#### Impact Without Fix
+
+- British players appear under Allies or Unassigned on the scoreboard
+- `team_sort_rank()` in `scoreboard.rs` has no British case — sort order is wrong
+- `scoreboard.rs` `team_name()` has no British arm — name displays as Unknown
+- `weapons.rs` weapon breakdown does not bucket British players separately
+- `timeline.rs` score timeline only plots Allies/Axis — British team score is invisible
+- `chat.rs` colour-coding doesn't highlight "British" team mentions
+- `clan_match.rs` and `round.rs` team win detection ignores British rounds
+
+#### Files to Update
+
+| File | Change Required |
+|---|---|
+| `dod/src/lib.rs` | Add `Team::British` variant; map correct numeric value in team parser |
+| `analysis/src/scoreboard.rs` | Add `Team::British => 2` (or appropriate rank) in team sort |
+| `analysis/src/round.rs` | Add `BritishWin` round state handling if applicable |
+| `analysis/src/lib.rs` | Add British team score tracking in `TeamScores` |
+| `native/src/bin/gui/views/scoreboard.rs` | Add `Team::British` to `team_name()` and `team_sort_rank()` |
+| `native/src/bin/gui/views/chat.rs` | Add British colour (e.g., `Color32::from_rgb(255, 200, 0)` — gold/yellow) and "British" pattern scan |
+| `native/src/bin/gui/views/weapons.rs` | Add British weapon breakdown column |
+| `native/src/bin/gui/views/timeline.rs` | Plot British team score line |
+| `native/src/bin/gui/views/rounds.rs` | Add British team colour/name in round winner display |
+| `native/src/bin/gui/views/streaks.rs` | Add `Team::British => BRITISH_COLOR` in any team-colour rendering |
+| `localizations/dod_tools_english.txt` | Add `#teamname_british` key |
+
+> [!NOTE]
+> The correct numeric value for the British team in the DoD 1.3 network protocol needs to be confirmed empirically — parse a demo from a British map and inspect the `SvcUpdateUserInfo` team field to find the raw number. It is likely `3` but should be verified before implementing.

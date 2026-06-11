@@ -116,6 +116,7 @@
 "#app_col_max_life"             "Max. Life"
 "#app_team_unknown"             "Unknown"
 "#app_team_unassigned"          "Unassigned"
+"#teamname_british"             "British"
 
 // -----------------------------------------------------------------------
 // Rounds view

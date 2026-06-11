@@ -61,6 +61,7 @@ pub fn use_clan_match_detection_updates(
             .iter()
             .all(|player| matches!(player.stats, (0, _, _)))
             && state.team_scores.get_team_score(Team::Allies) == 0
+            && state.team_scores.get_team_score(Team::British) == 0
             && state.team_scores.get_team_score(Team::Axis) == 0 =>
         {
             state.rounds.clear();

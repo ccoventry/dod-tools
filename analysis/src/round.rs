@@ -59,7 +59,10 @@ pub fn use_rounds_updates(state: &mut AnalyzerState, event: &AnalyzerEvent) {
                             }) = state.rounds.pop()
                             {
                                 let winner_stats = match round_state {
-                                    RoundState::AlliesWin => Some((Team::Allies, allies_kills)),
+                                    RoundState::AlliesWin => {
+                                        let team = if state.allies_are_british { Team::British } else { Team::Allies };
+                                        Some((team, allies_kills))
+                                    }
                                     RoundState::AxisWin => Some((Team::Axis, axis_kills)),
                                     _ => None,
                                 };
@@ -109,9 +112,9 @@ pub fn use_rounds_updates(state: &mut AnalyzerState, event: &AnalyzerEvent) {
                     return;
                 }
 
-                if let Some(Team::Allies) = team {
+                if let Some(Team::Allies) | Some(Team::British) = team {
                     *allies_kills += 1;
-                } else {
+                } else if let Some(Team::Axis) = team {
                     *axis_kills += 1;
                 }
             }
