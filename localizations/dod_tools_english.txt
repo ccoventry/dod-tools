@@ -69,9 +69,14 @@
 // -----------------------------------------------------------------------
 // Summary view
 // -----------------------------------------------------------------------
+"#app_summary_section_file"     "File Information"
+"#app_summary_section_demo"     "Demo & Match Details"
+"#app_summary_section_tech"     "Technical Specifications"
+"#app_summary_file_name"        "File name"
 "#app_summary_file_path"        "File path"
 "#app_summary_file_size"        "File size"
 "#app_summary_file_created"     "File created at"
+"#app_summary_recorded_by"      "Recorded by"
 "#app_summary_demo_type"        "Demo type"
 "#app_summary_game_mod"         "Game mod"
 "#app_summary_map_name"         "Map name"

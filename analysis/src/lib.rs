@@ -82,6 +82,7 @@ pub struct AnalyzerState {
     pub chat_messages: Vec<ChatMessage>,
     pub pov_player_index: Option<u8>,
     pub pov_stats: PovStats,
+    pub hltv_name: Option<String>,
 }
 
 #[derive(Default)]
