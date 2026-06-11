@@ -29,6 +29,17 @@ impl TeamScores {
         self.current_scores.clear();
         self.timeline.clear();
     }
+
+    pub(crate) fn convert_allies_to_british(&mut self) {
+        for (_, team, _) in &mut self.timeline {
+            if *team == Team::Allies {
+                *team = Team::British;
+            }
+        }
+        if let Some(val) = self.current_scores.remove(&Team::Allies) {
+            self.current_scores.insert(Team::British, val);
+        }
+    }
 }
 
 pub fn use_scoreboard_updates(state: &mut AnalyzerState, event: &AnalyzerEvent) {
@@ -42,10 +53,15 @@ pub fn use_scoreboard_updates(state: &mut AnalyzerState, event: &AnalyzerEvent) 
         }
 
         AnalyzerEvent::UserMessage(UserMessage::PTeam(p_team)) => {
+            let allies_are_british = state.allies_are_british;
             let player = state.find_player_by_client_index_mut(p_team.client_index - 1);
 
             if let Some(player) = player {
-                player.team = Some(p_team.team.clone());
+                let mut team = p_team.team.clone();
+                if team == Team::Allies && allies_are_british {
+                    team = Team::British;
+                }
+                player.team = Some(team);
             };
         }
 
@@ -62,11 +78,16 @@ pub fn use_scoreboard_updates(state: &mut AnalyzerState, event: &AnalyzerEvent) 
         }
 
         AnalyzerEvent::UserMessage(UserMessage::ScoreInfo(score_info)) => {
+            let allies_are_british = state.allies_are_british;
             let player = state.find_player_by_client_index_mut(score_info.client_index - 1);
 
             if let Some(player) = player {
+                let mut team = score_info.team.clone();
+                if team == Team::Allies && allies_are_british {
+                    team = Team::British;
+                }
                 player.class = Some(score_info.class.clone());
-                player.team = Some(score_info.team.clone());
+                player.team = Some(team);
                 player.stats = (
                     score_info.points as i32,
                     score_info.kills as i32,
@@ -76,11 +97,16 @@ pub fn use_scoreboard_updates(state: &mut AnalyzerState, event: &AnalyzerEvent) 
         }
 
         AnalyzerEvent::UserMessage(UserMessage::ScoreInfoLong(score_info_long)) => {
+            let allies_are_british = state.allies_are_british;
             let player = state.find_player_by_client_index_mut(score_info_long.client_index - 1);
 
             if let Some(player) = player {
+                let mut team = score_info_long.team.clone();
+                if team == Team::Allies && allies_are_british {
+                    team = Team::British;
+                }
                 player.class = Some(score_info_long.class.clone());
-                player.team = Some(score_info_long.team.clone());
+                player.team = Some(team);
                 player.stats = (
                     score_info_long.score as i32,
                     score_info_long.frags as i32,
@@ -119,7 +145,7 @@ pub fn use_scoreboard_updates(state: &mut AnalyzerState, event: &AnalyzerEvent) 
 
                     (left_team, right_team) => {
                         let rank = |team: &Option<Team>| match team {
-                            Some(Team::Allies) => 0,
+                            Some(Team::Allies) | Some(Team::British) => 0,
                             Some(Team::Axis) => 1,
                             Some(Team::Spectators) => 2,
                             Some(Team::Unassigned) => 3,
@@ -136,9 +162,13 @@ pub fn use_scoreboard_updates(state: &mut AnalyzerState, event: &AnalyzerEvent) 
 
 pub fn use_team_score_updates(state: &mut AnalyzerState, event: &AnalyzerEvent) {
     if let AnalyzerEvent::UserMessage(UserMessage::TeamScore(team_score)) = event {
+        let mut team = team_score.team.clone();
+        if team == Team::Allies && state.allies_are_british {
+            team = Team::British;
+        }
         state.team_scores.add_team_score(
             state.current_time.clone(),
-            team_score.team.clone(),
+            team,
             team_score.score as i32,
         );
     }

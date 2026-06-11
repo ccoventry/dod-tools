@@ -113,9 +113,10 @@ pub enum Team {
     Axis,
     Spectators,
     Unassigned,
+    British,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Class {
     AxisMortar,
     Bazooka,
@@ -145,6 +146,20 @@ pub enum Class {
     SupportInfantry,
     Unteroffizer,
     Unassigned,
+}
+
+impl Class {
+    pub fn is_british(&self) -> bool {
+        matches!(
+            self,
+            Class::BritishRifleman
+                | Class::SergeantMajor
+                | Class::Marksman
+                | Class::Gunner
+                | Class::RocketInfantry
+                | Class::BritishMortar
+        )
+    }
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -1091,6 +1106,7 @@ impl TryFrom<&str> for Team {
             "axis" => Ok(Team::Axis),
             "spectators" => Ok(Team::Spectators),
             "unassigned" => Ok(Team::Unassigned),
+            "british" | "brit" => Ok(Team::British),
             _ => Err(()),
         }
     }

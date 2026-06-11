@@ -1,5 +1,5 @@
 use crate::FileInfo;
-use crate::views::{ALLIES_COLOR, AXIS_COLOR, NEUTRAL_COLOR, TABLE_ROW_HEIGHT, t};
+use crate::views::{ALLIES_COLOR, AXIS_COLOR, BRITISH_COLOR, NEUTRAL_COLOR, TABLE_ROW_HEIGHT, t};
 use analysis::{Analysis, Round, Team, translate_key};
 use egui::{Align, Layout, Ui};
 use egui_extras::{Column, TableBuilder};
@@ -57,6 +57,7 @@ pub fn rounds_ui(_file_info: Option<&FileInfo>, r: Option<&Analysis>, ui: &mut U
                                         0.0,
                                         match winner_stats {
                                             Some((Team::Allies, _)) => ALLIES_COLOR,
+                                            Some((Team::British, _)) => BRITISH_COLOR,
                                             Some((Team::Axis, _)) => AXIS_COLOR,
                                             _ => NEUTRAL_COLOR,
                                         },
@@ -88,6 +89,8 @@ pub fn rounds_ui(_file_info: Option<&FileInfo>, r: Option<&Analysis>, ui: &mut U
                                         let name = match winner {
                                             Team::Allies => translate_key("#teamname_allies")
                                                 .unwrap_or_else(|| "Allies".to_string()),
+                                            Team::British => translate_key("#teamname_british")
+                                                .unwrap_or_else(|| "British".to_string()),
                                             Team::Axis => translate_key("#teamname_axis")
                                                 .unwrap_or_else(|| "Axis".to_string()),
                                             Team::Spectators => {

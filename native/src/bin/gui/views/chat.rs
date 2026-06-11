@@ -296,6 +296,7 @@ pub fn chat_log_ui(file_info: Option<&FileInfo>, r: Option<&Analysis>, ui: &mut 
                         ChatType::Mm2 => {
                             let team_color = match msg.sender_team {
                                 Some(Team::Allies) => Color32::from_rgb(34, 139, 34), // Forest Green
+                                Some(Team::British) => crate::views::BRITISH_COLOR,   // Goldenrod/Gold
                                 Some(Team::Axis) => Color32::from_rgb(178, 34, 34), // Firebrick Red
                                 Some(Team::Spectators) => Color32::YELLOW, // Spectator yellow
                                 _ => Color32::LIGHT_BLUE,                  // Default / Console
@@ -329,6 +330,7 @@ pub fn chat_log_ui(file_info: Option<&FileInfo>, r: Option<&Analysis>, ui: &mut 
                         _ => {
                             let team_color = match msg.sender_team {
                                 Some(Team::Allies) => Color32::from_rgb(34, 139, 34), // Forest Green
+                                Some(Team::British) => crate::views::BRITISH_COLOR,   // Goldenrod/Gold
                                 Some(Team::Axis) => Color32::from_rgb(178, 34, 34), // Firebrick Red
                                 Some(Team::Spectators) => Color32::YELLOW, // Spectator yellow
                                 _ => Color32::LIGHT_BLUE,                  // Default / Console

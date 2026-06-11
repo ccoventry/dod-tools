@@ -6,6 +6,7 @@ use std::collections::HashSet;
 
 pub const TABLE_ROW_HEIGHT: f32 = 18.;
 pub const ALLIES_COLOR: Color32 = Color32::DARK_GREEN;
+pub const BRITISH_COLOR: Color32 = Color32::from_rgb(218, 165, 32);
 pub const AXIS_COLOR: Color32 = Color32::DARK_RED;
 pub const NEUTRAL_COLOR: Color32 = Color32::WHITE;
 

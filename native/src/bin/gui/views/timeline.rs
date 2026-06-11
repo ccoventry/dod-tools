@@ -1,5 +1,5 @@
 use crate::FileInfo;
-use crate::views::{ALLIES_COLOR, AXIS_COLOR, t};
+use crate::views::{ALLIES_COLOR, AXIS_COLOR, BRITISH_COLOR, t};
 use analysis::{Analysis, Team, translate_key};
 use egui::Ui;
 use egui_plot::{Corner, Legend, Line, Plot, PlotPoints};
@@ -11,8 +11,27 @@ pub fn team_score_timeline_ui(_file_info: Option<&FileInfo>, r: Option<&Analysis
     ui.add_space(8.0);
 
     ui.scope(|ui| {
-        let allies_label =
-            translate_key("#teamname_allies").unwrap_or_else(|| "Allies".to_string());
+        let (allies_label, allies_color, allies_team) = if let Some(analysis) = r {
+            if analysis.state.allies_are_british {
+                (
+                    translate_key("#teamname_british").unwrap_or_else(|| "British".to_string()),
+                    BRITISH_COLOR,
+                    Team::British,
+                )
+            } else {
+                (
+                    translate_key("#teamname_allies").unwrap_or_else(|| "Allies".to_string()),
+                    ALLIES_COLOR,
+                    Team::Allies,
+                )
+            }
+        } else {
+            (
+                translate_key("#teamname_allies").unwrap_or_else(|| "Allies".to_string()),
+                ALLIES_COLOR,
+                Team::Allies,
+            )
+        };
         let axis_label = translate_key("#teamname_axis").unwrap_or_else(|| "Axis".to_string());
 
         let plot = Plot::new("timeline_plot")
@@ -49,9 +68,9 @@ pub fn team_score_timeline_ui(_file_info: Option<&FileInfo>, r: Option<&Analysis
                         })
                 };
 
-                let points = team_line_points(Team::Allies);
+                let points = team_line_points(allies_team);
                 let line =
-                    Line::new(allies_label, PlotPoints::from_iter(points)).color(ALLIES_COLOR);
+                    Line::new(allies_label, PlotPoints::from_iter(points)).color(allies_color);
 
                 plot_ui.line(line);
 

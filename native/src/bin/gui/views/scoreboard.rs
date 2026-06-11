@@ -6,6 +6,7 @@ use egui_extras::{Column, TableBody, TableBuilder};
 fn team_name(team: &Team) -> String {
     match team {
         Team::Allies => translate_key("#teamname_allies").unwrap_or_else(|| "Allies".to_string()),
+        Team::British => translate_key("#teamname_british").unwrap_or_else(|| "British".to_string()),
         Team::Axis => translate_key("#teamname_axis").unwrap_or_else(|| "Axis".to_string()),
         Team::Spectators => {
             translate_key("#teamname_spectators").unwrap_or_else(|| "Spectators".to_string())
@@ -18,7 +19,7 @@ fn team_name(team: &Team) -> String {
 /// Using an integer avoids locale-dependent string comparisons.
 fn team_sort_rank(team: Option<&Team>) -> u8 {
     match team {
-        Some(Team::Allies) => 0,
+        Some(Team::Allies) | Some(Team::British) => 0,
         Some(Team::Axis) => 1,
         Some(Team::Spectators) => 2,
         Some(Team::Unassigned) | None => 3,
@@ -31,11 +32,13 @@ pub fn scoreboard_ui(
     ui: &mut Ui,
 ) {
     let match_result_fragment = if let Some(analysis) = analysis {
-        let (allies_score, axis_score) = (
-            analysis.state.team_scores.get_team_score(Team::Allies),
-            analysis.state.team_scores.get_team_score(Team::Axis),
-        );
-        let allies = translate_key("#teamname_allies").unwrap_or_else(|| "Allies".to_string());
+        let is_british = analysis.state.allies_are_british;
+        let allies_team = if is_british { Team::British } else { Team::Allies };
+        let allies_score = analysis.state.team_scores.get_team_score(allies_team);
+        let axis_score = analysis.state.team_scores.get_team_score(Team::Axis);
+        let allies_key = if is_british { "#teamname_british" } else { "#teamname_allies" };
+        let allies_default = if is_british { "British" } else { "Allies" };
+        let allies = translate_key(allies_key).unwrap_or_else(|| allies_default.to_string());
         let axis = translate_key("#teamname_axis").unwrap_or_else(|| "Axis".to_string());
         format!(
             ": {} ({}) {} {} ({})",

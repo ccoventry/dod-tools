@@ -52,6 +52,7 @@ pub fn team_weapon_breakdown_ui(r: Option<&Analysis>, ui: &mut Ui) {
         .default_open(false)
         .show(ui, |ui| {
             let mut allies_breakdown = std::collections::HashMap::new();
+            let mut british_breakdown = std::collections::HashMap::new();
             let mut axis_breakdown = std::collections::HashMap::new();
 
             if let Some(analysis) = r {
@@ -59,6 +60,7 @@ pub fn team_weapon_breakdown_ui(r: Option<&Analysis>, ui: &mut Ui) {
                     if let Some(team) = &p.team {
                         let target_map = match team {
                             Team::Allies => Some(&mut allies_breakdown),
+                            Team::British => Some(&mut british_breakdown),
                             Team::Axis => Some(&mut axis_breakdown),
                             _ => None,
                         };
@@ -76,13 +78,25 @@ pub fn team_weapon_breakdown_ui(r: Option<&Analysis>, ui: &mut Ui) {
 
             let allies_name =
                 translate_key("#teamname_allies").unwrap_or_else(|| "Allies".to_string());
+            let british_name =
+                translate_key("#teamname_british").unwrap_or_else(|| "British".to_string());
             let axis_name = translate_key("#teamname_axis").unwrap_or_else(|| "Axis".to_string());
 
-            CollapsingHeader::new(allies_name)
-                .default_open(true)
-                .show(ui, |ui| {
-                    weapon_breakdown_table_ui(&allies_breakdown, ui);
-                });
+            if !allies_breakdown.is_empty() || british_breakdown.is_empty() {
+                CollapsingHeader::new(allies_name)
+                    .default_open(true)
+                    .show(ui, |ui| {
+                        weapon_breakdown_table_ui(&allies_breakdown, ui);
+                    });
+            }
+
+            if !british_breakdown.is_empty() {
+                CollapsingHeader::new(british_name)
+                    .default_open(true)
+                    .show(ui, |ui| {
+                        weapon_breakdown_table_ui(&british_breakdown, ui);
+                    });
+            }
 
             CollapsingHeader::new(axis_name)
                 .default_open(true)
