@@ -91,6 +91,22 @@ pub fn header_ui(file_info: Option<&FileInfo>, analysis: Option<&Analysis>, ui: 
         }
         ui.end_row();
 
+        ui.strong(t("#app_summary_map_name"));
+        ui.label(
+            analysis
+                .map(|a| a.demo_info.map_name.as_str())
+                .unwrap_or(""),
+        );
+        ui.end_row();
+
+        ui.strong(t("#app_summary_demo_type"));
+        if let Some(a) = analysis {
+            ui.label(&a.demo_info.demo_type);
+        } else {
+            ui.label("");
+        }
+        ui.end_row();
+
         ui.strong(t("#app_summary_recorded_by"));
         if let Some(a) = analysis {
             let recorder = if a.demo_info.demo_type == "HLTV" {
@@ -117,22 +133,6 @@ pub fn header_ui(file_info: Option<&FileInfo>, analysis: Option<&Analysis>, ui: 
         } else {
             ui.label("");
         }
-        ui.end_row();
-
-        ui.strong(t("#app_summary_demo_type"));
-        if let Some(a) = analysis {
-            ui.label(&a.demo_info.demo_type);
-        } else {
-            ui.label("");
-        }
-        ui.end_row();
-
-        ui.strong(t("#app_summary_map_name"));
-        ui.label(
-            analysis
-                .map(|a| a.demo_info.map_name.as_str())
-                .unwrap_or(""),
-        );
         ui.end_row();
 
         ui.strong(t("#app_summary_demo_duration"));
