@@ -1,6 +1,6 @@
 use crate::FileInfo;
 use crate::views::{PlayerHighlighting, TABLE_ROW_HEIGHT, t};
-use analysis::{Analysis, MortalityState, Player, SteamId, Team, translate_key};
+use analysis::{Analysis, Player, SteamId, Team, translate_key};
 use egui::{Align, Layout, Ui};
 use egui_extras::{Column, TableBody, TableBuilder};
 
@@ -81,9 +81,6 @@ pub fn scoreboard_ui(
             "#app_col_score",
             "#app_col_kills",
             "#app_col_deaths",
-            "#app_col_avg_life",
-            "#app_col_min_life",
-            "#app_col_max_life",
         ];
 
         let table = TableBuilder::new(ui)
@@ -173,9 +170,6 @@ pub fn scoreboard_ui(
                             4 => a.player.stats.0.cmp(&b.player.stats.0),
                             5 => a.player.stats.1.cmp(&b.player.stats.1),
                             6 => a.player.stats.2.cmp(&b.player.stats.2),
-                            7 => a.player.avg_lifespan().cmp(&b.player.avg_lifespan()),
-                            8 => a.player.min_lifespan().cmp(&b.player.min_lifespan()),
-                            9 => a.player.max_lifespan().cmp(&b.player.max_lifespan()),
                             _ => std::cmp::Ordering::Equal,
                         };
 
@@ -269,27 +263,6 @@ pub fn scoreboard_row_ui(
 
         row.col(|ui| {
             let resp = cell_label(ui, &p.stats.2.to_string());
-            if resp.clicked() {
-                clicked.set(true);
-            }
-        });
-
-        row.col(|ui| {
-            let resp = cell_label(ui, &format!("{}s", p.avg_lifespan().as_secs()));
-            if resp.clicked() {
-                clicked.set(true);
-            }
-        });
-
-        row.col(|ui| {
-            let resp = cell_label(ui, &format!("{}s", p.min_lifespan().as_secs()));
-            if resp.clicked() {
-                clicked.set(true);
-            }
-        });
-
-        row.col(|ui| {
-            let resp = cell_label(ui, &format!("{}s", p.max_lifespan().as_secs()));
             if resp.clicked() {
                 clicked.set(true);
             }
