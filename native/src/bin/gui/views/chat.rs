@@ -324,11 +324,7 @@ pub fn chat_log_ui(file_info: Option<&FileInfo>, r: Option<&Analysis>, ui: &mut 
                             } else {
                                 msg.text.clone()
                             };
-                            ui.label(
-                                RichText::new(display_text.trim())
-                                    .italics()
-                                    .color(Color32::from_rgb(180, 220, 220)),
-                            );
+                            render_system_message(ui, display_text.trim());
                         }
                         _ => {
                             let team_color = match msg.sender_team {
@@ -353,4 +349,73 @@ pub fn chat_log_ui(file_info: Option<&FileInfo>, r: Option<&Analysis>, ui: &mut 
             }
         },
     );
+}
+
+fn render_system_message(ui: &mut Ui, text: &str) {
+    let sys_color = Color32::from_rgb(180, 220, 220);
+
+    struct TeamStyle {
+        patterns: &'static [&'static str],
+        color: Color32,
+    }
+
+    let team_styles = &[
+        TeamStyle {
+            patterns: &["allies", "allied"],
+            color: Color32::from_rgb(34, 139, 34), // Forest Green
+        },
+        TeamStyle {
+            patterns: &["axis"],
+            color: Color32::from_rgb(178, 34, 34), // Firebrick Red
+        },
+        TeamStyle {
+            patterns: &["spectators", "spectator", "spec"],
+            color: Color32::YELLOW, // Spectator yellow
+        },
+    ];
+
+    let old_spacing = ui.spacing().item_spacing.x;
+    ui.spacing_mut().item_spacing.x = 0.0;
+
+    let mut remainder = text;
+
+    loop {
+        if remainder.is_empty() {
+            break;
+        }
+
+        let remainder_lower = remainder.to_lowercase();
+        let mut earliest_match: Option<(usize, usize, Color32)> = None;
+
+        for style in team_styles {
+            for pattern in style.patterns {
+                if let Some(idx) = remainder_lower.find(pattern) {
+                    let is_earlier = match earliest_match {
+                        None => true,
+                        Some((existing_idx, _, _)) => idx < existing_idx,
+                    };
+                    if is_earlier {
+                        earliest_match = Some((idx, pattern.len(), style.color));
+                    }
+                }
+            }
+        }
+
+        match earliest_match {
+            Some((idx, len, color)) => {
+                if idx > 0 {
+                    ui.label(RichText::new(&remainder[..idx]).italics().color(sys_color));
+                }
+                let matched_text = &remainder[idx..idx + len];
+                ui.label(RichText::new(matched_text).italics().color(color));
+                remainder = &remainder[idx + len..];
+            }
+            None => {
+                ui.label(RichText::new(remainder).italics().color(sys_color));
+                break;
+            }
+        }
+    }
+
+    ui.spacing_mut().item_spacing.x = old_spacing;
 }
