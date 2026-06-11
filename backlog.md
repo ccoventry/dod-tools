@@ -30,6 +30,7 @@ Below is the consolidated backlog, structured as a clean, scannable table sorted
 | **M9** | 🟡 **Medium** | **POV Client Duplicate Protection** | CLI / Auditor | Use client headers/viewpoints rather than just file sizes/hashes so same-match POVs from different players aren't flagged as duplicates. | Extract POV player index/header metadata during audit scans and add them to the file uniqueness hash signature. |
 | **M10** | 🟡 **Medium** | **Project Renaming** | Project / Core | Rename the repository to support a broader set of Half-Life mods (e.g., CS 1.6, Team Fortress Classic). | Perform workspace-wide search & replace of `"dod-tools"` to the new project identifier and rename root config/directories. |
 | **M11** | 🟡 **Medium** | **Server Mod Detection** | Parser / GUI | Detect common server-side mods (AMX/AMXX, Warcraft 3, Super Hero) present during a recorded demo and surface them in the UI. | Scan `TextMsg` / `HudText` / `Motd` content for known plugin signatures (e.g., `[AMX]`, `[ADMIN]`, XP/gold HUD text). Store detected mods as `Vec<DetectedMod>` on `AnalyzerState`. **Important**: presence of AMX must *not* influence match-type classification — KTP is a competitive league that uses AMX heavily. Decide placement (Summary section? tooltip? dedicated field?) before implementing. |
+| **M12** | 🟡 **Medium** | **Kill/Death Counting Accuracy Across Reconnects** | Parser / Core | Fix scoreboard kill/death stats for players who disconnect and rejoin mid-demo. Detailed options below [M12]. | See detailed spec. Three implementation options with different accuracy/complexity trade-offs. |
 | **H1** | 🔴 **Hard** | **Combine Weapon & POV Tabs** | GUI / Layout | Merge "Weapon Breakdowns" and "POV Analytics" into a player dropdown selector. Show extra POV stats with visual notes only when the POV player is chosen. | Merge `views/weapons.rs` and `views/pov.rs` into a unified player details view. Add dynamic checks to append the POV analytics grid when the POV player is active. |
 | **H2** | 🔴 **Hard** | **Objective Capture Timelines** | Parser / GUI | Track flags captured (`CapMsg`) and interruptions (`CancelProg`) to display objective capture timelines. | Track `CapMsg` and `CancelProg` network messages in `analysis/src/lib.rs` and build a horizontal time-based timeline widget in the GUI. |
 | **H3** | 🔴 **Hard** | **Objective Capture Timelines** | Parser / Core | Trace POV ammo box creation/pickup/decay timelines by decoding delta packet updates (`SvcDeltaPacketEntities`). | Parse `SvcPacketEntities` updates and `SvcDeltaPacketEntities` decoders in `analysis/src/lib.rs` to map `models/w_ammobox.mdl` lifetimes. |
@@ -41,6 +42,105 @@ Below is the consolidated backlog, structured as a clean, scannable table sorted
 ---
 
 ## 📋 Detailed Feature Specifications
+
+### 2. Kill/Death Counting Accuracy Across Reconnects [M12 - 🟡 Medium]
+
+The scoreboard currently derives kill and death counts from server-sent absolute-total packets (`ScoreShort`, `Frags`, `ObjScore`). These are accurate as long as the server preserves a player's stats across a disconnect/reconnect — but **standard GoldSrc resets a player's server-side stats to zero on reconnect**, even if the Steam ID is the same.
+
+#### The Problem
+
+> **Example:** Player A gets 5 kills and 0 deaths, disconnects, rejoins, then gets 2 more kills and 3 deaths.
+>
+> - **Correct result:** 7 kills, 3 deaths
+> - **Current result (if server resets on reconnect):** 2 kills, 3 deaths — because the post-reconnect `Frags` packet reports `frags=2` (server restarted from 0) and overwrites the preserved 5.
+
+All individual kill and death events **are present in the demo file** as `DeathMsg` packets (broadcast to every client at the time of the kill), so the raw data is available to count correctly.
+
+#### Root Cause
+
+The analyzer stores stats as the last absolute value received from the server:
+
+- `Frags.frags` → overwrites `player.stats.1` (kills)
+- `ScoreShort.kills` → overwrites `player.stats.1` (kills)
+- `ScoreShort.deaths` → overwrites `player.stats.2` (deaths)
+- `ObjScore.score` → overwrites `player.stats.0` (score)
+
+On reconnect, a new server-side session begins. The server sends a fresh `Frags` starting from 0, which silently discards the pre-disconnect counts stored on the local player record.
+
+---
+
+#### Option A — `DeathMsg`-only counting (independent accumulator)
+
+**How it works:** Ignore `Frags`/`ScoreShort` for kills and deaths entirely. Add two new fields to `Player`: `kills_counted: u32` and `deaths_counted: u32`. Increment them on every `DeathMsg` where the player is killer or victim, resolved through the current slot-to-player mapping at the time each event fires.
+
+**Pros:**
+- Completely immune to server-side stat resets — counts every event in the demo regardless of reconnects.
+- Simple, deterministic, easy to test.
+- `DeathMsg` is already in the event pipeline and parsed.
+
+**Cons:**
+- **Wrong for mid-join demos.** If the recording starts partway through a match, all `DeathMsg` events before the recording began are missing. The counted kills/deaths for players who were already active will be understated.
+- Ignores `Frags`/`ScoreShort` entirely, so any server-side corrections (e.g. admin-adjusted scores) are not reflected.
+- Objective score still cannot be counted from events alone — there is no per-capture score-change packet — so `ObjScore` must still be used for `stats.0`.
+
+**Verdict:** Best for full-game HLTV demos. Incorrect for partial recordings.
+
+---
+
+#### Option B — Server value as a floor, `DeathMsg` as a delta (hybrid)
+
+**How it works:** On each `DeathMsg`, increment the independent counters (`kills_counted`, `deaths_counted`) as in Option A. On each `Frags`/`ScoreShort`, update the server-reported value. At display time, use `max(kills_counted, server_reported_kills)` as the displayed kill count, and likewise for deaths.
+
+**Pros:**
+- Handles the mid-join case: if you join mid-game, `ScoreShort` gives you the current totals as a baseline, and `DeathMsg` accumulates on top of whatever you caught.
+- Still correct for full recordings where the server resets on reconnect, because the `DeathMsg` count grows above the reset server value.
+
+**Cons:**
+- `max()` is a heuristic — it assumes neither source under-counts, which is generally true but not guaranteed.
+- Requires tracking two parallel kill/death counters per player.
+- Edge cases: if a server admin manually reduces a player's score, the heuristic will ignore that reduction.
+
+**Verdict:** Best overall balance. Handles both full recordings and mid-join demos without either source dominating incorrectly.
+
+---
+
+#### Option C — Seed from `ScoreShort` on first sync, accumulate `DeathMsg` deltas after
+
+**How it works:** Track a `stats_seeded: bool` flag per player. On the first `ScoreShort`/`ScoreInfo` received after a player connects (or reconnects), set their kills/deaths to the server value and mark as seeded. After that point, use `DeathMsg` events as `+1` increments rather than overwriting with server values.
+
+**Pros:**
+- Correct for mid-join: the initial sync establishes the true baseline.
+- Correct across reconnects: the `DeathMsg` delta accurately adds post-reconnect kills/deaths on top of the pre-disconnect total that was preserved on the local record.
+- No heuristic — the logic is explicit.
+
+**Cons:**
+- Most complex to implement: requires per-player seeded state and per-connection session tracking.
+- If the server sends a corrective `ScoreShort` after a legitimate stat adjustment, the code would ignore it (having already switched to delta mode).
+- Reconnect detection must be reliable — the seeding must reset on each new connection event, not just the first one ever.
+
+**Verdict:** Most accurate approach but requires the most careful state management.
+
+---
+
+#### Data Model Changes Required (all options)
+
+```rust
+// In Player struct (analysis/src/player.rs)
+pub kills_counted: u32,    // incremented by DeathMsg (killer)
+pub deaths_counted: u32,   // incremented by DeathMsg (victim)
+// Option C only:
+pub kills_seeded: bool,
+pub deaths_seeded: bool,
+```
+
+`DeathMsg` is already parsed and available in the event stream. The handler in `analysis/src/scoreboard.rs` would need a new arm resolving both `killer_client_index` and `victim_client_index` to their current player records and incrementing the respective counters.
+
+Objective score (`stats.0`) is not addressable by any per-event packet and must continue to come from `ObjScore`/`ScoreShort` regardless of the chosen option.
+
+---
+
+> [!NOTE]
+> Before implementing, verify empirically whether standard DoD 1.3 actually resets stats on reconnect. If it preserves them (i.e. Scenario A from the analysis), Option A through C all converge on the same result and the simpler current approach may be acceptable. Test by examining a demo that includes a reconnect and checking the post-rejoin `Frags` packet value.
 
 ### 1. "Trim Demo(s)" Tool [H7 - 🔴 Hard / High Effort]
 Trim a Day of Defeat (GoldSrc) demo file (`.dem`) down to only the time a clan match is actually played, stripping out warmup/setup time to reduce file sizes.
