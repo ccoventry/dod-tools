@@ -374,10 +374,26 @@ impl Display for Markdown {
                             Duration::new(start_time.viewdemo_offset.as_secs(), 0);
                         let streak_duration = Duration::new((end_time - start_time).as_secs(), 0);
 
-                        let weapons_used = kill_streak
-                            .kills
-                            .iter()
-                            .map(|(_, weapon)| format!("{weapon:?}"))
+                        let mut grouped = Vec::new();
+                        for (_, weapon) in &kill_streak.kills {
+                            let name = format!("{weapon:?}");
+                            if let Some((last_name, count)) = grouped.last_mut() {
+                                if *last_name == name {
+                                    *count += 1;
+                                    continue;
+                                }
+                            }
+                            grouped.push((name, 1));
+                        }
+                        let weapons_used = grouped
+                            .into_iter()
+                            .map(|(name, count)| {
+                                if count > 1 {
+                                    format!("{} x{}", name, count)
+                                } else {
+                                    name
+                                }
+                            })
                             .collect::<Vec<_>>()
                             .join(", ");
 
