@@ -130,7 +130,20 @@ pub fn kill_streaks_ui(
                 all_weapons.sort_by_key(|w| weapon_name(w));
 
                 if !all_weapons.is_empty() {
-                    ui.label(egui::RichText::new(t("#app_streaks_filter_weapons")).small().weak());
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new(t("#app_streaks_filter_weapons")).small().weak());
+                        if ui.small_button(t("#app_chat_select_all")).clicked() {
+                            disabled_weapons.clear();
+                            ui.data_mut(|d| d.insert_temp(filter_key, disabled_weapons.clone()));
+                        }
+                        if ui.small_button(t("#app_chat_clear_all")).clicked() {
+                            disabled_weapons = all_weapons
+                                .iter()
+                                .map(|w| format!("{:?}", w))
+                                .collect();
+                            ui.data_mut(|d| d.insert_temp(filter_key, disabled_weapons.clone()));
+                        }
+                    });
                     ui.horizontal_wrapped(|ui| {
                         for weapon in &all_weapons {
                             let name = weapon_name(weapon);
