@@ -96,10 +96,26 @@ pub fn kill_streaks_table_ui(p: &Player, ui: &mut Ui) {
                         });
 
                         row.col(|ui| {
-                            let weapons = streak
-                                .kills
-                                .iter()
-                                .map(|(_, weapon)| weapon_name(weapon))
+                            let mut grouped = Vec::new();
+                            for (_, weapon) in &streak.kills {
+                                let name = weapon_name(weapon);
+                                if let Some((last_name, count)) = grouped.last_mut() {
+                                    if *last_name == name {
+                                        *count += 1;
+                                        continue;
+                                    }
+                                }
+                                grouped.push((name, 1));
+                            }
+                            let weapons = grouped
+                                .into_iter()
+                                .map(|(name, count)| {
+                                    if count > 1 {
+                                        format!("{} x{}", name, count)
+                                    } else {
+                                        name
+                                    }
+                                })
                                 .collect::<Vec<_>>()
                                 .join(", ");
 
