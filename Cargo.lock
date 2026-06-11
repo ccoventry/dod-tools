@@ -923,6 +923,8 @@ version = "0.10.0"
 dependencies = [
  "analysis",
  "clap",
+ "dem",
+ "dod",
  "tabled",
 ]
 

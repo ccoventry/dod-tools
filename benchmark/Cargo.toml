@@ -11,3 +11,5 @@ path = "src/main.rs"
 analysis = { path = "../analysis" }
 clap = { workspace = true, features = ["derive"] }
 tabled = { workspace = true }
+dem = { workspace = true }
+dod = { path = "../dod" }

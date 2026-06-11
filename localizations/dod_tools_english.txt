@@ -8,11 +8,18 @@
 // Main window / shell
 // -----------------------------------------------------------------------
 "#app_menu_file"                "File"
-"#app_menu_choose_dir"          "Choose Directory..."
 "#app_menu_select_folder"       "Select Demos Folder..."
 "#app_menu_clear_cache"         "Clear loaded cache"
 "#app_menu_preferences"         "Preferences..."
 "#app_menu_quit"                "Quit"
+"#app_menu_help"                "Help"
+"#app_menu_about"               "About..."
+
+"#app_about_title"              "About dod-tools"
+"#app_about_desc"               "A utility for auditing and analyzing Day of Defeat 1.3 demo files."
+"#app_about_github"             "GitHub Repository"
+"#app_about_close"              "Close"
+
 
 "#app_panel_explorer"           "Explorer"
 "#app_panel_demos"              "Demos"
@@ -57,6 +64,7 @@
 "#app_tab_weapons"              "Weapon breakdowns"
 "#app_tab_streaks"              "Kill streaks"
 "#app_tab_chat"                 "Chat log"
+"#app_tab_pov"                  "POV analytics"
 
 // -----------------------------------------------------------------------
 // Summary view
@@ -70,7 +78,6 @@
 "#app_summary_demo_protocol"    "Demo protocol"
 "#app_summary_net_protocol"     "Network protocol"
 "#app_summary_game_version"     "Game version"
-"#app_summary_analyzer_ver"     "Analyzer version"
 "#app_game_dod"                 "Day of Defeat (dod)"
 "#app_game_cstrike"             "Counter-Strike (cstrike)"
 "#app_game_valve"               "Half-Life (valve)"
@@ -155,7 +162,7 @@
 "#app_chat_no_messages"         "No chat or system messages found in this demo."
 "#app_chat_no_match"            "No messages match the active filters."
 "#app_chat_team_prefix"         "(Team)"
-"#app_chat_system_prefix"       "(system)"
+"#app_chat_system_prefix"       "[system]"
 "#app_chat_dead_prefix"         "*DEAD*"
 "#app_chat_unknown_sender"      "Unknown"
 
@@ -172,5 +179,27 @@
 "#app_progress_reading"         "Reading and preparing %s1...%s2"
 "#app_progress_parsing"         "Parsing events for %s1: %s2%s3"
 
+// -----------------------------------------------------------------------
+// POV Analytics view
+// -----------------------------------------------------------------------
+"#app_pov_heading"              "POV Player Analytics"
+"#app_pov_no_stats"             "POV analytics are not available for HLTV demos."
+"#app_pov_metrics_sub"          "POV Player Overview"
+"#app_pov_weapons_sub"          "POV Weapon Analytics"
+"#app_pov_col_bullets"          "Bullets Fired"
+"#app_pov_col_reloads"          "Reloads"
+"#app_pov_detail_title"         "%s1 Details"
+"#app_pov_detail_scoped"        "Scoped Kills"
+"#app_pov_detail_noscopes"      "Noscope Kills"
+"#app_pov_detail_ratio"         "Scoped Ratio"
+"#app_pov_select_weapon"        "Select a weapon to view details."
+"#app_pov_suicides"             "Suicides"
+"#app_pov_tk_committed"         "Team Kills Committed"
+"#app_pov_tk_suffered"          "Team Kills Suffered"
+"#app_pov_hits_taken"           "Hits Taken"
+"#app_pov_damage_taken"         "Damage Taken"
+"#app_pov_avg_dmg_taken"        "Avg. Damage Taken / Hit"
+
 }
 }
+
