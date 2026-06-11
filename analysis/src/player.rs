@@ -162,6 +162,9 @@ pub fn use_player_updates(state: &mut AnalyzerState, event: &AnalyzerEvent) {
         // HLTV clients have this field set to 1. We can skip them because whatever slot it occupies
         // will never be referenced by game events, unless someone else takes that slot.
         if let Some(&"1") = fields.get("*hltv") {
+            if let Some(name) = fields.get("name") {
+                state.hltv_name = Some(name.to_string());
+            }
             return;
         }
 
