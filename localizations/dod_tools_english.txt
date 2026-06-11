@@ -147,6 +147,7 @@
 // -----------------------------------------------------------------------
 "#app_streaks_heading"          "Kill Streaks"
 "#app_streaks_select_player"     "Select Player:"
+"#app_streaks_filter_weapons"    "Filter Weapons:"
 "#app_col_wave"                 "Wave"
 "#app_col_total_kills"          "Total Kills"
 "#app_col_weapons_used"         "Weapons Used"

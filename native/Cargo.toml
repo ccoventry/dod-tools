@@ -8,6 +8,7 @@ default-run = "dod-tools-gui"
 analysis = { path = "../analysis" }
 clap = { workspace = true, features = ["derive"] }
 dem = { workspace = true }
+dod = { path = "../dod" }
 eframe = { workspace = true }
 egui = { workspace = true }
 egui_extras = { workspace = true }
@@ -37,6 +38,10 @@ path = "src/bin/dump.rs"
 [[bin]]
 name = "dod-tools-inspect"
 path = "src/bin/inspect.rs"
+
+[[bin]]
+name = "inspect_reconnect"
+path = "src/bin/inspect_reconnect.rs"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2.100"

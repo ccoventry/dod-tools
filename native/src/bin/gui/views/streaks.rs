@@ -1,9 +1,10 @@
 use crate::FileInfo;
 use crate::views::{PlayerHighlighting, TABLE_ROW_HEIGHT, t, weapon_name};
-use analysis::{Analysis, Player};
+use analysis::{Analysis, Player, Weapon};
 use egui::{Align, Layout, ScrollArea, Ui};
 use egui_extras::{Column, TableBuilder};
 use humantime::format_duration;
+use std::collections::HashSet;
 use std::time::Duration;
 
 pub fn kill_streaks_ui(
@@ -105,17 +106,58 @@ pub fn kill_streaks_ui(
                 });
         });
 
-        ui.add_space(8.0);
+        ui.add_space(4.0);
 
-        // Render Table for selected player
+        // Render weapon filter checkboxes for selected player
         if let Some(ref id) = selected_id {
             if let Some(p) = players_with_streaks.iter().find(|p| &p.id == id) {
+                let filter_key = tab_id
+                    .with(id.to_string())
+                    .with("weapon_filters");
+
+                // Load currently disabled weapons (empty = all enabled)
+                let mut disabled_weapons: HashSet<String> =
+                    ui.data(|d| d.get_temp(filter_key).unwrap_or_default());
+
+                // Collect all unique weapons across this player's streaks
+                let mut all_weapons: Vec<Weapon> = p
+                    .kill_streaks
+                    .iter()
+                    .flat_map(|s| s.kills.iter().map(|(_, w)| w.clone()))
+                    .collect::<HashSet<_>>()
+                    .into_iter()
+                    .collect();
+                all_weapons.sort_by_key(|w| weapon_name(w));
+
+                if !all_weapons.is_empty() {
+                    ui.label(egui::RichText::new(t("#app_streaks_filter_weapons")).small().weak());
+                    ui.horizontal_wrapped(|ui| {
+                        for weapon in &all_weapons {
+                            let name = weapon_name(weapon);
+                            let key = format!("{:?}", weapon);
+                            let mut enabled = !disabled_weapons.contains(&key);
+                            if ui.checkbox(&mut enabled, &name).changed() {
+                                if enabled {
+                                    disabled_weapons.remove(&key);
+                                } else {
+                                    disabled_weapons.insert(key);
+                                }
+                                ui.data_mut(|d| d.insert_temp(filter_key, disabled_weapons.clone()));
+                            }
+                        }
+                    });
+                    ui.add_space(4.0);
+                }
+
+                ui.separator();
+                ui.add_space(4.0);
+
                 ScrollArea::vertical()
                     .id_salt("player_kill_streaks_scroll")
                     .auto_shrink(false)
                     .min_scrolled_height(260.)
                     .show(ui, |ui| {
-                        kill_streaks_table_ui(p, ui);
+                        kill_streaks_table_ui(p, &disabled_weapons, ui);
                     });
             }
         }
@@ -124,82 +166,133 @@ pub fn kill_streaks_ui(
     }
 }
 
-pub fn kill_streaks_table_ui(p: &Player, ui: &mut Ui) {
+pub fn kill_streaks_table_ui(p: &Player, disabled_weapons: &HashSet<String>, ui: &mut Ui) {
+    // Streak summary header
     TableBuilder::new(ui)
-        .striped(true)
+        .striped(false)
         .cell_layout(Layout::left_to_right(Align::Center))
         .columns(Column::auto(), 5)
         .header(TABLE_ROW_HEIGHT, |mut row| {
-            row.col(|ui| {
-                ui.strong(t("#app_col_wave"));
-            });
-            row.col(|ui| {
-                ui.strong(t("#app_col_total_kills"));
-            });
-            row.col(|ui| {
-                ui.strong(t("#app_col_start_time"));
-            });
-            row.col(|ui| {
-                ui.strong(t("#app_col_duration"));
-            });
-            row.col(|ui| {
-                ui.strong(t("#app_col_weapons_used"));
-            });
+            row.col(|ui| { ui.strong(t("#app_col_wave")); });
+            row.col(|ui| { ui.strong(t("#app_col_total_kills")); });
+            row.col(|ui| { ui.strong(t("#app_col_start_time")); });
+            row.col(|ui| { ui.strong(t("#app_col_duration")); });
+            row.col(|ui| { ui.strong(t("#app_col_weapons_used")); });
         })
         .body(|mut body| {
-            for (wave, streak) in p.kill_streaks.iter().enumerate() {
-                if let (Some((start, _)), Some((end, _))) =
-                    (streak.kills.first(), streak.kills.last())
-                {
+            let mut displayed_wave = 0usize;
+
+            for streak in &p.kill_streaks {
+                // Apply kill-level weapon filter
+                let filtered_kills: Vec<_> = streak
+                    .kills
+                    .iter()
+                    .filter(|(_, w)| !disabled_weapons.contains(&format!("{:?}", w)))
+                    .collect();
+
+                // Skip streaks with no remaining kills after filtering
+                if filtered_kills.is_empty() {
+                    continue;
+                }
+
+                displayed_wave += 1;
+
+                let first = filtered_kills.first().unwrap();
+                let last = filtered_kills.last().unwrap();
+                let start_dur = Duration::new(first.0.viewdemo_offset.as_secs(), 0);
+                let total_dur = Duration::new(
+                    last.0.viewdemo_offset
+                        .checked_sub(first.0.viewdemo_offset)
+                        .unwrap_or(Duration::ZERO)
+                        .as_secs(),
+                    0,
+                );
+
+                // Weapons summary for this filtered streak
+                let mut grouped: Vec<(String, usize)> = Vec::new();
+                for (_, weapon) in &filtered_kills {
+                    let name = weapon_name(weapon);
+                    if let Some((last_name, count)) = grouped.last_mut() {
+                        if *last_name == name {
+                            *count += 1;
+                            continue;
+                        }
+                    }
+                    grouped.push((name, 1));
+                }
+                let weapons_summary = grouped
+                    .iter()
+                    .map(|(name, count)| {
+                        if *count > 1 { format!("{} x{}", name, count) } else { name.clone() }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+
+                // Streak summary row
+                body.row(TABLE_ROW_HEIGHT, |mut row| {
+                    row.col(|ui| { ui.label(displayed_wave.to_string()); });
+                    row.col(|ui| { ui.label(filtered_kills.len().to_string()); });
+                    row.col(|ui| { ui.label(format_duration(start_dur).to_string()); });
+                    row.col(|ui| { ui.label(format_duration(total_dur).to_string()); });
+                    row.col(|ui| { ui.label(&weapons_summary); });
+                });
+
+                // Per-kill sub-rows with Δms intervals
+                for (i, (time, weapon)) in filtered_kills.iter().enumerate() {
+                    let delta_label = if i == 0 {
+                        "  —".to_string()
+                    } else {
+                        let prev_time = &filtered_kills[i - 1].0;
+                        let delta_ms = time.viewdemo_offset
+                            .checked_sub(prev_time.viewdemo_offset)
+                            .unwrap_or(Duration::ZERO)
+                            .as_millis();
+                        format!("  +{} ms", format_with_thousands(delta_ms))
+                    };
+
                     body.row(TABLE_ROW_HEIGHT, |mut row| {
                         row.col(|ui| {
-                            ui.label((wave + 1).to_string());
+                            ui.label(
+                                egui::RichText::new(format!("  ↳ {}", i + 1))
+                                    .weak()
+                                    .small(),
+                            );
                         });
-
+                        row.col(|_ui| {}); // kills count — not applicable per-kill
                         row.col(|ui| {
-                            ui.label(streak.kills.len().to_string());
+                            // Absolute time of this kill
+                            let abs_ms = time.viewdemo_offset.as_millis();
+                            ui.label(
+                                egui::RichText::new(format!("  {}s", abs_ms / 1000))
+                                    .weak()
+                                    .small(),
+                            );
                         });
-
                         row.col(|ui| {
-                            let start = Duration::new(start.viewdemo_offset.as_secs(), 0);
-
-                            ui.label(format_duration(start).to_string());
+                            ui.label(egui::RichText::new(&delta_label).weak().small());
                         });
-
                         row.col(|ui| {
-                            let duration = Duration::new((end - start).as_secs(), 0);
-
-                            ui.label(format_duration(duration).to_string());
-                        });
-
-                        row.col(|ui| {
-                            let mut grouped = Vec::new();
-                            for (_, weapon) in &streak.kills {
-                                let name = weapon_name(weapon);
-                                if let Some((last_name, count)) = grouped.last_mut() {
-                                    if *last_name == name {
-                                        *count += 1;
-                                        continue;
-                                    }
-                                }
-                                grouped.push((name, 1));
-                            }
-                            let weapons = grouped
-                                .into_iter()
-                                .map(|(name, count)| {
-                                    if count > 1 {
-                                        format!("{} x{}", name, count)
-                                    } else {
-                                        name
-                                    }
-                                })
-                                .collect::<Vec<_>>()
-                                .join(", ");
-
-                            ui.label(weapons);
+                            ui.label(
+                                egui::RichText::new(weapon_name(weapon))
+                                    .weak()
+                                    .small(),
+                            );
                         });
                     });
                 }
             }
         });
+}
+
+/// Format a large integer with thousands separators (e.g. 12345 → "12,345").
+fn format_with_thousands(n: u128) -> String {
+    let s = n.to_string();
+    let mut result = String::new();
+    for (i, c) in s.chars().rev().enumerate() {
+        if i > 0 && i % 3 == 0 {
+            result.push(',');
+        }
+        result.push(c);
+    }
+    result.chars().rev().collect()
 }
