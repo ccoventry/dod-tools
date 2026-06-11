@@ -130,6 +130,7 @@ pub fn kill_streaks_ui(
                 all_weapons.sort_by_key(|w| weapon_name(w));
 
                 if !all_weapons.is_empty() {
+                    // Global Select All / Clear All
                     ui.horizontal(|ui| {
                         ui.label(egui::RichText::new(t("#app_streaks_filter_weapons")).small().weak());
                         if ui.small_button(t("#app_chat_select_all")).clicked() {
@@ -144,21 +145,129 @@ pub fn kill_streaks_ui(
                             ui.data_mut(|d| d.insert_temp(filter_key, disabled_weapons.clone()));
                         }
                     });
-                    ui.horizontal_wrapped(|ui| {
-                        for weapon in &all_weapons {
-                            let name = weapon_name(weapon);
-                            let key = format!("{:?}", weapon);
-                            let mut enabled = !disabled_weapons.contains(&key);
-                            if ui.checkbox(&mut enabled, &name).changed() {
-                                if enabled {
-                                    disabled_weapons.remove(&key);
+
+                    // Grouped weapon checkboxes
+                    let categories: &[(&str, &[Weapon])] = &[
+                        ("Grenades", &[
+                            Weapon::Mk2Grenade, Weapon::StickGrenade, Weapon::MillsBomb,
+                        ]),
+                        ("Melee", &[
+                            Weapon::Kabar, Weapon::GermanKnife, Weapon::BritishKnife,
+                            Weapon::Spade, Weapon::K98Bayonet, Weapon::EnfieldBayonet,
+                            Weapon::ButtStock,
+                        ]),
+                        ("Allied", &[
+                            Weapon::M1911, Weapon::Garand, Weapon::Springfield,
+                            Weapon::Thompson, Weapon::Bar, Weapon::M1Carbine,
+                            Weapon::Browning30Cal, Weapon::GreaseGun, Weapon::Bazooka,
+                            Weapon::LeeEnfield, Weapon::ScopedLeeEnfield, Weapon::Sten,
+                            Weapon::Bren, Weapon::Webley, Weapon::Piat, Weapon::M1A1Carbine,
+                            Weapon::Mortar,
+                        ]),
+                        ("Axis", &[
+                            Weapon::Luger, Weapon::ScopedK98, Weapon::Stg44, Weapon::K98,
+                            Weapon::Mp40, Weapon::Mg42, Weapon::Mg34, Weapon::Fg42,
+                            Weapon::ScopedFg42, Weapon::K43, Weapon::Panzerschreck,
+                        ]),
+                    ];
+
+                    // Collect any weapons not covered by the above categories
+                    let categorized: HashSet<String> = categories
+                        .iter()
+                        .flat_map(|(_, weapons)| weapons.iter().map(|w| format!("{:?}", w)))
+                        .collect();
+                    let mut other_weapons: Vec<&Weapon> = all_weapons
+                        .iter()
+                        .filter(|w| !categorized.contains(&format!("{:?}", w)))
+                        .collect();
+                    other_weapons.sort_by_key(|w| weapon_name(w));
+
+                    for (group_label, group_weapons) in categories {
+                        // Only show groups that have at least one weapon present in this player's streaks
+                        let present: Vec<&Weapon> = group_weapons
+                            .iter()
+                            .filter(|w| all_weapons.contains(w))
+                            .collect();
+                        if present.is_empty() {
+                            continue;
+                        }
+
+                        let group_keys: Vec<String> = present
+                            .iter()
+                            .map(|w| format!("{:?}", w))
+                            .collect();
+                        let all_enabled = group_keys.iter().all(|k| !disabled_weapons.contains(k));
+
+                        ui.horizontal_wrapped(|ui| {
+                            // Clickable group label — toggles all weapons in the group
+                            let label_text = egui::RichText::new(format!("[{}]", group_label))
+                                .small()
+                                .strong();
+                            let resp = ui.add(
+                                egui::Label::new(label_text).sense(egui::Sense::click())
+                            );
+                            if resp.hovered() {
+                                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                            }
+                            if resp.clicked() {
+                                if all_enabled {
+                                    // All on → turn all off
+                                    for k in &group_keys { disabled_weapons.insert(k.clone()); }
                                 } else {
-                                    disabled_weapons.insert(key);
+                                    // Some/all off → turn all on
+                                    for k in &group_keys { disabled_weapons.remove(k); }
                                 }
                                 ui.data_mut(|d| d.insert_temp(filter_key, disabled_weapons.clone()));
                             }
-                        }
-                    });
+
+                            // Individual weapon checkboxes
+                            for weapon in &present {
+                                let name = weapon_name(weapon);
+                                let key = format!("{:?}", weapon);
+                                let mut enabled = !disabled_weapons.contains(&key);
+                                if ui.checkbox(&mut enabled, &name).changed() {
+                                    if enabled { disabled_weapons.remove(&key); }
+                                    else { disabled_weapons.insert(key); }
+                                    ui.data_mut(|d| d.insert_temp(filter_key, disabled_weapons.clone()));
+                                }
+                            }
+                        });
+                    }
+
+                    // "Other" group for any weapons not in the above categories
+                    if !other_weapons.is_empty() {
+                        let other_keys: Vec<String> = other_weapons
+                            .iter()
+                            .map(|w| format!("{:?}", w))
+                            .collect();
+                        let all_enabled = other_keys.iter().all(|k| !disabled_weapons.contains(k));
+                        ui.horizontal_wrapped(|ui| {
+                            let label_text = egui::RichText::new("[Other]").small().strong();
+                            let resp = ui.add(egui::Label::new(label_text).sense(egui::Sense::click()));
+                            if resp.hovered() {
+                                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                            }
+                            if resp.clicked() {
+                                if all_enabled {
+                                    for k in &other_keys { disabled_weapons.insert(k.clone()); }
+                                } else {
+                                    for k in &other_keys { disabled_weapons.remove(k); }
+                                }
+                                ui.data_mut(|d| d.insert_temp(filter_key, disabled_weapons.clone()));
+                            }
+                            for weapon in &other_weapons {
+                                let name = weapon_name(weapon);
+                                let key = format!("{:?}", weapon);
+                                let mut enabled = !disabled_weapons.contains(&key);
+                                if ui.checkbox(&mut enabled, &name).changed() {
+                                    if enabled { disabled_weapons.remove(&key); }
+                                    else { disabled_weapons.insert(key); }
+                                    ui.data_mut(|d| d.insert_temp(filter_key, disabled_weapons.clone()));
+                                }
+                            }
+                        });
+                    }
+
                     ui.add_space(4.0);
                 }
 
