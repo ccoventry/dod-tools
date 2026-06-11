@@ -71,35 +71,67 @@ pub fn chat_log_ui(file_info: Option<&FileInfo>, r: Option<&Analysis>, ui: &mut 
 
     ui.horizontal(|ui| {
         ui.label(t("#app_chat_player_chat"));
-        if ui.checkbox(&mut show_mm1, t("#app_chat_all_chat")).changed() || changed {
+        if ui
+            .checkbox(&mut show_mm1, t("#app_chat_all_chat"))
+            .changed()
+            || changed
+        {
             ui.data_mut(|d| d.insert_temp(show_mm1_id, show_mm1));
         }
-        if ui.checkbox(&mut show_mm2, t("#app_chat_team_chat")).changed() || changed {
+        if ui
+            .checkbox(&mut show_mm2, t("#app_chat_team_chat"))
+            .changed()
+            || changed
+        {
             ui.data_mut(|d| d.insert_temp(show_mm2_id, show_mm2));
         }
-        if ui.checkbox(&mut show_alive, t("#app_chat_alive_players")).changed() || changed {
+        if ui
+            .checkbox(&mut show_alive, t("#app_chat_alive_players"))
+            .changed()
+            || changed
+        {
             ui.data_mut(|d| d.insert_temp(show_alive_id, show_alive));
         }
-        if ui.checkbox(&mut show_dead, t("#app_chat_dead_players")).changed() || changed {
+        if ui
+            .checkbox(&mut show_dead, t("#app_chat_dead_players"))
+            .changed()
+            || changed
+        {
             ui.data_mut(|d| d.insert_temp(show_dead_id, show_dead));
         }
     });
 
     ui.horizontal(|ui| {
         ui.label(t("#app_chat_system_logs"));
-        if ui.checkbox(&mut show_joins, t("#app_chat_joins_leaves")).changed() || changed {
+        if ui
+            .checkbox(&mut show_joins, t("#app_chat_joins_leaves"))
+            .changed()
+            || changed
+        {
             ui.data_mut(|d| d.insert_temp(show_joins_id, show_joins));
         }
-        if ui.checkbox(&mut show_teams, t("#app_chat_team_changes")).changed() || changed {
+        if ui
+            .checkbox(&mut show_teams, t("#app_chat_team_changes"))
+            .changed()
+            || changed
+        {
             ui.data_mut(|d| d.insert_temp(show_teams_id, show_teams));
         }
-        if ui.checkbox(&mut show_gameplay, t("#app_chat_gameplay")).changed() || changed {
+        if ui
+            .checkbox(&mut show_gameplay, t("#app_chat_gameplay"))
+            .changed()
+            || changed
+        {
             ui.data_mut(|d| d.insert_temp(show_gameplay_id, show_gameplay));
         }
-        if ui.checkbox(&mut show_other_sys, t("#app_chat_other_system")).changed() || changed {
+        if ui
+            .checkbox(&mut show_other_sys, t("#app_chat_other_system"))
+            .changed()
+            || changed
+        {
             ui.data_mut(|d| d.insert_temp(show_other_sys_id, show_other_sys));
         }
-        
+
         ui.add_space(20.0);
         ui.label(t("#app_chat_search"));
         if ui.text_edit_singleline(&mut filter_text).changed() {
@@ -141,23 +173,50 @@ pub fn chat_log_ui(file_info: Option<&FileInfo>, r: Option<&Analysis>, ui: &mut 
         .filter(|msg| {
             match msg.chat_type {
                 ChatType::Mm1 => {
-                    if !show_mm1 { return false; }
-                    let alive_dead_ok = if msg.sender_dead { show_dead } else { show_alive };
-                    if !alive_dead_ok { return false; }
+                    if !show_mm1 {
+                        return false;
+                    }
+                    let alive_dead_ok = if msg.sender_dead {
+                        show_dead
+                    } else {
+                        show_alive
+                    };
+                    if !alive_dead_ok {
+                        return false;
+                    }
                 }
                 ChatType::Mm2 => {
-                    if !show_mm2 { return false; }
-                    let alive_dead_ok = if msg.sender_dead { show_dead } else { show_alive };
-                    if !alive_dead_ok { return false; }
+                    if !show_mm2 {
+                        return false;
+                    }
+                    let alive_dead_ok = if msg.sender_dead {
+                        show_dead
+                    } else {
+                        show_alive
+                    };
+                    if !alive_dead_ok {
+                        return false;
+                    }
                 }
                 ChatType::System => {
                     let sys_category = if let Some(ref token) = msg.system_token {
                         let token_lower = token.to_lowercase();
-                        if token_lower.contains("connect") || token_lower.contains("join_game") || token_lower.contains("joined_game") || token_lower.contains("kick") || token_lower.contains("disconnect") {
+                        if token_lower.contains("connect")
+                            || token_lower.contains("join_game")
+                            || token_lower.contains("joined_game")
+                            || token_lower.contains("kick")
+                            || token_lower.contains("disconnect")
+                        {
                             "join_leave"
-                        } else if token_lower.contains("joined_team") || token_lower.contains("team") {
+                        } else if token_lower.contains("joined_team")
+                            || token_lower.contains("team")
+                        {
                             "team_change"
-                        } else if token_lower.contains("score") || token_lower.contains("capture") || token_lower.contains("cap") || token_lower.contains("reinforce") {
+                        } else if token_lower.contains("score")
+                            || token_lower.contains("capture")
+                            || token_lower.contains("cap")
+                            || token_lower.contains("reinforce")
+                        {
                             "gameplay"
                         } else {
                             "other"
@@ -167,16 +226,36 @@ pub fn chat_log_ui(file_info: Option<&FileInfo>, r: Option<&Analysis>, ui: &mut 
                     };
 
                     match sys_category {
-                        "join_leave" => { if !show_joins { return false; } }
-                        "team_change" => { if !show_teams { return false; } }
-                        "gameplay" => { if !show_gameplay { return false; } }
-                        _ => { if !show_other_sys { return false; } }
+                        "join_leave" => {
+                            if !show_joins {
+                                return false;
+                            }
+                        }
+                        "team_change" => {
+                            if !show_teams {
+                                return false;
+                            }
+                        }
+                        "gameplay" => {
+                            if !show_gameplay {
+                                return false;
+                            }
+                        }
+                        _ => {
+                            if !show_other_sys {
+                                return false;
+                            }
+                        }
                     }
                 }
             }
 
             if !query.is_empty() {
-                let name_matches = msg.sender_name.as_ref().map(|n| n.to_lowercase().contains(&query)).unwrap_or(false);
+                let name_matches = msg
+                    .sender_name
+                    .as_ref()
+                    .map(|n| n.to_lowercase().contains(&query))
+                    .unwrap_or(false);
                 let text_matches = msg.text.to_lowercase().contains(&query);
                 if !name_matches && !text_matches {
                     return false;
@@ -195,9 +274,11 @@ pub fn chat_log_ui(file_info: Option<&FileInfo>, r: Option<&Analysis>, ui: &mut 
     let text_style = egui::TextStyle::Body;
     let row_height = ui.text_style_height(&text_style);
 
-    ScrollArea::vertical()
-        .auto_shrink([false; 2])
-        .show_rows(ui, row_height, filtered.len(), |ui, row_range| {
+    ScrollArea::vertical().auto_shrink([false; 2]).show_rows(
+        ui,
+        row_height,
+        filtered.len(),
+        |ui, row_range| {
             for idx in row_range {
                 let msg = filtered[idx];
                 ui.horizontal(|ui| {
@@ -205,7 +286,10 @@ pub fn chat_log_ui(file_info: Option<&FileInfo>, r: Option<&Analysis>, ui: &mut 
                     ui.colored_label(Color32::from_rgb(140, 140, 140), time_str);
 
                     if msg.sender_dead {
-                        ui.colored_label(Color32::from_rgb(220, 50, 50), t("#app_chat_dead_prefix"));
+                        ui.colored_label(
+                            Color32::from_rgb(220, 50, 50),
+                            t("#app_chat_dead_prefix"),
+                        );
                     }
 
                     match msg.chat_type {
@@ -214,12 +298,15 @@ pub fn chat_log_ui(file_info: Option<&FileInfo>, r: Option<&Analysis>, ui: &mut 
                                 Some(Team::Allies) => Color32::from_rgb(34, 139, 34), // Forest Green
                                 Some(Team::Axis) => Color32::from_rgb(178, 34, 34), // Firebrick Red
                                 Some(Team::Spectators) => Color32::YELLOW, // Spectator yellow
-                                _ => Color32::LIGHT_BLUE, // Default / Console
+                                _ => Color32::LIGHT_BLUE,                  // Default / Console
                             };
                             ui.colored_label(team_color, t("#app_chat_team_prefix"));
                         }
                         ChatType::System => {
-                            ui.colored_label(Color32::from_rgb(200, 150, 80), t("#app_chat_system_prefix"));
+                            ui.colored_label(
+                                Color32::from_rgb(200, 150, 80),
+                                t("#app_chat_system_prefix"),
+                            );
                         }
                         _ => {}
                     }
@@ -237,24 +324,33 @@ pub fn chat_log_ui(file_info: Option<&FileInfo>, r: Option<&Analysis>, ui: &mut 
                             } else {
                                 msg.text.clone()
                             };
-                            ui.label(RichText::new(&display_text).italics().color(Color32::from_rgb(180, 220, 220)));
+                            ui.label(
+                                RichText::new(display_text.trim())
+                                    .italics()
+                                    .color(Color32::from_rgb(180, 220, 220)),
+                            );
                         }
                         _ => {
                             let team_color = match msg.sender_team {
                                 Some(Team::Allies) => Color32::from_rgb(34, 139, 34), // Forest Green
                                 Some(Team::Axis) => Color32::from_rgb(178, 34, 34), // Firebrick Red
                                 Some(Team::Spectators) => Color32::YELLOW, // Spectator yellow
-                                _ => Color32::LIGHT_BLUE, // Default / Console
+                                _ => Color32::LIGHT_BLUE,                  // Default / Console
                             };
 
                             let name_fallback = t("#app_chat_unknown_sender");
-                            let name = msg.sender_name.as_deref().unwrap_or(&name_fallback);
+                            let name = msg.sender_name.as_deref().unwrap_or(&name_fallback).trim();
+
+                            let old_spacing = ui.spacing().item_spacing.x;
+                            ui.spacing_mut().item_spacing.x = 0.0;
                             ui.colored_label(team_color, name);
-                            ui.label(" :  ");
-                            ui.colored_label(Color32::WHITE, &msg.text);
+                            ui.label(": ");
+                            ui.colored_label(Color32::WHITE, msg.text.trim());
+                            ui.spacing_mut().item_spacing.x = old_spacing;
                         }
                     }
                 });
             }
-        });
+        },
+    );
 }

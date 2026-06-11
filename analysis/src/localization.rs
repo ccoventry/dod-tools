@@ -60,7 +60,7 @@ fn parse_kv_line(line: &str) -> Option<(String, String)> {
     let chars: Vec<char> = line.chars().collect();
     let mut quotes_indices = Vec::new();
     let mut escaped = false;
-    
+
     let mut i = 0;
     while i < chars.len() {
         let c = chars[i];
@@ -74,10 +74,14 @@ fn parse_kv_line(line: &str) -> Option<(String, String)> {
         }
         i += 1;
     }
-    
+
     if quotes_indices.len() >= 4 {
-        let key: String = chars[quotes_indices[0] + 1..quotes_indices[1]].iter().collect();
-        let val: String = chars[quotes_indices[2] + 1..quotes_indices[3]].iter().collect();
+        let key: String = chars[quotes_indices[0] + 1..quotes_indices[1]]
+            .iter()
+            .collect();
+        let val: String = chars[quotes_indices[2] + 1..quotes_indices[3]]
+            .iter()
+            .collect();
         Some((key, val))
     } else {
         None
@@ -86,13 +90,13 @@ fn parse_kv_line(line: &str) -> Option<(String, String)> {
 
 fn parse_localization_content(content: &str, map: &mut HashMap<String, String>, target_lang: &str) {
     let mut current_lang = "en".to_string(); // default to en in case there are no headers
-    
+
     for line in content.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with("//") {
             continue;
         }
-        
+
         // Check for language section like [en], [de]
         if trimmed.starts_with('[') && trimmed.ends_with(']') {
             current_lang = trimmed[1..trimmed.len() - 1].trim().to_lowercase();
@@ -132,33 +136,42 @@ fn parse_localization_content(content: &str, map: &mut HashMap<String, String>, 
 fn load_localizations_from_disk(active_lang: &str) -> HashMap<String, String> {
     let mut map = HashMap::new();
     let amxx_code = get_amxx_code(active_lang);
-    
+
     // Pass 1: English baseline
     load_pass(&mut map, "english", "en");
-    
+
     // Pass 2: Active language overlay (if not English)
     if active_lang != "english" {
         load_pass(&mut map, active_lang, amxx_code);
     }
-    
+
     map
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn scan_dir_recursive(dir: &std::path::Path, map: &mut HashMap<String, String>, filter_lang: &str, amxx_code: &str) {
+fn scan_dir_recursive(
+    dir: &std::path::Path,
+    map: &mut HashMap<String, String>,
+    filter_lang: &str,
+    amxx_code: &str,
+) {
     if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.filter_map(Result::ok) {
             let path = entry.path();
             if path.is_dir() {
                 scan_dir_recursive(&path, map, filter_lang, amxx_code);
             } else if path.is_file() && path.extension().map(|s| s == "txt").unwrap_or(false) {
-                let name = path.file_name().and_then(|s| s.to_str()).unwrap_or_default().to_lowercase();
+                let name = path
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or_default()
+                    .to_lowercase();
                 let should_load = if name.contains('_') {
                     name.ends_with(&format!("_{}.txt", filter_lang))
                 } else {
                     true
                 };
-                
+
                 if should_load {
                     if let Ok(content) = read_to_string_lossy_utf16_or_utf8(&path) {
                         parse_localization_content(&content, map, amxx_code);
@@ -175,15 +188,20 @@ fn load_pass(map: &mut HashMap<String, String>, filter_lang: &str, amxx_code: &s
         std::path::PathBuf::from("localizations"),
         std::path::PathBuf::from("../localizations"),
     ];
-    
+
     if let Ok(exe_path) = std::env::current_exe() {
         if let Some(parent) = exe_path.parent() {
             paths.push(parent.join("localizations"));
         }
     }
-    
+
     for base_path in paths {
-        if base_path.is_dir() && base_path.file_name().map(|n| n == "localizations").unwrap_or(false) {
+        if base_path.is_dir()
+            && base_path
+                .file_name()
+                .map(|n| n == "localizations")
+                .unwrap_or(false)
+        {
             scan_dir_recursive(&base_path, map, filter_lang, amxx_code);
         }
     }
@@ -208,7 +226,7 @@ fn read_to_string_lossy_utf16_or_utf8(path: &std::path::Path) -> std::io::Result
             return Ok(String::from_utf16_lossy(&u16_chars));
         }
     }
-    
+
     match String::from_utf8(bytes.clone()) {
         Ok(s) => Ok(s),
         Err(_) => {
@@ -226,7 +244,6 @@ fn read_to_string_lossy_utf16_or_utf8(path: &std::path::Path) -> std::io::Result
     }
 }
 
-
 #[cfg(target_arch = "wasm32")]
 fn load_localizations_from_disk(_active_lang: &str) -> HashMap<String, String> {
     HashMap::new()
@@ -242,14 +259,20 @@ mod tests {
         let parsed = parse_kv_line(line);
         assert_eq!(
             parsed,
-            Some(("#Game_joined_team".to_string(), "%s1 joined team %s2".to_string()))
+            Some((
+                "#Game_joined_team".to_string(),
+                "%s1 joined team %s2".to_string()
+            ))
         );
-        
+
         let line_escaped = "\"#Game_test\"\t\t\"This has a \\\"quote\\\" inside\"";
         let parsed_escaped = parse_kv_line(line_escaped);
         assert_eq!(
             parsed_escaped,
-            Some(("#Game_test".to_string(), "This has a \\\"quote\\\" inside".to_string()))
+            Some((
+                "#Game_test".to_string(),
+                "This has a \\\"quote\\\" inside".to_string()
+            ))
         );
     }
 
@@ -268,13 +291,22 @@ mod tests {
                 }
             }
         "##;
-        
+
         let mut map = HashMap::new();
         parse_localization_content(content, &mut map, "en");
-        
-        assert_eq!(map.get("#game_joined_team"), Some(&"%s1 joined team %s2".to_string()));
-        assert_eq!(map.get("#game_join"), Some(&"%s1 joined the game".to_string()));
-        assert_eq!(map.get("#game_disconnected"), Some(&"%s1 disconnected".to_string()));
+
+        assert_eq!(
+            map.get("#game_joined_team"),
+            Some(&"%s1 joined team %s2".to_string())
+        );
+        assert_eq!(
+            map.get("#game_join"),
+            Some(&"%s1 joined the game".to_string())
+        );
+        assert_eq!(
+            map.get("#game_disconnected"),
+            Some(&"%s1 disconnected".to_string())
+        );
     }
 
     #[test]
@@ -287,17 +319,21 @@ mod tests {
             [de]
             CHO_FIN_EXT = Auswahl beendet. Laufende Map wird um %.0f Minuten verlängert.
         "#;
-        
+
         let mut map = HashMap::new();
         parse_localization_content(content, &mut map, "en");
-        
+
         assert_eq!(
             map.get("cho_fin_ext"),
-            Some(&"Choosing finished. Current map will be extended to next %.0f minutes".to_string())
+            Some(
+                &"Choosing finished. Current map will be extended to next %.0f minutes".to_string()
+            )
         );
         assert_eq!(
             map.get("#cho_fin_ext"),
-            Some(&"Choosing finished. Current map will be extended to next %.0f minutes".to_string())
+            Some(
+                &"Choosing finished. Current map will be extended to next %.0f minutes".to_string()
+            )
         );
         assert_eq!(
             map.get("cho_fin_next"),

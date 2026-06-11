@@ -1,5 +1,5 @@
-mod clan_match;
 mod chat;
+mod clan_match;
 mod kill;
 mod localization;
 mod mortality;
@@ -9,8 +9,8 @@ mod scoreboard;
 mod time;
 
 use crate::{
-    clan_match::{ClanMatchDetection, use_clan_match_detection_updates},
     chat::use_chat_updates,
+    clan_match::{ClanMatchDetection, use_clan_match_detection_updates},
     kill::{use_kill_streak_updates, use_weapon_breakdown_updates},
     mortality::with_mortality_detection,
     player::use_player_updates,
@@ -27,10 +27,10 @@ use std::time::Duration;
 
 pub use crate::{
     chat::{ChatMessage, ChatType, translate_system_message},
+    localization::{get_active_language, set_active_language, translate_key},
     mortality::MortalityState,
     player::{Connection, Player, PlayerGlobalId, SteamId},
     round::Round,
-    localization::{set_active_language, get_active_language, translate_key},
 };
 pub use dod::{Team, Weapon};
 
@@ -62,7 +62,7 @@ pub struct PovStats {
     pub teamkills_committed: u32,
     pub teamkills_suffered: u32,
     pub weapon_stats: std::collections::HashMap<Weapon, WeaponPovStats>,
-    
+
     // Tracking state
     pub current_weapon: Option<Weapon>,
     pub prev_clip_ammo: u32,
@@ -137,7 +137,10 @@ impl From<Demo> for DemoInfo {
                     if let MessageData::Parsed(msgs) = &box_type.1.messages {
                         for msg in msgs {
                             if let NetMessage::EngineMessage(eng_msg) = msg {
-                                if matches!(**eng_msg, EngineMessage::SvcHltv(_) | EngineMessage::SvcDirector(_)) {
+                                if matches!(
+                                    **eng_msg,
+                                    EngineMessage::SvcHltv(_) | EngineMessage::SvcDirector(_)
+                                ) {
                                     is_hltv = true;
                                     break 'outer;
                                 }
@@ -147,7 +150,11 @@ impl From<Demo> for DemoInfo {
                 }
             }
         }
-        let demo_type = if is_hltv { "HLTV".to_string() } else { "POV".to_string() };
+        let demo_type = if is_hltv {
+            "HLTV".to_string()
+        } else {
+            "POV".to_string()
+        };
 
         Self {
             demo_protocol: value.header.demo_protocol,
@@ -172,7 +179,7 @@ fn is_relevant_message(name_bytes: &[u8]) -> bool {
         len -= 1;
     }
     let trimmed = &name_bytes[..len];
-    
+
     matches!(
         trimmed,
         b"RoundState"
@@ -211,7 +218,11 @@ pub fn use_pov_stats_updates(state: &mut AnalyzerState, event: &AnalyzerEvent) {
                 if let Some(ref prev_weapon) = state.pov_stats.current_weapon {
                     if prev_weapon == &msg.weapon {
                         if (msg.clip_ammo as u32) < state.pov_stats.prev_clip_ammo {
-                            let entry = state.pov_stats.weapon_stats.entry(msg.weapon.clone()).or_default();
+                            let entry = state
+                                .pov_stats
+                                .weapon_stats
+                                .entry(msg.weapon.clone())
+                                .or_default();
                             entry.bullets_fired += 1;
                         }
                     } else {
@@ -225,7 +236,11 @@ pub fn use_pov_stats_updates(state: &mut AnalyzerState, event: &AnalyzerEvent) {
             }
             UserMessage::ReloadDone(_) => {
                 if let Some(ref active_weapon) = state.pov_stats.current_weapon {
-                    let entry = state.pov_stats.weapon_stats.entry(active_weapon.clone()).or_default();
+                    let entry = state
+                        .pov_stats
+                        .weapon_stats
+                        .entry(active_weapon.clone())
+                        .or_default();
                     entry.reloads += 1;
                 }
                 state.pov_stats.is_scoped = false;
@@ -239,7 +254,8 @@ pub fn use_pov_stats_updates(state: &mut AnalyzerState, event: &AnalyzerEvent) {
                 if state.pov_stats.has_received_health {
                     if health_val < state.pov_stats.prev_health {
                         state.pov_stats.hits_taken += 1;
-                        state.pov_stats.total_damage_taken += state.pov_stats.prev_health - health_val;
+                        state.pov_stats.total_damage_taken +=
+                            state.pov_stats.prev_health - health_val;
                     }
                 }
                 state.pov_stats.prev_health = health_val;
@@ -247,19 +263,32 @@ pub fn use_pov_stats_updates(state: &mut AnalyzerState, event: &AnalyzerEvent) {
             }
             UserMessage::DeathMsg(msg) => {
                 if let Some(pov_idx) = state.pov_player_index {
-                    let is_killer_pov = msg.killer_client_index > 0 && msg.killer_client_index - 1 == pov_idx;
-                    let is_victim_pov = msg.victim_client_index > 0 && msg.victim_client_index - 1 == pov_idx;
+                    let is_killer_pov =
+                        msg.killer_client_index > 0 && msg.killer_client_index - 1 == pov_idx;
+                    let is_victim_pov =
+                        msg.victim_client_index > 0 && msg.victim_client_index - 1 == pov_idx;
 
                     if is_killer_pov {
                         if msg.killer_client_index == msg.victim_client_index {
                             state.pov_stats.suicides += 1;
                         } else {
-                            let killer_team = state.find_player_by_client_index(msg.killer_client_index - 1).and_then(|p| p.team.clone());
-                            let victim_team = state.find_player_by_client_index(msg.victim_client_index - 1).and_then(|p| p.team.clone());
-                            if killer_team.is_some() && victim_team.is_some() && killer_team == victim_team {
+                            let killer_team = state
+                                .find_player_by_client_index(msg.killer_client_index - 1)
+                                .and_then(|p| p.team.clone());
+                            let victim_team = state
+                                .find_player_by_client_index(msg.victim_client_index - 1)
+                                .and_then(|p| p.team.clone());
+                            if killer_team.is_some()
+                                && victim_team.is_some()
+                                && killer_team == victim_team
+                            {
                                 state.pov_stats.teamkills_committed += 1;
                             } else {
-                                let entry = state.pov_stats.weapon_stats.entry(msg.weapon.clone()).or_default();
+                                let entry = state
+                                    .pov_stats
+                                    .weapon_stats
+                                    .entry(msg.weapon.clone())
+                                    .or_default();
                                 entry.kills += 1;
                                 if matches!(
                                     msg.weapon,
@@ -283,9 +312,16 @@ pub fn use_pov_stats_updates(state: &mut AnalyzerState, event: &AnalyzerEvent) {
                     if is_victim_pov {
                         state.pov_stats.is_scoped = false;
                         if msg.killer_client_index > 0 && !is_killer_pov {
-                            let killer_team = state.find_player_by_client_index(msg.killer_client_index - 1).and_then(|p| p.team.clone());
-                            let victim_team = state.find_player_by_client_index(msg.victim_client_index - 1).and_then(|p| p.team.clone());
-                            if killer_team.is_some() && victim_team.is_some() && killer_team == victim_team {
+                            let killer_team = state
+                                .find_player_by_client_index(msg.killer_client_index - 1)
+                                .and_then(|p| p.team.clone());
+                            let victim_team = state
+                                .find_player_by_client_index(msg.victim_client_index - 1)
+                                .and_then(|p| p.team.clone());
+                            if killer_team.is_some()
+                                && victim_team.is_some()
+                                && killer_team == victim_team
+                            {
                                 state.pov_stats.teamkills_suffered += 1;
                             }
                         }
@@ -310,9 +346,8 @@ impl Analysis {
     where
         F: FnMut(usize, usize),
     {
-        let demo_res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            open_demo_from_bytes(value)
-        }));
+        let demo_res =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| open_demo_from_bytes(value)));
         let demo = match demo_res {
             Ok(Ok(d)) => d,
             Ok(Err(e)) => return Err(format!("Parse error: {}", e)),
@@ -337,7 +372,12 @@ impl Analysis {
 
         process_event(&mut state, &AnalyzerEvent::Initialization);
 
-        let total_frames: usize = demo.directory.entries.iter().map(|entry| entry.frames.len()).sum();
+        let total_frames: usize = demo
+            .directory
+            .entries
+            .iter()
+            .map(|entry| entry.frames.len())
+            .sum();
         let mut processed_frames = 0;
 
         for entry in &demo.directory.entries {
@@ -348,12 +388,20 @@ impl Analysis {
                         for net_msg in msgs {
                             match net_msg {
                                 NetMessage::EngineMessage(engine_msg) => {
-                                    process_event(&mut state, &AnalyzerEvent::EngineMessage(engine_msg));
+                                    process_event(
+                                        &mut state,
+                                        &AnalyzerEvent::EngineMessage(engine_msg),
+                                    );
                                 }
                                 NetMessage::UserMessage(user_msg) => {
                                     if is_relevant_message(user_msg.name.as_ref()) {
-                                        if let Ok(msg) = UserMessage::new(&user_msg.name, &user_msg.data) {
-                                            process_event(&mut state, &AnalyzerEvent::UserMessage(msg));
+                                        if let Ok(msg) =
+                                            UserMessage::new(&user_msg.name, &user_msg.data)
+                                        {
+                                            process_event(
+                                                &mut state,
+                                                &AnalyzerEvent::UserMessage(msg),
+                                            );
                                         }
                                     }
                                 }
@@ -375,15 +423,14 @@ impl Analysis {
     }
 
     pub fn parse_with_diagnostics(value: &[u8]) -> Result<(Self, ParseDiagnostics), String> {
-        let demo_res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            open_demo_from_bytes(value)
-        }));
+        let demo_res =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| open_demo_from_bytes(value)));
         let demo = match demo_res {
             Ok(Ok(d)) => d,
             Ok(Err(e)) => return Err(format!("Parse error: {}", e)),
             Err(_) => return Err("Parser panicked during demo structural decoding".to_string()),
         };
-        
+
         let process_event = |state: &mut AnalyzerState, event: &AnalyzerEvent| {
             use_timing_updates(state, event);
             use_player_updates(state, event);
@@ -403,7 +450,12 @@ impl Analysis {
         let mut _last_live_frame_unopt = None;
         let mut state_unopt = AnalyzerState::default();
         process_event(&mut state_unopt, &AnalyzerEvent::Initialization);
-        let total_frames: usize = demo.directory.entries.iter().map(|entry| entry.frames.len()).sum();
+        let total_frames: usize = demo
+            .directory
+            .entries
+            .iter()
+            .map(|entry| entry.frames.len())
+            .sum();
         let mut processed_frames = 0;
 
         for entry in &demo.directory.entries {
@@ -414,13 +466,27 @@ impl Analysis {
                         for net_msg in msgs {
                             match net_msg {
                                 NetMessage::EngineMessage(engine_msg) => {
-                                    process_event(&mut state_unopt, &AnalyzerEvent::EngineMessage(engine_msg));
+                                    process_event(
+                                        &mut state_unopt,
+                                        &AnalyzerEvent::EngineMessage(engine_msg),
+                                    );
                                 }
                                 NetMessage::UserMessage(user_msg) => {
-                                    if let Ok(msg) = UserMessage::new(&user_msg.name, &user_msg.data) {
-                                        let old_live = matches!(state_unopt.clan_match_detection, ClanMatchDetection::MatchIsLive);
-                                        process_event(&mut state_unopt, &AnalyzerEvent::UserMessage(msg));
-                                        let new_live = matches!(state_unopt.clan_match_detection, ClanMatchDetection::MatchIsLive);
+                                    if let Ok(msg) =
+                                        UserMessage::new(&user_msg.name, &user_msg.data)
+                                    {
+                                        let old_live = matches!(
+                                            state_unopt.clan_match_detection,
+                                            ClanMatchDetection::MatchIsLive
+                                        );
+                                        process_event(
+                                            &mut state_unopt,
+                                            &AnalyzerEvent::UserMessage(msg),
+                                        );
+                                        let new_live = matches!(
+                                            state_unopt.clan_match_detection,
+                                            ClanMatchDetection::MatchIsLive
+                                        );
                                         if !old_live && new_live {
                                             _last_live_frame_unopt = Some(processed_frames);
                                         }
@@ -451,14 +517,28 @@ impl Analysis {
                         for net_msg in msgs {
                             match net_msg {
                                 NetMessage::EngineMessage(engine_msg) => {
-                                    process_event(&mut state_opt, &AnalyzerEvent::EngineMessage(engine_msg));
+                                    process_event(
+                                        &mut state_opt,
+                                        &AnalyzerEvent::EngineMessage(engine_msg),
+                                    );
                                 }
                                 NetMessage::UserMessage(user_msg) => {
                                     if is_relevant_message(user_msg.name.as_ref()) {
-                                        if let Ok(msg) = UserMessage::new(&user_msg.name, &user_msg.data) {
-                                            let old_live = matches!(state_opt.clan_match_detection, ClanMatchDetection::MatchIsLive);
-                                            process_event(&mut state_opt, &AnalyzerEvent::UserMessage(msg));
-                                            let new_live = matches!(state_opt.clan_match_detection, ClanMatchDetection::MatchIsLive);
+                                        if let Ok(msg) =
+                                            UserMessage::new(&user_msg.name, &user_msg.data)
+                                        {
+                                            let old_live = matches!(
+                                                state_opt.clan_match_detection,
+                                                ClanMatchDetection::MatchIsLive
+                                            );
+                                            process_event(
+                                                &mut state_opt,
+                                                &AnalyzerEvent::UserMessage(msg),
+                                            );
+                                            let new_live = matches!(
+                                                state_opt.clan_match_detection,
+                                                ClanMatchDetection::MatchIsLive
+                                            );
                                             if !old_live && new_live {
                                                 last_live_frame_opt = Some(processed_frames);
                                             }
@@ -508,22 +588,37 @@ pub struct ParseDiagnostics {
 
 fn check_states_equal(left: &AnalyzerState, right: &AnalyzerState) -> Result<(), String> {
     if format!("{:?}", left.clan_match_detection) != format!("{:?}", right.clan_match_detection) {
-        return Err(format!("clan_match_detection mismatch: {:?} vs {:?}", left.clan_match_detection, right.clan_match_detection));
+        return Err(format!(
+            "clan_match_detection mismatch: {:?} vs {:?}",
+            left.clan_match_detection, right.clan_match_detection
+        ));
     }
-    if left.current_time.real_offset != right.current_time.real_offset || left.current_time.viewdemo_offset != right.current_time.viewdemo_offset {
+    if left.current_time.real_offset != right.current_time.real_offset
+        || left.current_time.viewdemo_offset != right.current_time.viewdemo_offset
+    {
         return Err(format!("current_time mismatch"));
     }
     if format!("{:?}", left.team_scores) != format!("{:?}", right.team_scores) {
         return Err(format!("team_scores mismatch"));
     }
     if left.pov_player_index != right.pov_player_index {
-        return Err(format!("pov_player_index mismatch: {:?} vs {:?}", left.pov_player_index, right.pov_player_index));
+        return Err(format!(
+            "pov_player_index mismatch: {:?} vs {:?}",
+            left.pov_player_index, right.pov_player_index
+        ));
     }
     if left.pov_stats != right.pov_stats {
-        return Err(format!("pov_stats mismatch: {:?} vs {:?}", left.pov_stats, right.pov_stats));
+        return Err(format!(
+            "pov_stats mismatch: {:?} vs {:?}",
+            left.pov_stats, right.pov_stats
+        ));
     }
     if left.rounds.len() != right.rounds.len() {
-        return Err(format!("rounds count mismatch: {} vs {}", left.rounds.len(), right.rounds.len()));
+        return Err(format!(
+            "rounds count mismatch: {} vs {}",
+            left.rounds.len(),
+            right.rounds.len()
+        ));
     }
     for (i, (r_l, r_r)) in left.rounds.iter().zip(right.rounds.iter()).enumerate() {
         if format!("{:?}", r_l) != format!("{:?}", r_r) {
@@ -531,7 +626,11 @@ fn check_states_equal(left: &AnalyzerState, right: &AnalyzerState) -> Result<(),
         }
     }
     if left.players.len() != right.players.len() {
-        return Err(format!("players count mismatch: {} vs {}", left.players.len(), right.players.len()));
+        return Err(format!(
+            "players count mismatch: {} vs {}",
+            left.players.len(),
+            right.players.len()
+        ));
     }
     for (i, (p_l, p_r)) in left.players.iter().zip(right.players.iter()).enumerate() {
         if p_l.id != p_r.id {
@@ -555,7 +654,12 @@ fn check_states_equal(left: &AnalyzerState, right: &AnalyzerState) -> Result<(),
         if p_l.kill_streaks.len() != p_r.kill_streaks.len() {
             return Err(format!("player {} kill_streaks len mismatched", i));
         }
-        for (j, (k_l, k_r)) in p_l.kill_streaks.iter().zip(p_r.kill_streaks.iter()).enumerate() {
+        for (j, (k_l, k_r)) in p_l
+            .kill_streaks
+            .iter()
+            .zip(p_r.kill_streaks.iter())
+            .enumerate()
+        {
             if format!("{:?}", k_l.kills) != format!("{:?}", k_r.kills) {
                 return Err(format!("player {} kill_streak {} mismatched", i, j));
             }
@@ -567,9 +671,10 @@ fn check_states_equal(left: &AnalyzerState, right: &AnalyzerState) -> Result<(),
             return Err(format!("player {} mortality len mismatched", i));
         }
         for (j, (m_l, m_r)) in p_l.mortality.iter().zip(p_r.mortality.iter()).enumerate() {
-            if m_l.time().real_offset != m_r.time().real_offset || 
-               m_l.time().viewdemo_offset != m_r.time().viewdemo_offset || 
-               m_l.mortality() != m_r.mortality() {
+            if m_l.time().real_offset != m_r.time().real_offset
+                || m_l.time().viewdemo_offset != m_r.time().viewdemo_offset
+                || m_l.mortality() != m_r.mortality()
+            {
                 return Err(format!("player {} mortality {} mismatched", i, j));
             }
         }
@@ -627,17 +732,17 @@ mod tests {
             "../demos/bewton-playoffs-round1-armory-allied.dem",
             "demos/bewton-playoffs-round1-armory-allied.dem",
         ];
-        
+
         let mut tested_any = false;
-        
+
         for path in paths {
             if !std::path::Path::new(path).exists() {
                 continue;
             }
-            
+
             println!("Testing optimized vs unoptimized parsing on: {}", path);
             let file_bytes = fs::read(path).expect("failed to read demo");
-            
+
             // Unoptimized parse
             let demo = open_demo_from_bytes(&file_bytes).unwrap();
             let mut state_unopt = AnalyzerState::default();
@@ -659,25 +764,39 @@ mod tests {
             process_event(&mut state_unopt, &AnalyzerEvent::Initialization);
             for entry in &demo.directory.entries {
                 for frame in &entry.frames {
-                    let old_live = matches!(state_unopt.clan_match_detection, ClanMatchDetection::MatchIsLive);
+                    let old_live = matches!(
+                        state_unopt.clan_match_detection,
+                        ClanMatchDetection::MatchIsLive
+                    );
                     process_event(&mut state_unopt, &AnalyzerEvent::Frame(frame));
                     if let FrameData::NetworkMessage(box_type) = &frame.frame_data {
                         if let MessageData::Parsed(msgs) = &box_type.1.messages {
                             for net_msg in msgs {
                                 match net_msg {
                                     NetMessage::EngineMessage(engine_msg) => {
-                                        process_event(&mut state_unopt, &AnalyzerEvent::EngineMessage(engine_msg));
+                                        process_event(
+                                            &mut state_unopt,
+                                            &AnalyzerEvent::EngineMessage(engine_msg),
+                                        );
                                     }
                                     NetMessage::UserMessage(user_msg) => {
-                                        if let Ok(msg) = UserMessage::new(&user_msg.name, &user_msg.data) {
-                                            process_event(&mut state_unopt, &AnalyzerEvent::UserMessage(msg));
+                                        if let Ok(msg) =
+                                            UserMessage::new(&user_msg.name, &user_msg.data)
+                                        {
+                                            process_event(
+                                                &mut state_unopt,
+                                                &AnalyzerEvent::UserMessage(msg),
+                                            );
                                         }
                                     }
                                 }
                             }
                         }
                     }
-                    let new_live = matches!(state_unopt.clan_match_detection, ClanMatchDetection::MatchIsLive);
+                    let new_live = matches!(
+                        state_unopt.clan_match_detection,
+                        ClanMatchDetection::MatchIsLive
+                    );
                     if !old_live && new_live {
                         last_live_frame = Some(processed_frames);
                     }
@@ -691,80 +810,192 @@ mod tests {
             let state_opt = opt_analysis.state;
 
             // Compare debug print representation
-            let total_frames: usize = demo.directory.entries.iter().map(|entry| entry.frames.len()).sum();
-            println!("  -> Total frames: {}, Live frame index: {:?} (Warmup frames skipped: {:?})", 
-                total_frames, 
+            let total_frames: usize = demo
+                .directory
+                .entries
+                .iter()
+                .map(|entry| entry.frames.len())
+                .sum();
+            println!(
+                "  -> Total frames: {}, Live frame index: {:?} (Warmup frames skipped: {:?})",
+                total_frames,
                 last_live_frame,
                 last_live_frame.unwrap_or(0)
             );
-            
+
             assert_states_eq(&state_unopt, &state_opt);
             tested_any = true;
         }
-        
-        assert!(tested_any, "No demo files were found to run the comparison test!");
+
+        assert!(
+            tested_any,
+            "No demo files were found to run the comparison test!"
+        );
         println!("All existing demos match perfectly!");
     }
 
     fn assert_states_eq(left: &AnalyzerState, right: &AnalyzerState) {
         // Compare clan_match_detection
-        assert_eq!(format!("{:?}", left.clan_match_detection), format!("{:?}", right.clan_match_detection));
-        
+        assert_eq!(
+            format!("{:?}", left.clan_match_detection),
+            format!("{:?}", right.clan_match_detection)
+        );
+
         // Compare current_time
-        assert_eq!(left.current_time.real_offset, right.current_time.real_offset);
-        assert_eq!(left.current_time.viewdemo_offset, right.current_time.viewdemo_offset);
-        
+        assert_eq!(
+            left.current_time.real_offset,
+            right.current_time.real_offset
+        );
+        assert_eq!(
+            left.current_time.viewdemo_offset,
+            right.current_time.viewdemo_offset
+        );
+
         // Compare team_scores
-        assert_eq!(format!("{:?}", left.team_scores), format!("{:?}", right.team_scores));
-        
+        assert_eq!(
+            format!("{:?}", left.team_scores),
+            format!("{:?}", right.team_scores)
+        );
+
         // Compare POV stats
         assert_eq!(left.pov_player_index, right.pov_player_index);
         assert_eq!(left.pov_stats, right.pov_stats);
-        
+
         // Compare rounds
         assert_eq!(left.rounds.len(), right.rounds.len());
         for (i, (r_l, r_r)) in left.rounds.iter().zip(right.rounds.iter()).enumerate() {
-            assert_eq!(format!("{:?}", r_l), format!("{:?}", r_r), "Round {} mismatched", i);
+            assert_eq!(
+                format!("{:?}", r_l),
+                format!("{:?}", r_r),
+                "Round {} mismatched",
+                i
+            );
         }
-        
+
         // Compare players
         assert_eq!(left.players.len(), right.players.len());
         for (i, (p_l, p_r)) in left.players.iter().zip(right.players.iter()).enumerate() {
             assert_eq!(p_l.id, p_r.id, "Player {} ID mismatched", i);
-            assert_eq!(format!("{:?}", p_l.connection), format!("{:?}", p_r.connection), "Player {} connection mismatched", i);
+            assert_eq!(
+                format!("{:?}", p_l.connection),
+                format!("{:?}", p_r.connection),
+                "Player {} connection mismatched",
+                i
+            );
             assert_eq!(p_l.name, p_r.name, "Player {} name mismatched", i);
             assert_eq!(p_l.team, p_r.team, "Player {} team mismatched", i);
-            assert_eq!(format!("{:?}", p_l.class), format!("{:?}", p_r.class), "Player {} class mismatched", i);
+            assert_eq!(
+                format!("{:?}", p_l.class),
+                format!("{:?}", p_r.class),
+                "Player {} class mismatched",
+                i
+            );
             assert_eq!(p_l.stats, p_r.stats, "Player {} stats mismatched", i);
-            
+
             // kill_streaks
-            assert_eq!(p_l.kill_streaks.len(), p_r.kill_streaks.len(), "Player {} kill_streaks len mismatched", i);
-            for (j, (k_l, k_r)) in p_l.kill_streaks.iter().zip(p_r.kill_streaks.iter()).enumerate() {
-                assert_eq!(format!("{:?}", k_l.kills), format!("{:?}", k_r.kills), "Player {} kill_streak {} mismatched", i, j);
+            assert_eq!(
+                p_l.kill_streaks.len(),
+                p_r.kill_streaks.len(),
+                "Player {} kill_streaks len mismatched",
+                i
+            );
+            for (j, (k_l, k_r)) in p_l
+                .kill_streaks
+                .iter()
+                .zip(p_r.kill_streaks.iter())
+                .enumerate()
+            {
+                assert_eq!(
+                    format!("{:?}", k_l.kills),
+                    format!("{:?}", k_r.kills),
+                    "Player {} kill_streak {} mismatched",
+                    i,
+                    j
+                );
             }
-            
+
             // weapon_breakdown (HashMap == is order-independent)
-            assert_eq!(p_l.weapon_breakdown, p_r.weapon_breakdown, "Player {} weapon_breakdown mismatched", i);
-            
+            assert_eq!(
+                p_l.weapon_breakdown, p_r.weapon_breakdown,
+                "Player {} weapon_breakdown mismatched",
+                i
+            );
+
             // mortality
-            assert_eq!(p_l.mortality.len(), p_r.mortality.len(), "Player {} mortality len mismatched", i);
+            assert_eq!(
+                p_l.mortality.len(),
+                p_r.mortality.len(),
+                "Player {} mortality len mismatched",
+                i
+            );
             for (j, (m_l, m_r)) in p_l.mortality.iter().zip(p_r.mortality.iter()).enumerate() {
-                assert_eq!(m_l.time().real_offset, m_r.time().real_offset, "Player {} mortality {} real_offset mismatched", i, j);
-                assert_eq!(m_l.time().viewdemo_offset, m_r.time().viewdemo_offset, "Player {} mortality {} viewdemo_offset mismatched", i, j);
-                assert_eq!(m_l.mortality(), m_r.mortality(), "Player {} mortality {} status mismatched", i, j);
+                assert_eq!(
+                    m_l.time().real_offset,
+                    m_r.time().real_offset,
+                    "Player {} mortality {} real_offset mismatched",
+                    i,
+                    j
+                );
+                assert_eq!(
+                    m_l.time().viewdemo_offset,
+                    m_r.time().viewdemo_offset,
+                    "Player {} mortality {} viewdemo_offset mismatched",
+                    i,
+                    j
+                );
+                assert_eq!(
+                    m_l.mortality(),
+                    m_r.mortality(),
+                    "Player {} mortality {} status mismatched",
+                    i,
+                    j
+                );
             }
         }
-        
+
         // Compare chat messages
-        assert_eq!(left.chat_messages.len(), right.chat_messages.len(), "Chat messages length mismatched");
-        for (i, (c_l, c_r)) in left.chat_messages.iter().zip(right.chat_messages.iter()).enumerate() {
-            assert_eq!(c_l.chat_type, c_r.chat_type, "Chat message {} type mismatched", i);
-            assert_eq!(c_l.sender_name, c_r.sender_name, "Chat message {} sender mismatched", i);
-            assert_eq!(c_l.sender_team, c_r.sender_team, "Chat message {} team mismatched", i);
-            assert_eq!(c_l.sender_dead, c_r.sender_dead, "Chat message {} dead flag mismatched", i);
+        assert_eq!(
+            left.chat_messages.len(),
+            right.chat_messages.len(),
+            "Chat messages length mismatched"
+        );
+        for (i, (c_l, c_r)) in left
+            .chat_messages
+            .iter()
+            .zip(right.chat_messages.iter())
+            .enumerate()
+        {
+            assert_eq!(
+                c_l.chat_type, c_r.chat_type,
+                "Chat message {} type mismatched",
+                i
+            );
+            assert_eq!(
+                c_l.sender_name, c_r.sender_name,
+                "Chat message {} sender mismatched",
+                i
+            );
+            assert_eq!(
+                c_l.sender_team, c_r.sender_team,
+                "Chat message {} team mismatched",
+                i
+            );
+            assert_eq!(
+                c_l.sender_dead, c_r.sender_dead,
+                "Chat message {} dead flag mismatched",
+                i
+            );
             assert_eq!(c_l.text, c_r.text, "Chat message {} text mismatched", i);
-            assert_eq!(c_l.system_token, c_r.system_token, "Chat message {} system_token mismatched", i);
-            assert_eq!(c_l.system_args, c_r.system_args, "Chat message {} system_args mismatched", i);
+            assert_eq!(
+                c_l.system_token, c_r.system_token,
+                "Chat message {} system_token mismatched",
+                i
+            );
+            assert_eq!(
+                c_l.system_args, c_r.system_args,
+                "Chat message {} system_args mismatched",
+                i
+            );
         }
     }
 }

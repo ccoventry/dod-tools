@@ -2,8 +2,8 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod views;
 mod explorer;
+mod views;
 
 use analysis::Analysis;
 use clap::Parser;
@@ -13,17 +13,17 @@ use native::FileInfo;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::mpsc;
-use views::{report_ui, PlayerHighlighting, t};
+use views::{PlayerHighlighting, report_ui, t};
 
-#[cfg(not(target_arch = "wasm32"))]
-use native::run_analyzer_with_progress;
 #[cfg(not(target_arch = "wasm32"))]
 use egui_file_dialog::FileDialog;
-
-#[cfg(target_arch = "wasm32")]
-use explorer::{SendWrapper, WebFile, DirNode, build_web_tree, render_web_dir_node};
 #[cfg(not(target_arch = "wasm32"))]
-use explorer::{DemoListItem, scan_dir_async, get_native_roots, render_native_dir_node};
+use native::run_analyzer_with_progress;
+
+#[cfg(not(target_arch = "wasm32"))]
+use explorer::{DemoListItem, get_native_roots, render_native_dir_node, scan_dir_async};
+#[cfg(target_arch = "wasm32")]
+use explorer::{DirNode, SendWrapper, WebFile, build_web_tree, render_web_dir_node};
 
 #[derive(Debug, Parser)]
 struct Args {
@@ -52,9 +52,9 @@ async fn main() {
 }
 
 #[cfg(target_arch = "wasm32")]
-use wasm_bindgen::prelude::*;
-#[cfg(target_arch = "wasm32")]
 use wasm_bindgen::JsCast;
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::prelude::*;
 
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
@@ -111,7 +111,8 @@ fn load_settings() -> AppSettings {
     if path.exists() {
         if let Ok(content) = std::fs::read_to_string(&path) {
             if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
-                let language = val.get("language")
+                let language = val
+                    .get("language")
                     .and_then(|v| v.as_str())
                     .unwrap_or("auto")
                     .to_string();
@@ -124,7 +125,10 @@ fn load_settings() -> AppSettings {
 
 fn save_settings(settings: &AppSettings) {
     let mut map = serde_json::Map::new();
-    map.insert("language".to_string(), serde_json::Value::String(settings.language.clone()));
+    map.insert(
+        "language".to_string(),
+        serde_json::Value::String(settings.language.clone()),
+    );
     let val = serde_json::Value::Object(map);
     if let Ok(content) = serde_json::to_string_pretty(&val) {
         let _ = std::fs::write("settings.json", content);
@@ -136,16 +140,31 @@ fn detect_os_language() -> String {
     for var in &["LANG", "LC_ALL", "LC_MESSAGES"] {
         if let Ok(val) = std::env::var(var) {
             let val_lower = val.to_lowercase();
-            if val_lower.starts_with("de") { return "german".to_string(); }
-            if val_lower.starts_with("fr") { return "french".to_string(); }
-            if val_lower.starts_with("es") { return "spanish".to_string(); }
-            if val_lower.starts_with("ru") { return "russian".to_string(); }
-            if val_lower.starts_with("en") { return "english".to_string(); }
+            if val_lower.starts_with("de") {
+                return "german".to_string();
+            }
+            if val_lower.starts_with("fr") {
+                return "french".to_string();
+            }
+            if val_lower.starts_with("es") {
+                return "spanish".to_string();
+            }
+            if val_lower.starts_with("ru") {
+                return "russian".to_string();
+            }
+            if val_lower.starts_with("en") {
+                return "english".to_string();
+            }
         }
     }
 
     if let Ok(output) = std::process::Command::new("reg")
-        .args(&["query", "HKCU\\Control Panel\\International", "/v", "LocaleName"])
+        .args(&[
+            "query",
+            "HKCU\\Control Panel\\International",
+            "/v",
+            "LocaleName",
+        ])
         .output()
     {
         if output.status.success() {
@@ -155,13 +174,27 @@ fn detect_os_language() -> String {
                     let parts: Vec<&str> = line.split_whitespace().collect();
                     if let Some(locale) = parts.last() {
                         let loc = locale.to_lowercase();
-                        if loc.starts_with("de") { return "german".to_string(); }
-                        if loc.starts_with("fr") { return "french".to_string(); }
-                        if loc.starts_with("es") { return "spanish".to_string(); }
-                        if loc.starts_with("ru") { return "russian".to_string(); }
-                        if loc.starts_with("sr") { return "serbian".to_string(); }
-                        if loc.starts_with("tr") { return "turkish".to_string(); }
-                        if loc.starts_with("pl") { return "polish".to_string(); }
+                        if loc.starts_with("de") {
+                            return "german".to_string();
+                        }
+                        if loc.starts_with("fr") {
+                            return "french".to_string();
+                        }
+                        if loc.starts_with("es") {
+                            return "spanish".to_string();
+                        }
+                        if loc.starts_with("ru") {
+                            return "russian".to_string();
+                        }
+                        if loc.starts_with("sr") {
+                            return "serbian".to_string();
+                        }
+                        if loc.starts_with("tr") {
+                            return "turkish".to_string();
+                        }
+                        if loc.starts_with("pl") {
+                            return "polish".to_string();
+                        }
                     }
                 }
             }
@@ -169,18 +202,38 @@ fn detect_os_language() -> String {
     }
 
     if let Ok(output) = std::process::Command::new("powershell")
-        .args(&["-NoProfile", "-Command", "[System.Globalization.CultureInfo]::CurrentUICulture.Name"])
+        .args(&[
+            "-NoProfile",
+            "-Command",
+            "[System.Globalization.CultureInfo]::CurrentUICulture.Name",
+        ])
         .output()
     {
         if output.status.success() {
-            let s = String::from_utf8_lossy(&output.stdout).trim().to_lowercase();
-            if s.starts_with("de") { return "german".to_string(); }
-            if s.starts_with("fr") { return "french".to_string(); }
-            if s.starts_with("es") { return "spanish".to_string(); }
-            if s.starts_with("ru") { return "russian".to_string(); }
-            if s.starts_with("sr") { return "serbian".to_string(); }
-            if s.starts_with("tr") { return "turkish".to_string(); }
-            if s.starts_with("pl") { return "polish".to_string(); }
+            let s = String::from_utf8_lossy(&output.stdout)
+                .trim()
+                .to_lowercase();
+            if s.starts_with("de") {
+                return "german".to_string();
+            }
+            if s.starts_with("fr") {
+                return "french".to_string();
+            }
+            if s.starts_with("es") {
+                return "spanish".to_string();
+            }
+            if s.starts_with("ru") {
+                return "russian".to_string();
+            }
+            if s.starts_with("sr") {
+                return "serbian".to_string();
+            }
+            if s.starts_with("tr") {
+                return "turkish".to_string();
+            }
+            if s.starts_with("pl") {
+                return "polish".to_string();
+            }
         }
     }
 
@@ -192,11 +245,21 @@ fn detect_os_language() -> String {
     for var in &["LANG", "LC_ALL", "LC_MESSAGES"] {
         if let Ok(val) = std::env::var(var) {
             let val_lower = val.to_lowercase();
-            if val_lower.starts_with("de") { return "german".to_string(); }
-            if val_lower.starts_with("fr") { return "french".to_string(); }
-            if val_lower.starts_with("es") { return "spanish".to_string(); }
-            if val_lower.starts_with("ru") { return "russian".to_string(); }
-            if val_lower.starts_with("en") { return "english".to_string(); }
+            if val_lower.starts_with("de") {
+                return "german".to_string();
+            }
+            if val_lower.starts_with("fr") {
+                return "french".to_string();
+            }
+            if val_lower.starts_with("es") {
+                return "spanish".to_string();
+            }
+            if val_lower.starts_with("ru") {
+                return "russian".to_string();
+            }
+            if val_lower.starts_with("en") {
+                return "english".to_string();
+            }
         }
     }
     "english".to_string()
@@ -364,8 +427,6 @@ impl Default for Gui {
     }
 }
 
-
-
 #[cfg(target_arch = "wasm32")]
 fn pick_web_folder(ctx: Context, tx: mpsc::Sender<GuiMessage>) {
     wasm_bindgen_futures::spawn_local(async move {
@@ -436,11 +497,15 @@ fn parse_web_file(ctx: Context, tx: mpsc::Sender<GuiMessage>, web_file: WebFile)
 
             match Analysis::try_from_bytes_with_progress(bytes.as_slice(), progress_cb) {
                 Ok(analysis) => {
-                    let last_modified_ms = js_sys::Reflect::get(file.as_ref(), &wasm_bindgen::JsValue::from_str("lastModified"))
-                        .ok()
-                        .and_then(|v| v.as_f64())
-                        .unwrap_or(0.0);
-                    let created_at = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_millis(last_modified_ms as u64);
+                    let last_modified_ms = js_sys::Reflect::get(
+                        file.as_ref(),
+                        &wasm_bindgen::JsValue::from_str("lastModified"),
+                    )
+                    .ok()
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.0);
+                    let created_at = std::time::SystemTime::UNIX_EPOCH
+                        + std::time::Duration::from_millis(last_modified_ms as u64);
 
                     let size_bytes = file.size() as u64;
                     let file_info = FileInfo {
@@ -634,7 +699,9 @@ impl eframe::App for Gui {
         TopBottomPanel::top("controls")
             .frame(Frame::side_top_panel(&ctx.style()).inner_margin(6.))
             .show(ctx, |ui| {
-                if modal_open { ui.disable(); }
+                if modal_open {
+                    ui.disable();
+                }
                 ui.horizontal(|ui| {
                     ui.menu_button(format!("{} ⏷", t("#app_menu_file")), |ui| {
                         #[cfg(target_arch = "wasm32")]
@@ -671,14 +738,11 @@ impl eframe::App for Gui {
                         }
                     });
 
-
-
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         egui::widgets::global_theme_preference_buttons(ui);
                     });
                 });
             });
-
 
         #[cfg(target_arch = "wasm32")]
         let mut filtered_web_files = vec![];
@@ -719,7 +783,9 @@ impl eframe::App for Gui {
             .max_width(400.)
             .frame(Frame::side_top_panel(&ctx.style()).inner_margin(6.))
             .show(ctx, |ui| {
-                if modal_open { ui.disable(); }
+                if modal_open {
+                    ui.disable();
+                }
                 ui.heading(t("#app_panel_explorer"));
                 ui.separator();
 
@@ -738,11 +804,12 @@ impl eframe::App for Gui {
                         let mut cache = std::mem::take(&mut self.subdir_cache);
 
                         let collapsing_id = ui.make_persistent_id("this_pc");
-                        let mut state = egui::collapsing_header::CollapsingState::load_with_default_open(
-                            ui.ctx(),
-                            collapsing_id,
-                            true,
-                        );
+                        let mut state =
+                            egui::collapsing_header::CollapsingState::load_with_default_open(
+                                ui.ctx(),
+                                collapsing_id,
+                                true,
+                            );
                         let is_open = state.is_open();
 
                         ui.horizontal(|ui| {
@@ -758,7 +825,13 @@ impl eframe::App for Gui {
                             ui.indent(ui.make_persistent_id("this_pc_indent"), |ui| {
                                 let roots = get_native_roots();
                                 for root in roots {
-                                    render_native_dir_node(ui, &root, self.current_dir.as_deref(), &mut next_dir, &mut cache);
+                                    render_native_dir_node(
+                                        ui,
+                                        &root,
+                                        self.current_dir.as_deref(),
+                                        &mut next_dir,
+                                        &mut cache,
+                                    );
                                     ui.add_space(2.0);
                                 }
                             });
@@ -799,7 +872,9 @@ impl eframe::App for Gui {
             .max_height(400.)
             .frame(Frame::side_top_panel(&ctx.style()).inner_margin(6.))
             .show(ctx, |ui| {
-                if modal_open { ui.disable(); }
+                if modal_open {
+                    ui.disable();
+                }
                 ui.heading(t("#app_panel_demos"));
                 ui.separator();
 
@@ -829,21 +904,30 @@ impl eframe::App for Gui {
                             .striped(true)
                             .cell_layout(Layout::left_to_right(Align::Center))
                             .column(Column::initial(300.0).resizable(true).clip(true)) // Name
-                            .column(Column::initial(80.0).resizable(true))             // Type
-                            .column(Column::initial(150.0).resizable(true))            // Map
-                            .column(Column::initial(150.0))                           // Date
+                            .column(Column::initial(80.0).resizable(true)) // Type
+                            .column(Column::initial(150.0).resizable(true)) // Map
+                            .column(Column::initial(150.0)) // Date
                             .header(20.0, |mut header| {
-                                header.col(|ui| { ui.strong(t("#app_col_name")); });
-                                header.col(|ui| { ui.strong(t("#app_col_type")); });
-                                header.col(|ui| { ui.strong(t("#app_col_map")); });
-                                header.col(|ui| { ui.strong(t("#app_col_date")); });
+                                header.col(|ui| {
+                                    ui.strong(t("#app_col_name"));
+                                });
+                                header.col(|ui| {
+                                    ui.strong(t("#app_col_type"));
+                                });
+                                header.col(|ui| {
+                                    ui.strong(t("#app_col_map"));
+                                });
+                                header.col(|ui| {
+                                    ui.strong(t("#app_col_date"));
+                                });
                             })
                             .body(|mut body| {
                                 for item in &self.desktop_files {
                                     let path_str = item.path.to_string_lossy().into_owned();
 
                                     let is_selected = selected_path.as_ref() == Some(&path_str);
-                                    let is_loading = self.loading_path.as_deref() == Some(path_str.as_str());
+                                    let is_loading =
+                                        self.loading_path.as_deref() == Some(path_str.as_str());
 
                                     body.row(18.0, |mut row| {
                                         row.set_selected(is_selected);
@@ -852,15 +936,24 @@ impl eframe::App for Gui {
                                                 if is_loading {
                                                     ui.spinner();
                                                 }
-                                                if ui.selectable_label(is_selected, format!("📄 {}", item.name)).clicked() {
+                                                if ui
+                                                    .selectable_label(
+                                                        is_selected,
+                                                        format!("📄 {}", item.name),
+                                                    )
+                                                    .clicked()
+                                                {
                                                     if !is_selected {
-                                                        analyze_target_file = Some(item.path.clone());
+                                                        analyze_target_file =
+                                                            Some(item.path.clone());
                                                     }
                                                 }
                                             });
                                         });
                                         row.col(|ui| {
-                                            let demo_type = if let Some((_, analysis)) = self.analyses.get(&path_str) {
+                                            let demo_type = if let Some((_, analysis)) =
+                                                self.analyses.get(&path_str)
+                                            {
                                                 analysis.demo_info.demo_type.as_str()
                                             } else if item.name.to_lowercase().contains("hltv") {
                                                 "HLTV"
@@ -896,14 +989,22 @@ impl eframe::App for Gui {
                             .striped(true)
                             .cell_layout(Layout::left_to_right(Align::Center))
                             .column(Column::initial(300.0).resizable(true).clip(true)) // Name
-                            .column(Column::initial(80.0).resizable(true))             // Type
-                            .column(Column::initial(150.0).resizable(true))            // Map
-                            .column(Column::initial(100.0))                           // Status
+                            .column(Column::initial(80.0).resizable(true)) // Type
+                            .column(Column::initial(150.0).resizable(true)) // Map
+                            .column(Column::initial(100.0)) // Status
                             .header(20.0, |mut header| {
-                                header.col(|ui| { ui.strong(t("#app_col_name")); });
-                                header.col(|ui| { ui.strong(t("#app_col_type")); });
-                                header.col(|ui| { ui.strong(t("#app_col_map")); });
-                                header.col(|ui| { ui.strong(t("#app_col_status")); });
+                                header.col(|ui| {
+                                    ui.strong(t("#app_col_name"));
+                                });
+                                header.col(|ui| {
+                                    ui.strong(t("#app_col_type"));
+                                });
+                                header.col(|ui| {
+                                    ui.strong(t("#app_col_map"));
+                                });
+                                header.col(|ui| {
+                                    ui.strong(t("#app_col_status"));
+                                });
                             })
                             .body(|mut body| {
                                 for file in &filtered_web_files {
@@ -918,20 +1019,27 @@ impl eframe::App for Gui {
                                     body.row(18.0, |mut row| {
                                         row.set_selected(is_selected);
                                         row.col(|ui| {
-                                            if ui.selectable_label(is_selected, format!("📄 {}", name)).clicked() {
+                                            if ui
+                                                .selectable_label(
+                                                    is_selected,
+                                                    format!("📄 {}", name),
+                                                )
+                                                .clicked()
+                                            {
                                                 if !is_selected && !is_loading {
                                                     parse_file_target = Some(file.clone());
                                                 }
                                             }
                                         });
                                         row.col(|ui| {
-                                            let demo_type = if let Some((_, analysis)) = analysis_opt {
-                                                analysis.demo_info.demo_type.as_str()
-                                            } else if name.to_lowercase().contains("hltv") {
-                                                "HLTV"
-                                            } else {
-                                                "POV"
-                                            };
+                                            let demo_type =
+                                                if let Some((_, analysis)) = analysis_opt {
+                                                    analysis.demo_info.demo_type.as_str()
+                                                } else if name.to_lowercase().contains("hltv") {
+                                                    "HLTV"
+                                                } else {
+                                                    "POV"
+                                                };
                                             ui.label(demo_type);
                                         });
                                         row.col(|ui| {
@@ -960,11 +1068,13 @@ impl eframe::App for Gui {
             });
 
         CentralPanel::default().show(ctx, |ui| {
-            if modal_open { ui.disable(); }
+            if modal_open {
+                ui.disable();
+            }
             if let Some(loading_path) = &self.loading_path {
                 let progress = self.loading_progress.unwrap_or(0.0);
                 let pct = progress * 100.0;
-                
+
                 let time_str = match (self.loading_elapsed, self.loading_eta) {
                     (Some(elapsed), Some(eta)) => {
                         format!(" (Elapsed: {:.1}s, ETA: {:.1}s)", elapsed, eta)
@@ -991,18 +1101,18 @@ impl eframe::App for Gui {
                         .replace("%s3", &time_str)
                 };
 
-                ui.add(
-                    egui::ProgressBar::new(progress)
-                        .animate(true)
-                        .text(text),
-                );
+                ui.add(egui::ProgressBar::new(progress).animate(true).text(text));
                 ui.add_space(10.0);
             }
 
             if let Some(error) = &self.error_message {
                 ui.centered_and_justified(|ui| {
                     ui.vertical(|ui| {
-                        ui.label(egui::RichText::new(t("#app_error_heading")).heading().color(egui::Color32::from_rgb(239, 68, 68)));
+                        ui.label(
+                            egui::RichText::new(t("#app_error_heading"))
+                                .heading()
+                                .color(egui::Color32::from_rgb(239, 68, 68)),
+                        );
                         ui.add_space(8.0);
                         ui.label(error);
                     });
@@ -1025,7 +1135,12 @@ impl eframe::App for Gui {
                         ScrollArea::vertical()
                             .id_salt("report_scroll_area")
                             .show(ui, |ui| {
-                                report_ui(Some(file_info), Some(analysis), &mut self.player_highlight, ui);
+                                report_ui(
+                                    Some(file_info),
+                                    Some(analysis),
+                                    &mut self.player_highlight,
+                                    ui,
+                                );
                             });
                     }
                 }
@@ -1053,7 +1168,9 @@ impl eframe::App for Gui {
                 }
 
                 let new_idx = if let Some(idx) = current_idx {
-                    (idx as isize + move_selection).clamp(0, (self.desktop_files.len() - 1) as isize) as usize
+                    (idx as isize + move_selection)
+                        .clamp(0, (self.desktop_files.len() - 1) as isize)
+                        as usize
                 } else {
                     0
                 };
@@ -1134,21 +1251,60 @@ impl eframe::App for Gui {
                                         let mut chars = other.chars();
                                         match chars.next() {
                                             None => String::new(),
-                                            Some(f) => f.to_uppercase().collect::<String>() + chars.as_str(),
+                                            Some(f) => {
+                                                f.to_uppercase().collect::<String>()
+                                                    + chars.as_str()
+                                            }
                                         }
                                     }
                                 })
                                 .show_ui(ui, |ui| {
-                                    ui.selectable_value(&mut current_lang, "auto".to_string(), t("#app_prefs_lang_auto"));
+                                    ui.selectable_value(
+                                        &mut current_lang,
+                                        "auto".to_string(),
+                                        t("#app_prefs_lang_auto"),
+                                    );
                                     ui.separator();
-                                    ui.selectable_value(&mut current_lang, "english".to_string(), "English");
-                                    ui.selectable_value(&mut current_lang, "french".to_string(), "French");
-                                    ui.selectable_value(&mut current_lang, "german".to_string(), "German");
-                                    ui.selectable_value(&mut current_lang, "spanish".to_string(), "Spanish");
-                                    ui.selectable_value(&mut current_lang, "russian".to_string(), "Russian");
-                                    ui.selectable_value(&mut current_lang, "serbian".to_string(), "Serbian");
-                                    ui.selectable_value(&mut current_lang, "polish".to_string(), "Polish");
-                                    ui.selectable_value(&mut current_lang, "turkish".to_string(), "Turkish");
+                                    ui.selectable_value(
+                                        &mut current_lang,
+                                        "english".to_string(),
+                                        "English",
+                                    );
+                                    ui.selectable_value(
+                                        &mut current_lang,
+                                        "french".to_string(),
+                                        "French",
+                                    );
+                                    ui.selectable_value(
+                                        &mut current_lang,
+                                        "german".to_string(),
+                                        "German",
+                                    );
+                                    ui.selectable_value(
+                                        &mut current_lang,
+                                        "spanish".to_string(),
+                                        "Spanish",
+                                    );
+                                    ui.selectable_value(
+                                        &mut current_lang,
+                                        "russian".to_string(),
+                                        "Russian",
+                                    );
+                                    ui.selectable_value(
+                                        &mut current_lang,
+                                        "serbian".to_string(),
+                                        "Serbian",
+                                    );
+                                    ui.selectable_value(
+                                        &mut current_lang,
+                                        "polish".to_string(),
+                                        "Polish",
+                                    );
+                                    ui.selectable_value(
+                                        &mut current_lang,
+                                        "turkish".to_string(),
+                                        "Turkish",
+                                    );
                                 });
 
                             if current_lang != self.settings.language {
@@ -1187,16 +1343,19 @@ impl eframe::App for Gui {
                         ui.add_space(8.0);
                         ui.label(t("#app_about_desc"));
                         ui.add_space(8.0);
-                        
+
                         ui.horizontal(|ui| {
                             ui.label(format!("{}:", t("#app_about_github")));
-                            ui.hyperlink_to("github.com/ccoventry/dod-tools", "https://github.com/ccoventry/dod-tools");
+                            ui.hyperlink_to(
+                                "github.com/ccoventry/dod-tools",
+                                "https://github.com/ccoventry/dod-tools",
+                            );
                         });
-                        
+
                         ui.add_space(16.0);
                         ui.separator();
                         ui.add_space(8.0);
-                        
+
                         if ui.button(t("#app_about_close")).clicked() {
                             close_clicked = true;
                         }
@@ -1210,8 +1369,10 @@ impl eframe::App for Gui {
 #[cfg(not(target_arch = "wasm32"))]
 fn analyze_files_async(ctx: Context, tx: mpsc::Sender<GuiMessage>, paths: Vec<PathBuf>) {
     tokio::task::spawn_blocking(move || {
-        tx.send(GuiMessage::AnalyzerStart { _files: paths.len() })
-            .unwrap();
+        tx.send(GuiMessage::AnalyzerStart {
+            _files: paths.len(),
+        })
+        .unwrap();
 
         for (index, demo_path) in paths.iter().enumerate() {
             let tx_clone = tx.clone();
@@ -1264,4 +1425,3 @@ fn analyze_files_async(ctx: Context, tx: mpsc::Sender<GuiMessage>, paths: Vec<Pa
         tx.send(GuiMessage::Idle).unwrap();
     });
 }
-

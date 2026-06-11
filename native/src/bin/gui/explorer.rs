@@ -50,11 +50,14 @@ pub fn build_web_tree(files: &[WebFile]) -> DirNode {
             for i in 0..parts.len() - 1 {
                 let name = parts[i].to_string();
                 let path = parts[0..=i].join("/");
-                current = current.subdirs.entry(name.clone()).or_insert_with(|| DirNode {
-                    name,
-                    path,
-                    subdirs: std::collections::BTreeMap::new(),
-                });
+                current = current
+                    .subdirs
+                    .entry(name.clone())
+                    .or_insert_with(|| DirNode {
+                        name,
+                        path,
+                        subdirs: std::collections::BTreeMap::new(),
+                    });
             }
         }
     }
@@ -174,10 +177,7 @@ pub fn scan_dir_async(ctx: Context, tx: mpsc::Sender<GuiMessage>, dir: PathBuf) 
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn get_subdirs(
-    path: &Path,
-    cache: &mut HashMap<PathBuf, Vec<PathBuf>>,
-) -> Vec<PathBuf> {
+fn get_subdirs(path: &Path, cache: &mut HashMap<PathBuf, Vec<PathBuf>>) -> Vec<PathBuf> {
     if let Some(dirs) = cache.get(path) {
         return dirs.clone();
     }
@@ -241,7 +241,10 @@ pub fn render_native_dir_node(
     if !has_subdirs {
         ui.horizontal(|ui| {
             ui.add_space(16.0);
-            if ui.selectable_label(is_selected, format!("📁 {}", name)).clicked() {
+            if ui
+                .selectable_label(is_selected, format!("📁 {}", name))
+                .clicked()
+            {
                 *next_dir = Some(path.to_path_buf());
             }
         });
@@ -265,7 +268,10 @@ pub fn render_native_dir_node(
                 state.toggle(ui);
                 state.store(ui.ctx());
             }
-            if ui.selectable_label(is_selected, format!("📁 {}", name)).clicked() {
+            if ui
+                .selectable_label(is_selected, format!("📁 {}", name))
+                .clicked()
+            {
                 *next_dir = Some(path.to_path_buf());
             }
         });
@@ -281,18 +287,17 @@ pub fn render_native_dir_node(
 }
 
 #[cfg(target_arch = "wasm32")]
-pub fn render_web_dir_node(
-    ui: &mut egui::Ui,
-    node: &DirNode,
-    selected_folder: &mut String,
-) {
+pub fn render_web_dir_node(ui: &mut egui::Ui, node: &DirNode, selected_folder: &mut String) {
     let is_selected = selected_folder == &node.path;
     let has_subdirs = !node.subdirs.is_empty();
 
     if !has_subdirs {
         ui.horizontal(|ui| {
             ui.add_space(16.0);
-            if ui.selectable_label(is_selected, format!("📁 {}", node.name)).clicked() {
+            if ui
+                .selectable_label(is_selected, format!("📁 {}", node.name))
+                .clicked()
+            {
                 *selected_folder = node.path.clone();
             }
         });
@@ -311,7 +316,10 @@ pub fn render_web_dir_node(
                 state.toggle(ui);
                 state.store(ui.ctx());
             }
-            if ui.selectable_label(is_selected, format!("📁 {}", node.name)).clicked() {
+            if ui
+                .selectable_label(is_selected, format!("📁 {}", node.name))
+                .clicked()
+            {
                 *selected_folder = node.path.clone();
             }
         });

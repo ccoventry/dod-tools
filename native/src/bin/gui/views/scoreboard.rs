@@ -1,6 +1,6 @@
 use crate::FileInfo;
 use crate::views::{PlayerHighlighting, TABLE_ROW_HEIGHT, t};
-use analysis::{Analysis, Player, SteamId, Team, MortalityState, translate_key};
+use analysis::{Analysis, MortalityState, Player, SteamId, Team, translate_key};
 use egui::{Align, Label, Layout, Ui};
 use egui_extras::{Column, TableBody, TableBuilder};
 
@@ -12,7 +12,10 @@ pub struct ScoreboardSortState {
 
 impl Default for ScoreboardSortState {
     fn default() -> Self {
-        Self { col_idx: 5, desc: true } // Score descending
+        Self {
+            col_idx: 5,
+            desc: true,
+        } // Score descending
     }
 }
 
@@ -20,7 +23,9 @@ fn team_name(team: &Team) -> String {
     match team {
         Team::Allies => translate_key("#teamname_allies").unwrap_or_else(|| "Allies".to_string()),
         Team::Axis => translate_key("#teamname_axis").unwrap_or_else(|| "Axis".to_string()),
-        Team::Spectators => translate_key("#teamname_spectators").unwrap_or_else(|| "Spectators".to_string()),
+        Team::Spectators => {
+            translate_key("#teamname_spectators").unwrap_or_else(|| "Spectators".to_string())
+        }
         Team::Unassigned => t("#app_team_unassigned"),
     }
 }
@@ -61,126 +66,133 @@ pub fn scoreboard_ui(
             .unwrap_or_default()
     });
 
-    ui.heading(format!("{}{match_result_fragment}", t("#app_scoreboard_heading")));
+    ui.heading(format!(
+        "{}{match_result_fragment}",
+        t("#app_scoreboard_heading")
+    ));
     ui.add_space(8.0);
 
     ui.scope(|ui| {
-            let columns = [
-                "",
-                "#app_col_id",
-                "#app_col_name",
-                "#app_col_team",
-                "#app_col_class",
-                "#app_col_score",
-                "#app_col_kills",
-                "#app_col_deaths",
-                "#app_col_avg_life",
-                "#app_col_min_life",
-                "#app_col_max_life",
-            ];
+        let columns = [
+            "",
+            "#app_col_id",
+            "#app_col_name",
+            "#app_col_team",
+            "#app_col_class",
+            "#app_col_score",
+            "#app_col_kills",
+            "#app_col_deaths",
+            "#app_col_avg_life",
+            "#app_col_min_life",
+            "#app_col_max_life",
+        ];
 
-            let table = TableBuilder::new(ui)
-                .striped(true)
-                .cell_layout(Layout::left_to_right(Align::Center))
-                .max_scroll_height(260.)
-                .column(Column::auto())
-                .column(Column::auto_with_initial_suggestion(150.))
-                .columns(Column::auto(), columns.len());
+        let table = TableBuilder::new(ui)
+            .striped(true)
+            .cell_layout(Layout::left_to_right(Align::Center))
+            .max_scroll_height(260.)
+            .column(Column::auto())
+            .column(Column::auto_with_initial_suggestion(150.))
+            .columns(Column::auto(), columns.len());
 
-            table
-                .header(TABLE_ROW_HEIGHT, |mut header| {
-                    for (i, column) in columns.into_iter().enumerate() {
-                        header.col(|ui| {
-                            if i == 0 {
-                                ui.strong(column);
+        table
+            .header(TABLE_ROW_HEIGHT, |mut header| {
+                for (i, column) in columns.into_iter().enumerate() {
+                    header.col(|ui| {
+                        if i == 0 {
+                            ui.strong(column);
+                        } else {
+                            let col_label = if column.starts_with('#') {
+                                t(column)
                             } else {
-                                let col_label = if column.starts_with('#') {
-                                    t(column)
-                                } else {
-                                    column.to_string()
-                                };
-                                let text = if sort_state.col_idx == i {
-                                    format!("{} {}", col_label, if sort_state.desc { "⏷" } else { "⏶" })
-                                } else {
-                                    col_label
-                                };
-
-                                let resp = ui.add(
-                                    egui::Label::new(egui::RichText::new(text).strong())
-                                        .sense(egui::Sense::click()),
-                                );
-
-                                if resp.clicked() {
-                                    if sort_state.col_idx == i {
-                                        sort_state.desc = !sort_state.desc;
-                                    } else {
-                                        sort_state.col_idx = i;
-                                        sort_state.desc = true;
-                                    }
-                                    ui.data_mut(|d| d.insert_temp(sort_id, sort_state));
-                                }
-
-                                if resp.hovered() {
-                                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                                }
-                            }
-                        });
-                    }
-                })
-                .body(|ref mut body| {
-                    if let Some(analysis) = r {
-                        struct SortablePlayer<'a> {
-                            player: &'a Player,
-                            steam_id_str: String,
-                            team_str: String,
-                            class_str: String,
-                        }
-
-                        let mut players: Vec<SortablePlayer> = analysis.state.players
-                            .iter()
-                            .map(|a| {
-                                let steam_id_str = SteamId::try_from(&a.id)
-                                    .map(|s| s.to_string())
-                                    .unwrap_or_else(|_| a.id.to_string());
-                                let team_str = match &a.team {
-                                    None => t("#app_team_unknown"),
-                                    Some(team) => team_name(team),
-                                };
-                                let class_str = a.class.as_ref()
-                                    .map(|c| format!("{c:?}"))
-                                    .unwrap_or_else(|| t("#app_team_unknown"));
-                                SortablePlayer {
-                                    player: a,
-                                    steam_id_str,
-                                    team_str,
-                                    class_str,
-                                }
-                            })
-                            .collect();
-
-                        players.sort_by(|a, b| {
-                            let cmp = match sort_state.col_idx {
-                                1 => a.steam_id_str.cmp(&b.steam_id_str),
-                                2 => a.player.name.cmp(&b.player.name),
-                                3 => a.team_str.cmp(&b.team_str),
-                                4 => a.class_str.cmp(&b.class_str),
-                                5 => a.player.stats.0.cmp(&b.player.stats.0),
-                                6 => a.player.stats.1.cmp(&b.player.stats.1),
-                                7 => a.player.stats.2.cmp(&b.player.stats.2),
-                                8 => a.player.avg_lifespan().cmp(&b.player.avg_lifespan()),
-                                9 => a.player.min_lifespan().cmp(&b.player.min_lifespan()),
-                                10 => a.player.max_lifespan().cmp(&b.player.max_lifespan()),
-                                _ => std::cmp::Ordering::Equal,
+                                column.to_string()
+                            };
+                            let text = if sort_state.col_idx == i {
+                                format!("{} {}", col_label, if sort_state.desc { "⏷" } else { "⏶" })
+                            } else {
+                                col_label
                             };
 
-                            if sort_state.desc { cmp.reverse() } else { cmp }
-                        });
+                            let resp = ui.add(
+                                egui::Label::new(egui::RichText::new(text).strong())
+                                    .sense(egui::Sense::click()),
+                            );
 
-                        for sp in players {
-                            scoreboard_row_ui(sp.player, player_highlighting, body);
+                            if resp.clicked() {
+                                if sort_state.col_idx == i {
+                                    sort_state.desc = !sort_state.desc;
+                                } else {
+                                    sort_state.col_idx = i;
+                                    sort_state.desc = true;
+                                }
+                                ui.data_mut(|d| d.insert_temp(sort_id, sort_state));
+                            }
+
+                            if resp.hovered() {
+                                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                            }
                         }
+                    });
+                }
+            })
+            .body(|ref mut body| {
+                if let Some(analysis) = r {
+                    struct SortablePlayer<'a> {
+                        player: &'a Player,
+                        steam_id_str: String,
+                        team_str: String,
+                        class_str: String,
                     }
-                });
+
+                    let mut players: Vec<SortablePlayer> = analysis
+                        .state
+                        .players
+                        .iter()
+                        .map(|a| {
+                            let steam_id_str = SteamId::try_from(&a.id)
+                                .map(|s| s.to_string())
+                                .unwrap_or_else(|_| a.id.to_string());
+                            let team_str = match &a.team {
+                                None => t("#app_team_unknown"),
+                                Some(team) => team_name(team),
+                            };
+                            let class_str = a
+                                .class
+                                .as_ref()
+                                .map(|c| format!("{c:?}"))
+                                .unwrap_or_else(|| t("#app_team_unknown"));
+                            SortablePlayer {
+                                player: a,
+                                steam_id_str,
+                                team_str,
+                                class_str,
+                            }
+                        })
+                        .collect();
+
+                    players.sort_by(|a, b| {
+                        let cmp = match sort_state.col_idx {
+                            1 => a.steam_id_str.cmp(&b.steam_id_str),
+                            2 => a.player.name.cmp(&b.player.name),
+                            3 => a.team_str.cmp(&b.team_str),
+                            4 => a.class_str.cmp(&b.class_str),
+                            5 => a.player.stats.0.cmp(&b.player.stats.0),
+                            6 => a.player.stats.1.cmp(&b.player.stats.1),
+                            7 => a.player.stats.2.cmp(&b.player.stats.2),
+                            8 => a.player.avg_lifespan().cmp(&b.player.avg_lifespan()),
+                            9 => a.player.min_lifespan().cmp(&b.player.min_lifespan()),
+                            10 => a.player.max_lifespan().cmp(&b.player.max_lifespan()),
+                            _ => std::cmp::Ordering::Equal,
+                        };
+
+                        if sort_state.desc { cmp.reverse() } else { cmp }
+                    });
+
+                    for sp in players {
+                        scoreboard_row_ui(sp.player, player_highlighting, body);
+                    }
+                }
+            });
     });
 }
 

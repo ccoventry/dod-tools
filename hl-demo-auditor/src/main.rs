@@ -1,12 +1,15 @@
 //! Directory scanning and duplicate auditing tool for GoldSrc/Source/Source2 demo files.
 
 use clap::Parser;
+use hl_demo_auditor::{find_duplicates, scan_dir};
 use std::fs;
 use std::path::PathBuf;
-use hl_demo_auditor::{scan_dir, find_duplicates};
 
 #[derive(Parser, Debug)]
-#[command(version, about = "Audits folders for Half-Life engine family (.dem) files and reports duplicates.")]
+#[command(
+    version,
+    about = "Audits folders for Half-Life engine family (.dem) files and reports duplicates."
+)]
 struct Args {
     /// Folder paths to scan for .dem files
     paths: Vec<PathBuf>,
@@ -29,9 +32,13 @@ fn main() {
         }
     }
 
-    println!("Found {} total .dem files. Auditing for duplicates...", files.len());
-    
-    let (unique_files, duplicate_groups, duplicate_count, space_wasted_bytes) = find_duplicates(files);
+    println!(
+        "Found {} total .dem files. Auditing for duplicates...",
+        files.len()
+    );
+
+    let (unique_files, duplicate_groups, duplicate_count, space_wasted_bytes) =
+        find_duplicates(files);
 
     println!(
         "Audit complete: {} unique files, {} duplicates found. Wasted space: {:.2} GB",
@@ -48,22 +55,34 @@ fn main() {
     let total_scanned = unique_files.len() + duplicate_count;
     report_content.push_str(&format!("* **Total Files Scanned**: {}\n", total_scanned));
     report_content.push_str(&format!("* **Unique Demos**: {}\n", unique_files.len()));
-    report_content.push_str(&format!("* **Duplicate Files Found**: {}\n", duplicate_count));
-    report_content.push_str(&format!("* **Wasted Space**: {:.2} MB ({:.2} GB)\n\n", 
+    report_content.push_str(&format!(
+        "* **Duplicate Files Found**: {}\n",
+        duplicate_count
+    ));
+    report_content.push_str(&format!(
+        "* **Wasted Space**: {:.2} MB ({:.2} GB)\n\n",
         space_wasted_bytes as f64 / (1024.0 * 1024.0),
         space_wasted_bytes as f64 / (1024.0 * 1024.0 * 1024.0)
     ));
-    
+
     report_content.push_str("## Duplicate Groups Found\n");
     report_content.push_str("All files under each group have identical content. You can safely delete the duplicate files listed under \"Duplicates\".\n\n");
 
     for (i, group) in duplicate_groups.iter().enumerate() {
         let size_mb = group.key.size as f64 / (1024.0 * 1024.0);
         let total_wasted_mb = size_mb * group.duplicates.len() as f64;
-        report_content.push_str(&format!("### Group {} (Size: {:.2} MB, Wasted: {:.2} MB, Hash: {:x})\n", 
-            i + 1, size_mb, total_wasted_mb, group.key.header_hash));
-        
-        report_content.push_str(&format!("* **Original File**: `{}`\n", group.original.display()));
+        report_content.push_str(&format!(
+            "### Group {} (Size: {:.2} MB, Wasted: {:.2} MB, Hash: {:x})\n",
+            i + 1,
+            size_mb,
+            total_wasted_mb,
+            group.key.header_hash
+        ));
+
+        report_content.push_str(&format!(
+            "* **Original File**: `{}`\n",
+            group.original.display()
+        ));
         report_content.push_str("* **Duplicates**:\n");
         for dup in &group.duplicates {
             report_content.push_str(&format!("  - `{}`\n", dup.display()));

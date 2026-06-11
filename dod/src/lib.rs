@@ -1385,12 +1385,9 @@ fn round_state(i: &[u8]) -> IResult<&[u8], RoundState> {
 }
 
 fn say_text(i: &[u8]) -> IResult<&[u8], SayText> {
-    all_consuming((
-        le_u8,
-        null_string,
-    ))
-    .map(|(client_index, text)| SayText { client_index, text })
-    .parse(i)
+    all_consuming((le_u8, null_string))
+        .map(|(client_index, text)| SayText { client_index, text })
+        .parse(i)
 }
 
 fn scope(i: &[u8]) -> IResult<&[u8], Scope> {
@@ -1399,27 +1396,31 @@ fn scope(i: &[u8]) -> IResult<&[u8], Scope> {
 
 fn score_info(i: &[u8]) -> IResult<&[u8], ScoreInfo> {
     all_consuming((le_u8, le_i8, le_i8, le_i8, class, team, le_u8))
-        .map(|(client_index, points, kills, deaths, class, team, _)| ScoreInfo {
-            client_index,
-            points,
-            kills,
-            deaths,
-            class,
-            team,
-        })
+        .map(
+            |(client_index, points, kills, deaths, class, team, _)| ScoreInfo {
+                client_index,
+                points,
+                kills,
+                deaths,
+                class,
+                team,
+            },
+        )
         .parse(i)
 }
 
 fn score_info_long(i: &[u8]) -> IResult<&[u8], ScoreInfoLong> {
     all_consuming((le_u8, le_i16, le_i16, le_i16, class, team, le_u8))
-        .map(|(client_index, score, frags, deaths, class, team, _)| ScoreInfoLong {
-            client_index,
-            score,
-            frags,
-            deaths,
-            class,
-            team,
-        })
+        .map(
+            |(client_index, score, frags, deaths, class, team, _)| ScoreInfoLong {
+                client_index,
+                score,
+                frags,
+                deaths,
+                class,
+                team,
+            },
+        )
         .parse(i)
 }
 
@@ -1623,27 +1624,19 @@ fn cur_marker(i: &[u8]) -> IResult<&[u8], CurMarker> {
 }
 
 fn map_marker(i: &[u8]) -> IResult<&[u8], MapMarker> {
-    all_consuming(take(6usize))
-        .map(|_| MapMarker {})
-        .parse(i)
+    all_consuming(take(6usize)).map(|_| MapMarker {}).parse(i)
 }
 
 fn object(i: &[u8]) -> IResult<&[u8], Object> {
-    all_consuming(take(i.len()))
-        .map(|_| Object {})
-        .parse(i)
+    all_consuming(take(i.len())).map(|_| Object {}).parse(i)
 }
 
 fn p_shoot(i: &[u8]) -> IResult<&[u8], PShoot> {
-    all_consuming(take(i.len()))
-        .map(|_| PShoot {})
-        .parse(i)
+    all_consuming(take(i.len())).map(|_| PShoot {}).parse(i)
 }
 
 fn show_menu(i: &[u8]) -> IResult<&[u8], ShowMenu> {
-    all_consuming(take(i.len()))
-        .map(|_| ShowMenu {})
-        .parse(i)
+    all_consuming(take(i.len())).map(|_| ShowMenu {}).parse(i)
 }
 
 fn start_prog_f(i: &[u8]) -> IResult<&[u8], StartProgF> {
@@ -1657,25 +1650,17 @@ fn start_prog_f(i: &[u8]) -> IResult<&[u8], StartProgF> {
 }
 
 fn timer_status(i: &[u8]) -> IResult<&[u8], TimerStatus> {
-    all_consuming(take(3usize))
-        .map(|_| TimerStatus {})
-        .parse(i)
+    all_consuming(take(3usize)).map(|_| TimerStatus {}).parse(i)
 }
 
 fn weather(i: &[u8]) -> IResult<&[u8], Weather> {
-    all_consuming(take(2usize))
-        .map(|_| Weather {})
-        .parse(i)
+    all_consuming(take(2usize)).map(|_| Weather {}).parse(i)
 }
 
 fn ammo_pickup(i: &[u8]) -> IResult<&[u8], AmmoPickup> {
-    all_consuming(take(i.len()))
-        .map(|_| AmmoPickup {})
-        .parse(i)
+    all_consuming(take(i.len())).map(|_| AmmoPickup {}).parse(i)
 }
 
 fn weap_pickup(i: &[u8]) -> IResult<&[u8], WeapPickup> {
-    all_consuming(take(i.len()))
-        .map(|_| WeapPickup {})
-        .parse(i)
+    all_consuming(take(i.len())).map(|_| WeapPickup {}).parse(i)
 }

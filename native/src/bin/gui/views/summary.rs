@@ -53,20 +53,35 @@ pub fn header_ui(file_info: Option<&FileInfo>, analysis: Option<&Analysis>, ui: 
         ui.end_row();
 
         ui.strong(t("#app_summary_map_name"));
-        ui.label(analysis.map(|a| a.demo_info.map_name.as_str()).unwrap_or(""));
+        ui.label(
+            analysis
+                .map(|a| a.demo_info.map_name.as_str())
+                .unwrap_or(""),
+        );
         ui.end_row();
 
         ui.strong(t("#app_summary_demo_protocol"));
-        ui.label(analysis.map(|a| a.demo_info.demo_protocol.to_string()).unwrap_or_else(String::new));
+        ui.label(
+            analysis
+                .map(|a| a.demo_info.demo_protocol.to_string())
+                .unwrap_or_else(String::new),
+        );
         ui.end_row();
 
         ui.strong(t("#app_summary_net_protocol"));
-        ui.label(analysis.map(|a| a.demo_info.network_protocol.to_string()).unwrap_or_else(String::new));
+        ui.label(
+            analysis
+                .map(|a| a.demo_info.network_protocol.to_string())
+                .unwrap_or_else(String::new),
+        );
         ui.end_row();
 
         ui.strong(t("#app_summary_game_version"));
         if let Some(a) = analysis {
-            let version_str = match (a.demo_info.game_directory.as_str(), a.demo_info.network_protocol) {
+            let version_str = match (
+                a.demo_info.game_directory.as_str(),
+                a.demo_info.network_protocol,
+            ) {
                 ("dod", 48) => t("#app_ver_dod_13"),
                 ("dod", 47) => t("#app_ver_dod_10_12"),
                 ("cstrike", 48) => t("#app_ver_cs_16"),

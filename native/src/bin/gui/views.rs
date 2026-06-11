@@ -1,8 +1,8 @@
 use crate::FileInfo;
 use analysis::Analysis;
+use analysis::PlayerGlobalId;
 use egui::{Color32, Ui};
 use std::collections::HashSet;
-use analysis::PlayerGlobalId;
 
 pub const TABLE_ROW_HEIGHT: f32 = 18.;
 pub const ALLIES_COLOR: Color32 = Color32::DARK_GREEN;
@@ -26,23 +26,23 @@ pub struct PlayerHighlighting {
     pub highlighted: HashSet<PlayerGlobalId>,
 }
 
-pub mod summary;
-pub mod scoreboard;
-pub mod timeline;
-pub mod rounds;
-pub mod weapons;
-pub mod streaks;
 pub mod chat;
 pub mod pov;
+pub mod rounds;
+pub mod scoreboard;
+pub mod streaks;
+pub mod summary;
+pub mod timeline;
+pub mod weapons;
 
-pub use summary::header_ui;
-pub use scoreboard::scoreboard_ui;
-pub use timeline::team_score_timeline_ui;
-pub use rounds::rounds_ui;
-pub use weapons::weapon_breakdowns_ui;
-pub use streaks::kill_streaks_ui;
 pub use chat::chat_log_ui;
 pub use pov::pov_analytics_ui;
+pub use rounds::rounds_ui;
+pub use scoreboard::scoreboard_ui;
+pub use streaks::kill_streaks_ui;
+pub use summary::header_ui;
+pub use timeline::team_score_timeline_ui;
+pub use weapons::weapon_breakdowns_ui;
 
 pub fn report_ui(
     file_info: Option<&FileInfo>,
@@ -55,19 +55,50 @@ pub fn report_ui(
     } else {
         egui::Id::new("blank_report").with("active_tab")
     };
-    let mut current_tab = ui.data(|d| d.get_temp::<String>(tab_id).unwrap_or_else(|| "Summary".to_string()));
+    let mut current_tab = ui.data(|d| {
+        d.get_temp::<String>(tab_id)
+            .unwrap_or_else(|| "Summary".to_string())
+    });
 
     ui.horizontal(|ui| {
-        ui.selectable_value(&mut current_tab, "Summary".to_string(), t("#app_tab_summary"));
-        ui.selectable_value(&mut current_tab, "Scoreboard".to_string(), t("#app_tab_scoreboard"));
-        ui.selectable_value(&mut current_tab, "Timeline".to_string(), t("#app_tab_timeline"));
+        ui.selectable_value(
+            &mut current_tab,
+            "Summary".to_string(),
+            t("#app_tab_summary"),
+        );
+        ui.selectable_value(
+            &mut current_tab,
+            "Scoreboard".to_string(),
+            t("#app_tab_scoreboard"),
+        );
+        ui.selectable_value(
+            &mut current_tab,
+            "Timeline".to_string(),
+            t("#app_tab_timeline"),
+        );
         ui.selectable_value(&mut current_tab, "Rounds".to_string(), t("#app_tab_rounds"));
-        ui.selectable_value(&mut current_tab, "Weapon Breakdowns".to_string(), t("#app_tab_weapons"));
-        ui.selectable_value(&mut current_tab, "Kill Streaks".to_string(), t("#app_tab_streaks"));
+        ui.selectable_value(
+            &mut current_tab,
+            "Weapon Breakdowns".to_string(),
+            t("#app_tab_weapons"),
+        );
+        ui.selectable_value(
+            &mut current_tab,
+            "Kill Streaks".to_string(),
+            t("#app_tab_streaks"),
+        );
         ui.selectable_value(&mut current_tab, "Chat Log".to_string(), t("#app_tab_chat"));
-        
-        let is_pov = r.map(|a| a.demo_info.demo_type.as_str() == "POV").unwrap_or(false);
-        if ui.add_enabled(is_pov, egui::Button::new(t("#app_tab_pov")).selected(current_tab == "POV Analytics")).clicked() {
+
+        let is_pov = r
+            .map(|a| a.demo_info.demo_type.as_str() == "POV")
+            .unwrap_or(false);
+        if ui
+            .add_enabled(
+                is_pov,
+                egui::Button::new(t("#app_tab_pov")).selected(current_tab == "POV Analytics"),
+            )
+            .clicked()
+        {
             current_tab = "POV Analytics".to_string();
         }
     });

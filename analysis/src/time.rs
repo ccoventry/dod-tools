@@ -16,7 +16,9 @@ impl Sub<GameTime> for GameTime {
     type Output = Duration;
 
     fn sub(self, rhs: GameTime) -> Self::Output {
-        self.viewdemo_offset.checked_sub(rhs.viewdemo_offset).unwrap_or(Duration::ZERO)
+        self.viewdemo_offset
+            .checked_sub(rhs.viewdemo_offset)
+            .unwrap_or(Duration::ZERO)
     }
 }
 
@@ -24,7 +26,9 @@ impl<'a> Sub<&'a GameTime> for &GameTime {
     type Output = Duration;
 
     fn sub(self, rhs: &'a GameTime) -> Self::Output {
-        self.viewdemo_offset.checked_sub(rhs.viewdemo_offset).unwrap_or(Duration::ZERO)
+        self.viewdemo_offset
+            .checked_sub(rhs.viewdemo_offset)
+            .unwrap_or(Duration::ZERO)
     }
 }
 
@@ -33,8 +37,7 @@ pub fn use_timing_updates(state: &mut AnalyzerState, event: &AnalyzerEvent) {
         && let Ok(offset) = Duration::try_from_secs_f32(svc_time.time)
     {
         state.current_time.viewdemo_offset = offset;
-    } else if let AnalyzerEvent::Frame(frame) = event
-    {
+    } else if let AnalyzerEvent::Frame(frame) = event {
         state.frame_index += 1;
         if let Ok(offset) = Duration::try_from_secs_f32(frame.time) {
             state.current_time.real_offset = offset;
