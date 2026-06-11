@@ -139,8 +139,12 @@ Objective score (`stats.0`) is not addressable by any per-event packet and must 
 
 ---
 
-> [!NOTE]
-> Before implementing, verify empirically whether standard DoD 1.3 actually resets stats on reconnect. If it preserves them (i.e. Scenario A from the analysis), Option A through C all converge on the same result and the simpler current approach may be acceptable. Test by examining a demo that includes a reconnect and checking the post-rejoin `Frags` packet value.
+> [!IMPORTANT]
+> **Confirmed:** DoD 1.3 resets a player's score, kills, and deaths to zero on reconnect server-side. Post-reconnect `Frags` and `ScoreShort` packets start from 0 and will overwrite the pre-disconnect counts stored on the local player record. The current code **does show incorrect stats** for players who disconnect and rejoin.
+>
+> **Also confirmed:** The demo file *does* contain all individual `DeathMsg` packets from the entire session — both before and after the reconnect — so the raw data to count correctly exists. There is no server packet that carries a "cumulative total including pre-disconnect" value; the only reliable source is counting `DeathMsg` events independently.
+>
+> **Recommended approach: Option B** (`max(server_reported, death_msg_counted)`). It correctly handles both reconnect scenarios (where `DeathMsg` count grows above the reset server value) and mid-join recordings (where an initial `ScoreShort` establishes the baseline that `DeathMsg` alone can't recover).
 
 ### 1. "Trim Demo(s)" Tool [H7 - 🔴 Hard / High Effort]
 Trim a Day of Defeat (GoldSrc) demo file (`.dem`) down to only the time a clan match is actually played, stripping out warmup/setup time to reduce file sizes.
