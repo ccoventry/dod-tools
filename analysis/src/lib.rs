@@ -73,7 +73,7 @@ pub struct PovStats {
 #[derive(Debug, Default)]
 pub struct AnalyzerState {
     clan_match_detection: ClanMatchDetection,
-    current_time: GameTime,
+    pub current_time: GameTime,
 
     pub frame_index: usize,
     pub players: Vec<Player>,

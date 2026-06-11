@@ -78,6 +78,8 @@
 "#app_summary_demo_protocol"    "Demo protocol"
 "#app_summary_net_protocol"     "Network protocol"
 "#app_summary_game_version"     "Game version"
+"#app_summary_demo_duration"    "Demo duration"
+"#app_summary_match_duration"   "Match duration"
 "#app_game_dod"                 "Day of Defeat (dod)"
 "#app_game_cstrike"             "Counter-Strike (cstrike)"
 "#app_game_valve"               "Half-Life (valve)"

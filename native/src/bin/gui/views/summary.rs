@@ -2,6 +2,7 @@ use crate::FileInfo;
 use crate::views::t;
 use analysis::Analysis;
 use egui::{Grid, Ui};
+use humantime::format_duration;
 
 pub fn header_ui(file_info: Option<&FileInfo>, analysis: Option<&Analysis>, ui: &mut Ui) {
     Grid::new("header").show(ui, |ui| {
@@ -24,6 +25,34 @@ pub fn header_ui(file_info: Option<&FileInfo>, analysis: Option<&Analysis>, ui: 
                 .format("%Y-%m-%d %I:%M %p")
                 .to_string();
             ui.label(formatted_date);
+        } else {
+            ui.label("");
+        }
+        ui.end_row();
+
+        ui.strong(t("#app_summary_demo_duration"));
+        if let Some(a) = analysis {
+            let total_dur = std::time::Duration::from_secs_f32(a.demo_info.playback_time);
+            ui.label(format_duration(std::time::Duration::from_secs(total_dur.as_secs())).to_string());
+        } else {
+            ui.label("");
+        }
+        ui.end_row();
+
+        ui.strong(t("#app_summary_match_duration"));
+        if let Some(a) = analysis {
+            let first_round_start = a.state.rounds.first().map(|r| match r {
+                analysis::Round::Active { start_time, .. } => start_time.viewdemo_offset,
+                analysis::Round::Completed { start_time, .. } => start_time.viewdemo_offset,
+            }).unwrap_or(std::time::Duration::ZERO);
+
+            let last_round_end = a.state.rounds.last().map(|r| match r {
+                analysis::Round::Active { .. } => a.state.current_time.viewdemo_offset,
+                analysis::Round::Completed { end_time, .. } => end_time.viewdemo_offset,
+            }).unwrap_or(std::time::Duration::ZERO);
+
+            let match_dur = last_round_end.checked_sub(first_round_start).unwrap_or(std::time::Duration::ZERO);
+            ui.label(format_duration(std::time::Duration::from_secs(match_dur.as_secs())).to_string());
         } else {
             ui.label("");
         }
