@@ -28,6 +28,38 @@ fn clean_control_chars(s: &str) -> String {
         .collect()
 }
 
+pub fn translate_embedded_keys(text: &str) -> String {
+    let mut result = String::new();
+    let chars: Vec<char> = text.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '#' {
+            let mut key = String::new();
+            key.push('#');
+            let mut j = i + 1;
+            while j < chars.len() && (chars[j].is_alphanumeric() || chars[j] == '_') {
+                key.push(chars[j]);
+                j += 1;
+            }
+            if key.len() > 1 {
+                if let Some(trans) = crate::localization::translate_key(&key.to_lowercase()) {
+                    result.push_str(&trans);
+                } else {
+                    result.push_str(&key);
+                }
+                i = j;
+            } else {
+                result.push('#');
+                i += 1;
+            }
+        } else {
+            result.push(chars[i]);
+            i += 1;
+        }
+    }
+    result
+}
+
 pub fn use_chat_updates(state: &mut AnalyzerState, event: &AnalyzerEvent) {
     match event {
         AnalyzerEvent::UserMessage(UserMessage::SayText(say_text)) => {
@@ -152,7 +184,7 @@ pub fn use_chat_updates(state: &mut AnalyzerState, event: &AnalyzerEvent) {
                 sender_name,
                 sender_team,
                 sender_dead: is_dead_prefix || is_dead_state,
-                text: message_text.trim().to_string(),
+                text: translate_embedded_keys(message_text.trim()),
                 system_token: None,
                 system_args: Vec::new(),
             });
@@ -214,6 +246,33 @@ pub fn translate_system_message(
     arg3: Option<&str>,
     arg4: Option<&str>,
 ) -> String {
+    let translate_arg = |arg: Option<&str>| -> Option<String> {
+        let a = arg?;
+        let cleaned = clean_control_chars(a);
+        
+        // 1. Try to translate the entire string as-is or with prepended '#'
+        let mut key = cleaned.to_lowercase();
+        if !key.starts_with('#') {
+            key.insert(0, '#');
+        }
+        if let Some(trans) = crate::localization::translate_key(&key) {
+            return Some(trans);
+        }
+
+        // 2. Otherwise, look for embedded keys inside the string
+        Some(translate_embedded_keys(&cleaned))
+    };
+
+    let a1_opt = translate_arg(arg1);
+    let a2_opt = translate_arg(arg2);
+    let a3_opt = translate_arg(arg3);
+    let a4_opt = translate_arg(arg4);
+
+    let a1 = a1_opt.as_deref();
+    let a2 = a2_opt.as_deref();
+    let a3 = a3_opt.as_deref();
+    let a4 = a4_opt.as_deref();
+
     let mut key = token.trim().to_lowercase();
     if !key.starts_with('#') {
         key.insert(0, '#');
@@ -221,21 +280,21 @@ pub fn translate_system_message(
 
     if let Some(template) = crate::localization::translate_key(&key) {
         let mut result = template.clone();
-        if let Some(a) = arg1 {
+        if let Some(a) = a1 {
             result = result.replace("%s1", a);
         }
-        if let Some(a) = arg2 {
+        if let Some(a) = a2 {
             result = result.replace("%s2", a);
         }
-        if let Some(a) = arg3 {
+        if let Some(a) = a3 {
             result = result.replace("%s3", a);
         }
-        if let Some(a) = arg4 {
+        if let Some(a) = a4 {
             result = result.replace("%s4", a);
         }
 
         if result.contains("%s") {
-            let args = [arg1, arg2, arg3, arg4];
+            let args = [a1, a2, a3, a4];
             let mut arg_idx = 0;
             while let Some(pos) = result.find("%s") {
                 if arg_idx < args.len() {
@@ -256,40 +315,40 @@ pub fn translate_system_message(
             .unwrap_or_else(|| "Player".to_string());
 
         if key.starts_with("#game_joined_team") {
-            let name = arg1.unwrap_or(&fallback_someone);
-            let team = arg2.unwrap_or("a team");
+            let name = a1.unwrap_or(&fallback_someone);
+            let team = a2.unwrap_or("a team");
             format!("{} joined team {}", name, team)
         } else if key.starts_with("#game_joined_game") || key.starts_with("#game_join") {
-            let name = arg1.unwrap_or(&fallback_someone);
+            let name = a1.unwrap_or(&fallback_someone);
             format!("{} joined the game", name)
         } else if key.starts_with("#game_connected") {
-            let name = arg1.unwrap_or(&fallback_someone);
+            let name = a1.unwrap_or(&fallback_someone);
             format!("{} connected", name)
         } else if key.starts_with("#game_disconnected") {
-            let name = arg1.unwrap_or(&fallback_someone);
+            let name = a1.unwrap_or(&fallback_someone);
             format!("{} disconnected", name)
         } else if key.starts_with("#game_will_restart_in") {
-            let time = arg1.unwrap_or("?");
+            let time = a1.unwrap_or("?");
             format!("Game will restart in {} seconds", time)
         } else if key.starts_with("#game_ready_team") {
-            let team = arg1.unwrap_or("Team");
+            let team = a1.unwrap_or("Team");
             format!("{} is ready", team)
         } else if key.starts_with("#game_ready") {
-            let name = arg1.unwrap_or(&fallback_player);
+            let name = a1.unwrap_or(&fallback_player);
             format!("{} is ready", name)
         } else {
             let mut parts = vec![token.to_string()];
-            if let Some(arg) = arg1 {
-                parts.push(clean_control_chars(arg));
+            if let Some(arg) = a1 {
+                parts.push(arg.to_string());
             }
-            if let Some(arg) = arg2 {
-                parts.push(clean_control_chars(arg));
+            if let Some(arg) = a2 {
+                parts.push(arg.to_string());
             }
-            if let Some(arg) = arg3 {
-                parts.push(clean_control_chars(arg));
+            if let Some(arg) = a3 {
+                parts.push(arg.to_string());
             }
-            if let Some(arg) = arg4 {
-                parts.push(clean_control_chars(arg));
+            if let Some(arg) = a4 {
+                parts.push(arg.to_string());
             }
             parts.join(" ")
         }
@@ -325,6 +384,36 @@ mod tests {
         let res_unknown =
             translate_system_message("#Unknown_Token", Some("arg1"), Some("arg2"), None, None);
         assert_eq!(res_unknown, "#Unknown_Token arg1 arg2");
+
+        // Test nested translation of arguments (like #class_axis_kar98)
+        let res3 = translate_system_message(
+            "#game_respawn_as",
+            Some("#class_axis_kar98"),
+            None,
+            None,
+            None,
+        );
+        if crate::localization::translate_key("#game_respawn_as").is_some() {
+            assert_eq!(res3, "*You will respawn as Grenadier.");
+        }
+
+        // Test nested translation of arguments without leading '#'
+        let res4 = translate_system_message(
+            "#game_respawn_as",
+            Some("class_axis_kar98"),
+            None,
+            None,
+            None,
+        );
+        if crate::localization::translate_key("#game_respawn_as").is_some() {
+            assert_eq!(res4, "*You will respawn as Grenadier.");
+        }
+
+        // Test translate_embedded_keys directly
+        let embedded_res = translate_embedded_keys("You will respawn as #class_axis_kar98 next round.");
+        if crate::localization::translate_key("#class_axis_kar98").is_some() {
+            assert_eq!(embedded_res, "You will respawn as Grenadier next round.");
+        }
     }
 
     #[test]
@@ -423,5 +512,29 @@ mod tests {
         }));
         use_chat_updates(&mut state, &event7);
         assert_eq!(state.chat_messages.len(), 5); // Should be 5 (not filtered!)
+    }
+
+    #[test]
+    #[ignore]
+    fn test_find_untranslated_chat_keys() {
+        use std::fs;
+        let dir = std::path::Path::new("../demos");
+        if let Ok(entries) = fs::read_dir(dir) {
+            for entry in entries.filter_map(Result::ok) {
+                let path = entry.path();
+                if path.extension().map(|e| e == "dem").unwrap_or(false) {
+                    println!("Analyzing chat for untranslated keys in {:?}", path);
+                    if let Ok(bytes) = fs::read(&path) {
+                        if let Ok(analysis) = crate::Analysis::try_from_bytes(&bytes) {
+                            for msg in &analysis.state.chat_messages {
+                                if msg.text.contains('#') {
+                                    println!("  [UNTRANSLATED] {:?}", msg.text);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }

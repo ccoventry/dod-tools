@@ -350,5 +350,8 @@ mod tests {
 
         let joined_team = translate_key("#game_joined_team");
         assert_eq!(joined_team.as_deref(), Some("*%s1 joined %s2"));
+
+        let class_kar = translate_key("#class_axis_kar98");
+        assert_eq!(class_kar.as_deref(), Some("Grenadier"));
     }
 }
