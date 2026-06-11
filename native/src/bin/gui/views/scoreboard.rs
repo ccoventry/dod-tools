@@ -1,7 +1,7 @@
 use crate::FileInfo;
 use crate::views::{PlayerHighlighting, TABLE_ROW_HEIGHT, t};
 use analysis::{Analysis, MortalityState, Player, SteamId, Team, translate_key};
-use egui::{Align, Label, Layout, Ui};
+use egui::{Align, Layout, Ui};
 use egui_extras::{Column, TableBody, TableBuilder};
 
 #[derive(Clone, Copy)]
@@ -13,7 +13,7 @@ pub struct ScoreboardSortState {
 impl Default for ScoreboardSortState {
     fn default() -> Self {
         Self {
-            col_idx: 5,
+            col_idx: 4,
             desc: true,
         } // Score descending
     }
@@ -74,7 +74,6 @@ pub fn scoreboard_ui(
 
     ui.scope(|ui| {
         let columns = [
-            "",
             "#app_col_id",
             "#app_col_name",
             "#app_col_team",
@@ -91,46 +90,41 @@ pub fn scoreboard_ui(
             .striped(true)
             .cell_layout(Layout::left_to_right(Align::Center))
             .max_scroll_height(260.)
-            .column(Column::auto())
             .column(Column::auto_with_initial_suggestion(150.))
-            .columns(Column::auto(), columns.len());
+            .columns(Column::auto(), columns.len() - 1);
 
         table
             .header(TABLE_ROW_HEIGHT, |mut header| {
                 for (i, column) in columns.into_iter().enumerate() {
                     header.col(|ui| {
-                        if i == 0 {
-                            ui.strong(column);
+                        let col_label = if column.starts_with('#') {
+                            t(column)
                         } else {
-                            let col_label = if column.starts_with('#') {
-                                t(column)
+                            column.to_string()
+                        };
+                        let text = if sort_state.col_idx == i {
+                            format!("{} {}", col_label, if sort_state.desc { "⏷" } else { "⏶" })
+                        } else {
+                            col_label
+                        };
+
+                        let resp = ui.add(
+                            egui::Label::new(egui::RichText::new(text).strong())
+                                .sense(egui::Sense::click()),
+                        );
+
+                        if resp.clicked() {
+                            if sort_state.col_idx == i {
+                                sort_state.desc = !sort_state.desc;
                             } else {
-                                column.to_string()
-                            };
-                            let text = if sort_state.col_idx == i {
-                                format!("{} {}", col_label, if sort_state.desc { "⏷" } else { "⏶" })
-                            } else {
-                                col_label
-                            };
-
-                            let resp = ui.add(
-                                egui::Label::new(egui::RichText::new(text).strong())
-                                    .sense(egui::Sense::click()),
-                            );
-
-                            if resp.clicked() {
-                                if sort_state.col_idx == i {
-                                    sort_state.desc = !sort_state.desc;
-                                } else {
-                                    sort_state.col_idx = i;
-                                    sort_state.desc = true;
-                                }
-                                ui.data_mut(|d| d.insert_temp(sort_id, sort_state));
+                                sort_state.col_idx = i;
+                                sort_state.desc = true;
                             }
+                            ui.data_mut(|d| d.insert_temp(sort_id, sort_state));
+                        }
 
-                            if resp.hovered() {
-                                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                            }
+                        if resp.hovered() {
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                         }
                     });
                 }
@@ -172,16 +166,16 @@ pub fn scoreboard_ui(
 
                     players.sort_by(|a, b| {
                         let cmp = match sort_state.col_idx {
-                            1 => a.steam_id_str.cmp(&b.steam_id_str),
-                            2 => a.player.name.cmp(&b.player.name),
-                            3 => a.team_str.cmp(&b.team_str),
-                            4 => a.class_str.cmp(&b.class_str),
-                            5 => a.player.stats.0.cmp(&b.player.stats.0),
-                            6 => a.player.stats.1.cmp(&b.player.stats.1),
-                            7 => a.player.stats.2.cmp(&b.player.stats.2),
-                            8 => a.player.avg_lifespan().cmp(&b.player.avg_lifespan()),
-                            9 => a.player.min_lifespan().cmp(&b.player.min_lifespan()),
-                            10 => a.player.max_lifespan().cmp(&b.player.max_lifespan()),
+                            0 => a.steam_id_str.cmp(&b.steam_id_str),
+                            1 => a.player.name.cmp(&b.player.name),
+                            2 => a.team_str.cmp(&b.team_str),
+                            3 => a.class_str.cmp(&b.class_str),
+                            4 => a.player.stats.0.cmp(&b.player.stats.0),
+                            5 => a.player.stats.1.cmp(&b.player.stats.1),
+                            6 => a.player.stats.2.cmp(&b.player.stats.2),
+                            7 => a.player.avg_lifespan().cmp(&b.player.avg_lifespan()),
+                            8 => a.player.min_lifespan().cmp(&b.player.min_lifespan()),
+                            9 => a.player.max_lifespan().cmp(&b.player.max_lifespan()),
                             _ => std::cmp::Ordering::Equal,
                         };
 
@@ -201,77 +195,113 @@ pub fn scoreboard_row_ui(
     player_highlighting: &mut PlayerHighlighting,
     body: &mut TableBody,
 ) {
-    let row_label = |ui: &mut Ui, str: &str| {
-        ui.add(Label::new(str).extend());
+    let cell_label = |ui: &mut Ui, text: &str| -> egui::Response {
+        ui.add(egui::Label::new(text).sense(egui::Sense::click()))
     };
 
+    let clicked = std::cell::Cell::new(false);
+
     body.row(TABLE_ROW_HEIGHT, |mut row| {
-        let mut is_checked = player_highlighting.highlighted.contains(&p.id);
-
-        row.set_selected(is_checked);
+        let is_selected = player_highlighting.highlighted.contains(&p.id);
+        row.set_selected(is_selected);
 
         row.col(|ui| {
-            if ui.checkbox(&mut is_checked, "").changed() {
-                if is_checked {
-                    player_highlighting.highlighted.insert(p.id.clone());
-                } else {
-                    player_highlighting.highlighted.remove(&p.id);
+            match SteamId::try_from(&p.id) {
+                Ok(steam_id) => {
+                    let link_text = steam_id.to_string();
+                    let link_url = format!("https://steamcommunity.com/profiles/{}", p.id);
+                    let link_resp = ui.hyperlink_to(link_text, link_url);
+                    if link_resp.clicked() {
+                        clicked.set(true);
+                    }
                 }
-            }
+                _ => {
+                    let resp = ui.add(egui::Label::new(p.id.to_string()).sense(egui::Sense::click()));
+                    if resp.clicked() {
+                        clicked.set(true);
+                    }
+                }
+            };
         });
 
-        row.col(|ui| match SteamId::try_from(&p.id) {
-            Ok(steam_id) => {
-                let link_text = steam_id.to_string();
-                let link_url = format!("https://steamcommunity.com/profiles/{}", p.id);
-
-                ui.hyperlink_to(link_text, link_url);
-            }
-            _ => {
-                ui.label(p.id.to_string());
+        row.col(|ui| {
+            let resp = cell_label(ui, &p.name);
+            if resp.clicked() {
+                clicked.set(true);
             }
         });
 
         row.col(|ui| {
-            row_label(ui, &p.name);
-        });
-
-        row.col(|ui| {
-            ui.label(match &p.team {
+            let team_str = match &p.team {
                 None => t("#app_team_unknown"),
                 Some(team) => team_name(team),
-            });
+            };
+            let resp = cell_label(ui, &team_str);
+            if resp.clicked() {
+                clicked.set(true);
+            }
         });
 
         row.col(|ui| {
-            ui.label(match &p.class {
+            let class_str = match &p.class {
                 None => t("#app_team_unknown"),
                 Some(x) => format!("{x:?}"),
-            });
+            };
+            let resp = cell_label(ui, &class_str);
+            if resp.clicked() {
+                clicked.set(true);
+            }
         });
 
         row.col(|ui| {
-            ui.label(p.stats.0.to_string());
+            let resp = cell_label(ui, &p.stats.0.to_string());
+            if resp.clicked() {
+                clicked.set(true);
+            }
         });
 
         row.col(|ui| {
-            ui.label(p.stats.1.to_string());
+            let resp = cell_label(ui, &p.stats.1.to_string());
+            if resp.clicked() {
+                clicked.set(true);
+            }
         });
 
         row.col(|ui| {
-            ui.label(p.stats.2.to_string());
+            let resp = cell_label(ui, &p.stats.2.to_string());
+            if resp.clicked() {
+                clicked.set(true);
+            }
         });
 
         row.col(|ui| {
-            ui.label(format!("{}s", p.avg_lifespan().as_secs()));
+            let resp = cell_label(ui, &format!("{}s", p.avg_lifespan().as_secs()));
+            if resp.clicked() {
+                clicked.set(true);
+            }
         });
 
         row.col(|ui| {
-            ui.label(format!("{}s", p.min_lifespan().as_secs()));
+            let resp = cell_label(ui, &format!("{}s", p.min_lifespan().as_secs()));
+            if resp.clicked() {
+                clicked.set(true);
+            }
         });
 
         row.col(|ui| {
-            ui.label(format!("{}s", p.max_lifespan().as_secs()));
+            let resp = cell_label(ui, &format!("{}s", p.max_lifespan().as_secs()));
+            if resp.clicked() {
+                clicked.set(true);
+            }
         });
     });
+
+    if clicked.get() {
+        if player_highlighting.highlighted.contains(&p.id) {
+            player_highlighting.highlighted.remove(&p.id);
+        } else {
+            player_highlighting.highlighted.clear();
+            player_highlighting.highlighted.insert(p.id.clone());
+        }
+    }
 }
