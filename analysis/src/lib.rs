@@ -73,6 +73,11 @@ pub struct PovStats {
 #[derive(Debug, Default)]
 pub struct AnalyzerState {
     clan_match_detection: ClanMatchDetection,
+    /// Set to `true` as soon as any definitive clan-match signal is observed
+    /// (ClanTimer message, WaveTime > 0, or the Reset→Start scoreboard zeroing
+    /// sequence). Unlike `clan_match_detection`, this flag is never cleared, so
+    /// demos recorded *after* the match went live still report correctly.
+    pub clan_match_detected: bool,
     pub current_time: GameTime,
 
     pub frame_index: usize,
@@ -185,6 +190,7 @@ fn is_relevant_message(name_bytes: &[u8]) -> bool {
         trimmed,
         b"RoundState"
             | b"ClanTimer"
+            | b"WaveTime"
             | b"TeamScore"
             | b"ScoreShort"
             | b"ObjScore"
@@ -594,6 +600,12 @@ fn check_states_equal(left: &AnalyzerState, right: &AnalyzerState) -> Result<(),
             left.clan_match_detection, right.clan_match_detection
         ));
     }
+    if left.clan_match_detected != right.clan_match_detected {
+        return Err(format!(
+            "clan_match_detected mismatch: {:?} vs {:?}",
+            left.clan_match_detected, right.clan_match_detected
+        ));
+    }
     if left.current_time.real_offset != right.current_time.real_offset
         || left.current_time.viewdemo_offset != right.current_time.viewdemo_offset
     {
@@ -690,6 +702,10 @@ impl<'a> From<&'a [u8]> for Analysis {
 }
 
 impl AnalyzerState {
+    pub fn is_clan_match(&self) -> bool {
+        self.clan_match_detected
+    }
+
     fn find_player_by_client_index(&self, client_index: u8) -> Option<&Player> {
         self.players.iter().find(|player| match player.connection {
             Connection::Connected { client_id } => client_id == client_index,

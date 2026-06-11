@@ -135,6 +135,19 @@ pub fn header_ui(file_info: Option<&FileInfo>, analysis: Option<&Analysis>, ui: 
         }
         ui.end_row();
 
+        ui.strong(t("#app_summary_match_type"));
+        if let Some(a) = analysis {
+            let match_type = if a.state.is_clan_match() {
+                t("#app_match_type_clan")
+            } else {
+                t("#app_match_type_pub")
+            };
+            ui.label(match_type);
+        } else {
+            ui.label("");
+        }
+        ui.end_row();
+
         ui.strong(t("#app_summary_demo_duration"));
         if let Some(a) = analysis {
             let total_dur = a.state.current_time.viewdemo_offset;
