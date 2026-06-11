@@ -32,7 +32,7 @@ pub use crate::{
     round::Round,
     localization::{set_active_language, get_active_language, translate_key},
 };
-pub use dod::Team;
+pub use dod::{Team, Weapon};
 
 #[derive(Debug)]
 pub enum AnalyzerEvent<'a> {
@@ -44,7 +44,31 @@ pub enum AnalyzerEvent<'a> {
     UserMessage(UserMessage),
 }
 
+#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
+pub struct WeaponPovStats {
+    pub bullets_fired: u32,
+    pub reloads: u32,
+    pub kills: u32,
+    pub noscopes: u32,
+    pub scoped_kills: u32,
+}
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct PovStats {
+    pub is_scoped: bool,
+    pub hits_taken: u32,
+    pub total_damage_taken: u32,
+    pub suicides: u32,
+    pub teamkills_committed: u32,
+    pub teamkills_suffered: u32,
+    pub weapon_stats: std::collections::HashMap<Weapon, WeaponPovStats>,
+    
+    // Tracking state
+    pub current_weapon: Option<Weapon>,
+    pub prev_clip_ammo: u32,
+    pub prev_health: u32,
+    pub has_received_health: bool,
+}
 
 #[derive(Debug, Default)]
 pub struct AnalyzerState {
@@ -56,6 +80,8 @@ pub struct AnalyzerState {
     pub rounds: Vec<Round>,
     pub team_scores: TeamScores,
     pub chat_messages: Vec<ChatMessage>,
+    pub pov_player_index: Option<u8>,
+    pub pov_stats: PovStats,
 }
 
 #[derive(Default)]
@@ -163,7 +189,112 @@ fn is_relevant_message(name_bytes: &[u8]) -> bool {
             | b"TextMsg"
             | b"DeathMsg"
             | b"PStatus"
+            | b"Scope"
+            | b"CurWeapon"
+            | b"ReloadDone"
+            | b"ResetHUD"
+            | b"Health"
     )
+}
+
+pub fn use_pov_stats_updates(state: &mut AnalyzerState, event: &AnalyzerEvent) {
+    if let AnalyzerEvent::EngineMessage(EngineMessage::SvcServerInfo(msg)) = event {
+        state.pov_player_index = Some(msg.player_index);
+    }
+
+    if let AnalyzerEvent::UserMessage(user_msg) = event {
+        match user_msg {
+            UserMessage::Scope(_) => {
+                state.pov_stats.is_scoped = !state.pov_stats.is_scoped;
+            }
+            UserMessage::CurWeapon(msg) => {
+                if let Some(ref prev_weapon) = state.pov_stats.current_weapon {
+                    if prev_weapon == &msg.weapon {
+                        if (msg.clip_ammo as u32) < state.pov_stats.prev_clip_ammo {
+                            let entry = state.pov_stats.weapon_stats.entry(msg.weapon.clone()).or_default();
+                            entry.bullets_fired += 1;
+                        }
+                    } else {
+                        state.pov_stats.is_scoped = false;
+                    }
+                } else {
+                    state.pov_stats.is_scoped = false;
+                }
+                state.pov_stats.current_weapon = Some(msg.weapon.clone());
+                state.pov_stats.prev_clip_ammo = msg.clip_ammo as u32;
+            }
+            UserMessage::ReloadDone(_) => {
+                if let Some(ref active_weapon) = state.pov_stats.current_weapon {
+                    let entry = state.pov_stats.weapon_stats.entry(active_weapon.clone()).or_default();
+                    entry.reloads += 1;
+                }
+                state.pov_stats.is_scoped = false;
+            }
+            UserMessage::ResetHUD(_) => {
+                state.pov_stats.is_scoped = false;
+                state.pov_stats.has_received_health = false;
+            }
+            UserMessage::Health(msg) => {
+                let health_val = msg.0 as u32;
+                if state.pov_stats.has_received_health {
+                    if health_val < state.pov_stats.prev_health {
+                        state.pov_stats.hits_taken += 1;
+                        state.pov_stats.total_damage_taken += state.pov_stats.prev_health - health_val;
+                    }
+                }
+                state.pov_stats.prev_health = health_val;
+                state.pov_stats.has_received_health = true;
+            }
+            UserMessage::DeathMsg(msg) => {
+                if let Some(pov_idx) = state.pov_player_index {
+                    let is_killer_pov = msg.killer_client_index > 0 && msg.killer_client_index - 1 == pov_idx;
+                    let is_victim_pov = msg.victim_client_index > 0 && msg.victim_client_index - 1 == pov_idx;
+
+                    if is_killer_pov {
+                        if msg.killer_client_index == msg.victim_client_index {
+                            state.pov_stats.suicides += 1;
+                        } else {
+                            let killer_team = state.find_player_by_client_index(msg.killer_client_index - 1).and_then(|p| p.team.clone());
+                            let victim_team = state.find_player_by_client_index(msg.victim_client_index - 1).and_then(|p| p.team.clone());
+                            if killer_team.is_some() && victim_team.is_some() && killer_team == victim_team {
+                                state.pov_stats.teamkills_committed += 1;
+                            } else {
+                                let entry = state.pov_stats.weapon_stats.entry(msg.weapon.clone()).or_default();
+                                entry.kills += 1;
+                                if matches!(
+                                    msg.weapon,
+                                    Weapon::Springfield
+                                        | Weapon::ScopedK98
+                                        | Weapon::ScopedFg42
+                                        | Weapon::ScopedLeeEnfield
+                                ) {
+                                    if state.pov_stats.is_scoped {
+                                        entry.scoped_kills += 1;
+                                    } else {
+                                        entry.noscopes += 1;
+                                    }
+                                }
+                            }
+                        }
+                    } else if msg.killer_client_index == 0 && is_victim_pov {
+                        state.pov_stats.suicides += 1;
+                    }
+
+                    if is_victim_pov {
+                        state.pov_stats.is_scoped = false;
+                        if msg.killer_client_index > 0 && !is_killer_pov {
+                            let killer_team = state.find_player_by_client_index(msg.killer_client_index - 1).and_then(|p| p.team.clone());
+                            let victim_team = state.find_player_by_client_index(msg.victim_client_index - 1).and_then(|p| p.team.clone());
+                            if killer_team.is_some() && victim_team.is_some() && killer_team == victim_team {
+                                state.pov_stats.teamkills_suffered += 1;
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 impl Analysis {
@@ -201,6 +332,7 @@ impl Analysis {
             use_rounds_updates(state, event);
             use_chat_updates(state, event);
             use_clan_match_detection_updates(Duration::from_secs(10), state, event);
+            use_pov_stats_updates(state, event);
         };
 
         process_event(&mut state, &AnalyzerEvent::Initialization);
@@ -263,6 +395,7 @@ impl Analysis {
             use_rounds_updates(state, event);
             use_chat_updates(state, event);
             use_clan_match_detection_updates(Duration::from_secs(10), state, event);
+            use_pov_stats_updates(state, event);
         };
 
         // 1. Unoptimized Parse (no filtering, processes every single user message)
@@ -382,6 +515,12 @@ fn check_states_equal(left: &AnalyzerState, right: &AnalyzerState) -> Result<(),
     }
     if format!("{:?}", left.team_scores) != format!("{:?}", right.team_scores) {
         return Err(format!("team_scores mismatch"));
+    }
+    if left.pov_player_index != right.pov_player_index {
+        return Err(format!("pov_player_index mismatch: {:?} vs {:?}", left.pov_player_index, right.pov_player_index));
+    }
+    if left.pov_stats != right.pov_stats {
+        return Err(format!("pov_stats mismatch: {:?} vs {:?}", left.pov_stats, right.pov_stats));
     }
     if left.rounds.len() != right.rounds.len() {
         return Err(format!("rounds count mismatch: {} vs {}", left.rounds.len(), right.rounds.len()));
@@ -515,6 +654,7 @@ mod tests {
                 use_rounds_updates(state, event);
                 use_chat_updates(state, event);
                 use_clan_match_detection_updates(Duration::from_secs(10), state, event);
+                use_pov_stats_updates(state, event);
             };
             process_event(&mut state_unopt, &AnalyzerEvent::Initialization);
             for entry in &demo.directory.entries {
@@ -576,6 +716,10 @@ mod tests {
         
         // Compare team_scores
         assert_eq!(format!("{:?}", left.team_scores), format!("{:?}", right.team_scores));
+        
+        // Compare POV stats
+        assert_eq!(left.pov_player_index, right.pov_player_index);
+        assert_eq!(left.pov_stats, right.pov_stats);
         
         // Compare rounds
         assert_eq!(left.rounds.len(), right.rounds.len());

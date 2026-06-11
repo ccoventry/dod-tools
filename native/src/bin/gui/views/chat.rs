@@ -201,7 +201,7 @@ pub fn chat_log_ui(file_info: Option<&FileInfo>, r: Option<&Analysis>, ui: &mut 
             for idx in row_range {
                 let msg = filtered[idx];
                 ui.horizontal(|ui| {
-                    let time_str = format!("[{} / F: {}]", format_game_time(&msg.time.viewdemo_offset), msg.frame_index);
+                    let time_str = format!("[{}]", format_game_time(&msg.time.viewdemo_offset));
                     ui.colored_label(Color32::from_rgb(140, 140, 140), time_str);
 
                     if msg.sender_dead {

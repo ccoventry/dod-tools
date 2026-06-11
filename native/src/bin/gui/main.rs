@@ -38,8 +38,9 @@ async fn main() {
         ..Default::default()
     };
 
+    let title = format!("dod-tools v{}", env!("CARGO_PKG_VERSION"));
     eframe::run_native(
-        "dod-tools",
+        &title,
         options,
         Box::new(|_cc| {
             Ok(Box::new(
@@ -227,6 +228,7 @@ struct Gui {
     error_message: Option<String>,
     settings: AppSettings,
     show_settings_window: bool,
+    show_about_window: bool,
 
     rx: mpsc::Receiver<GuiMessage>,
     tx: mpsc::Sender<GuiMessage>,
@@ -328,6 +330,7 @@ impl Default for Gui {
             tx,
             settings,
             show_settings_window: false,
+            show_about_window: false,
 
             #[cfg(not(target_arch = "wasm32"))]
             file_picker: FileDialog::default(),
@@ -469,6 +472,8 @@ fn parse_web_file(ctx: Context, tx: mpsc::Sender<GuiMessage>, web_file: WebFile)
 
 impl eframe::App for Gui {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
+        let modal_open = self.show_settings_window || self.show_about_window;
+
         if self.loading_path.is_some() {
             ctx.request_repaint();
         }
@@ -629,14 +634,9 @@ impl eframe::App for Gui {
         TopBottomPanel::top("controls")
             .frame(Frame::side_top_panel(&ctx.style()).inner_margin(6.))
             .show(ctx, |ui| {
+                if modal_open { ui.disable(); }
                 ui.horizontal(|ui| {
                     ui.menu_button(format!("{} ⏷", t("#app_menu_file")), |ui| {
-                        #[cfg(not(target_arch = "wasm32"))]
-                        if ui.button(t("#app_menu_choose_dir")).clicked() {
-                            self.file_picker.pick_directory();
-                            ui.close();
-                        }
-
                         #[cfg(target_arch = "wasm32")]
                         if ui.button(t("#app_menu_select_folder")).clicked() {
                             pick_web_folder(ctx.clone(), self.tx.clone());
@@ -661,6 +661,13 @@ impl eframe::App for Gui {
                         #[cfg(not(target_arch = "wasm32"))]
                         if ui.button(t("#app_menu_quit")).clicked() {
                             std::process::exit(0);
+                        }
+                    });
+
+                    ui.menu_button(format!("{} ⏷", t("#app_menu_help")), |ui| {
+                        if ui.button(t("#app_menu_about")).clicked() {
+                            self.show_about_window = true;
+                            ui.close();
                         }
                     });
 
@@ -712,6 +719,7 @@ impl eframe::App for Gui {
             .max_width(400.)
             .frame(Frame::side_top_panel(&ctx.style()).inner_margin(6.))
             .show(ctx, |ui| {
+                if modal_open { ui.disable(); }
                 ui.heading(t("#app_panel_explorer"));
                 ui.separator();
 
@@ -791,6 +799,7 @@ impl eframe::App for Gui {
             .max_height(400.)
             .frame(Frame::side_top_panel(&ctx.style()).inner_margin(6.))
             .show(ctx, |ui| {
+                if modal_open { ui.disable(); }
                 ui.heading(t("#app_panel_demos"));
                 ui.separator();
 
@@ -951,6 +960,7 @@ impl eframe::App for Gui {
             });
 
         CentralPanel::default().show(ctx, |ui| {
+            if modal_open { ui.disable(); }
             if let Some(loading_path) = &self.loading_path {
                 let progress = self.loading_progress.unwrap_or(0.0);
                 let pct = progress * 100.0;
@@ -1160,6 +1170,39 @@ impl eframe::App for Gui {
                     });
                 });
             self.show_settings_window = open && !close_clicked;
+        }
+
+        if self.show_about_window {
+            let mut open = true;
+            let mut close_clicked = false;
+            egui::Window::new(t("#app_about_title"))
+                .open(&mut open)
+                .resizable(false)
+                .collapsible(false)
+                .show(ctx, |ui| {
+                    ui.vertical(|ui| {
+                        ui.heading("dod-tools");
+                        ui.add_space(4.0);
+                        ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
+                        ui.add_space(8.0);
+                        ui.label(t("#app_about_desc"));
+                        ui.add_space(8.0);
+                        
+                        ui.horizontal(|ui| {
+                            ui.label(format!("{}:", t("#app_about_github")));
+                            ui.hyperlink_to("github.com/ccoventry/dod-tools", "https://github.com/ccoventry/dod-tools");
+                        });
+                        
+                        ui.add_space(16.0);
+                        ui.separator();
+                        ui.add_space(8.0);
+                        
+                        if ui.button(t("#app_about_close")).clicked() {
+                            close_clicked = true;
+                        }
+                    });
+                });
+            self.show_about_window = open && !close_clicked;
         }
     }
 }

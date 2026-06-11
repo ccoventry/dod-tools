@@ -82,9 +82,5 @@ pub fn header_ui(file_info: Option<&FileInfo>, analysis: Option<&Analysis>, ui: 
             ui.label("");
         }
         ui.end_row();
-
-        ui.strong(t("#app_summary_analyzer_ver"));
-        ui.label(env!("CARGO_PKG_VERSION"));
-        ui.end_row();
     });
 }

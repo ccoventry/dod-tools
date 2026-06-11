@@ -33,6 +33,7 @@ pub mod rounds;
 pub mod weapons;
 pub mod streaks;
 pub mod chat;
+pub mod pov;
 
 pub use summary::header_ui;
 pub use scoreboard::scoreboard_ui;
@@ -41,6 +42,7 @@ pub use rounds::rounds_ui;
 pub use weapons::weapon_breakdowns_ui;
 pub use streaks::kill_streaks_ui;
 pub use chat::chat_log_ui;
+pub use pov::pov_analytics_ui;
 
 pub fn report_ui(
     file_info: Option<&FileInfo>,
@@ -63,6 +65,11 @@ pub fn report_ui(
         ui.selectable_value(&mut current_tab, "Weapon Breakdowns".to_string(), t("#app_tab_weapons"));
         ui.selectable_value(&mut current_tab, "Kill Streaks".to_string(), t("#app_tab_streaks"));
         ui.selectable_value(&mut current_tab, "Chat Log".to_string(), t("#app_tab_chat"));
+        
+        let is_pov = r.map(|a| a.demo_info.demo_type.as_str() == "POV").unwrap_or(false);
+        if ui.add_enabled(is_pov, egui::Button::new(t("#app_tab_pov")).selected(current_tab == "POV Analytics")).clicked() {
+            current_tab = "POV Analytics".to_string();
+        }
     });
 
     ui.separator();
@@ -77,6 +84,7 @@ pub fn report_ui(
         "Weapon Breakdowns" => weapon_breakdowns_ui(file_info, r, player_highlighting, ui),
         "Kill Streaks" => kill_streaks_ui(file_info, r, player_highlighting, ui),
         "Chat Log" => chat_log_ui(file_info, r, ui),
+        "POV Analytics" => pov_analytics_ui(file_info, r, ui),
         _ => {}
     }
 }
