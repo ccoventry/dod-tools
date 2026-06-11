@@ -23,6 +23,42 @@ pub fn t(key: &str) -> String {
 
 /// Look up a localized weapon name, falling back to a readable title-case enum name.
 pub fn weapon_name(weapon: &analysis::Weapon) -> String {
+    // 1. Try to find translation using the official dod_english.txt keys first
+    let official_key = match weapon {
+        analysis::Weapon::Garand => Some("#wpn_garand"),
+        analysis::Weapon::M1Carbine => Some("#wpn_carbine"),
+        analysis::Weapon::Thompson => Some("#wpn_tommy"),
+        analysis::Weapon::GreaseGun => Some("#wpn_grease"),
+        analysis::Weapon::Springfield => Some("#wpn_spring"),
+        analysis::Weapon::Bar => Some("#wpn_bar"),
+        analysis::Weapon::Browning30Cal => Some("#wpn_30cal"),
+        analysis::Weapon::LeeEnfield => Some("#wpn_enfield"),
+        analysis::Weapon::Sten => Some("#wpn_sten"),
+        analysis::Weapon::ScopedLeeEnfield => Some("#wpn_enfields"),
+        analysis::Weapon::Bren => Some("#wpn_bren"),
+        analysis::Weapon::K98 => Some("#wpn_k98"),
+        analysis::Weapon::K43 => Some("#wpn_k43"),
+        analysis::Weapon::Mp40 => Some("#wpn_mp40"),
+        analysis::Weapon::Stg44 => Some("#wpn_mp44"),
+        analysis::Weapon::ScopedK98 => Some("#wpn_k98s"),
+        analysis::Weapon::Mg34 => Some("#wpn_mg34"),
+        analysis::Weapon::Mg42 => Some("#wpn_mg42"),
+        analysis::Weapon::Fg42 => Some("#wpn_fg42"),
+        analysis::Weapon::ScopedFg42 => Some("#wpn_fg42s"),
+        analysis::Weapon::Bazooka => Some("#wpn_bazooka"),
+        analysis::Weapon::Panzerschreck => Some("#wpn_pschreck"),
+        analysis::Weapon::Piat => Some("#wpn_piat"),
+        analysis::Weapon::Mortar => Some("#wpn_mortar"),
+        _ => None,
+    };
+
+    if let Some(key) = official_key {
+        if let Some(translation) = analysis::translate_key(key) {
+            return translation;
+        }
+    }
+
+    // 2. Fallback to our custom keys in dod_tools_english.txt or readable title case
     let key = format!("#app_weapon_{:?}", weapon).to_lowercase();
     analysis::translate_key(&key).unwrap_or_else(|| {
         let raw = format!("{:?}", weapon);
