@@ -1,5 +1,5 @@
 use crate::FileInfo;
-use crate::views::{PlayerHighlighting, TABLE_ROW_HEIGHT, t};
+use crate::views::{PlayerHighlighting, TABLE_ROW_HEIGHT, t, weapon_name};
 use analysis::{Analysis, Player};
 use egui::{Align, CollapsingHeader, Layout, ScrollArea, Ui};
 use egui_extras::{Column, TableBuilder};
@@ -99,7 +99,7 @@ pub fn kill_streaks_table_ui(p: &Player, ui: &mut Ui) {
                             let weapons = streak
                                 .kills
                                 .iter()
-                                .map(|(_, weapon)| format!("{weapon:?}"))
+                                .map(|(_, weapon)| weapon_name(weapon))
                                 .collect::<Vec<_>>()
                                 .join(", ");
 

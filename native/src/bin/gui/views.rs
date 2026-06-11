@@ -21,6 +21,22 @@ pub fn t(key: &str) -> String {
     })
 }
 
+/// Look up a localized weapon name, falling back to a readable title-case enum name.
+pub fn weapon_name(weapon: &analysis::Weapon) -> String {
+    let key = format!("#app_weapon_{:?}", weapon).to_lowercase();
+    analysis::translate_key(&key).unwrap_or_else(|| {
+        let raw = format!("{:?}", weapon);
+        let mut result = String::new();
+        for (i, c) in raw.chars().enumerate() {
+            if i > 0 && c.is_uppercase() {
+                result.push(' ');
+            }
+            result.push(c);
+        }
+        result
+    })
+}
+
 #[derive(Default)]
 pub struct PlayerHighlighting {
     pub highlighted: HashSet<PlayerGlobalId>,
