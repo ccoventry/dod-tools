@@ -21,8 +21,12 @@ fn main() {
                                 name_len -= 1;
                             }
                             if &user_msg.name[..name_len] == b"CurWeapon" {
-                                if let Ok(UserMessage::CurWeapon(msg)) = UserMessage::new(&user_msg.name, &user_msg.data) {
-                                    if msg.weapon == Weapon::Garand || msg.weapon == Weapon::ButtStock {
+                                if let Ok(UserMessage::CurWeapon(msg)) =
+                                    UserMessage::new(&user_msg.name, &user_msg.data)
+                                {
+                                    if msg.weapon == Weapon::Garand
+                                        || msg.weapon == Weapon::ButtStock
+                                    {
                                         println!(
                                             "Frame time: {:.3} | CurWeapon: active={}, weapon={:?}, clip_ammo={}",
                                             frame.time, msg.is_active, msg.weapon, msg.clip_ammo

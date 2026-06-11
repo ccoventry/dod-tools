@@ -1,5 +1,5 @@
-use crate::{AnalyzerEvent, AnalyzerState, time::GameTime};
 use crate::mortality::MortalityState;
+use crate::{AnalyzerEvent, AnalyzerState, time::GameTime};
 use dod::{Team, UserMessage};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,11 +77,15 @@ pub fn use_chat_updates(state: &mut AnalyzerState, event: &AnalyzerEvent) {
                         if c == '[' {
                             bracket_depth += 1;
                         } else if c == ']' {
-                            if bracket_depth > 0 { bracket_depth -= 1; }
+                            if bracket_depth > 0 {
+                                bracket_depth -= 1;
+                            }
                         } else if c == '(' {
                             paren_depth += 1;
                         } else if c == ')' {
-                            if paren_depth > 0 { paren_depth -= 1; }
+                            if paren_depth > 0 {
+                                paren_depth -= 1;
+                            }
                         } else if c == ':' && bracket_depth == 0 && paren_depth == 0 {
                             found_pos = Some(idx);
                             break;
@@ -99,8 +103,10 @@ pub fn use_chat_updates(state: &mut AnalyzerState, event: &AnalyzerEvent) {
 
             let sender_block_trimmed = sender_block.trim();
             let is_dead_prefix = sender_block_trimmed.contains("*DEAD*");
-            let is_team_prefix = sender_block_trimmed.contains("(TEAM)") || sender_block_trimmed.contains("(Team)");
-            let is_spec_prefix = sender_block_trimmed.contains("(SPECTATOR)") || sender_block_trimmed.contains("(Spectator)");
+            let is_team_prefix =
+                sender_block_trimmed.contains("(TEAM)") || sender_block_trimmed.contains("(Team)");
+            let is_spec_prefix = sender_block_trimmed.contains("(SPECTATOR)")
+                || sender_block_trimmed.contains("(Spectator)");
 
             let (sender_name, sender_team, is_dead_state) = if say_text.client_index > 0 {
                 let player = state.find_player_by_client_index(say_text.client_index - 1);
@@ -130,9 +136,8 @@ pub fn use_chat_updates(state: &mut AnalyzerState, event: &AnalyzerEvent) {
                 (Some(console_name), None, false)
             };
 
-            let is_team_message = is_team_prefix 
-                || is_spec_prefix 
-                || sender_team == Some(Team::Spectators);
+            let is_team_message =
+                is_team_prefix || is_spec_prefix || sender_team == Some(Team::Spectators);
 
             let chat_type = if is_team_message {
                 ChatType::Mm2
@@ -195,24 +200,32 @@ pub fn translate_system_message(
     if !key.starts_with('#') {
         key.insert(0, '#');
     }
-    
+
     if let Some(template) = crate::localization::translate_key(&key) {
         let mut result = template.clone();
-        if let Some(a) = arg1 { result = result.replace("%s1", a); }
-        if let Some(a) = arg2 { result = result.replace("%s2", a); }
-        if let Some(a) = arg3 { result = result.replace("%s3", a); }
-        if let Some(a) = arg4 { result = result.replace("%s4", a); }
-        
+        if let Some(a) = arg1 {
+            result = result.replace("%s1", a);
+        }
+        if let Some(a) = arg2 {
+            result = result.replace("%s2", a);
+        }
+        if let Some(a) = arg3 {
+            result = result.replace("%s3", a);
+        }
+        if let Some(a) = arg4 {
+            result = result.replace("%s4", a);
+        }
+
         if result.contains("%s") {
             let args = [arg1, arg2, arg3, arg4];
             let mut arg_idx = 0;
             while let Some(pos) = result.find("%s") {
                 if arg_idx < args.len() {
                     let replacement = args[arg_idx].unwrap_or("");
-                    result.replace_range(pos..pos+2, replacement);
+                    result.replace_range(pos..pos + 2, replacement);
                     arg_idx += 1;
                 } else {
-                    result.replace_range(pos..pos+2, "");
+                    result.replace_range(pos..pos + 2, "");
                 }
             }
         }
@@ -248,10 +261,18 @@ pub fn translate_system_message(
             format!("{} is ready", name)
         } else {
             let mut parts = vec![token.to_string()];
-            if let Some(arg) = arg1 { parts.push(clean_control_chars(arg)); }
-            if let Some(arg) = arg2 { parts.push(clean_control_chars(arg)); }
-            if let Some(arg) = arg3 { parts.push(clean_control_chars(arg)); }
-            if let Some(arg) = arg4 { parts.push(clean_control_chars(arg)); }
+            if let Some(arg) = arg1 {
+                parts.push(clean_control_chars(arg));
+            }
+            if let Some(arg) = arg2 {
+                parts.push(clean_control_chars(arg));
+            }
+            if let Some(arg) = arg3 {
+                parts.push(clean_control_chars(arg));
+            }
+            if let Some(arg) = arg4 {
+                parts.push(clean_control_chars(arg));
+            }
             parts.join(" ")
         }
     }
@@ -263,7 +284,13 @@ mod tests {
 
     #[test]
     fn test_translate_system_message_fallback() {
-        let res = translate_system_message("#Game_joined_team", Some("Warchyld"), Some("Allies"), None, None);
+        let res = translate_system_message(
+            "#Game_joined_team",
+            Some("Warchyld"),
+            Some("Allies"),
+            None,
+            None,
+        );
         if crate::localization::translate_key("#game_joined_team").is_some() {
             assert_eq!(res, "*Warchyld joined Allies");
         } else {
@@ -277,7 +304,8 @@ mod tests {
             assert_eq!(res2, "scrd disconnected");
         }
 
-        let res_unknown = translate_system_message("#Unknown_Token", Some("arg1"), Some("arg2"), None, None);
+        let res_unknown =
+            translate_system_message("#Unknown_Token", Some("arg1"), Some("arg2"), None, None);
         assert_eq!(res_unknown, "#Unknown_Token arg1 arg2");
     }
 
@@ -297,7 +325,10 @@ mod tests {
         }));
         use_chat_updates(&mut state, &event);
         assert_eq!(state.chat_messages.len(), 1);
-        assert_eq!(state.chat_messages[0].sender_name.as_deref(), Some("dicE[: :]"));
+        assert_eq!(
+            state.chat_messages[0].sender_name.as_deref(),
+            Some("dicE[: :]")
+        );
         assert_eq!(state.chat_messages[0].text, "hello there");
         assert_eq!(state.chat_messages[0].chat_type, ChatType::Mm1); // all chat
 
@@ -308,7 +339,10 @@ mod tests {
         }));
         use_chat_updates(&mut state, &event2);
         assert_eq!(state.chat_messages.len(), 2);
-        assert_eq!(state.chat_messages[1].sender_name.as_deref(), Some("dicE[: :]"));
+        assert_eq!(
+            state.chat_messages[1].sender_name.as_deref(),
+            Some("dicE[: :]")
+        );
         assert_eq!(state.chat_messages[1].text, "team chat message");
         assert_eq!(state.chat_messages[1].chat_type, ChatType::Mm2); // team chat
 
@@ -319,7 +353,10 @@ mod tests {
         }));
         use_chat_updates(&mut state, &event3);
         assert_eq!(state.chat_messages.len(), 3);
-        assert_eq!(state.chat_messages[2].sender_name.as_deref(), Some("Some[Other:Tag]Player"));
+        assert_eq!(
+            state.chat_messages[2].sender_name.as_deref(),
+            Some("Some[Other:Tag]Player")
+        );
         assert_eq!(state.chat_messages[2].text, "hello world");
 
         // 4. Test fallback with no spaces around colon
@@ -329,7 +366,10 @@ mod tests {
         }));
         use_chat_updates(&mut state, &event4);
         assert_eq!(state.chat_messages.len(), 4);
-        assert_eq!(state.chat_messages[3].sender_name.as_deref(), Some("dicE[: :]"));
+        assert_eq!(
+            state.chat_messages[3].sender_name.as_deref(),
+            Some("dicE[: :]")
+        );
         assert_eq!(state.chat_messages[3].text, "hello");
     }
 }

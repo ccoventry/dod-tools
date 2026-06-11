@@ -8,9 +8,9 @@ use std::fs;
 use std::io::Read;
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::PathBuf;
-use std::time::SystemTime;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
+use std::time::SystemTime;
 
 pub struct FileInfo {
     pub created_at: SystemTime,
@@ -36,7 +36,10 @@ pub fn run_analyzer(demo_path: &PathBuf) -> Result<(FileInfo, Analysis), String>
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub fn run_analyzer_with_progress<F>(demo_path: &PathBuf, progress_cb: F) -> Result<(FileInfo, Analysis), String>
+pub fn run_analyzer_with_progress<F>(
+    demo_path: &PathBuf,
+    progress_cb: F,
+) -> Result<(FileInfo, Analysis), String>
 where
     F: FnMut(usize, usize),
 {
@@ -52,7 +55,8 @@ where
 
     let analysis = Analysis::try_from_bytes_with_progress(bytes.as_slice(), progress_cb)?;
 
-    let metadata = fs::metadata(demo_path).map_err(|e| format!("Could not read metadata: {}", e))?;
+    let metadata =
+        fs::metadata(demo_path).map_err(|e| format!("Could not read metadata: {}", e))?;
     let size_bytes = metadata.len();
     let created_at = FileTime::from_last_modification_time(&metadata);
     let creation_offset = Duration::new(created_at.unix_seconds() as u64, created_at.nanoseconds());

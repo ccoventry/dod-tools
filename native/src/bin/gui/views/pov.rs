@@ -66,7 +66,8 @@ pub fn pov_analytics_ui(_file_info: Option<&FileInfo>, r: Option<&Analysis>, ui:
     ui.strong(t("#app_pov_weapons_sub"));
     ui.add_space(4.0);
 
-    let mut weapon_list: Vec<(&Weapon, &analysis::WeaponPovStats)> = stats.weapon_stats.iter().collect();
+    let mut weapon_list: Vec<(&Weapon, &analysis::WeaponPovStats)> =
+        stats.weapon_stats.iter().collect();
     // Sort by kills descending, then name
     weapon_list.sort_by(|(w_a, s_a), (w_b, s_b)| {
         let cmp = s_b.kills.cmp(&s_a.kills);
@@ -111,22 +112,34 @@ pub fn pov_analytics_ui(_file_info: Option<&FileInfo>, r: Option<&Analysis>, ui:
                     let is_selected = selected_weapon.as_ref() == Some(weapon);
                     body.row(TABLE_ROW_HEIGHT, |mut row| {
                         row.col(|ui| {
-                            if ui.selectable_label(is_selected, format!("{:?}", weapon)).clicked() {
+                            if ui
+                                .selectable_label(is_selected, format!("{:?}", weapon))
+                                .clicked()
+                            {
                                 selected_weapon = Some(weapon.clone());
                             }
                         });
                         row.col(|ui| {
-                            if ui.selectable_label(is_selected, format!("{}", w_stats.kills)).clicked() {
+                            if ui
+                                .selectable_label(is_selected, format!("{}", w_stats.kills))
+                                .clicked()
+                            {
                                 selected_weapon = Some(weapon.clone());
                             }
                         });
                         row.col(|ui| {
-                            if ui.selectable_label(is_selected, format!("{}", w_stats.bullets_fired)).clicked() {
+                            if ui
+                                .selectable_label(is_selected, format!("{}", w_stats.bullets_fired))
+                                .clicked()
+                            {
                                 selected_weapon = Some(weapon.clone());
                             }
                         });
                         row.col(|ui| {
-                            if ui.selectable_label(is_selected, format!("{}", w_stats.reloads)).clicked() {
+                            if ui
+                                .selectable_label(is_selected, format!("{}", w_stats.reloads))
+                                .clicked()
+                            {
                                 selected_weapon = Some(weapon.clone());
                             }
                         });

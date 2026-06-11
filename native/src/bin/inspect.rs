@@ -3,8 +3,8 @@
 use clap::Parser;
 use dem::open_demo_from_bytes;
 use dem::types::{FrameData, MessageData, NetMessage};
-use std::collections::{HashMap, HashSet};
 use std::collections::hash_map::DefaultHasher;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::io::Read;
@@ -38,7 +38,7 @@ struct InspectResult {
 fn inspect_single_demo(path: &Path) -> Result<InspectResult, String> {
     let bytes = fs::read(path).map_err(|e| e.to_string())?;
     let size_bytes = bytes.len();
-    
+
     // Catch panics from the external dem crate
     let demo_res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         open_demo_from_bytes(&bytes)
@@ -121,8 +121,14 @@ fn main() {
 
     let total_unique = unique_files.len();
     let limit = std::cmp::min(total_unique, args.limit);
-    println!("Deduplication complete. {} unique files identified.", total_unique);
-    println!("Inspecting all {} unique demos using parallel threads...", limit);
+    println!(
+        "Deduplication complete. {} unique files identified.",
+        total_unique
+    );
+    println!(
+        "Inspecting all {} unique demos using parallel threads...",
+        limit
+    );
 
     let num_threads = std::thread::available_parallelism()
         .map(|n| n.get())
@@ -177,18 +183,33 @@ fn main() {
             }
             Err(e) => {
                 let path = &unique_files_arc[idx];
-                eprintln!("\n  [Error] Failed to inspect demo {}: {} ({})", idx + 1, path.display(), e);
+                eprintln!(
+                    "\n  [Error] Failed to inspect demo {}: {} ({})",
+                    idx + 1,
+                    path.display(),
+                    e
+                );
             }
         }
 
         if processed_count % 100 == 0 || processed_count == limit {
-            println!("  -> Progress: {}/{} demos inspected...", processed_count, limit);
+            println!(
+                "  -> Progress: {}/{} demos inspected...",
+                processed_count, limit
+            );
         }
     }
 
     let elapsed = start_time.elapsed();
-    println!("\nAnalysis completed in {:.2} seconds.", elapsed.as_secs_f64());
-    println!("Total data parsed: {:.2} MB ({:.2} GB)", processed_size_bytes as f64 / 1_048_576.0, processed_size_bytes as f64 / 1_073_741_824.0);
+    println!(
+        "\nAnalysis completed in {:.2} seconds.",
+        elapsed.as_secs_f64()
+    );
+    println!(
+        "Total data parsed: {:.2} MB ({:.2} GB)",
+        processed_size_bytes as f64 / 1_048_576.0,
+        processed_size_bytes as f64 / 1_073_741_824.0
+    );
     println!("Total frames processed: {}", total_frames);
 
     println!("\n### Map Distributions ###");
@@ -199,9 +220,13 @@ fn main() {
     }
 
     println!("\n### User Message Type Frequency & Penetration ###");
-    println!("| User Message Name | Total Occurrences | Demos Containing Message | Penetration % |");
-    println!("|-------------------|-------------------|--------------------------|---------------|");
-    
+    println!(
+        "| User Message Name | Total Occurrences | Demos Containing Message | Penetration % |"
+    );
+    println!(
+        "|-------------------|-------------------|--------------------------|---------------|"
+    );
+
     let mut sorted_messages: Vec<_> = message_counts.into_iter().collect();
     sorted_messages.sort_by(|a, b| b.1.cmp(&a.1));
 
@@ -221,7 +246,10 @@ fn scan_dir(dir: &Path, files: &mut Vec<PathBuf>) {
             let path = entry.path();
             if path.is_dir() {
                 scan_dir(&path, files);
-            } else if path.extension().map_or(false, |ext| ext.eq_ignore_ascii_case("dem")) {
+            } else if path
+                .extension()
+                .map_or(false, |ext| ext.eq_ignore_ascii_case("dem"))
+            {
                 files.push(path);
             }
         }
@@ -231,15 +259,15 @@ fn scan_dir(dir: &Path, files: &mut Vec<PathBuf>) {
 fn get_file_key(path: &Path) -> Result<FileKey, std::io::Error> {
     let metadata = fs::metadata(path)?;
     let size = metadata.len();
-    
+
     let mut file = fs::File::open(path)?;
     let read_size = std::cmp::min(size, 65536) as usize;
     let mut buffer = vec![0; read_size];
     file.read_exact(&mut buffer)?;
-    
+
     let mut hasher = DefaultHasher::new();
     buffer.hash(&mut hasher);
     let header_hash = hasher.finish();
-    
+
     Ok(FileKey { size, header_hash })
 }

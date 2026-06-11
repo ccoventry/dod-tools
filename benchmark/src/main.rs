@@ -10,7 +10,10 @@ use std::time::Duration;
 use tabled::{builder::Builder, settings::Style};
 
 #[derive(Parser, Debug)]
-#[command(version, about = "Developer utility to profile and verify Day of Defeat demo parser performance.")]
+#[command(
+    version,
+    about = "Developer utility to profile and verify Day of Defeat demo parser performance."
+)]
 struct Args {
     /// Folder paths to scan for .dem files to benchmark
     paths: Vec<PathBuf>,
@@ -51,13 +54,16 @@ fn main() {
     }
 
     println!("Found {} total .dem files.", files.len());
-    
+
     // Sort files alphabetically so traversal is deterministic
     files.sort();
 
     let limit = args.limit;
     if files.len() > limit {
-        println!("Limiting benchmark evaluation to the first {} files (use --limit <num> to customize).", limit);
+        println!(
+            "Limiting benchmark evaluation to the first {} files (use --limit <num> to customize).",
+            limit
+        );
         files.truncate(limit);
     }
 
@@ -76,7 +82,8 @@ fn main() {
                         res.map_name,
                         res.size_mb,
                         res.total_frames,
-                        res.live_frame.map_or("None".to_string(), |idx| idx.to_string()),
+                        res.live_frame
+                            .map_or("None".to_string(), |idx| idx.to_string()),
                         res.skipped_pct,
                         res.speedup
                     );
@@ -98,7 +105,10 @@ fn scan_dir(dir: &Path, files: &mut Vec<PathBuf>) {
             let path = entry.path();
             if path.is_dir() {
                 scan_dir(&path, files);
-            } else if path.extension().map_or(false, |ext| ext.eq_ignore_ascii_case("dem")) {
+            } else if path
+                .extension()
+                .map_or(false, |ext| ext.eq_ignore_ascii_case("dem"))
+            {
                 files.push(path);
             }
         }
@@ -110,7 +120,7 @@ fn benchmark_demo(path: &Path) -> Result<DemoResult, String> {
     let size_mb = file_bytes.len() as f64 / (1024.0 * 1024.0);
 
     let (analysis, diag) = Analysis::parse_with_diagnostics(&file_bytes)?;
-    
+
     let skipped_pct = if let Some(live_frame) = diag.live_frame_index {
         (live_frame as f64 / diag.total_frames as f64) * 100.0
     } else {
@@ -129,7 +139,11 @@ fn benchmark_demo(path: &Path) -> Result<DemoResult, String> {
         unopt_time: diag.unopt_duration,
         opt_time: diag.opt_duration,
         speedup,
-        mismatch: if diag.states_matched { None } else { diag.mismatch_reason },
+        mismatch: if diag.states_matched {
+            None
+        } else {
+            diag.mismatch_reason
+        },
     })
 }
 
@@ -160,9 +174,15 @@ fn print_report(results: &[DemoResult]) {
     let mut mismatch_count = 0;
 
     for res in results {
-        let file_name = res.path.file_name().and_then(|n| n.to_str()).unwrap_or("unknown");
-        let live_frame_str = res.live_frame.map_or("None".to_string(), |idx| idx.to_string());
-        
+        let file_name = res
+            .path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown");
+        let live_frame_str = res
+            .live_frame
+            .map_or("None".to_string(), |idx| idx.to_string());
+
         table_builder.push_record([
             file_name.to_string(),
             res.map_name.clone(),
@@ -197,12 +217,26 @@ fn print_report(results: &[DemoResult]) {
     println!("* **Total unique demos processed**: {}", results.len());
     println!("* **Total size processed**: {:.2} MB", total_size);
     println!("* **Total frames processed**: {}", total_frames);
-    println!("* **Total unoptimized time**: {:.3} seconds", total_unopt.as_secs_f64());
-    println!("* **Total optimized time**: {:.3} seconds", total_opt.as_secs_f64());
-    println!("* **Overall average speedup**: {:.2}x", total_unopt.as_secs_f64() / total_opt.as_secs_f64());
+    println!(
+        "* **Total unoptimized time**: {:.3} seconds",
+        total_unopt.as_secs_f64()
+    );
+    println!(
+        "* **Total optimized time**: {:.3} seconds",
+        total_opt.as_secs_f64()
+    );
+    println!(
+        "* **Overall average speedup**: {:.2}x",
+        total_unopt.as_secs_f64() / total_opt.as_secs_f64()
+    );
     if mismatch_count > 0 {
-        println!("* **WARNING**: {} demo(s) failed the correctness assertion! See log details above.", mismatch_count);
+        println!(
+            "* **WARNING**: {} demo(s) failed the correctness assertion! See log details above.",
+            mismatch_count
+        );
     } else {
-        println!("* **Validation**: All parsed states matched perfectly between unoptimized and optimized pipelines!");
+        println!(
+            "* **Validation**: All parsed states matched perfectly between unoptimized and optimized pipelines!"
+        );
     }
 }

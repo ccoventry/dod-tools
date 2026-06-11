@@ -40,7 +40,7 @@ pub trait MortalityState {
     fn lifespans(&self) -> Vec<Duration> {
         use std::sync::atomic::{AtomicBool, Ordering};
         static LOGGED_ONCE: AtomicBool = AtomicBool::new(false);
-        
+
         #[derive(Default)]
         struct State<'a> {
             lifespans: Vec<Duration>,
@@ -66,8 +66,8 @@ pub trait MortalityState {
                                 None => {
                                     // Log when timestamps are invalid (death before spawn) - only once
                                     if !LOGGED_ONCE.swap(true, Ordering::Relaxed) {
-                                        eprintln!("Warning: Invalid lifespan - death time ({:?}) < spawn time ({:?})", 
-                                                 change.time().viewdemo_offset, 
+                                        eprintln!("Warning: Invalid lifespan - death time ({:?}) < spawn time ({:?})",
+                                                 change.time().viewdemo_offset,
                                                  spawn_time.viewdemo_offset);
                                         eprintln!("(Further warnings suppressed)");
                                     }

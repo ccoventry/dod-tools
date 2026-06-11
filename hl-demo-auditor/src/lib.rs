@@ -1,5 +1,5 @@
-use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
+use std::collections::hash_map::DefaultHasher;
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::io::Read;
@@ -25,7 +25,10 @@ pub fn scan_dir(dir: &Path, files: &mut Vec<PathBuf>) {
             let path = entry.path();
             if path.is_dir() {
                 scan_dir(&path, files);
-            } else if path.extension().map_or(false, |ext| ext.eq_ignore_ascii_case("dem")) {
+            } else if path
+                .extension()
+                .map_or(false, |ext| ext.eq_ignore_ascii_case("dem"))
+            {
                 files.push(path);
             }
         }
@@ -36,17 +39,17 @@ pub fn scan_dir(dir: &Path, files: &mut Vec<PathBuf>) {
 pub fn get_file_key(path: &Path) -> Result<FileKey, std::io::Error> {
     let metadata = fs::metadata(path)?;
     let size = metadata.len();
-    
+
     // Hash the first 64KB (or less if the file is smaller)
     let mut file = fs::File::open(path)?;
     let read_size = std::cmp::min(size, 65536) as usize;
     let mut buffer = vec![0; read_size];
     file.read_exact(&mut buffer)?;
-    
+
     let mut hasher = DefaultHasher::new();
     buffer.hash(&mut hasher);
     let header_hash = hasher.finish();
-    
+
     Ok(FileKey { size, header_hash })
 }
 
@@ -72,7 +75,10 @@ pub fn find_duplicates(files: Vec<PathBuf>) -> (Vec<PathBuf>, Vec<DuplicateGroup
             // Unreadable files get a unique key based on path
             let mut hasher = DefaultHasher::new();
             path.hash(&mut hasher);
-            let dummy_key = FileKey { size: 0, header_hash: hasher.finish() };
+            let dummy_key = FileKey {
+                size: 0,
+                header_hash: hasher.finish(),
+            };
             groups.entry(dummy_key).or_default().push(path);
         }
     }
@@ -112,7 +118,12 @@ pub fn find_duplicates(files: Vec<PathBuf>) -> (Vec<PathBuf>, Vec<DuplicateGroup
         space_b.cmp(&space_a)
     });
 
-    (unique_files, duplicate_groups, duplicate_count, space_wasted_bytes)
+    (
+        unique_files,
+        duplicate_groups,
+        duplicate_count,
+        space_wasted_bytes,
+    )
 }
 
 #[cfg(test)]
@@ -127,11 +138,15 @@ mod tests {
         }
         let mut files = vec![];
         scan_dir(demos_dir, &mut files);
-        
+
         let (_, duplicates, dup_count, wasted) = find_duplicates(files);
-        
+
         // Assert that none of our test demos (including both allied/axis POVs) are duplicates
-        assert_eq!(dup_count, 0, "Demos in test folder should all be unique, but found duplicates: {:?}", duplicates);
+        assert_eq!(
+            dup_count, 0,
+            "Demos in test folder should all be unique, but found duplicates: {:?}",
+            duplicates
+        );
         assert_eq!(wasted, 0);
     }
 
@@ -143,15 +158,19 @@ mod tests {
         }
         let mut files = vec![];
         scan_dir(demos_dir, &mut files);
-        
+
         // Intentionally duplicate the entire list of file paths
         let mut duplicated_list = files.clone();
         duplicated_list.extend(files);
-        
+
         let (_, duplicates, dup_count, wasted) = find_duplicates(duplicated_list);
-        
+
         // They should be deduplicated by path, resulting in 0 duplicate groups
-        assert_eq!(dup_count, 0, "Duplicate paths should be resolved and not reported as duplicates: {:?}", duplicates);
+        assert_eq!(
+            dup_count, 0,
+            "Duplicate paths should be resolved and not reported as duplicates: {:?}",
+            duplicates
+        );
         assert_eq!(wasted, 0);
     }
 }

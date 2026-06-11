@@ -14,36 +14,36 @@ pub fn weapon_breakdowns_ui(
     ui.add_space(8.0);
 
     ui.scope(|ui| {
-            team_weapon_breakdown_ui(r, ui);
+        team_weapon_breakdown_ui(r, ui);
 
-            CollapsingHeader::new(t("#app_weapons_player_bd"))
-                .default_open(false)
-                .show(ui, |ui| {
-                    if let Some(analysis) = r {
-                        let mut players = Vec::from_iter(&analysis.state.players);
-                        players.sort_by(|l, r| l.name.cmp(&r.name));
+        CollapsingHeader::new(t("#app_weapons_player_bd"))
+            .default_open(false)
+            .show(ui, |ui| {
+                if let Some(analysis) = r {
+                    let mut players = Vec::from_iter(&analysis.state.players);
+                    players.sort_by(|l, r| l.name.cmp(&r.name));
 
-                        ScrollArea::vertical()
-                            .id_salt("player_weapons_scroll")
-                            .auto_shrink(false)
-                            .min_scrolled_height(260.)
-                            .show(ui, |ui| {
-                                for p in players {
-                                    if !player_highlighting.highlighted.is_empty()
-                                        && !player_highlighting.highlighted.contains(&p.id)
-                                    {
-                                        continue;
-                                    }
-
-                                    CollapsingHeader::new(&p.name)
-                                        .default_open(false)
-                                        .show(ui, |ui| {
-                                            weapon_breakdown_table_ui(&p.weapon_breakdown, ui);
-                                        });
+                    ScrollArea::vertical()
+                        .id_salt("player_weapons_scroll")
+                        .auto_shrink(false)
+                        .min_scrolled_height(260.)
+                        .show(ui, |ui| {
+                            for p in players {
+                                if !player_highlighting.highlighted.is_empty()
+                                    && !player_highlighting.highlighted.contains(&p.id)
+                                {
+                                    continue;
                                 }
-                            });
-                    }
-                });
+
+                                CollapsingHeader::new(&p.name)
+                                    .default_open(false)
+                                    .show(ui, |ui| {
+                                        weapon_breakdown_table_ui(&p.weapon_breakdown, ui);
+                                    });
+                            }
+                        });
+                }
+            });
     });
 }
 
@@ -74,7 +74,8 @@ pub fn team_weapon_breakdown_ui(r: Option<&Analysis>, ui: &mut Ui) {
                 }
             }
 
-            let allies_name = translate_key("#teamname_allies").unwrap_or_else(|| "Allies".to_string());
+            let allies_name =
+                translate_key("#teamname_allies").unwrap_or_else(|| "Allies".to_string());
             let axis_name = translate_key("#teamname_axis").unwrap_or_else(|| "Axis".to_string());
 
             CollapsingHeader::new(allies_name)

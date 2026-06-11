@@ -14,36 +14,36 @@ pub fn kill_streaks_ui(
 ) {
     ui.heading(t("#app_streaks_heading"));
     ui.add_space(8.0);
-    
+
     ui.scope(|ui| {
-            if let Some(analysis) = r {
-                let mut players = Vec::from_iter(&analysis.state.players);
-                players.sort_by(|l, r| l.name.cmp(&r.name));
+        if let Some(analysis) = r {
+            let mut players = Vec::from_iter(&analysis.state.players);
+            players.sort_by(|l, r| l.name.cmp(&r.name));
 
-                ScrollArea::vertical()
-                    .id_salt("player_kill_streaks_scroll")
-                    .auto_shrink(false)
-                    .min_scrolled_height(260.)
-                    .show(ui, |ui| {
-                        for p in players {
-                            if !player_highlighting.highlighted.is_empty()
-                                && !player_highlighting.highlighted.contains(&p.id)
-                            {
-                                continue;
-                            }
-
-                            if p.kill_streaks.is_empty() {
-                                continue;
-                            }
-
-                            CollapsingHeader::new(&p.name)
-                                .default_open(false)
-                                .show(ui, |ui| {
-                                    kill_streaks_table_ui(p, ui);
-                                });
+            ScrollArea::vertical()
+                .id_salt("player_kill_streaks_scroll")
+                .auto_shrink(false)
+                .min_scrolled_height(260.)
+                .show(ui, |ui| {
+                    for p in players {
+                        if !player_highlighting.highlighted.is_empty()
+                            && !player_highlighting.highlighted.contains(&p.id)
+                        {
+                            continue;
                         }
-                    });
-            }
+
+                        if p.kill_streaks.is_empty() {
+                            continue;
+                        }
+
+                        CollapsingHeader::new(&p.name)
+                            .default_open(false)
+                            .show(ui, |ui| {
+                                kill_streaks_table_ui(p, ui);
+                            });
+                    }
+                });
+        }
     });
 }
 
