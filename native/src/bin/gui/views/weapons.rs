@@ -1,6 +1,6 @@
 use crate::FileInfo;
-use crate::views::{PlayerHighlighting, TABLE_ROW_HEIGHT, t};
-use analysis::{Analysis, Team, translate_key};
+use crate::views::{PlayerHighlighting, TABLE_ROW_HEIGHT, t, weapon_name};
+use analysis::{Analysis, Team, Weapon, translate_key};
 use egui::{Align, CollapsingHeader, Layout, ScrollArea, Ui};
 use egui_extras::{Column, TableBuilder};
 
@@ -92,13 +92,13 @@ pub fn team_weapon_breakdown_ui(r: Option<&Analysis>, ui: &mut Ui) {
         });
 }
 
-pub fn weapon_breakdown_table_ui<W: std::fmt::Debug>(
-    breakdown: &std::collections::HashMap<W, (u32, u32)>,
+pub fn weapon_breakdown_table_ui(
+    breakdown: &std::collections::HashMap<Weapon, (u32, u32)>,
     ui: &mut Ui,
 ) {
     let mut weapon_breakdown: Vec<(String, (u32, u32))> = breakdown
         .iter()
-        .map(|(w, stats)| (format!("{:?}", w), *stats))
+        .map(|(w, stats)| (weapon_name(w), *stats))
         .collect();
 
     weapon_breakdown.sort_by(|(name_a, l), (name_b, r)| {

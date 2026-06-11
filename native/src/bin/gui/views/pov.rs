@@ -1,5 +1,5 @@
 use crate::FileInfo;
-use crate::views::{TABLE_ROW_HEIGHT, t};
+use crate::views::{TABLE_ROW_HEIGHT, t, weapon_name};
 use analysis::{Analysis, Weapon};
 use egui::{Align, Layout, Ui};
 use egui_extras::{Column, TableBuilder};
@@ -113,7 +113,7 @@ pub fn pov_analytics_ui(_file_info: Option<&FileInfo>, r: Option<&Analysis>, ui:
                     body.row(TABLE_ROW_HEIGHT, |mut row| {
                         row.col(|ui| {
                             if ui
-                                .selectable_label(is_selected, format!("{:?}", weapon))
+                                .selectable_label(is_selected, weapon_name(&weapon))
                                 .clicked()
                             {
                                 selected_weapon = Some(weapon.clone());
@@ -160,7 +160,7 @@ pub fn pov_analytics_ui(_file_info: Option<&FileInfo>, r: Option<&Analysis>, ui:
                 );
 
                 ui_right.vertical(|ui| {
-                    let title = t("#app_pov_detail_title").replace("%s1", &format!("{:?}", weapon));
+                    let title = t("#app_pov_detail_title").replace("%s1", &weapon_name(weapon));
                     ui.strong(title);
                     ui.add_space(8.0);
 
