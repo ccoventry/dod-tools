@@ -1,23 +1,7 @@
-use crate::FileInfo;
 use crate::views::{PlayerHighlighting, TABLE_ROW_HEIGHT, t};
 use analysis::{Analysis, Player, SteamId, Team, translate_key};
 use egui::{Align, Layout, Ui};
 use egui_extras::{Column, TableBody, TableBuilder};
-
-#[derive(Clone, Copy)]
-pub struct ScoreboardSortState {
-    pub col_idx: usize,
-    pub desc: bool,
-}
-
-impl Default for ScoreboardSortState {
-    fn default() -> Self {
-        Self {
-            col_idx: 4,
-            desc: true,
-        } // Score descending
-    }
-}
 
 fn team_name(team: &Team) -> String {
     match team {
@@ -30,13 +14,23 @@ fn team_name(team: &Team) -> String {
     }
 }
 
+/// Stable numeric rank for team ordering (lower = higher in the table).
+/// Using an integer avoids locale-dependent string comparisons.
+fn team_sort_rank(team: Option<&Team>) -> u8 {
+    match team {
+        Some(Team::Allies) => 0,
+        Some(Team::Axis) => 1,
+        Some(Team::Spectators) => 2,
+        Some(Team::Unassigned) | None => 3,
+    }
+}
+
 pub fn scoreboard_ui(
-    file_info: Option<&FileInfo>,
-    r: Option<&Analysis>,
+    analysis: Option<&Analysis>,
     player_highlighting: &mut PlayerHighlighting,
     ui: &mut Ui,
 ) {
-    let match_result_fragment = if let Some(analysis) = r {
+    let match_result_fragment = if let Some(analysis) = analysis {
         let (allies_score, axis_score) = (
             analysis.state.team_scores.get_team_score(Team::Allies),
             analysis.state.team_scores.get_team_score(Team::Axis),
@@ -54,17 +48,6 @@ pub fn scoreboard_ui(
     } else {
         String::new()
     };
-
-    let sort_id = if let Some(fi) = file_info {
-        egui::Id::new(&fi.path).with("scoreboard_sort")
-    } else {
-        egui::Id::new("blank_scoreboard_sort")
-    };
-
-    let mut sort_state = ui.data_mut(|d| {
-        d.get_temp::<ScoreboardSortState>(sort_id)
-            .unwrap_or_default()
-    });
 
     ui.heading(format!(
         "{}{match_result_fragment}",
@@ -92,88 +75,46 @@ pub fn scoreboard_ui(
 
         table
             .header(TABLE_ROW_HEIGHT, |mut header| {
-                for (i, column) in columns.into_iter().enumerate() {
+                for column in columns {
                     header.col(|ui| {
                         let col_label = if column.starts_with('#') {
                             t(column)
                         } else {
                             column.to_string()
                         };
-                        let text = if sort_state.col_idx == i {
-                            format!("{} {}", col_label, if sort_state.desc { "⏷" } else { "⏶" })
-                        } else {
-                            col_label
-                        };
-
-                        let resp = ui.add(
-                            egui::Label::new(egui::RichText::new(text).strong())
-                                .sense(egui::Sense::click()),
-                        );
-
-                        if resp.clicked() {
-                            if sort_state.col_idx == i {
-                                sort_state.desc = !sort_state.desc;
-                            } else {
-                                sort_state.col_idx = i;
-                                sort_state.desc = true;
-                            }
-                            ui.data_mut(|d| d.insert_temp(sort_id, sort_state));
-                        }
-
-                        if resp.hovered() {
-                            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                        }
+                        ui.strong(col_label);
                     });
                 }
             })
             .body(|ref mut body| {
-                if let Some(analysis) = r {
+                if let Some(analysis) = analysis {
                     struct SortablePlayer<'a> {
                         player: &'a Player,
                         steam_id_str: String,
-                        team_str: String,
-                        class_str: String,
                     }
 
                     let mut players: Vec<SortablePlayer> = analysis
                         .state
                         .players
                         .iter()
-                        .map(|a| {
-                            let steam_id_str = SteamId::try_from(&a.id)
+                        .map(|p| {
+                            let steam_id_str = SteamId::try_from(&p.id)
                                 .map(|s| s.to_string())
-                                .unwrap_or_else(|_| a.id.to_string());
-                            let team_str = match &a.team {
-                                None => t("#app_team_unknown"),
-                                Some(team) => team_name(team),
-                            };
-                            let class_str = a
-                                .class
-                                .as_ref()
-                                .map(|c| format!("{c:?}"))
-                                .unwrap_or_else(|| t("#app_team_unknown"));
-                            SortablePlayer {
-                                player: a,
-                                steam_id_str,
-                                team_str,
-                                class_str,
-                            }
+                                .unwrap_or_else(|_| p.id.to_string());
+                            SortablePlayer { player: p, steam_id_str }
                         })
                         .collect();
 
+                    // Fixed sort order: Team ASC, Score DESC, Kills DESC,
+                    // Deaths ASC, Name ASC, ID ASC.
                     players.sort_by(|a, b| {
-                        let cmp = match sort_state.col_idx {
-                            0 => a.steam_id_str.cmp(&b.steam_id_str),
-                            1 => a.player.name.cmp(&b.player.name),
-                            2 => a.team_str.cmp(&b.team_str),
-                            3 => a.class_str.cmp(&b.class_str),
-                            4 => a.player.stats.0.cmp(&b.player.stats.0),
-                            5 => a.player.stats.1.cmp(&b.player.stats.1),
-                            6 => a.player.stats.2.cmp(&b.player.stats.2),
-                            _ => std::cmp::Ordering::Equal,
-                        };
-
-                        if sort_state.desc { cmp.reverse() } else { cmp }
+                        team_sort_rank(a.player.team.as_ref())
+                            .cmp(&team_sort_rank(b.player.team.as_ref()))
+                            .then_with(|| b.player.stats.0.cmp(&a.player.stats.0)) // Score DESC
+                            .then_with(|| b.player.stats.1.cmp(&a.player.stats.1)) // Kills DESC
+                            .then_with(|| a.player.stats.2.cmp(&b.player.stats.2)) // Deaths ASC
+                            .then_with(|| a.player.name.cmp(&b.player.name))       // Name ASC
+                            .then_with(|| a.steam_id_str.cmp(&b.steam_id_str))     // ID ASC
                     });
 
                     for sp in players {

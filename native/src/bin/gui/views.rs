@@ -161,7 +161,7 @@ pub fn report_ui(
 
     match current_tab.as_str() {
         "Summary" => header_ui(file_info, r, ui),
-        "Scoreboard" => scoreboard_ui(file_info, r, player_highlighting, ui),
+        "Scoreboard" => scoreboard_ui(r, player_highlighting, ui),
         "Timeline" => team_score_timeline_ui(file_info, r, ui),
         "Rounds" => rounds_ui(file_info, r, ui),
         "Weapon Breakdowns" => weapon_breakdowns_ui(file_info, r, player_highlighting, ui),
