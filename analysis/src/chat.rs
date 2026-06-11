@@ -167,6 +167,24 @@ pub fn use_chat_updates(state: &mut AnalyzerState, event: &AnalyzerEvent) {
                 text_msg.arg4.as_deref(),
             );
 
+            // Filter out client-side POV engine logs like spectator camera modes to declutter chat
+            let text_lower = formatted_text.to_lowercase();
+            let key_lower = text_msg.text.to_lowercase();
+            if text_lower.contains("first person")
+                || text_lower.contains("third person")
+                || text_lower.contains("free look")
+                || text_lower.contains("chase cam")
+                || text_lower.contains("chase camera")
+                || text_lower.contains("camera options")
+                || text_lower.contains("overview")
+                || key_lower.starts_with("#obs_")
+                || key_lower.starts_with("obs_")
+                || key_lower.starts_with("#spec_mode")
+                || key_lower.starts_with("spec_mode")
+            {
+                return;
+            }
+
             state.chat_messages.push(ChatMessage {
                 time: state.current_time.clone(),
                 frame_index: state.frame_index,
@@ -312,7 +330,7 @@ mod tests {
     #[test]
     fn test_chat_splitter() {
         use crate::Player;
-        use dod::{SayText, UserMessage};
+        use dod::{SayText, TextMsg, UserMessage};
 
         let mut state = AnalyzerState::default();
         // Add a mock player with colons in name
@@ -371,5 +389,39 @@ mod tests {
             Some("dicE[: :]")
         );
         assert_eq!(state.chat_messages[3].text, "hello");
+
+        // 5. Test filtering POV engine/spectator camera messages
+        let event5 = AnalyzerEvent::UserMessage(UserMessage::TextMsg(TextMsg {
+            destination: 2,
+            text: "#Spec_Mode4".to_string(),
+            arg1: None,
+            arg2: None,
+            arg3: None,
+            arg4: None,
+        }));
+        use_chat_updates(&mut state, &event5);
+        assert_eq!(state.chat_messages.len(), 4); // Should still be 4 (filtered out!)
+
+        let event6 = AnalyzerEvent::UserMessage(UserMessage::TextMsg(TextMsg {
+            destination: 2,
+            text: "Free Look".to_string(),
+            arg1: None,
+            arg2: None,
+            arg3: None,
+            arg4: None,
+        }));
+        use_chat_updates(&mut state, &event6);
+        assert_eq!(state.chat_messages.len(), 4); // Should still be 4 (filtered out!)
+
+        let event7 = AnalyzerEvent::UserMessage(UserMessage::TextMsg(TextMsg {
+            destination: 2,
+            text: "#Game_connected".to_string(),
+            arg1: Some("scrd".to_string()),
+            arg2: None,
+            arg3: None,
+            arg4: None,
+        }));
+        use_chat_updates(&mut state, &event7);
+        assert_eq!(state.chat_messages.len(), 5); // Should be 5 (not filtered!)
     }
 }
