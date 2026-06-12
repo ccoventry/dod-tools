@@ -78,6 +78,13 @@ pub struct AnalyzerState {
     /// sequence). Unlike `clan_match_detection`, this flag is never cleared, so
     /// demos recorded *after* the match went live still report correctly.
     pub clan_match_detected: bool,
+    pub match_start_witnessed: bool,
+    pub started_late: bool,
+    pub ended_early: bool,
+    pub first_time_left: Option<std::time::Duration>,
+    pub last_time_left: Option<std::time::Duration>,
+    pub map_changed: bool,
+    pub initial_map_name: Option<String>,
     pub current_time: GameTime,
 
     pub frame_index: usize,
@@ -191,6 +198,7 @@ fn is_relevant_message(name_bytes: &[u8]) -> bool {
         trimmed,
         b"RoundState"
             | b"ClanTimer"
+            | b"TimeLeft"
             | b"WaveTime"
             | b"TeamScore"
             | b"ScoreShort"
@@ -210,6 +218,92 @@ fn is_relevant_message(name_bytes: &[u8]) -> bool {
             | b"ResetHUD"
             | b"Health"
     )
+}
+
+pub fn use_time_left_updates(state: &mut AnalyzerState, event: &AnalyzerEvent) {
+    if let AnalyzerEvent::UserMessage(dod::UserMessage::TimeLeft(time_left)) = event {
+        let duration = time_left.0;
+        if state.first_time_left.is_none() {
+            state.first_time_left = Some(duration);
+        }
+        state.last_time_left = Some(duration);
+    }
+}
+
+fn is_close_to_match_end(duration: Duration) -> bool {
+    let secs = duration.as_secs();
+    let targets = [900u64, 1200, 1500, 1800, 2400, 2700];
+    for &target in &targets {
+        if secs >= target.saturating_sub(10) && secs <= target + 30 {
+            return true;
+        }
+    }
+    false
+}
+
+pub fn use_general_finalization(state: &mut AnalyzerState, event: &AnalyzerEvent) {
+    if let AnalyzerEvent::EngineMessage(EngineMessage::SvcServerInfo(msg)) = event {
+        let map_name = String::from_utf8_lossy(&msg.map_file_name)
+            .trim_end_matches('\0')
+            .to_string();
+        let clean_map = map_name
+            .trim_start_matches("maps/")
+            .trim_end_matches(".bsp")
+            .to_string();
+        if let Some(ref initial) = state.initial_map_name {
+            if initial != &clean_map {
+                let has_gameplay = state.rounds.iter().any(|r| matches!(r, Round::Completed { .. }))
+                    || state.players.iter().any(|p| p.stats.0 > 0 || p.stats.1 > 0 || p.stats.2 > 0);
+                if has_gameplay {
+                    state.map_changed = true;
+                } else {
+                    state.initial_map_name = Some(clean_map);
+                    state.players.clear();
+                    state.rounds.clear();
+                    state.team_scores.reset();
+                    state.clan_match_detected = false;
+                    state.clan_match_detection = ClanMatchDetection::WaitingForReset;
+                }
+            }
+        } else {
+            state.initial_map_name = Some(clean_map);
+        }
+    }
+
+    use_time_left_updates(state, event);
+
+    if let AnalyzerEvent::Finalization = event {
+        if state.is_clan_match() {
+            state.started_late = !state.match_start_witnessed;
+        } else {
+            state.started_late = state.players.iter().any(|p| p.has_pre_demo_activity);
+        }
+
+        let match_duration = if let Some(first_round) = state.rounds.first() {
+            let start = match first_round {
+                Round::Active { start_time, .. } => start_time.real_offset,
+                Round::Completed { start_time, .. } => start_time.real_offset,
+            };
+            state.current_time.real_offset.saturating_sub(start)
+        } else {
+            Duration::ZERO
+        };
+
+        let is_natural_end = state.map_changed
+            || state.last_time_left.map_or(false, |tl| tl <= Duration::from_secs(10))
+            || is_close_to_match_end(match_duration);
+
+        state.ended_early = if is_natural_end {
+            false
+        } else if let Some(last_round) = state.rounds.last() {
+            match last_round {
+                Round::Completed { winner_stats, .. } => winner_stats.is_none(),
+                _ => true,
+            }
+        } else {
+            false
+        };
+    }
 }
 
 pub fn use_pov_stats_updates(state: &mut AnalyzerState, event: &AnalyzerEvent) {
@@ -399,6 +493,9 @@ impl Analysis {
         let mut state = AnalyzerState::default();
 
         let process_event = |state: &mut AnalyzerState, event: &AnalyzerEvent| {
+            if state.map_changed && !matches!(event, AnalyzerEvent::Finalization) {
+                return;
+            }
             use_timing_updates(state, event);
             use_player_updates(state, event);
             with_mortality_detection(state, event);
@@ -408,8 +505,9 @@ impl Analysis {
             use_team_score_updates(state, event);
             use_rounds_updates(state, event);
             use_chat_updates(state, event);
-            use_clan_match_detection_updates(Duration::from_secs(10), state, event);
+            use_clan_match_detection_updates(Duration::from_secs(30), state, event);
             use_pov_stats_updates(state, event);
+            use_general_finalization(state, event);
             check_and_promote_british(state);
         };
 
@@ -475,6 +573,9 @@ impl Analysis {
         };
 
         let process_event = |state: &mut AnalyzerState, event: &AnalyzerEvent| {
+            if state.map_changed && !matches!(event, AnalyzerEvent::Finalization) {
+                return;
+            }
             use_timing_updates(state, event);
             use_player_updates(state, event);
             with_mortality_detection(state, event);
@@ -484,8 +585,9 @@ impl Analysis {
             use_team_score_updates(state, event);
             use_rounds_updates(state, event);
             use_chat_updates(state, event);
-            use_clan_match_detection_updates(Duration::from_secs(10), state, event);
+            use_clan_match_detection_updates(Duration::from_secs(30), state, event);
             use_pov_stats_updates(state, event);
+            use_general_finalization(state, event);
             check_and_promote_british(state);
         };
 
@@ -643,6 +745,48 @@ fn check_states_equal(left: &AnalyzerState, right: &AnalyzerState) -> Result<(),
             left.clan_match_detected, right.clan_match_detected
         ));
     }
+    if left.match_start_witnessed != right.match_start_witnessed {
+        return Err(format!(
+            "match_start_witnessed mismatch: {:?} vs {:?}",
+            left.match_start_witnessed, right.match_start_witnessed
+        ));
+    }
+    if left.started_late != right.started_late {
+        return Err(format!(
+            "started_late mismatch: {:?} vs {:?}",
+            left.started_late, right.started_late
+        ));
+    }
+    if left.ended_early != right.ended_early {
+        return Err(format!(
+            "ended_early mismatch: {:?} vs {:?}",
+            left.ended_early, right.ended_early
+        ));
+    }
+    if left.first_time_left != right.first_time_left {
+        return Err(format!(
+            "first_time_left mismatch: {:?} vs {:?}",
+            left.first_time_left, right.first_time_left
+        ));
+    }
+    if left.last_time_left != right.last_time_left {
+        return Err(format!(
+            "last_time_left mismatch: {:?} vs {:?}",
+            left.last_time_left, right.last_time_left
+        ));
+    }
+    if left.map_changed != right.map_changed {
+        return Err(format!(
+            "map_changed mismatch: {:?} vs {:?}",
+            left.map_changed, right.map_changed
+        ));
+    }
+    if left.initial_map_name != right.initial_map_name {
+        return Err(format!(
+            "initial_map_name mismatch: {:?} vs {:?}",
+            left.initial_map_name, right.initial_map_name
+        ));
+    }
     if left.current_time.real_offset != right.current_time.real_offset
         || left.current_time.viewdemo_offset != right.current_time.viewdemo_offset
     {
@@ -700,6 +844,15 @@ fn check_states_equal(left: &AnalyzerState, right: &AnalyzerState) -> Result<(),
         }
         if p_l.stats != p_r.stats {
             return Err(format!("player {} stats mismatched", i));
+        }
+        if p_l.stats_seeded != p_r.stats_seeded {
+            return Err(format!("player {} stats_seeded mismatched", i));
+        }
+        if p_l.has_pre_demo_activity != p_r.has_pre_demo_activity {
+            return Err(format!("player {} has_pre_demo_activity mismatched", i));
+        }
+        if p_l.has_reconnected != p_r.has_reconnected {
+            return Err(format!("player {} has_reconnected mismatched", i));
         }
         if p_l.kill_streaks.len() != p_r.kill_streaks.len() {
             return Err(format!("player {} kill_streaks len mismatched", i));
@@ -803,6 +956,9 @@ mod tests {
             let mut last_live_frame = None;
             let mut processed_frames = 0;
             let process_event = |state: &mut AnalyzerState, event: &AnalyzerEvent| {
+                if state.map_changed && !matches!(event, AnalyzerEvent::Finalization) {
+                    return;
+                }
                 use_timing_updates(state, event);
                 use_player_updates(state, event);
                 with_mortality_detection(state, event);
@@ -812,8 +968,9 @@ mod tests {
                 use_team_score_updates(state, event);
                 use_rounds_updates(state, event);
                 use_chat_updates(state, event);
-                use_clan_match_detection_updates(Duration::from_secs(10), state, event);
+                use_clan_match_detection_updates(Duration::from_secs(30), state, event);
                 use_pov_stats_updates(state, event);
+                use_general_finalization(state, event);
             };
             process_event(&mut state_unopt, &AnalyzerEvent::Initialization);
             for entry in &demo.directory.entries {
@@ -905,6 +1062,14 @@ mod tests {
             right.current_time.viewdemo_offset
         );
 
+        assert_eq!(left.match_start_witnessed, right.match_start_witnessed);
+        assert_eq!(left.started_late, right.started_late);
+        assert_eq!(left.ended_early, right.ended_early);
+        assert_eq!(left.first_time_left, right.first_time_left);
+        assert_eq!(left.last_time_left, right.last_time_left);
+        assert_eq!(left.map_changed, right.map_changed);
+        assert_eq!(left.initial_map_name, right.initial_map_name);
+
         // Compare team_scores
         assert_eq!(
             format!("{:?}", left.team_scores),
@@ -945,6 +1110,9 @@ mod tests {
                 i
             );
             assert_eq!(p_l.stats, p_r.stats, "Player {} stats mismatched", i);
+            assert_eq!(p_l.stats_seeded, p_r.stats_seeded, "Player {} stats_seeded mismatched", i);
+            assert_eq!(p_l.has_pre_demo_activity, p_r.has_pre_demo_activity, "Player {} has_pre_demo_activity mismatched", i);
+            assert_eq!(p_l.has_reconnected, p_r.has_reconnected, "Player {} has_reconnected mismatched", i);
 
             // kill_streaks
             assert_eq!(
@@ -1050,6 +1218,171 @@ mod tests {
                 "Chat message {} system_args mismatched",
                 i
             );
+        }
+    }
+
+    #[test]
+    fn test_reconnect_stats_accumulation() {
+        let mut player = Player::new_mock(1, "STEAM_0:0:99999");
+
+        // Session 1: Player gets 5 kills, 2 deaths, 10 score
+        player.update_session_stats(10, 5, 2);
+        assert_eq!(player.stats, (10, 5, 2));
+
+        // Player disconnects
+        player.needs_reconnect_sync = true;
+
+        // Player reconnects. Server resets stats, so first update is 0 kills, 0 deaths, 0 score.
+        player.update_session_stats(0, 0, 0);
+
+        // Assert old session accumulated, active session reset to 0, total displayed stats are still 5 kills, 2 deaths, 10 score
+        assert_eq!(player.accumulated_stats, (10, 5, 2));
+        assert_eq!(player.session_stats, (0, 0, 0));
+        assert_eq!(player.stats, (10, 5, 2));
+
+        // Player gets a kill and a death in Session 2
+        player.update_session_stats(12, 1, 1);
+        assert_eq!(player.accumulated_stats, (10, 5, 2));
+        assert_eq!(player.session_stats, (12, 1, 1));
+        assert_eq!(player.stats, (22, 6, 3)); // 10+12 score, 5+1 kills, 2+1 deaths
+
+        // Player disconnects and reconnects again. This time, server preserves/restores stats (e.g. they reconnect and have 1 kill, 1 death, 12 score).
+        player.needs_reconnect_sync = true;
+        player.update_session_stats(12, 1, 1);
+
+        // Assert no double counting (accumulated stats should remain unchanged)
+        assert_eq!(player.accumulated_stats, (10, 5, 2));
+        assert_eq!(player.session_stats, (12, 1, 1));
+        assert_eq!(player.stats, (22, 6, 3));
+    }
+
+    #[test]
+    fn test_partial_demo_and_pre_activity_detection() {
+        let mut state = AnalyzerState::default();
+
+        // Simulate start of demo
+        use_general_finalization(&mut state, &AnalyzerEvent::Initialization);
+
+        // Send TimeLeft message
+        use_general_finalization(
+            &mut state,
+            &AnalyzerEvent::UserMessage(dod::UserMessage::TimeLeft(dod::TimeLeft(
+                Duration::from_secs(900), // 15 mins
+            ))),
+        );
+
+        // Seed a player with pre-demo activity (e.g. they already had 2 score, 1 kill, 1 death before demo started)
+        let mut player = Player::new_mock(1, "Player 1");
+        player.update_session_stats(2, 1, 1);
+        state.players.push(player);
+
+        // Send another TimeLeft message near the end
+        use_general_finalization(
+            &mut state,
+            &AnalyzerEvent::UserMessage(dod::UserMessage::TimeLeft(dod::TimeLeft(
+                Duration::from_secs(300), // 5 mins
+            ))),
+        );
+
+        // Add a completed round (winner_stats is Some)
+        state.rounds.push(Round::Completed {
+            start_time: crate::time::GameTime::default(),
+            end_time: crate::time::GameTime::default(),
+            winner_stats: Some((Team::Allies, 1)),
+        });
+
+        // Add an active/incomplete round at the end
+        state.rounds.push(Round::Completed {
+            start_time: crate::time::GameTime::default(),
+            end_time: crate::time::GameTime::default(),
+            winner_stats: None,
+        });
+
+        // Simulate Finalization
+        use_general_finalization(&mut state, &AnalyzerEvent::Finalization);
+
+        assert_eq!(state.first_time_left, Some(Duration::from_secs(900)));
+        assert_eq!(state.last_time_left, Some(Duration::from_secs(300)));
+        assert!(state.started_late);
+        assert!(state.ended_early);
+        assert!(state.players[0].has_pre_demo_activity);
+    }
+
+    #[test]
+    fn test_inspect_lenn_demo() {
+        let mut path = "demos/ktps8w1-m00cat_soul_lenn_h2.dem";
+        if !std::path::Path::new(path).exists() {
+            path = "../demos/ktps8w1-m00cat_soul_lenn_h2.dem";
+        }
+        if std::path::Path::new(path).exists() {
+            let file_bytes = fs::read(path).unwrap();
+            let analysis = Analysis::try_from_bytes(&file_bytes).unwrap();
+            println!("CLAN MATCH: map_name: {}", analysis.demo_info.map_name);
+            println!("CLAN MATCH: clan_match_detected: {}", analysis.state.clan_match_detected);
+            println!("CLAN MATCH: match_start_witnessed: {}", analysis.state.match_start_witnessed);
+            println!("CLAN MATCH: started_late: {}", analysis.state.started_late);
+            println!("CLAN MATCH: ended_early: {}", analysis.state.ended_early);
+            println!("CLAN MATCH: first_time_left: {:?}", analysis.state.first_time_left);
+            println!("CLAN MATCH: last_time_left: {:?}", analysis.state.last_time_left);
+            println!("CLAN MATCH: map_changed: {}", analysis.state.map_changed);
+            println!("CLAN MATCH: initial_map_name: {:?}", analysis.state.initial_map_name);
+            for p in &analysis.state.players {
+                if p.has_pre_demo_activity {
+                    println!("CLAN MATCH: Player {} has pre-demo activity! Stats: {:?}", p.name, p.stats);
+                }
+            }
+        } else {
+            panic!("Demo file not found at either path!");
+        }
+    }
+
+    #[test]
+    fn test_pub_demo_natural_end_detection() {
+        let mut state = AnalyzerState::default();
+        state.clan_match_detected = false;
+
+        // 1. Without rounds and map change/timeleft, duration is 0, which is NOT close to match end.
+        // It has no rounds, so ended_early defaults to false.
+        use_general_finalization(&mut state, &AnalyzerEvent::Finalization);
+        assert!(!state.ended_early);
+
+        // 2. Add an incomplete round, making it not natural end.
+        let mut state = AnalyzerState::default();
+        state.clan_match_detected = false;
+        state.rounds.push(Round::Completed {
+            start_time: crate::time::GameTime { real_offset: Duration::ZERO, ..Default::default() },
+            end_time: crate::time::GameTime { real_offset: Duration::ZERO, ..Default::default() },
+            winner_stats: None,
+        });
+        use_general_finalization(&mut state, &AnalyzerEvent::Finalization);
+        assert!(state.ended_early); // Ended early because not close to match end, no map change, and last round is incomplete
+
+        // 3. Make duration close to standard map end (e.g., 20 mins = 1200s, let's use 1195s)
+        let mut state = AnalyzerState::default();
+        state.clan_match_detected = false;
+        state.rounds.push(Round::Completed {
+            start_time: crate::time::GameTime { real_offset: Duration::ZERO, ..Default::default() },
+            end_time: crate::time::GameTime { real_offset: Duration::ZERO, ..Default::default() },
+            winner_stats: None,
+        });
+        state.current_time.real_offset = Duration::from_secs(1195);
+        use_general_finalization(&mut state, &AnalyzerEvent::Finalization);
+        assert!(!state.ended_early); // Not ended early because duration is close to 1200s (natural end)
+    }
+
+    #[test]
+    fn test_stealth_partial_demo() {
+        let mut path = "demos/ktps8w8-stealth_ih_saints_h1_p2.dem";
+        if !std::path::Path::new(path).exists() {
+            path = "../demos/ktps8w8-stealth_ih_saints_h1_p2.dem";
+        }
+        if std::path::Path::new(path).exists() {
+            let file_bytes = fs::read(path).unwrap();
+            let analysis = Analysis::try_from_bytes(&file_bytes).unwrap();
+            assert!(analysis.state.clan_match_detected);
+            assert!(!analysis.state.match_start_witnessed);
+            assert!(analysis.state.started_late);
+            assert!(analysis.state.ended_early);
         }
     }
 }
