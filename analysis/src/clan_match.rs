@@ -1,6 +1,6 @@
 use crate::mortality::{Mortality, MortalityChange};
 use crate::{AnalyzerEvent, AnalyzerState, round::Round, time::GameTime};
-use dod::{RoundState, Team, UserMessage};
+use dod::{RoundState, UserMessage};
 use std::time::Duration;
 
 #[derive(Debug, Default)]
@@ -18,6 +18,7 @@ pub fn use_clan_match_detection_updates(
     state: &mut AnalyzerState,
     event: &AnalyzerEvent,
 ) {
+
     // WaveTime carries mp_clan_respawntime, a CVAR that is only set to a
     // non-zero value in clan-match server configs. Seeing it with duration > 0
     // at any point — including mid-demo after joining a live match — is a
@@ -52,17 +53,15 @@ pub fn use_clan_match_detection_updates(
             };
         }
 
-        // Players and teams are scoreless after a reset; we infer the match is live
+        // Players are scoreless after a reset; we infer the match is live
         (
             ClanMatchDetection::WaitingForNormal { reset_time },
             AnalyzerEvent::UserMessage(UserMessage::RoundState(RoundState::Start)),
         ) if state
             .players
             .iter()
-            .all(|player| matches!(player.stats, (0, _, _)))
-            && state.team_scores.get_team_score(Team::Allies) == 0
-            && state.team_scores.get_team_score(Team::British) == 0
-            && state.team_scores.get_team_score(Team::Axis) == 0 =>
+            .filter(|player| matches!(player.connection, crate::Connection::Connected { .. }))
+            .all(|player| matches!(player.session_stats, (0, _, _))) =>
         {
             state.rounds.clear();
             state.rounds.push(Round::Active {
@@ -76,6 +75,13 @@ pub fn use_clan_match_detection_updates(
             for player in state.players.iter_mut() {
                 player.kill_streaks.clear();
                 player.weapon_breakdown.clear();
+                player.stats = (0, 0, 0);
+                player.session_stats = (0, 0, 0);
+                player.accumulated_stats = (0, 0, 0);
+                player.needs_reconnect_sync = false;
+                player.stats_seeded = true;
+                player.has_pre_demo_activity = false;
+                player.has_reconnected = false;
 
                 player.mortality.clear();
                 player.mortality.push(MortalityChange::new(
@@ -86,6 +92,7 @@ pub fn use_clan_match_detection_updates(
 
             // The scoreboard-zeroing Reset→Start sequence is the definitive
             // signal that a clan match just went live.
+            state.match_start_witnessed = true;
             state.clan_match_detected = true;
             state.clan_match_detection = ClanMatchDetection::MatchIsLive;
         }
