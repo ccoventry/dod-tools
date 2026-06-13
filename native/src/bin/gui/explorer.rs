@@ -222,18 +222,49 @@ pub fn get_native_roots() -> Vec<PathBuf> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+fn count_demo_files(path: &Path) -> usize {
+    let mut count = 0;
+    if let Ok(entries) = std::fs::read_dir(path) {
+        for entry in entries.filter_map(Result::ok) {
+            let p = entry.path();
+            if !p.is_dir() && p.extension().map_or(false, |ext| ext == "dem") {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 pub fn render_native_dir_node(
     ui: &mut egui::Ui,
     path: &Path,
     current_dir: Option<&Path>,
     next_dir: &mut Option<PathBuf>,
     cache: &mut HashMap<PathBuf, Vec<PathBuf>>,
+    scan_folders: bool,
+    demo_cache: &mut HashMap<PathBuf, usize>,
 ) {
     let name = path
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| path.to_string_lossy().into_owned());
     let is_selected = current_dir == Some(path);
+
+    let demo_count = if scan_folders {
+        *demo_cache.entry(path.to_path_buf()).or_insert_with(|| {
+            count_demo_files(path)
+        })
+    } else {
+        0
+    };
+
+    let folder_icon = if demo_count > 0 { "📂" } else { "📁" };
+    let display_name = if demo_count > 0 {
+        format!("{} ({})", name, demo_count)
+    } else {
+        name
+    };
 
     let subdirs = get_subdirs(path, cache);
     let has_subdirs = !subdirs.is_empty();
@@ -242,7 +273,7 @@ pub fn render_native_dir_node(
         ui.horizontal(|ui| {
             ui.add_space(16.0);
             if ui
-                .selectable_label(is_selected, format!("📁 {}", name))
+                .selectable_label(is_selected, format!("{} {}", folder_icon, display_name))
                 .clicked()
             {
                 *next_dir = Some(path.to_path_buf());
@@ -269,7 +300,7 @@ pub fn render_native_dir_node(
                 state.store(ui.ctx());
             }
             if ui
-                .selectable_label(is_selected, format!("📁 {}", name))
+                .selectable_label(is_selected, format!("{} {}", folder_icon, display_name))
                 .clicked()
             {
                 *next_dir = Some(path.to_path_buf());
@@ -279,7 +310,15 @@ pub fn render_native_dir_node(
         if is_open {
             ui.indent(ui.make_persistent_id((path, "indent")), |ui| {
                 for subdir in subdirs {
-                    render_native_dir_node(ui, &subdir, current_dir, next_dir, cache);
+                    render_native_dir_node(
+                        ui,
+                        &subdir,
+                        current_dir,
+                        next_dir,
+                        cache,
+                        scan_folders,
+                        demo_cache,
+                    );
                 }
             });
         }

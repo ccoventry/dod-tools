@@ -96,12 +96,14 @@ fn main() {}
 #[derive(Debug, Clone)]
 struct AppSettings {
     language: String,
+    scan_folders_for_demos: bool,
 }
 
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
             language: "auto".to_string(),
+            scan_folders_for_demos: false,
         }
     }
 }
@@ -116,7 +118,14 @@ fn load_settings() -> AppSettings {
                     .and_then(|v| v.as_str())
                     .unwrap_or("auto")
                     .to_string();
-                return AppSettings { language };
+                let scan_folders_for_demos = val
+                    .get("scan_folders_for_demos")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                return AppSettings {
+                    language,
+                    scan_folders_for_demos,
+                };
             }
         }
     }
@@ -128,6 +137,10 @@ fn save_settings(settings: &AppSettings) {
     map.insert(
         "language".to_string(),
         serde_json::Value::String(settings.language.clone()),
+    );
+    map.insert(
+        "scan_folders_for_demos".to_string(),
+        serde_json::Value::Bool(settings.scan_folders_for_demos),
     );
     let val = serde_json::Value::Object(map);
     if let Ok(content) = serde_json::to_string_pretty(&val) {
@@ -284,6 +297,14 @@ fn apply_language_setting(settings_lang: &str) {
     analysis::set_active_language(static_lang);
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SortColumn {
+    Name,
+    Type,
+    Map,
+    Date,
+}
+
 struct Gui {
     analyses: HashMap<String, (FileInfo, Analysis)>,
     selected_analysis_path: Option<String>,
@@ -292,6 +313,15 @@ struct Gui {
     settings: AppSettings,
     show_settings_window: bool,
     show_about_window: bool,
+
+    filter_query: String,
+    filter_type: String,
+    filter_map: String,
+    filter_date_start: String,
+    filter_date_end: String,
+
+    sort_column: Option<SortColumn>,
+    sort_ascending: bool,
 
     rx: mpsc::Receiver<GuiMessage>,
     tx: mpsc::Sender<GuiMessage>,
@@ -306,6 +336,8 @@ struct Gui {
     initial_files: Vec<PathBuf>,
     #[cfg(not(target_arch = "wasm32"))]
     subdir_cache: HashMap<PathBuf, Vec<PathBuf>>,
+    #[cfg(not(target_arch = "wasm32"))]
+    explorer_demo_cache: HashMap<PathBuf, usize>,
 
     #[cfg(not(target_arch = "wasm32"))]
     desktop_files: Vec<DemoListItem>,
@@ -363,6 +395,68 @@ enum GuiMessage {
 }
 
 impl Gui {
+    fn filter_demo(&self, name: &str, map_name: &str, date: &str, path_str: &str) -> bool {
+        if !self.filter_query.is_empty() {
+            let q = self.filter_query.to_lowercase();
+            if !name.to_lowercase().contains(&q)
+                && !map_name.to_lowercase().contains(&q)
+                && !path_str.to_lowercase().contains(&q)
+            {
+                return false;
+            }
+        }
+
+        if self.filter_type != "All" {
+            let demo_type = if let Some((_, analysis)) = self.analyses.get(path_str) {
+                analysis.demo_info.demo_type.as_str()
+            } else if name.to_lowercase().contains("hltv") {
+                "HLTV"
+            } else {
+                "POV"
+            };
+            if demo_type != self.filter_type {
+                return false;
+            }
+        }
+
+        if !self.filter_map.is_empty() {
+            let m = self.filter_map.to_lowercase();
+            if !map_name.to_lowercase().contains(&m) {
+                return false;
+            }
+        }
+
+        if self.filter_date_start.len() == 10 {
+            if date.len() >= 10 {
+                if &date[..10] < self.filter_date_start.as_str() {
+                    return false;
+                }
+            } else {
+                return false;
+            }
+        }
+        if self.filter_date_end.len() == 10 {
+            if date.len() >= 10 {
+                if &date[..10] > self.filter_date_end.as_str() {
+                    return false;
+                }
+            } else {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    fn toggle_sort(&mut self, col: SortColumn) {
+        if self.sort_column == Some(col) {
+            self.sort_ascending = !self.sort_ascending;
+        } else {
+            self.sort_column = Some(col);
+            self.sort_ascending = true;
+        }
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     fn with_initial_files(mut self, files: Vec<PathBuf>) -> Self {
         self.initial_files = files;
@@ -395,6 +489,15 @@ impl Default for Gui {
             show_settings_window: false,
             show_about_window: false,
 
+            filter_query: String::new(),
+            filter_type: "All".to_string(),
+            filter_map: String::new(),
+            filter_date_start: String::new(),
+            filter_date_end: String::new(),
+
+            sort_column: Some(SortColumn::Name),
+            sort_ascending: true,
+
             #[cfg(not(target_arch = "wasm32"))]
             file_picker: FileDialog::default(),
             #[cfg(not(target_arch = "wasm32"))]
@@ -405,6 +508,8 @@ impl Default for Gui {
             initial_files: Vec::default(),
             #[cfg(not(target_arch = "wasm32"))]
             subdir_cache: HashMap::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            explorer_demo_cache: HashMap::default(),
 
             #[cfg(not(target_arch = "wasm32"))]
             desktop_files: Vec::default(),
@@ -716,7 +821,10 @@ impl eframe::App for Gui {
                             self.analyses.clear();
                             self.selected_analysis_path = None;
                             #[cfg(not(target_arch = "wasm32"))]
-                            self.subdir_cache.clear();
+                            {
+                                self.subdir_cache.clear();
+                                self.explorer_demo_cache.clear();
+                            }
                             ui.close();
                         }
 
@@ -795,6 +903,7 @@ impl eframe::App for Gui {
                     ui.horizontal(|ui| {
                         if ui.small_button(t("#app_panel_refresh")).clicked() {
                             self.subdir_cache.clear();
+                            self.explorer_demo_cache.clear();
                             self.trigger_dir_scan(ctx);
                         }
                     });
@@ -802,6 +911,7 @@ impl eframe::App for Gui {
 
                     ScrollArea::vertical().show(ui, |ui| {
                         let mut cache = std::mem::take(&mut self.subdir_cache);
+                        let mut demo_cache = std::mem::take(&mut self.explorer_demo_cache);
 
                         let collapsing_id = ui.make_persistent_id("this_pc");
                         let mut state =
@@ -831,6 +941,8 @@ impl eframe::App for Gui {
                                         self.current_dir.as_deref(),
                                         &mut next_dir,
                                         &mut cache,
+                                        self.settings.scan_folders_for_demos,
+                                        &mut demo_cache,
                                     );
                                     ui.add_space(2.0);
                                 }
@@ -838,6 +950,7 @@ impl eframe::App for Gui {
                         }
 
                         self.subdir_cache = cache;
+                        self.explorer_demo_cache = demo_cache;
                     });
                 }
 
@@ -878,6 +991,58 @@ impl eframe::App for Gui {
                 ui.heading(t("#app_panel_demos"));
                 ui.separator();
 
+                ui.horizontal(|ui| {
+                    ui.label(t("#app_filter_search"));
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.filter_query)
+                            .hint_text("Search name/map...")
+                            .desired_width(140.0),
+                    );
+
+                    ui.add_space(6.0);
+                    ui.label(t("#app_filter_type"));
+                    egui::ComboBox::from_id_salt("filter_type_combo")
+                        .selected_text(&self.filter_type)
+                        .width(60.0)
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut self.filter_type, "All".to_string(), "All");
+                            ui.selectable_value(&mut self.filter_type, "POV".to_string(), "POV");
+                            ui.selectable_value(&mut self.filter_type, "HLTV".to_string(), "HLTV");
+                        });
+
+                    ui.add_space(6.0);
+                    ui.label(t("#app_filter_map"));
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.filter_map)
+                            .hint_text("de_dust2")
+                            .desired_width(90.0),
+                    );
+
+                    ui.add_space(6.0);
+                    ui.label(t("#app_filter_date_start"));
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.filter_date_start)
+                            .hint_text("Min Date")
+                            .desired_width(80.0),
+                    );
+                    ui.label("-");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.filter_date_end)
+                            .hint_text("Max Date")
+                            .desired_width(80.0),
+                    );
+
+                    ui.add_space(10.0);
+                    if ui.button(t("#app_filter_reset")).clicked() {
+                        self.filter_query.clear();
+                        self.filter_type = "All".to_string();
+                        self.filter_map.clear();
+                        self.filter_date_start.clear();
+                        self.filter_date_end.clear();
+                    }
+                });
+                ui.separator();
+
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     if self.current_dir.is_none() {
@@ -898,7 +1063,49 @@ impl eframe::App for Gui {
                             ui.add_space(4.0);
                         }
 
-                        let selected_path = &self.selected_analysis_path;
+                        let selected_path = self.selected_analysis_path.clone();
+
+                        let mut display_files: Vec<DemoListItem> = self.desktop_files.iter()
+                            .filter(|item| {
+                                let path_str = item.path.to_string_lossy();
+                                self.filter_demo(&item.name, &item.map_name, &item.date, &path_str)
+                            })
+                            .cloned()
+                            .collect();
+
+                        if let Some(col) = self.sort_column {
+                            display_files.sort_by(|a, b| {
+                                let path_a = a.path.to_string_lossy();
+                                let path_b = b.path.to_string_lossy();
+                                let type_a = if let Some((_, analysis)) = self.analyses.get(path_a.as_ref()) {
+                                    analysis.demo_info.demo_type.as_str()
+                                } else if a.name.to_lowercase().contains("hltv") {
+                                    "HLTV"
+                                } else {
+                                    "POV"
+                                };
+                                let type_b = if let Some((_, analysis)) = self.analyses.get(path_b.as_ref()) {
+                                    analysis.demo_info.demo_type.as_str()
+                                } else if b.name.to_lowercase().contains("hltv") {
+                                    "HLTV"
+                                } else {
+                                    "POV"
+                                };
+
+                                let cmp = match col {
+                                    SortColumn::Name => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+                                    SortColumn::Type => type_a.cmp(type_b),
+                                    SortColumn::Map => a.map_name.to_lowercase().cmp(&b.map_name.to_lowercase()),
+                                    SortColumn::Date => a.date.cmp(&b.date),
+                                };
+
+                                if self.sort_ascending {
+                                    cmp
+                                } else {
+                                    cmp.reverse()
+                                }
+                            });
+                        }
 
                         TableBuilder::new(ui)
                             .striped(true)
@@ -909,20 +1116,48 @@ impl eframe::App for Gui {
                             .column(Column::initial(150.0)) // Date
                             .header(20.0, |mut header| {
                                 header.col(|ui| {
-                                    ui.strong(t("#app_col_name"));
+                                    let label = match (self.sort_column, self.sort_ascending) {
+                                        (Some(SortColumn::Name), true) => format!("{} ⏶", t("#app_col_name")),
+                                        (Some(SortColumn::Name), false) => format!("{} ⏷", t("#app_col_name")),
+                                        _ => t("#app_col_name"),
+                                    };
+                                    if ui.selectable_label(self.sort_column == Some(SortColumn::Name), label).clicked() {
+                                        self.toggle_sort(SortColumn::Name);
+                                    }
                                 });
                                 header.col(|ui| {
-                                    ui.strong(t("#app_col_type"));
+                                    let label = match (self.sort_column, self.sort_ascending) {
+                                        (Some(SortColumn::Type), true) => format!("{} ⏶", t("#app_col_type")),
+                                        (Some(SortColumn::Type), false) => format!("{} ⏷", t("#app_col_type")),
+                                        _ => t("#app_col_type"),
+                                    };
+                                    if ui.selectable_label(self.sort_column == Some(SortColumn::Type), label).clicked() {
+                                        self.toggle_sort(SortColumn::Type);
+                                    }
                                 });
                                 header.col(|ui| {
-                                    ui.strong(t("#app_col_map"));
+                                    let label = match (self.sort_column, self.sort_ascending) {
+                                        (Some(SortColumn::Map), true) => format!("{} ⏶", t("#app_col_map")),
+                                        (Some(SortColumn::Map), false) => format!("{} ⏷", t("#app_col_map")),
+                                        _ => t("#app_col_map"),
+                                    };
+                                    if ui.selectable_label(self.sort_column == Some(SortColumn::Map), label).clicked() {
+                                        self.toggle_sort(SortColumn::Map);
+                                    }
                                 });
                                 header.col(|ui| {
-                                    ui.strong(t("#app_col_date"));
+                                    let label = match (self.sort_column, self.sort_ascending) {
+                                        (Some(SortColumn::Date), true) => format!("{} ⏶", t("#app_col_date")),
+                                        (Some(SortColumn::Date), false) => format!("{} ⏷", t("#app_col_date")),
+                                        _ => t("#app_col_date"),
+                                    };
+                                    if ui.selectable_label(self.sort_column == Some(SortColumn::Date), label).clicked() {
+                                        self.toggle_sort(SortColumn::Date);
+                                    }
                                 });
                             })
                             .body(|mut body| {
-                                for item in &self.desktop_files {
+                                for item in &display_files {
                                     let path_str = item.path.to_string_lossy().into_owned();
 
                                     let is_selected = selected_path.as_ref() == Some(&path_str);
@@ -981,9 +1216,84 @@ impl eframe::App for Gui {
                     } else if filtered_web_files.is_empty() {
                         ui.weak(t("#app_no_demos_found"));
                     } else {
-                        let selected_path = &self.selected_analysis_path;
-                        let analyses = &self.analyses;
-                        let loading_path = &self.loading_path;
+                        let selected_path = self.selected_analysis_path.clone();
+                        let loading_path = self.loading_path.clone();
+
+                        let mut display_files: Vec<&WebFile> = filtered_web_files.iter()
+                            .filter(|file| {
+                                let relative_path = &file.path;
+                                let name = &file.name;
+                                let analysis_opt = self.analyses.get(relative_path);
+                                let map = if let Some((_, analysis)) = analysis_opt {
+                                    analysis.demo_info.map_name.as_str()
+                                } else {
+                                    "-"
+                                };
+                                let date_str = if let Some((file_info, _)) = analysis_opt {
+                                    chrono::DateTime::<chrono::Utc>::from(file_info.created_at)
+                                        .format("%Y-%m-%d")
+                                        .to_string()
+                                } else {
+                                    "-".to_string()
+                                };
+                                self.filter_demo(name, map, &date_str, relative_path)
+                            })
+                            .collect();
+
+                        if let Some(col) = self.sort_column {
+                            display_files.sort_by(|a, b| {
+                                let relative_path_a = &a.path;
+                                let relative_path_b = &b.path;
+                                let name_a = &a.name;
+                                let name_b = &b.name;
+
+                                let analysis_opt_a = self.analyses.get(relative_path_a);
+                                let analysis_opt_b = self.analyses.get(relative_path_b);
+
+                                let map_a = if let Some((_, analysis)) = analysis_opt_a {
+                                    analysis.demo_info.map_name.as_str()
+                                } else {
+                                    "-"
+                                };
+                                let map_b = if let Some((_, analysis)) = analysis_opt_b {
+                                    analysis.demo_info.map_name.as_str()
+                                } else {
+                                    "-"
+                                };
+
+                                let type_a = if let Some((_, analysis)) = analysis_opt_a {
+                                    analysis.demo_info.demo_type.as_str()
+                                } else if name_a.to_lowercase().contains("hltv") {
+                                    "HLTV"
+                                } else {
+                                    "POV"
+                                };
+                                let type_b = if let Some((_, analysis)) = analysis_opt_b {
+                                    analysis.demo_info.demo_type.as_str()
+                                } else if name_b.to_lowercase().contains("hltv") {
+                                    "HLTV"
+                                } else {
+                                    "POV"
+                                };
+
+                                let cmp = match col {
+                                    SortColumn::Name => name_a.to_lowercase().cmp(&name_b.to_lowercase()),
+                                    SortColumn::Type => type_a.cmp(type_b),
+                                    SortColumn::Map => map_a.to_lowercase().cmp(&map_b.to_lowercase()),
+                                    SortColumn::Date => {
+                                        let status_a = if loading_path.as_ref() == Some(relative_path_a) { 0 } else if self.analyses.contains_key(relative_path_a) { 1 } else { 2 };
+                                        let status_b = if loading_path.as_ref() == Some(relative_path_b) { 0 } else if self.analyses.contains_key(relative_path_b) { 1 } else { 2 };
+                                        status_a.cmp(&status_b)
+                                    }
+                                };
+
+                                if self.sort_ascending {
+                                    cmp
+                                } else {
+                                    cmp.reverse()
+                                }
+                            });
+                        }
 
                         TableBuilder::new(ui)
                             .striped(true)
@@ -994,25 +1304,54 @@ impl eframe::App for Gui {
                             .column(Column::initial(100.0)) // Status
                             .header(20.0, |mut header| {
                                 header.col(|ui| {
-                                    ui.strong(t("#app_col_name"));
+                                    let label = match (self.sort_column, self.sort_ascending) {
+                                        (Some(SortColumn::Name), true) => format!("{} ⏶", t("#app_col_name")),
+                                        (Some(SortColumn::Name), false) => format!("{} ⏷", t("#app_col_name")),
+                                        _ => t("#app_col_name"),
+                                    };
+                                    if ui.selectable_label(self.sort_column == Some(SortColumn::Name), label).clicked() {
+                                        self.toggle_sort(SortColumn::Name);
+                                    }
                                 });
                                 header.col(|ui| {
-                                    ui.strong(t("#app_col_type"));
+                                    let label = match (self.sort_column, self.sort_ascending) {
+                                        (Some(SortColumn::Type), true) => format!("{} ⏶", t("#app_col_type")),
+                                        (Some(SortColumn::Type), false) => format!("{} ⏷", t("#app_col_type")),
+                                        _ => t("#app_col_type"),
+                                    };
+                                    if ui.selectable_label(self.sort_column == Some(SortColumn::Type), label).clicked() {
+                                        self.toggle_sort(SortColumn::Type);
+                                    }
                                 });
                                 header.col(|ui| {
-                                    ui.strong(t("#app_col_map"));
+                                    let label = match (self.sort_column, self.sort_ascending) {
+                                        (Some(SortColumn::Map), true) => format!("{} ⏶", t("#app_col_map")),
+                                        (Some(SortColumn::Map), false) => format!("{} ⏷", t("#app_col_map")),
+                                        _ => t("#app_col_map"),
+                                    };
+                                    if ui.selectable_label(self.sort_column == Some(SortColumn::Map), label).clicked() {
+                                        self.toggle_sort(SortColumn::Map);
+                                    }
                                 });
                                 header.col(|ui| {
-                                    ui.strong(t("#app_col_status"));
+                                    let label = match (self.sort_column, self.sort_ascending) {
+                                        (Some(SortColumn::Date), true) => format!("{} ⏶", t("#app_col_status")),
+                                        (Some(SortColumn::Date), false) => format!("{} ⏷", t("#app_col_status")),
+                                        _ => t("#app_col_status"),
+                                    };
+                                    if ui.selectable_label(self.sort_column == Some(SortColumn::Date), label).clicked() {
+                                        self.toggle_sort(SortColumn::Date);
+                                    }
                                 });
                             })
                             .body(|mut body| {
-                                for file in &filtered_web_files {
+                                for file in &display_files {
                                     let relative_path = &file.path;
                                     let name = &file.name;
 
+                                    let analysis_opt = self.analyses.get(relative_path);
+
                                     let is_selected = selected_path.as_ref() == Some(relative_path);
-                                    let analysis_opt = analyses.get(relative_path);
                                     let is_loaded = analysis_opt.is_some();
                                     let is_loading = loading_path.as_ref() == Some(relative_path);
 
@@ -1314,6 +1653,19 @@ impl eframe::App for Gui {
                                 ctx.request_repaint();
                             }
                         });
+
+                        ui.add_space(8.0);
+                        let mut scan_val = self.settings.scan_folders_for_demos;
+                        if ui.checkbox(&mut scan_val, t("#app_prefs_scan_folders")).changed() {
+                            self.settings.scan_folders_for_demos = scan_val;
+                            save_settings(&self.settings);
+                            #[cfg(not(target_arch = "wasm32"))]
+                            {
+                                self.subdir_cache.clear();
+                                self.explorer_demo_cache.clear();
+                            }
+                            ctx.request_repaint();
+                        }
 
                         ui.add_space(16.0);
                         ui.separator();
