@@ -15,7 +15,8 @@ pub fn header_ui(file_info: Option<&FileInfo>, analysis: Option<&Analysis>, ui: 
             let name_str = file_info.map(|fi| fi.name.as_str()).unwrap_or("");
             ui.monospace(name_str);
             if !name_str.is_empty() {
-                if ui.small_button("📋").on_hover_text("Copy filename").clicked() {
+                ui.add_space(6.0);
+                if ui.link(egui::RichText::new("[copy]").small()).on_hover_text("Copy filename").clicked() {
                     ui.ctx().copy_text(name_str.to_string());
                 }
             }
@@ -30,14 +31,18 @@ pub fn header_ui(file_info: Option<&FileInfo>, analysis: Option<&Analysis>, ui: 
                     .and_then(|p| p.to_str())
                     .unwrap_or(&fi.path);
                 ui.monospace(parent_dir);
-                if ui.small_button("📋").on_hover_text("Copy path").clicked() {
+                ui.add_space(6.0);
+                if ui.link(egui::RichText::new("[copy]").small()).on_hover_text("Copy path").clicked() {
                     ui.ctx().copy_text(parent_dir.to_string());
                 }
                 #[cfg(not(target_arch = "wasm32"))]
-                if ui.small_button("📁").on_hover_text("Open folder").clicked() {
-                    let _ = std::process::Command::new("explorer")
-                        .arg(parent_dir)
-                        .spawn();
+                {
+                    ui.add_space(6.0);
+                    if ui.link(egui::RichText::new("[open folder]").small()).on_hover_text("Open folder").clicked() {
+                        let _ = std::process::Command::new("explorer")
+                            .arg(parent_dir)
+                            .spawn();
+                    }
                 }
             } else {
                 ui.monospace("");
@@ -56,9 +61,13 @@ pub fn header_ui(file_info: Option<&FileInfo>, analysis: Option<&Analysis>, ui: 
 
         ui.strong(t("#app_summary_file_created"));
         if let Some(fi) = file_info {
-            let formatted_date = chrono::DateTime::<chrono::Local>::from(fi.created_at)
-                .format("%Y-%m-%d %I:%M %p")
-                .to_string();
+            let local_time = chrono::DateTime::<chrono::Local>::from(fi.created_at);
+            let utc_time = chrono::DateTime::<chrono::Utc>::from(fi.created_at);
+            let formatted_date = format!(
+                "{} / {}",
+                local_time.format("%Y-%m-%d %I:%M %p %Z"),
+                utc_time.format("%Y-%m-%d %I:%M %p UTC")
+            );
             ui.label(formatted_date);
         } else {
             ui.label("");
@@ -68,11 +77,11 @@ pub fn header_ui(file_info: Option<&FileInfo>, analysis: Option<&Analysis>, ui: 
 
     ui.add_space(16.0);
 
-    // 2. Demo & Match Details Section
-    ui.strong(t("#app_summary_section_demo"));
+    // 2. Game Details Section
+    ui.strong(t("#app_summary_section_game"));
     ui.separator();
     ui.add_space(4.0);
-    Grid::new("demo_details").show(ui, |ui| {
+    Grid::new("game_details").show(ui, |ui| {
         ui.strong(t("#app_summary_game_mod"));
         if let Some(a) = analysis {
             let game_dir = &a.demo_info.game_directory;
@@ -118,14 +127,55 @@ pub fn header_ui(file_info: Option<&FileInfo>, analysis: Option<&Analysis>, ui: 
         );
         ui.end_row();
 
-        ui.strong(t("#app_summary_demo_type"));
+        ui.strong(t("#app_summary_map_checksum"));
         if let Some(a) = analysis {
-            ui.label(&a.demo_info.demo_type);
+            ui.label(a.demo_info.map_checksum.to_string());
+        } else {
+            ui.label("");
+        }
+        ui.end_row();
+    });
+
+    ui.add_space(16.0);
+
+    // 3. Server Information Section
+    ui.strong(t("#app_summary_section_server"));
+    ui.separator();
+    ui.add_space(4.0);
+    Grid::new("server_info").show(ui, |ui| {
+        ui.strong(t("#app_summary_server_name"));
+        if let Some(a) = analysis {
+            ui.label(a.state.server_name.as_deref().unwrap_or(""));
         } else {
             ui.label("");
         }
         ui.end_row();
 
+        ui.strong(t("#app_summary_server_address"));
+        if let Some(a) = analysis {
+            ui.horizontal(|ui| {
+                let addr = a.state.server_address.as_deref().unwrap_or("");
+                ui.label(addr);
+                if !addr.is_empty() {
+                    ui.add_space(6.0);
+                    if ui.link(egui::RichText::new("[copy]").small()).on_hover_text("Copy server address").clicked() {
+                        ui.ctx().copy_text(addr.to_string());
+                    }
+                }
+            });
+        } else {
+            ui.label("");
+        }
+        ui.end_row();
+    });
+
+    ui.add_space(16.0);
+
+    // 4. Demo & Match Details Section
+    ui.strong(t("#app_summary_section_demo"));
+    ui.separator();
+    ui.add_space(4.0);
+    Grid::new("demo_details").show(ui, |ui| {
         ui.strong(t("#app_summary_recorded_by"));
         if let Some(a) = analysis {
             let recorder = if a.demo_info.demo_type == "HLTV" {
@@ -154,25 +204,9 @@ pub fn header_ui(file_info: Option<&FileInfo>, analysis: Option<&Analysis>, ui: 
         }
         ui.end_row();
 
-        ui.strong(t("#app_summary_server_name"));
+        ui.strong(t("#app_summary_demo_type"));
         if let Some(a) = analysis {
-            ui.label(a.state.server_name.as_deref().unwrap_or(""));
-        } else {
-            ui.label("");
-        }
-        ui.end_row();
-
-        ui.strong(t("#app_summary_server_address"));
-        if let Some(a) = analysis {
-            ui.horizontal(|ui| {
-                let addr = a.state.server_address.as_deref().unwrap_or("");
-                ui.label(addr);
-                if !addr.is_empty() {
-                    if ui.small_button("📋").on_hover_text("Copy server address").clicked() {
-                        ui.ctx().copy_text(addr.to_string());
-                    }
-                }
-            });
+            ui.label(&a.demo_info.demo_type);
         } else {
             ui.label("");
         }
@@ -181,7 +215,17 @@ pub fn header_ui(file_info: Option<&FileInfo>, analysis: Option<&Analysis>, ui: 
         ui.strong(t("#app_summary_match_type"));
         if let Some(a) = analysis {
             let match_type = if a.state.is_clan_match() {
-                t("#app_match_type_clan")
+                let has_completed_rounds = a.state.rounds.iter().any(|r| match r {
+                    analysis::Round::Completed { .. } => true,
+                    _ => false,
+                });
+                if !a.state.match_start_witnessed && !has_completed_rounds {
+                    t("#app_match_type_clan_pregame")
+                } else if a.state.started_late || a.state.ended_early {
+                    t("#app_match_type_clan_incomplete")
+                } else {
+                    t("#app_match_type_clan_completed")
+                }
             } else {
                 t("#app_match_type_pub")
             };
@@ -222,7 +266,7 @@ pub fn header_ui(file_info: Option<&FileInfo>, analysis: Option<&Analysis>, ui: 
 
     ui.add_space(16.0);
 
-    // 3. Technical Specifications Section
+    // 5. Technical Specifications Section
     ui.strong(t("#app_summary_section_tech"));
     ui.separator();
     ui.add_space(4.0);
