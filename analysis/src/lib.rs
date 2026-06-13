@@ -119,6 +119,9 @@ pub struct DemoInfo {
 
     /// Type of demo: "HLTV" or "POV"
     pub demo_type: String,
+
+    /// Map checksum / CRC.
+    pub map_checksum: u32,
 }
 
 impl From<Demo> for DemoInfo {
@@ -179,6 +182,7 @@ impl From<Demo> for DemoInfo {
             playback_time,
             game_directory,
             demo_type,
+            map_checksum: value.header.map_checksum,
         }
     }
 }

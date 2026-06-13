@@ -81,6 +81,8 @@
 // Summary view
 // -----------------------------------------------------------------------
 "#app_summary_section_file"     "File Information"
+"#app_summary_section_game"     "Game Details"
+"#app_summary_section_server"   "Server Information"
 "#app_summary_section_demo"     "Demo & Match Details"
 "#app_summary_section_tech"     "Technical Specifications"
 "#app_summary_file_name"        "File name"
@@ -93,6 +95,7 @@
 "#app_summary_demo_type"        "Demo type"
 "#app_summary_game_mod"         "Game mod"
 "#app_summary_map_name"         "Map name"
+"#app_summary_map_checksum"     "Map checksum"
 "#app_summary_demo_protocol"    "Demo protocol"
 "#app_summary_net_protocol"     "Network protocol"
 "#app_summary_game_version"     "Game version"
@@ -100,6 +103,9 @@
 "#app_summary_match_duration"   "Match duration"
 "#app_summary_match_type"       "Match type"
 "#app_match_type_clan"          "Clan Match"
+"#app_match_type_clan_completed"  "Clan Match (Fully Recorded)"
+"#app_match_type_clan_pregame"    "Clan Match (Pre-game only)"
+"#app_match_type_clan_incomplete" "Clan Match (Partially Recorded)"
 "#app_match_type_pub"           "Public Game"
 "#app_game_dod"                 "Day of Defeat (dod)"
 "#app_game_cstrike"             "Counter-Strike (cstrike)"
