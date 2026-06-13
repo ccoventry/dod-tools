@@ -1,3 +1,4 @@
 {
-  "language": "auto"
+  "language": "auto",
+  "scan_folders_for_demos": true
 }

@@ -52,7 +52,18 @@
 "#app_prefs_general"            "General Settings"
 "#app_prefs_language"           "Language:"
 "#app_prefs_lang_auto"          "Auto-Detect (OS Default)"
+"#app_prefs_scan_folders"       "Scan folders for demos"
 "#app_prefs_close"              "Close"
+
+// -----------------------------------------------------------------------
+// Demos List Filters
+// -----------------------------------------------------------------------
+"#app_filter_search"            "Search:"
+"#app_filter_type"              "Type:"
+"#app_filter_map"               "Map:"
+"#app_filter_date_start"        "Min YYYY-MM-DD"
+"#app_filter_date_end"          "Max YYYY-MM-DD"
+"#app_filter_reset"             "Reset"
 
 // -----------------------------------------------------------------------
 // Tab bar (views.rs)

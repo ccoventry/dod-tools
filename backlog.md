@@ -12,7 +12,6 @@ Below are the remaining open tasks in the backlog, structured as a clean, scanna
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **M7** | 🟡 **Medium** | **WASM Translation Assets** | GUI / WASM | Embed translation catalogs (e.g. `dod_tools_english.txt`) inside compiled binaries to enable WebAssembly translation. | Use `include_str!("../localizations/dod_tools_english.txt")` to bundle the default catalog directly into the binary for WASM runtime access. |
 | **M8** | 🟡 **Medium** | **Lock-Free Concurrent Lookups** | Core / UI Thread | Replace the localization wrapper's `Mutex` with a read-mostly `RwLock` or `ArcSwap` to prevent widget thread contention. | Refactor the translation cache in `analysis/src/lib.rs` to use `std::sync::RwLock` or `once_cell` instead of standard `Mutex` locks. |
-| **M9** | 🟡 **Medium** | **POV Client Duplicate Protection** | CLI / Auditor | Use client headers/viewpoints rather than just file sizes/hashes so same-match POVs from different players aren't flagged as duplicates. | Extract POV player index/header metadata during audit scans and add them to the file uniqueness hash signature. |
 | **M10** | 🟡 **Medium** | **Project Renaming** | Project / Core | Rename the repository to support a broader set of Half-Life mods (e.g., CS 1.6, Team Fortress Classic). | Perform workspace-wide search & replace of `"dod-tools"` to the new project identifier and rename root config/directories. |
 | **M11** | 🟡 **Medium** | **Server Mod Detection** | Parser / GUI | Detect common server-side mods (AMX/AMXX, Warcraft 3, Super Hero) present during a recorded demo and surface them in the UI. | Scan `TextMsg` / `HudText` / `Motd` content for known plugin signatures (e.g., `[AMX]`, `[ADMIN]`, XP/gold HUD text). Store detected mods as `Vec<DetectedMod>` on `AnalyzerState`. **Important**: presence of AMX must *not* influence match-type classification — KTP is a competitive league that uses AMX heavily. Decide placement (Summary section? tooltip? dedicated field?) before implementing. |
 | **M14** | 🟡 **Medium** | **Group Scoreboard by Team** | GUI / Scoreboard | Remove the "Team" column from the scoreboard table and group players under separate Allies/British and Axis headings. | Refactor `native/src/bin/gui/views/scoreboard.rs` to split the player list by team and build separate tables (or segmented headers) using `TableBuilder` with visual gaps in between them. |
@@ -22,6 +21,7 @@ Below are the remaining open tasks in the backlog, structured as a clean, scanna
 | **M18** | 🟡 **Medium** | **Demo List Search & Filtering** | GUI / Layout | Add filtering controls (by type, map, date range, search query) and a "Reset Filters" button above the demo list. | Add search query and criteria state to the Explorer UI in `native/src/bin/gui/main.rs` and filter the file list before drawing tree nodes or rows. |
 | **M19** | 🟡 **Medium** | **Explorer Folder Collapsing State Fix** | GUI / Layout | Allow collapsing a folder in the Explorer tree even if the active file is a child of the folder being closed. | Modify the node selection/expansion logic in `native/src/bin/gui/explorer.rs` to prevent auto-expanding parents if they are collapsed by manual user click. |
 | **M20** | 🟡 **Medium** | **Score Reset Resiliency** | Parser / Core | Handle KTP league score updates at the start of the second half to prevent incorrect round-winner or score tracking. | Implement logic in `analysis/src/lib.rs` that detects a mid-match score override/reset at the start of a half and adjusts round counting base values accordingly rather than mis-assigning point deltas. |
+| **M21** | 🟡 **Medium** | **High-Quality / Colored Icons** | GUI / Layout | Replace the monochrome outline folder icons with colored vector outlines or custom colored images. | Support loading custom PNG/SVG assets or styling an icon font with custom color palettes in egui. See detailed spec below. |
 | **H1** | 🔴 **Hard** | **Combine Weapon & POV Tabs** | GUI / Layout | Merge "Weapon Breakdowns" and "POV Analytics" into a player dropdown selector. Show extra POV stats with visual notes only when the POV player is chosen. | Merge `views/weapons.rs` and `views/pov.rs` into a unified player details view. Add dynamic checks to append the POV analytics grid when the POV player is active. |
 | **H2** | 🔴 **Hard** | **Objective Capture Timelines** | Parser / GUI | Track flags captured (`CapMsg`) and interruptions (`CancelProg`) to display objective capture timelines. | Track `CapMsg` and `CancelProg` network messages in `analysis/src/lib.rs` and build a horizontal time-based timeline widget in the GUI. |
 | **H3** | 🔴 **Hard** | **Objective Capture Timelines** | Parser / Core | Trace POV ammo box creation/pickup/decay timelines by decoding delta packet updates (`SvcDeltaPacketEntities`). | Parse `SvcPacketEntities` updates and `SvcDeltaPacketEntities` decoders in `analysis/src/lib.rs` to map `models/w_ammobox.mdl` lifetimes. |
@@ -286,3 +286,27 @@ Instead of parsing the entire demo file, we read the demo header and scan the fi
 Introduce a persistent local cache file (e.g., `.dod-tools-cache.json` or a SQLite database in the app data folder) storing resolved metadata (filename, map, type, duration) for scanned files.
 - When scanning the directory, if a file's modification time matches the cache entry, read metadata from the cache instantly.
 - If it is a cache miss, queue the file for a background scan, then write back to the cache. This ensures fast load times and persistent, correct classifications.
+
+---
+
+### 6. High-Quality Colored Icons in egui [M21 - 🟡 Medium]
+
+Currently, folder icons (`📁` and `📂`) render as white monochrome vector outlines because `egui` does not load color/bitmap system emoji fonts natively. To make the folder tree visual layout feel premium, we can implement high-quality colorized folder icons.
+
+#### Option A: Load Custom PNG or SVG Images
+Instead of text emoji characters, load small image assets into `egui` textures and render them.
+1. **Asset Storage**: Embed the assets (e.g. `folder_closed.png` and `folder_open_demos.png`) directly into the binary using `include_bytes!`.
+2. **Texture Loading**: In `Gui::default` or during the first frame callback, load these bytes into `egui::TextureHandle` objects using `ctx.load_texture(...)`.
+3. **Rendering**: In `explorer.rs`'s `render_native_dir_node`, draw the texture using `ui.image(...)` instead of rendering text:
+   ```rust
+   let texture = if has_demos { &self.folder_open_demos_texture } else { &self.folder_closed_texture };
+   ui.image(texture, [16.0, 16.0]);
+   ```
+
+#### Option B: Colorized Monochrome Icon Font (e.g. FontAwesome)
+Load a custom icon font (like FontAwesome or Google Material Symbols) that contains modern folder icon glyphs, and apply custom colors to the text widgets.
+1. **Font Registration**: Register the TTF/OTF font file bytes in `egui::FontDefinitions` under `ctx.set_fonts(...)`.
+2. **Icon Selection**: Use the icon font's private use area (PUA) characters (e.g. `\u{f07b}` for folder, `\u{f07c}` for open folder).
+3. **Dynamic Styling**: Draw the labels with explicit text colors using `egui::RichText`:
+   - Regular folder: `RichText::new("📁").color(Color32::from_rgb(120, 120, 120))` (sleek gray).
+   - Folder containing demos: `RichText::new("📂").color(Color32::from_rgb(250, 190, 50))` (vibrant warm yellow).
