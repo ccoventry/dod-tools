@@ -10,7 +10,6 @@ Below are the remaining open tasks in the backlog, structured as a clean, scanna
 
 | ID | Difficulty | Task | Area | Description | Dev Notes |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **M6** | 🟡 **Medium** | **Maximize Tab Space Layout** | GUI / Layout | Expand widget layouts to consume the full screen width and height since the side-by-side demo comparison panel is gone. | Adjust default widget widths/margins and `TableBuilder` Column configurations in `native/src/bin/gui/views/` to occupy 100% of the screen. |
 | **M7** | 🟡 **Medium** | **WASM Translation Assets** | GUI / WASM | Embed translation catalogs (e.g. `dod_tools_english.txt`) inside compiled binaries to enable WebAssembly translation. | Use `include_str!("../localizations/dod_tools_english.txt")` to bundle the default catalog directly into the binary for WASM runtime access. |
 | **M8** | 🟡 **Medium** | **Lock-Free Concurrent Lookups** | Core / UI Thread | Replace the localization wrapper's `Mutex` with a read-mostly `RwLock` or `ArcSwap` to prevent widget thread contention. | Refactor the translation cache in `analysis/src/lib.rs` to use `std::sync::RwLock` or `once_cell` instead of standard `Mutex` locks. |
 | **M9** | 🟡 **Medium** | **POV Client Duplicate Protection** | CLI / Auditor | Use client headers/viewpoints rather than just file sizes/hashes so same-match POVs from different players aren't flagged as duplicates. | Extract POV player index/header metadata during audit scans and add them to the file uniqueness hash signature. |
@@ -62,6 +61,7 @@ Below is a history of all successfully implemented and verified tasks.
 | **[x] M3** | 🟡 **Medium** | **Chat Filter Logic Overlap** | GUI / Chat Log | Fix player filter toggles so that unchecking "Alive" and "Dead" doesn't permanently lock all chat channels. | *Completed:* Decoupled the chat visibility filters in `chat.rs` so that unchecking `"Alive"` and `"Dead"` switches them to a default fallback state showing all messages instead of fully hiding chat. |
 | **[x] E13** | 🟢 **Easy** | **Player Profile External Links** | GUI / Scoreboard | Add quick web links to popular profiling services (e.g. Legit-Proof, Steam Community) next to a player's ID on the scoreboard. | *Completed:* Consolidated external links (Steam profile and Legit-Proof) directly into the Player Details view. |
 | **[x] E15** | 🟢 **Easy** | **Clean Up System Message Formatting** | Parser / Chat Log | Trim or clean up trailing newlines and raw console command arguments (like `"\nready2 3 4\n"`) from system announcements. | *Completed:* Implemented raw console command filtering and newline/whitespace normalization in system message translation, with associated tests. |
+| **[x] M6** | 🟡 **Medium** | **Maximize Tab Space Layout** | GUI / Layout | Expand widget layouts to consume the full screen width and height since the side-by-side demo comparison panel is gone. | *Completed:* Adjusted default widget widths/margins and TableBuilder Column configurations in `native/src/bin/gui/views/` to occupy 100% of the screen. Centered the scoreboard view and bounded its width to 50% of the screen. |
 
 ---
 
