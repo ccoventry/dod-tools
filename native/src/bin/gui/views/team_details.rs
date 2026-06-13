@@ -183,7 +183,11 @@ fn weapon_breakdown_table_ui(
     TableBuilder::new(ui)
         .striped(true)
         .cell_layout(Layout::left_to_right(Align::Center))
-        .columns(Column::auto(), 5)
+        .column(Column::remainder())
+        .column(Column::initial(80.0).resizable(true))
+        .column(Column::initial(130.0).resizable(true))
+        .column(Column::initial(90.0).resizable(true))
+        .column(Column::initial(130.0).resizable(true))
         .header(TABLE_ROW_HEIGHT, |mut row| {
             row.col(|ui| { ui.strong(t("#app_col_weapon")); });
             row.col(|ui| { ui.strong(t("#app_col_kills")); });
