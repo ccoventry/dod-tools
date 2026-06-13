@@ -1,4 +1,4 @@
-use crate::views::{PlayerHighlighting, TABLE_ROW_HEIGHT, t};
+use crate::views::{PlayerHighlighting, TABLE_ROW_HEIGHT, t, ALLIES_COLOR, BRITISH_COLOR, AXIS_COLOR};
 use analysis::{Analysis, Player, SteamId, Team, translate_key};
 use egui::{Align, Layout, Ui};
 use egui_extras::{Column, TableBody, TableBuilder};
@@ -23,14 +23,13 @@ fn team_name(team: &Team) -> String {
     }
 }
 
-/// Stable numeric rank for team ordering (lower = higher in the table).
-/// Using an integer avoids locale-dependent string comparisons.
-fn team_sort_rank(team: Option<&Team>) -> u8 {
+fn get_team_color(team: &Team) -> egui::Color32 {
     match team {
-        Some(Team::Allies) | Some(Team::British) => 0,
-        Some(Team::Axis) => 1,
-        Some(Team::Spectators) => 2,
-        Some(Team::Unassigned) | None => 3,
+        Team::Allies => ALLIES_COLOR,
+        Team::British => BRITISH_COLOR,
+        Team::Axis => AXIS_COLOR,
+        Team::Spectators => egui::Color32::YELLOW,
+        Team::Unassigned => egui::Color32::LIGHT_GRAY,
     }
 }
 
@@ -113,42 +112,63 @@ pub fn scoreboard_ui(
 
             ui.scope(|ui| {
                 let columns = [
-                    "#app_col_id",
                     "#app_col_name",
-                    "#app_col_team",
                     "#app_col_class",
                     "#app_col_score",
                     "#app_col_kills",
                     "#app_col_deaths",
                 ];
 
-                let table = TableBuilder::new(ui)
-                    .striped(true)
-                    .cell_layout(Layout::left_to_right(Align::Center))
-                    .column(Column::initial(160.0).resizable(true)) // Steam ID
-                    .column(Column::remainder())                    // Name
-                    .column(Column::initial(100.0).resizable(true)) // Team
-                    .column(Column::initial(120.0).resizable(true)) // Class
-                    .column(Column::initial(70.0).resizable(true))  // Score
-                    .column(Column::initial(70.0).resizable(true))  // Kills
-                    .column(Column::initial(70.0).resizable(true)); // Deaths
+                let name_w = 180.0;
+                let score_w = 140.0;
+                let kills_w = 140.0;
+                let deaths_w = 140.0;
+                let class_w = (desired_width - name_w - score_w - kills_w - deaths_w).max(120.0);
+                let total_table_width = name_w + class_w + score_w + kills_w + deaths_w + 4.0 * ui.spacing().item_spacing.x;
 
-                table
-                    .header(TABLE_ROW_HEIGHT, |mut header| {
-                        for column in columns {
-                            header.col(|ui| {
-                                let col_label = if column.starts_with('#') {
-                                    t(column)
-                                } else {
-                                    column.to_string()
-                                };
-                                ui.strong(col_label);
-                            });
-                        }
-                    })
+                let parent_clip_rect = ui.clip_rect();
+                let table_painter = ui.painter().clone();
+                let table = TableBuilder::new(ui)
+                    .striped(false)
+                    .vscroll(false)
+                    .cell_layout(Layout::left_to_right(Align::Center))
+                    .column(Column::exact(name_w))
+                    .column(Column::remainder())
+                    .column(Column::exact(score_w))
+                    .column(Column::exact(kills_w))
+                    .column(Column::exact(deaths_w));
+
+
+                 table
+                     .header(TABLE_ROW_HEIGHT, |mut header| {
+                         for (idx, column) in columns.iter().enumerate() {
+                             header.col(|ui| {
+                                 let col_label = if column.starts_with('#') {
+                                     t(column)
+                                 } else {
+                                     column.to_string()
+                                 };
+                                 if idx >= 2 {
+                                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                         ui.strong(col_label);
+                                     });
+                                 } else {
+                                     ui.strong(col_label);
+                                 }
+                             });
+                         }
+                     })
                     .body(|ref mut body| {
+                        // Spacer row between column headers and the first team row
+                        body.row(12.0, |mut row| {
+                            for _ in 0..5 {
+                                row.col(|_ui| {});
+                            }
+                        });
+
                         if let Some(analysis) = analysis {
                             struct SortablePlayer<'a> {
+
                                 player: &'a Player,
                                 steam_id_str: String,
                             }
@@ -165,20 +185,169 @@ pub fn scoreboard_ui(
                                 })
                                 .collect();
 
-                            // Fixed sort order: Team ASC, Score DESC, Kills DESC,
-                            // Deaths ASC, Name ASC, ID ASC.
+                            // Sort players by Score DESC, Kills DESC, Deaths ASC, Name ASC, ID ASC.
                             players.sort_by(|a, b| {
-                                team_sort_rank(a.player.team.as_ref())
-                                    .cmp(&team_sort_rank(b.player.team.as_ref()))
-                                    .then_with(|| b.player.stats.0.cmp(&a.player.stats.0)) // Score DESC
+                                b.player.stats.0.cmp(&a.player.stats.0) // Score DESC
                                     .then_with(|| b.player.stats.1.cmp(&a.player.stats.1)) // Kills DESC
                                     .then_with(|| a.player.stats.2.cmp(&b.player.stats.2)) // Deaths ASC
                                     .then_with(|| a.player.name.cmp(&b.player.name))       // Name ASC
                                     .then_with(|| a.steam_id_str.cmp(&b.steam_id_str))     // ID ASC
                             });
 
+                            let is_british = analysis.state.allies_are_british;
+                            let allies_team = if is_british { Team::British } else { Team::Allies };
+
+                            struct TeamGroup<'a> {
+                                team: Team,
+                                title: String,
+                                players: Vec<SortablePlayer<'a>>,
+                                total_score: i32,
+                                total_kills: i32,
+                                total_deaths: i32,
+                            }
+
+                            let mut allies_group = TeamGroup {
+                                team: allies_team.clone(),
+                                title: team_name(&allies_team),
+                                players: Vec::new(),
+                                total_score: analysis.state.team_scores.get_team_score(allies_team.clone()),
+                                total_kills: 0,
+                                total_deaths: 0,
+                            };
+                            let mut axis_group = TeamGroup {
+                                team: Team::Axis,
+                                title: team_name(&Team::Axis),
+                                players: Vec::new(),
+                                total_score: analysis.state.team_scores.get_team_score(Team::Axis),
+                                total_kills: 0,
+                                total_deaths: 0,
+                            };
+                            let mut spec_group = TeamGroup {
+                                team: Team::Spectators,
+                                title: team_name(&Team::Spectators),
+                                players: Vec::new(),
+                                total_score: 0,
+                                total_kills: 0,
+                                total_deaths: 0,
+                            };
+                            let mut unassigned_group = TeamGroup {
+                                team: Team::Unassigned,
+                                title: team_name(&Team::Unassigned),
+                                players: Vec::new(),
+                                total_score: 0,
+                                total_kills: 0,
+                                total_deaths: 0,
+                            };
+
                             for sp in players {
-                                scoreboard_row_ui(sp.player, player_highlighting, body);
+                                match sp.player.team.as_ref() {
+                                    Some(Team::Allies) | Some(Team::British) => {
+                                        allies_group.total_kills += sp.player.stats.1;
+                                        allies_group.total_deaths += sp.player.stats.2;
+                                        allies_group.players.push(sp);
+                                    }
+                                    Some(Team::Axis) => {
+                                        axis_group.total_kills += sp.player.stats.1;
+                                        axis_group.total_deaths += sp.player.stats.2;
+                                        axis_group.players.push(sp);
+                                    }
+                                    Some(Team::Spectators) => {
+                                        spec_group.total_score += sp.player.stats.0;
+                                        spec_group.total_kills += sp.player.stats.1;
+                                        spec_group.total_deaths += sp.player.stats.2;
+                                        spec_group.players.push(sp);
+                                    }
+                                    Some(Team::Unassigned) | None => {
+                                        unassigned_group.total_score += sp.player.stats.0;
+                                        unassigned_group.total_kills += sp.player.stats.1;
+                                        unassigned_group.total_deaths += sp.player.stats.2;
+                                        unassigned_group.players.push(sp);
+                                    }
+                                }
+                            }
+
+                            let mut groups = vec![allies_group, axis_group];
+                            if !spec_group.players.is_empty() {
+                                groups.push(spec_group);
+                            }
+                            if !unassigned_group.players.is_empty() {
+                                groups.push(unassigned_group);
+                            }
+
+                            let mut first = true;
+                            for group in groups {
+                                if !first {
+                                    // Visual spacer row of height 12.0
+                                    body.row(12.0, |mut row| {
+                                        for _ in 0..5 {
+                                            row.col(|_ui| {});
+                                        }
+                                    });
+                                }
+                                first = false;
+
+                                let count = group.players.len();
+                                let label_text = format!(
+                                    "{}  -  {} {}",
+                                    group.title,
+                                    count,
+                                    if count == 1 { "player" } else { "players" }
+                                );
+                                let team_color = get_team_color(&group.team);
+
+                                 // Render team header row
+                                body.row(24.0, |mut row| {
+                                    row.col(|ui| {
+                                        ui.vertical(|ui| {
+                                            ui.strong(egui::RichText::new(&label_text).color(team_color));
+                                            ui.add_space(2.0);
+                                            
+                                            // Draw a single continuous line across the entire table width
+                                            let rect = ui.max_rect();
+                                            let line_y = rect.max.y - 1.0;
+                                            let line_rect = egui::Rect::from_min_max(
+                                                egui::pos2(rect.min.x, line_y),
+                                                egui::pos2(rect.min.x + total_table_width, line_y + 1.0),
+                                            );
+                                            table_painter.rect_filled(line_rect, 0.0, team_color);
+                                        });
+                                    });
+                                    row.col(|ui| {
+                                        ui.vertical(|ui| {
+                                            ui.label("");
+                                            ui.add_space(2.0);
+                                        });
+                                    });
+                                    row.col(|ui| {
+                                        ui.vertical(|ui| {
+                                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                                ui.strong(egui::RichText::new(group.total_score.to_string()).color(team_color));
+                                            });
+                                            ui.add_space(2.0);
+                                        });
+                                    });
+                                    row.col(|ui| {
+                                        ui.vertical(|ui| {
+                                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                                ui.strong(egui::RichText::new(group.total_kills.to_string()).color(team_color));
+                                            });
+                                            ui.add_space(2.0);
+                                        });
+                                    });
+                                    row.col(|ui| {
+                                        ui.vertical(|ui| {
+                                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                                ui.strong(egui::RichText::new(group.total_deaths.to_string()).color(team_color));
+                                            });
+                                            ui.add_space(2.0);
+                                        });
+                                    });
+                                });
+
+                                // Render player rows
+                                for sp in group.players {
+                                    scoreboard_row_ui(sp.player, player_highlighting, &group.team, total_table_width, table_painter.clone(), parent_clip_rect, body);
+                                }
                             }
                         }
                     });
@@ -190,99 +359,110 @@ pub fn scoreboard_ui(
 pub fn scoreboard_row_ui(
     p: &Player,
     player_highlighting: &mut PlayerHighlighting,
+    team: &Team,
+    total_table_width: f32,
+    table_painter: egui::Painter,
+    parent_clip_rect: egui::Rect,
     body: &mut TableBody,
 ) {
-    let cell_label = |ui: &mut Ui, text: &str| -> egui::Response {
-        ui.add(egui::Label::new(text).sense(egui::Sense::click()))
+    let is_selected = player_highlighting.highlighted.contains(&p.id);
+    let team_color = if is_selected {
+        egui::Color32::WHITE
+    } else {
+        get_team_color(team)
+    };
+    let cell_label = |ui: &mut Ui, text: &str, hovered: bool| {
+        ui.add(egui::Label::new(egui::RichText::new(text).color(team_color)).sense(egui::Sense::empty()));
+        if hovered {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
     };
 
-    let clicked = std::cell::Cell::new(false);
+    let mut clicked = false;
+    let mut row_hovered = false;
 
     body.row(TABLE_ROW_HEIGHT, |mut row| {
-        let is_selected = player_highlighting.highlighted.contains(&p.id);
-        row.set_selected(is_selected);
+        row.set_selected(false);
 
+        // Column 1: Name
         row.col(|ui| {
-            let id_text = match SteamId::try_from(&p.id) {
-                Ok(steam_id) => steam_id.to_string(),
-                _ => p.id.to_string(),
-            };
-            let resp = cell_label(ui, &id_text);
-            if resp.clicked() {
-                clicked.set(true);
-            }
-        });
+            let rect = ui.max_rect();
+            let row_y = rect.y_range();
+            let table_x_min = rect.min.x;
+            let table_x_max = table_x_min + total_table_width;
 
-        row.col(|ui| {
-            ui.horizontal(|ui| {
-                let resp = cell_label(ui, &p.name);
-                if resp.clicked() {
-                    clicked.set(true);
+            if let Some(pos) = ui.input(|i| i.pointer.hover_pos()) {
+                if parent_clip_rect.contains(pos) && row_y.contains(pos.y) && pos.x >= table_x_min && pos.x <= table_x_max {
+                    row_hovered = true;
+                    if ui.input(|i| i.pointer.primary_clicked()) {
+                        clicked = true;
+                    }
                 }
+            }
+
+            let row_rect = egui::Rect::from_min_max(
+                rect.min,
+                egui::pos2(rect.min.x + total_table_width, rect.max.y),
+            );
+
+            // Handle selection and hover drawing
+            if is_selected {
+                table_painter.rect_filled(row_rect, 0.0, ui.visuals().selection.bg_fill);
+            } else if row_hovered {
+                table_painter.rect_filled(row_rect, 0.0, egui::Color32::from_rgba_unmultiplied(255, 255, 255, 15));
+            }
+
+            if row_hovered {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
+
+            ui.horizontal(|ui| {
+                cell_label(ui, &p.name, row_hovered);
                 if p.has_reconnected {
                     ui.add_space(2.0);
-                    let label = ui.colored_label(egui::Color32::from_rgb(251, 191, 36), "🔄")
+                    ui.colored_label(egui::Color32::from_rgb(251, 191, 36), "🔄")
                         .on_hover_text(t("#app_player_reconnected_desc"));
-                    if label.clicked() {
-                        clicked.set(true);
-                    }
                 }
                 if p.has_pre_demo_activity {
                     ui.add_space(2.0);
-                    let label = ui.colored_label(egui::Color32::from_rgb(251, 191, 36), "*")
+                    ui.colored_label(egui::Color32::from_rgb(251, 191, 36), "*")
                         .on_hover_text(t("#app_player_pre_demo_desc"));
-                    if label.clicked() {
-                        clicked.set(true);
-                    }
                 }
             });
         });
 
-        row.col(|ui| {
-            let team_str = match &p.team {
-                None => t("#app_team_unknown"),
-                Some(team) => team_name(team),
-            };
-            let resp = cell_label(ui, &team_str);
-            if resp.clicked() {
-                clicked.set(true);
-            }
-        });
-
+        // Column 2: Class
         row.col(|ui| {
             let class_str = match &p.class {
                 None => t("#app_team_unknown"),
                 Some(x) => format!("{x:?}"),
             };
-            let resp = cell_label(ui, &class_str);
-            if resp.clicked() {
-                clicked.set(true);
-            }
+            cell_label(ui, &class_str, row_hovered);
         });
 
+        // Column 3: Score
         row.col(|ui| {
-            let resp = cell_label(ui, &p.stats.0.to_string());
-            if resp.clicked() {
-                clicked.set(true);
-            }
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                cell_label(ui, &p.stats.0.to_string(), row_hovered);
+            });
         });
 
+        // Column 4: Kills
         row.col(|ui| {
-            let resp = cell_label(ui, &p.stats.1.to_string());
-            if resp.clicked() {
-                clicked.set(true);
-            }
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                cell_label(ui, &p.stats.1.to_string(), row_hovered);
+            });
         });
 
+        // Column 5: Deaths
         row.col(|ui| {
-            let resp = cell_label(ui, &p.stats.2.to_string());
-            if resp.clicked() {
-                clicked.set(true);
-            }
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                cell_label(ui, &p.stats.2.to_string(), row_hovered);
+            });
         });
     });
 
-    if clicked.get() {
+    if clicked {
         if player_highlighting.highlighted.contains(&p.id) {
             player_highlighting.highlighted.remove(&p.id);
         } else {
