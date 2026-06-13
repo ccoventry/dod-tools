@@ -298,6 +298,13 @@ pub fn render_native_dir_node(
             if ui.selectable_label(false, symbol).clicked() {
                 state.toggle(ui);
                 state.store(ui.ctx());
+                if !state.is_open() {
+                    if let Some(curr) = current_dir {
+                        if curr.starts_with(path) && curr != path {
+                            *next_dir = Some(path.to_path_buf());
+                        }
+                    }
+                }
             }
             if ui
                 .selectable_label(is_selected, format!("{} {}", folder_icon, display_name))
@@ -354,6 +361,12 @@ pub fn render_web_dir_node(ui: &mut egui::Ui, node: &DirNode, selected_folder: &
             if ui.selectable_label(false, symbol).clicked() {
                 state.toggle(ui);
                 state.store(ui.ctx());
+                if !state.is_open() {
+                    let prefix = format!("{}/", node.path);
+                    if selected_folder.starts_with(&prefix) {
+                        *selected_folder = node.path.clone();
+                    }
+                }
             }
             if ui
                 .selectable_label(is_selected, format!("📁 {}", node.name))

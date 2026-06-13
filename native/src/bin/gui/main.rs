@@ -1047,165 +1047,185 @@ impl eframe::App for Gui {
                 {
                     if self.current_dir.is_none() {
                         ui.weak(t("#app_please_choose_dir"));
-                    } else if self.scanning_dir && self.desktop_files.is_empty() {
-                        ui.horizontal(|ui| {
-                            ui.spinner();
-                            ui.weak(t("#app_scanning_folder"));
-                        });
-                    } else if self.desktop_files.is_empty() {
-                        ui.weak(t("#app_no_demos_found"));
                     } else {
-                        if self.scanning_dir {
+                        if self.scanning_dir && self.desktop_files.is_empty() {
                             ui.horizontal(|ui| {
                                 ui.spinner();
-                                ui.weak(t("#app_updating_folder"));
+                                ui.weak(t("#app_scanning_folder"));
                             });
-                            ui.add_space(4.0);
-                        }
+                        } else {
+                            if self.scanning_dir {
+                                ui.horizontal(|ui| {
+                                    ui.spinner();
+                                    ui.weak(t("#app_updating_folder"));
+                                });
+                                ui.add_space(4.0);
+                            }
 
-                        let selected_path = self.selected_analysis_path.clone();
+                            let selected_path = self.selected_analysis_path.clone();
 
-                        let mut display_files: Vec<DemoListItem> = self.desktop_files.iter()
-                            .filter(|item| {
-                                let path_str = item.path.to_string_lossy();
-                                self.filter_demo(&item.name, &item.map_name, &item.date, &path_str)
-                            })
-                            .cloned()
-                            .collect();
+                            let mut display_files: Vec<DemoListItem> = self.desktop_files.iter()
+                                .filter(|item| {
+                                    let path_str = item.path.to_string_lossy();
+                                    self.filter_demo(&item.name, &item.map_name, &item.date, &path_str)
+                                })
+                                .cloned()
+                                .collect();
 
-                        if let Some(col) = self.sort_column {
-                            display_files.sort_by(|a, b| {
-                                let path_a = a.path.to_string_lossy();
-                                let path_b = b.path.to_string_lossy();
-                                let type_a = if let Some((_, analysis)) = self.analyses.get(path_a.as_ref()) {
-                                    analysis.demo_info.demo_type.as_str()
-                                } else if a.name.to_lowercase().contains("hltv") {
-                                    "HLTV"
-                                } else {
-                                    "POV"
-                                };
-                                let type_b = if let Some((_, analysis)) = self.analyses.get(path_b.as_ref()) {
-                                    analysis.demo_info.demo_type.as_str()
-                                } else if b.name.to_lowercase().contains("hltv") {
-                                    "HLTV"
-                                } else {
-                                    "POV"
-                                };
-
-                                let cmp = match col {
-                                    SortColumn::Name => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-                                    SortColumn::Type => type_a.cmp(type_b),
-                                    SortColumn::Map => a.map_name.to_lowercase().cmp(&b.map_name.to_lowercase()),
-                                    SortColumn::Date => a.date.cmp(&b.date),
-                                };
-
-                                if self.sort_ascending {
-                                    cmp
-                                } else {
-                                    cmp.reverse()
-                                }
-                            });
-                        }
-
-                        TableBuilder::new(ui)
-                            .striped(true)
-                            .cell_layout(Layout::left_to_right(Align::Center))
-                            .column(Column::initial(300.0).resizable(true).clip(true)) // Name
-                            .column(Column::initial(80.0).resizable(true)) // Type
-                            .column(Column::initial(150.0).resizable(true)) // Map
-                            .column(Column::initial(150.0)) // Date
-                            .header(20.0, |mut header| {
-                                header.col(|ui| {
-                                    let label = match (self.sort_column, self.sort_ascending) {
-                                        (Some(SortColumn::Name), true) => format!("{} ⏶", t("#app_col_name")),
-                                        (Some(SortColumn::Name), false) => format!("{} ⏷", t("#app_col_name")),
-                                        _ => t("#app_col_name"),
+                            if let Some(col) = self.sort_column {
+                                display_files.sort_by(|a, b| {
+                                    let path_a = a.path.to_string_lossy();
+                                    let path_b = b.path.to_string_lossy();
+                                    let type_a = if let Some((_, analysis)) = self.analyses.get(path_a.as_ref()) {
+                                        analysis.demo_info.demo_type.as_str()
+                                    } else if a.name.to_lowercase().contains("hltv") {
+                                        "HLTV"
+                                    } else {
+                                        "POV"
                                     };
-                                    if ui.selectable_label(self.sort_column == Some(SortColumn::Name), label).clicked() {
-                                        self.toggle_sort(SortColumn::Name);
+                                    let type_b = if let Some((_, analysis)) = self.analyses.get(path_b.as_ref()) {
+                                        analysis.demo_info.demo_type.as_str()
+                                    } else if b.name.to_lowercase().contains("hltv") {
+                                        "HLTV"
+                                    } else {
+                                        "POV"
+                                    };
+
+                                    let cmp = match col {
+                                        SortColumn::Name => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+                                        SortColumn::Type => type_a.cmp(type_b),
+                                        SortColumn::Map => a.map_name.to_lowercase().cmp(&b.map_name.to_lowercase()),
+                                        SortColumn::Date => a.date.cmp(&b.date),
+                                    };
+
+                                    if self.sort_ascending {
+                                        cmp
+                                    } else {
+                                        cmp.reverse()
                                     }
                                 });
-                                header.col(|ui| {
-                                    let label = match (self.sort_column, self.sort_ascending) {
-                                        (Some(SortColumn::Type), true) => format!("{} ⏶", t("#app_col_type")),
-                                        (Some(SortColumn::Type), false) => format!("{} ⏷", t("#app_col_type")),
-                                        _ => t("#app_col_type"),
-                                    };
-                                    if ui.selectable_label(self.sort_column == Some(SortColumn::Type), label).clicked() {
-                                        self.toggle_sort(SortColumn::Type);
-                                    }
-                                });
-                                header.col(|ui| {
-                                    let label = match (self.sort_column, self.sort_ascending) {
-                                        (Some(SortColumn::Map), true) => format!("{} ⏶", t("#app_col_map")),
-                                        (Some(SortColumn::Map), false) => format!("{} ⏷", t("#app_col_map")),
-                                        _ => t("#app_col_map"),
-                                    };
-                                    if ui.selectable_label(self.sort_column == Some(SortColumn::Map), label).clicked() {
-                                        self.toggle_sort(SortColumn::Map);
-                                    }
-                                });
-                                header.col(|ui| {
-                                    let label = match (self.sort_column, self.sort_ascending) {
-                                        (Some(SortColumn::Date), true) => format!("{} ⏶", t("#app_col_date")),
-                                        (Some(SortColumn::Date), false) => format!("{} ⏷", t("#app_col_date")),
-                                        _ => t("#app_col_date"),
-                                    };
-                                    if ui.selectable_label(self.sort_column == Some(SortColumn::Date), label).clicked() {
-                                        self.toggle_sort(SortColumn::Date);
-                                    }
-                                });
-                            })
-                            .body(|mut body| {
-                                for item in &display_files {
-                                    let path_str = item.path.to_string_lossy().into_owned();
+                            }
 
-                                    let is_selected = selected_path.as_ref() == Some(&path_str);
-                                    let is_loading =
-                                        self.loading_path.as_deref() == Some(path_str.as_str());
-
-                                    body.row(18.0, |mut row| {
-                                        row.set_selected(is_selected);
-                                        row.col(|ui| {
-                                            ui.horizontal(|ui| {
-                                                if is_loading {
-                                                    ui.spinner();
-                                                }
-                                                if ui
-                                                    .selectable_label(
-                                                        is_selected,
-                                                        format!("📄 {}", item.name),
-                                                    )
-                                                    .clicked()
-                                                {
-                                                    if !is_selected {
-                                                        analyze_target_file =
-                                                            Some(item.path.clone());
-                                                    }
-                                                }
-                                            });
-                                        });
-                                        row.col(|ui| {
-                                            let demo_type = if let Some((_, analysis)) =
-                                                self.analyses.get(&path_str)
-                                            {
-                                                analysis.demo_info.demo_type.as_str()
-                                            } else if item.name.to_lowercase().contains("hltv") {
-                                                "HLTV"
-                                            } else {
-                                                "POV"
-                                            };
-                                            ui.label(demo_type);
-                                        });
-                                        row.col(|ui| {
-                                            ui.label(&item.map_name);
-                                        });
-                                        row.col(|ui| {
-                                            ui.label(&item.date);
-                                        });
+                            TableBuilder::new(ui)
+                                .striped(true)
+                                .cell_layout(Layout::left_to_right(Align::Center))
+                                .column(Column::initial(300.0).resizable(true).clip(true)) // Name
+                                .column(Column::initial(80.0).resizable(true)) // Type
+                                .column(Column::initial(150.0).resizable(true)) // Map
+                                .column(Column::initial(150.0)) // Date
+                                .header(20.0, |mut header| {
+                                    header.col(|ui| {
+                                        let label = match (self.sort_column, self.sort_ascending) {
+                                            (Some(SortColumn::Name), true) => format!("{} ⏶", t("#app_col_name")),
+                                            (Some(SortColumn::Name), false) => format!("{} ⏷", t("#app_col_name")),
+                                            _ => t("#app_col_name"),
+                                        };
+                                        if ui.add(egui::Button::new(label).frame(false)).clicked() {
+                                            self.toggle_sort(SortColumn::Name);
+                                        }
                                     });
-                                }
-                            });
+                                    header.col(|ui| {
+                                        let label = match (self.sort_column, self.sort_ascending) {
+                                            (Some(SortColumn::Type), true) => format!("{} ⏶", t("#app_col_type")),
+                                            (Some(SortColumn::Type), false) => format!("{} ⏷", t("#app_col_type")),
+                                            _ => t("#app_col_type"),
+                                        };
+                                        if ui.add(egui::Button::new(label).frame(false)).clicked() {
+                                            self.toggle_sort(SortColumn::Type);
+                                        }
+                                    });
+                                    header.col(|ui| {
+                                        let label = match (self.sort_column, self.sort_ascending) {
+                                            (Some(SortColumn::Map), true) => format!("{} ⏶", t("#app_col_map")),
+                                            (Some(SortColumn::Map), false) => format!("{} ⏷", t("#app_col_map")),
+                                            _ => t("#app_col_map"),
+                                        };
+                                        if ui.add(egui::Button::new(label).frame(false)).clicked() {
+                                            self.toggle_sort(SortColumn::Map);
+                                        }
+                                    });
+                                    header.col(|ui| {
+                                        let label = match (self.sort_column, self.sort_ascending) {
+                                            (Some(SortColumn::Date), true) => format!("{} ⏶", t("#app_col_date")),
+                                            (Some(SortColumn::Date), false) => format!("{} ⏷", t("#app_col_date")),
+                                            _ => t("#app_col_date"),
+                                        };
+                                        if ui.add(egui::Button::new(label).frame(false)).clicked() {
+                                            self.toggle_sort(SortColumn::Date);
+                                        }
+                                    });
+                                })
+                                .body(|mut body| {
+                                    if self.desktop_files.is_empty() {
+                                        body.row(18.0, |mut row| {
+                                            row.col(|ui| {
+                                                ui.weak(t("#app_no_demos_found"));
+                                            });
+                                            row.col(|_| {});
+                                            row.col(|_| {});
+                                            row.col(|_| {});
+                                        });
+                                    } else if display_files.is_empty() {
+                                        body.row(18.0, |mut row| {
+                                            row.col(|ui| {
+                                                ui.weak(t("#app_no_matching_demos"));
+                                            });
+                                            row.col(|_| {});
+                                            row.col(|_| {});
+                                            row.col(|_| {});
+                                        });
+                                    } else {
+                                        for item in &display_files {
+                                            let path_str = item.path.to_string_lossy().into_owned();
+
+                                            let is_selected = selected_path.as_ref() == Some(&path_str);
+                                            let is_loading =
+                                                self.loading_path.as_deref() == Some(path_str.as_str());
+
+                                            body.row(18.0, |mut row| {
+                                                row.set_selected(is_selected);
+                                                row.col(|ui| {
+                                                    ui.horizontal(|ui| {
+                                                        if is_loading {
+                                                            ui.spinner();
+                                                        }
+                                                        if ui
+                                                            .selectable_label(
+                                                                is_selected,
+                                                                format!("📄 {}", item.name),
+                                                            )
+                                                            .clicked()
+                                                        {
+                                                            if !is_selected {
+                                                                analyze_target_file =
+                                                                    Some(item.path.clone());
+                                                            }
+                                                        }
+                                                    });
+                                                });
+                                                row.col(|ui| {
+                                                    let demo_type = if let Some((_, analysis)) =
+                                                        self.analyses.get(&path_str)
+                                                    {
+                                                        analysis.demo_info.demo_type.as_str()
+                                                    } else if item.name.to_lowercase().contains("hltv") {
+                                                        "HLTV"
+                                                    } else {
+                                                        "POV"
+                                                    };
+                                                    ui.label(demo_type);
+                                                });
+                                                row.col(|ui| {
+                                                    ui.label(&item.map_name);
+                                                });
+                                                row.col(|ui| {
+                                                    ui.label(&item.date);
+                                                });
+                                            });
+                                        }
+                                    }
+                                });
+                        }
                     }
                 }
 
@@ -1213,8 +1233,6 @@ impl eframe::App for Gui {
                 {
                     if self.web_tree.is_none() {
                         ui.weak(t("#app_please_select_folder"));
-                    } else if filtered_web_files.is_empty() {
-                        ui.weak(t("#app_no_demos_found"));
                     } else {
                         let selected_path = self.selected_analysis_path.clone();
                         let loading_path = self.loading_path.clone();
@@ -1309,7 +1327,7 @@ impl eframe::App for Gui {
                                         (Some(SortColumn::Name), false) => format!("{} ⏷", t("#app_col_name")),
                                         _ => t("#app_col_name"),
                                     };
-                                    if ui.selectable_label(self.sort_column == Some(SortColumn::Name), label).clicked() {
+                                    if ui.add(egui::Button::new(label).frame(false)).clicked() {
                                         self.toggle_sort(SortColumn::Name);
                                     }
                                 });
@@ -1319,7 +1337,7 @@ impl eframe::App for Gui {
                                         (Some(SortColumn::Type), false) => format!("{} ⏷", t("#app_col_type")),
                                         _ => t("#app_col_type"),
                                     };
-                                    if ui.selectable_label(self.sort_column == Some(SortColumn::Type), label).clicked() {
+                                    if ui.add(egui::Button::new(label).frame(false)).clicked() {
                                         self.toggle_sort(SortColumn::Type);
                                     }
                                 });
@@ -1329,7 +1347,7 @@ impl eframe::App for Gui {
                                         (Some(SortColumn::Map), false) => format!("{} ⏷", t("#app_col_map")),
                                         _ => t("#app_col_map"),
                                     };
-                                    if ui.selectable_label(self.sort_column == Some(SortColumn::Map), label).clicked() {
+                                    if ui.add(egui::Button::new(label).frame(false)).clicked() {
                                         self.toggle_sort(SortColumn::Map);
                                     }
                                 });
@@ -1339,67 +1357,87 @@ impl eframe::App for Gui {
                                         (Some(SortColumn::Date), false) => format!("{} ⏷", t("#app_col_status")),
                                         _ => t("#app_col_status"),
                                     };
-                                    if ui.selectable_label(self.sort_column == Some(SortColumn::Date), label).clicked() {
+                                    if ui.add(egui::Button::new(label).frame(false)).clicked() {
                                         self.toggle_sort(SortColumn::Date);
                                     }
                                 });
                             })
                             .body(|mut body| {
-                                for file in &display_files {
-                                    let relative_path = &file.path;
-                                    let name = &file.name;
-
-                                    let analysis_opt = self.analyses.get(relative_path);
-
-                                    let is_selected = selected_path.as_ref() == Some(relative_path);
-                                    let is_loaded = analysis_opt.is_some();
-                                    let is_loading = loading_path.as_ref() == Some(relative_path);
-
+                                if filtered_web_files.is_empty() {
                                     body.row(18.0, |mut row| {
-                                        row.set_selected(is_selected);
                                         row.col(|ui| {
-                                            if ui
-                                                .selectable_label(
-                                                    is_selected,
-                                                    format!("📄 {}", name),
-                                                )
-                                                .clicked()
-                                            {
-                                                if !is_selected && !is_loading {
-                                                    parse_file_target = Some(file.clone());
-                                                }
-                                            }
+                                            ui.weak(t("#app_no_demos_found"));
                                         });
-                                        row.col(|ui| {
-                                            let demo_type =
-                                                if let Some((_, analysis)) = analysis_opt {
-                                                    analysis.demo_info.demo_type.as_str()
-                                                } else if name.to_lowercase().contains("hltv") {
-                                                    "HLTV"
-                                                } else {
-                                                    "POV"
-                                                };
-                                            ui.label(demo_type);
-                                        });
-                                        row.col(|ui| {
-                                            let map = if let Some((_, analysis)) = analysis_opt {
-                                                &analysis.demo_info.map_name
-                                            } else {
-                                                "-"
-                                            };
-                                            ui.label(map);
-                                        });
-                                        row.col(|ui| {
-                                            let status = if is_loading {
-                                                t("#app_status_loading")
-                                            } else if is_loaded {
-                                                t("#app_status_loaded")
-                                            } else {
-                                                t("#app_status_not_loaded")
-                                            };
-                                            ui.label(status);
-                                        });
+                                        row.col(|_| {});
+                                        row.col(|_| {});
+                                        row.col(|_| {});
                                     });
+                                } else if display_files.is_empty() {
+                                    body.row(18.0, |mut row| {
+                                        row.col(|ui| {
+                                            ui.weak(t("#app_no_matching_demos"));
+                                        });
+                                        row.col(|_| {});
+                                        row.col(|_| {});
+                                        row.col(|_| {});
+                                    });
+                                } else {
+                                    for file in &display_files {
+                                        let relative_path = &file.path;
+                                        let name = &file.name;
+
+                                        let analysis_opt = self.analyses.get(relative_path);
+
+                                        let is_selected = selected_path.as_ref() == Some(relative_path);
+                                        let is_loaded = analysis_opt.is_some();
+                                        let is_loading = loading_path.as_ref() == Some(relative_path);
+
+                                        body.row(18.0, |mut row| {
+                                            row.set_selected(is_selected);
+                                            row.col(|ui| {
+                                                if ui
+                                                    .selectable_label(
+                                                        is_selected,
+                                                        format!("📄 {}", name),
+                                                    )
+                                                    .clicked()
+                                                {
+                                                    if !is_selected && !is_loading {
+                                                        parse_file_target = Some(file.clone());
+                                                    }
+                                                }
+                                            });
+                                            row.col(|ui| {
+                                                let demo_type =
+                                                    if let Some((_, analysis)) = analysis_opt {
+                                                        analysis.demo_info.demo_type.as_str()
+                                                    } else if name.to_lowercase().contains("hltv") {
+                                                        "HLTV"
+                                                    } else {
+                                                        "POV"
+                                                    };
+                                                ui.label(demo_type);
+                                            });
+                                            row.col(|ui| {
+                                                let map = if let Some((_, analysis)) = analysis_opt {
+                                                    &analysis.demo_info.map_name
+                                                } else {
+                                                    "-"
+                                                };
+                                                ui.label(map);
+                                            });
+                                            row.col(|ui| {
+                                                let status = if is_loading {
+                                                    t("#app_status_loading")
+                                                } else if is_loaded {
+                                                    t("#app_status_loaded")
+                                                } else {
+                                                    t("#app_status_not_loaded")
+                                                };
+                                                ui.label(status);
+                                            });
+                                        });
+                                    }
                                 }
                             });
                     }

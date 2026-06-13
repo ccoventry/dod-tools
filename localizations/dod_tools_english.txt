@@ -32,6 +32,7 @@
 "#app_scanning_folder"          "Scanning folder..."
 "#app_updating_folder"          "Updating folder contents..."
 "#app_no_demos_found"           "No demos found in this folder."
+"#app_no_matching_demos"        "No matching demos found with active filters."
 "#app_please_select_folder"     "Please select a demos folder to begin."
 
 "#app_col_name"                 "Name"
