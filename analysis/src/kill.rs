@@ -1,9 +1,9 @@
-use crate::{AnalyzerEvent, AnalyzerState, mortality::MortalityState, time::GameTime};
+use crate::{AnalyzerEvent, AnalyzerState, mortality::MortalityState, time::GameTime, player::PlayerGlobalId};
 use dod::{RoundState, UserMessage, Weapon};
 
 #[derive(Debug, Default)]
 pub struct KillStreak {
-    pub kills: Vec<(GameTime, Weapon)>,
+    pub kills: Vec<(GameTime, Weapon, PlayerGlobalId)>,
 }
 
 pub fn use_kill_streak_updates(state: &mut AnalyzerState, event: &AnalyzerEvent) {
@@ -22,6 +22,8 @@ pub fn use_kill_streak_updates(state: &mut AnalyzerState, event: &AnalyzerEvent)
             _ => false,
         };
 
+        let victim_id = victim.map(|v| v.id.clone());
+
         let victim = state.find_player_by_client_index_mut(death_msg.victim_client_index - 1);
 
         if let Some(victim) = victim {
@@ -39,7 +41,7 @@ pub fn use_kill_streak_updates(state: &mut AnalyzerState, event: &AnalyzerEvent)
             None
         };
 
-        if let Some(killer) = killer {
+        if let (Some(killer), Some(v_id)) = (killer, victim_id) {
             if killer.kill_streaks.is_empty() {
                 killer.kill_streaks.push(KillStreak::default());
             }
@@ -56,7 +58,7 @@ pub fn use_kill_streak_updates(state: &mut AnalyzerState, event: &AnalyzerEvent)
             };
 
             if let Some(streak) = streak {
-                streak.kills.push((current_time, death_msg.weapon.clone()));
+                streak.kills.push((current_time, death_msg.weapon.clone(), v_id));
             }
         }
     } else if let AnalyzerEvent::UserMessage(UserMessage::RoundState(RoundState::Reset)) = event {

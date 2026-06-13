@@ -11,19 +11,38 @@ pub fn header_ui(file_info: Option<&FileInfo>, analysis: Option<&Analysis>, ui: 
     ui.add_space(4.0);
     Grid::new("file_info").show(ui, |ui| {
         ui.strong(t("#app_summary_file_name"));
-        ui.monospace(file_info.map(|fi| fi.name.as_str()).unwrap_or(""));
+        ui.horizontal(|ui| {
+            let name_str = file_info.map(|fi| fi.name.as_str()).unwrap_or("");
+            ui.monospace(name_str);
+            if !name_str.is_empty() {
+                if ui.small_button("📋").on_hover_text("Copy filename").clicked() {
+                    ui.ctx().copy_text(name_str.to_string());
+                }
+            }
+        });
         ui.end_row();
 
         ui.strong(t("#app_summary_file_path"));
-        if let Some(fi) = file_info {
-            let parent_dir = std::path::Path::new(&fi.path)
-                .parent()
-                .and_then(|p| p.to_str())
-                .unwrap_or(&fi.path);
-            ui.monospace(parent_dir);
-        } else {
-            ui.monospace("");
-        }
+        ui.horizontal(|ui| {
+            if let Some(fi) = file_info {
+                let parent_dir = std::path::Path::new(&fi.path)
+                    .parent()
+                    .and_then(|p| p.to_str())
+                    .unwrap_or(&fi.path);
+                ui.monospace(parent_dir);
+                if ui.small_button("📋").on_hover_text("Copy path").clicked() {
+                    ui.ctx().copy_text(parent_dir.to_string());
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                if ui.small_button("📁").on_hover_text("Open folder").clicked() {
+                    let _ = std::process::Command::new("explorer")
+                        .arg(parent_dir)
+                        .spawn();
+                }
+            } else {
+                ui.monospace("");
+            }
+        });
         ui.end_row();
 
         ui.strong(t("#app_summary_file_size"));
@@ -130,6 +149,30 @@ pub fn header_ui(file_info: Option<&FileInfo>, analysis: Option<&Analysis>, ui: 
                 }
             };
             ui.label(recorder);
+        } else {
+            ui.label("");
+        }
+        ui.end_row();
+
+        ui.strong(t("#app_summary_server_name"));
+        if let Some(a) = analysis {
+            ui.label(a.state.server_name.as_deref().unwrap_or(""));
+        } else {
+            ui.label("");
+        }
+        ui.end_row();
+
+        ui.strong(t("#app_summary_server_address"));
+        if let Some(a) = analysis {
+            ui.horizontal(|ui| {
+                let addr = a.state.server_address.as_deref().unwrap_or("");
+                ui.label(addr);
+                if !addr.is_empty() {
+                    if ui.small_button("📋").on_hover_text("Copy server address").clicked() {
+                        ui.ctx().copy_text(addr.to_string());
+                    }
+                }
+            });
         } else {
             ui.label("");
         }

@@ -199,6 +199,10 @@ pub fn use_chat_updates(state: &mut AnalyzerState, event: &AnalyzerEvent) {
                 text_msg.arg4.as_deref(),
             );
 
+            if formatted_text.is_empty() {
+                return;
+            }
+
             // Filter out client-side POV engine logs like spectator camera modes to declutter chat
             let text_lower = formatted_text.to_lowercase();
             let key_lower = text_msg.text.to_lowercase();
@@ -239,6 +243,18 @@ pub fn use_chat_updates(state: &mut AnalyzerState, event: &AnalyzerEvent) {
     }
 }
 
+fn is_raw_command(s: &str) -> bool {
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let first_word = trimmed.split_whitespace().next().unwrap_or("");
+    if first_word.starts_with("ready") && first_word.len() > 5 && first_word.chars().skip(5).all(|c| c.is_ascii_digit()) {
+        return true;
+    }
+    false
+}
+
 pub fn translate_system_message(
     token: &str,
     arg1: Option<&str>,
@@ -246,12 +262,21 @@ pub fn translate_system_message(
     arg3: Option<&str>,
     arg4: Option<&str>,
 ) -> String {
+    if is_raw_command(token) {
+        return String::new();
+    }
+
     let translate_arg = |arg: Option<&str>| -> Option<String> {
         let a = arg?;
         let cleaned = clean_control_chars(a);
+        let trimmed = cleaned.trim();
         
+        if is_raw_command(trimmed) {
+            return Some(String::new());
+        }
+
         // 1. Try to translate the entire string as-is or with prepended '#'
-        let mut key = cleaned.to_lowercase();
+        let mut key = trimmed.to_lowercase();
         if !key.starts_with('#') {
             key.insert(0, '#');
         }
@@ -260,7 +285,7 @@ pub fn translate_system_message(
         }
 
         // 2. Otherwise, look for embedded keys inside the string
-        Some(translate_embedded_keys(&cleaned))
+        Some(translate_embedded_keys(trimmed))
     };
 
     let a1_opt = translate_arg(arg1);
@@ -278,7 +303,7 @@ pub fn translate_system_message(
         key.insert(0, '#');
     }
 
-    if let Some(template) = crate::localization::translate_key(&key) {
+    let result = if let Some(template) = crate::localization::translate_key(&key) {
         let mut result = template.clone();
         if let Some(a) = a1 {
             result = result.replace("%s1", a);
@@ -339,20 +364,34 @@ pub fn translate_system_message(
         } else {
             let mut parts = vec![token.to_string()];
             if let Some(arg) = a1 {
-                parts.push(arg.to_string());
+                if !arg.is_empty() {
+                    parts.push(arg.to_string());
+                }
             }
             if let Some(arg) = a2 {
-                parts.push(arg.to_string());
+                if !arg.is_empty() {
+                    parts.push(arg.to_string());
+                }
             }
             if let Some(arg) = a3 {
-                parts.push(arg.to_string());
+                if !arg.is_empty() {
+                    parts.push(arg.to_string());
+                }
             }
             if let Some(arg) = a4 {
-                parts.push(arg.to_string());
+                if !arg.is_empty() {
+                    parts.push(arg.to_string());
+                }
             }
             parts.join(" ")
         }
+    };
+
+    let mut normalized = result.replace('\r', "").replace('\n', " ");
+    while normalized.contains("  ") {
+        normalized = normalized.replace("  ", " ");
     }
+    normalized.trim().to_string()
 }
 
 #[cfg(test)]
@@ -512,6 +551,44 @@ mod tests {
         }));
         use_chat_updates(&mut state, &event7);
         assert_eq!(state.chat_messages.len(), 5); // Should be 5 (not filtered!)
+    }
+
+    #[test]
+    fn test_system_message_sanitization() {
+        // Test raw command filtering
+        let res = translate_system_message(
+            "\nready2 3 4\n",
+            None,
+            None,
+            None,
+            None,
+        );
+        assert_eq!(res, "");
+
+        // Test argument raw command filtering
+        let res2 = translate_system_message(
+            "#clan_ready_rules",
+            Some("1"),
+            Some("\nready2 3 4\n"),
+            Some("\nready3 0 0\n"),
+            None,
+        );
+        if crate::localization::translate_key("#clan_ready_rules").is_some() {
+            assert!(!res2.contains("ready2"));
+            assert!(!res2.contains("ready3"));
+        } else {
+            assert_eq!(res2, "#clan_ready_rules 1");
+        }
+
+        // Test newline trimming & normalization
+        let res3 = translate_system_message(
+            "\nThis is a test\nwith multiple lines\n\n",
+            None,
+            None,
+            None,
+            None,
+        );
+        assert_eq!(res3, "This is a test with multiple lines");
     }
 
     #[test]

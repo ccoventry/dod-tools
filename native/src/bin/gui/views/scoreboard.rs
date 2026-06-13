@@ -3,6 +3,14 @@ use analysis::{Analysis, Player, SteamId, Team, translate_key};
 use egui::{Align, Layout, Ui};
 use egui_extras::{Column, TableBody, TableBuilder};
 
+fn format_time_left(duration: std::time::Duration) -> String {
+    let total_secs = duration.as_secs();
+    let mins = total_secs / 60;
+    let secs = total_secs % 60;
+    format!("{:02}:{:02}", mins, secs)
+}
+
+
 fn team_name(team: &Team) -> String {
     match team {
         Team::Allies => translate_key("#teamname_allies").unwrap_or_else(|| "Allies".to_string()),
@@ -57,6 +65,40 @@ pub fn scoreboard_ui(
         t("#app_scoreboard_heading")
     ));
     ui.add_space(8.0);
+
+    if let Some(analysis) = analysis {
+        if analysis.state.started_late || analysis.state.ended_early {
+            let banner_text = if analysis.state.started_late && analysis.state.ended_early {
+                let first_str = analysis.state.first_time_left.map(format_time_left).unwrap_or_else(|| "??:??".to_string());
+                let last_str = analysis.state.last_time_left.map(format_time_left).unwrap_or_else(|| "??:??".to_string());
+                t("#app_partial_demo_both")
+                    .replace("%s1", &first_str)
+                    .replace("%s2", &last_str)
+            } else if analysis.state.started_late {
+                let first_str = analysis.state.first_time_left.map(format_time_left).unwrap_or_else(|| "??:??".to_string());
+                t("#app_partial_demo_start")
+                    .replace("%s1", &first_str)
+            } else {
+                let last_str = analysis.state.last_time_left.map(format_time_left).unwrap_or_else(|| "??:??".to_string());
+                t("#app_partial_demo_end")
+                    .replace("%s2", &last_str)
+            };
+
+            let banner_color = egui::Color32::from_rgb(251, 191, 36); // Amber-400
+            let bg_color = egui::Color32::from_rgba_unmultiplied(251, 191, 36, 15); // Amber-400 with opacity
+            egui::Frame::NONE
+                .fill(bg_color)
+                .stroke(egui::Stroke::new(1.0, banner_color))
+                .corner_radius(4.0)
+                .inner_margin(8.0)
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.colored_label(banner_color, banner_text);
+                    });
+                });
+            ui.add_space(8.0);
+        }
+    }
 
     ui.scope(|ui| {
         let columns = [
@@ -144,29 +186,39 @@ pub fn scoreboard_row_ui(
         row.set_selected(is_selected);
 
         row.col(|ui| {
-            match SteamId::try_from(&p.id) {
-                Ok(steam_id) => {
-                    let link_text = steam_id.to_string();
-                    let link_url = format!("https://steamcommunity.com/profiles/{}", p.id);
-                    let link_resp = ui.hyperlink_to(link_text, link_url);
-                    if link_resp.clicked() {
-                        clicked.set(true);
-                    }
-                }
-                _ => {
-                    let resp = ui.add(egui::Label::new(p.id.to_string()).sense(egui::Sense::click()));
-                    if resp.clicked() {
-                        clicked.set(true);
-                    }
-                }
+            let id_text = match SteamId::try_from(&p.id) {
+                Ok(steam_id) => steam_id.to_string(),
+                _ => p.id.to_string(),
             };
-        });
-
-        row.col(|ui| {
-            let resp = cell_label(ui, &p.name);
+            let resp = cell_label(ui, &id_text);
             if resp.clicked() {
                 clicked.set(true);
             }
+        });
+
+        row.col(|ui| {
+            ui.horizontal(|ui| {
+                let resp = cell_label(ui, &p.name);
+                if resp.clicked() {
+                    clicked.set(true);
+                }
+                if p.has_reconnected {
+                    ui.add_space(2.0);
+                    let label = ui.colored_label(egui::Color32::from_rgb(251, 191, 36), "🔄")
+                        .on_hover_text(t("#app_player_reconnected_desc"));
+                    if label.clicked() {
+                        clicked.set(true);
+                    }
+                }
+                if p.has_pre_demo_activity {
+                    ui.add_space(2.0);
+                    let label = ui.colored_label(egui::Color32::from_rgb(251, 191, 36), "*")
+                        .on_hover_text(t("#app_player_pre_demo_desc"));
+                    if label.clicked() {
+                        clicked.set(true);
+                    }
+                }
+            });
         });
 
         row.col(|ui| {

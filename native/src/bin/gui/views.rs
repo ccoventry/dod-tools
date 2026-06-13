@@ -80,22 +80,22 @@ pub struct PlayerHighlighting {
 }
 
 pub mod chat;
+pub mod player_details;
 pub mod pov;
 pub mod rounds;
 pub mod scoreboard;
-pub mod streaks;
 pub mod summary;
+pub mod team_details;
 pub mod timeline;
-pub mod weapons;
 
 pub use chat::chat_log_ui;
+pub use player_details::player_details_ui;
 pub use pov::pov_analytics_ui;
 pub use rounds::rounds_ui;
 pub use scoreboard::scoreboard_ui;
-pub use streaks::kill_streaks_ui;
 pub use summary::header_ui;
+pub use team_details::team_details_ui;
 pub use timeline::team_score_timeline_ui;
-pub use weapons::weapon_breakdowns_ui;
 
 pub fn report_ui(
     file_info: Option<&FileInfo>,
@@ -126,20 +126,20 @@ pub fn report_ui(
         );
         ui.selectable_value(
             &mut current_tab,
+            "Player Details".to_string(),
+            t("#app_tab_player_details"),
+        );
+        ui.selectable_value(
+            &mut current_tab,
+            "Team Details".to_string(),
+            t("#app_tab_team_details"),
+        );
+        ui.selectable_value(
+            &mut current_tab,
             "Timeline".to_string(),
             t("#app_tab_timeline"),
         );
         ui.selectable_value(&mut current_tab, "Rounds".to_string(), t("#app_tab_rounds"));
-        ui.selectable_value(
-            &mut current_tab,
-            "Weapon Breakdowns".to_string(),
-            t("#app_tab_weapons"),
-        );
-        ui.selectable_value(
-            &mut current_tab,
-            "Kill Streaks".to_string(),
-            t("#app_tab_streaks"),
-        );
         ui.selectable_value(&mut current_tab, "Chat Log".to_string(), t("#app_tab_chat"));
 
         let is_pov = r
@@ -148,7 +148,7 @@ pub fn report_ui(
         if ui
             .add_enabled(
                 is_pov,
-                egui::Button::new(t("#app_tab_pov")).selected(current_tab == "POV Analytics"),
+                egui::Button::selectable(current_tab == "POV Analytics", t("#app_tab_pov")),
             )
             .clicked()
         {
@@ -163,10 +163,10 @@ pub fn report_ui(
     match current_tab.as_str() {
         "Summary" => header_ui(file_info, r, ui),
         "Scoreboard" => scoreboard_ui(r, player_highlighting, ui),
+        "Player Details" => player_details_ui(r, player_highlighting, ui),
+        "Team Details" => team_details_ui(r, ui),
         "Timeline" => team_score_timeline_ui(file_info, r, ui),
         "Rounds" => rounds_ui(file_info, r, ui),
-        "Weapon Breakdowns" => weapon_breakdowns_ui(file_info, r, player_highlighting, ui),
-        "Kill Streaks" => kill_streaks_ui(file_info, r, player_highlighting, ui),
         "Chat Log" => chat_log_ui(file_info, r, ui),
         "POV Analytics" => pov_analytics_ui(file_info, r, ui),
         _ => {}

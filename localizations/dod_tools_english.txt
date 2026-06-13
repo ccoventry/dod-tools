@@ -59,10 +59,10 @@
 // -----------------------------------------------------------------------
 "#app_tab_summary"              "Summary"
 "#app_tab_scoreboard"           "Scoreboard"
+"#app_tab_player_details"       "Player Details"
+"#app_tab_team_details"         "Team Details"
 "#app_tab_timeline"             "Team score timeline"
 "#app_tab_rounds"               "Rounds"
-"#app_tab_weapons"              "Weapon breakdowns"
-"#app_tab_streaks"              "Kill streaks"
 "#app_tab_chat"                 "Chat log"
 "#app_tab_pov"                  "POV analytics"
 
@@ -77,6 +77,8 @@
 "#app_summary_file_size"        "File size"
 "#app_summary_file_created"     "File created at"
 "#app_summary_recorded_by"      "Recorded by"
+"#app_summary_server_name"      "Server name"
+"#app_summary_server_address"   "Server address"
 "#app_summary_demo_type"        "Demo type"
 "#app_summary_game_mod"         "Game mod"
 "#app_summary_map_name"         "Map name"
@@ -152,6 +154,8 @@
 "#app_col_wave"                 "Wave"
 "#app_col_total_kills"          "Total Kills"
 "#app_col_weapons_used"         "Weapons Used"
+"#app_col_streak_details"       "Details"
+"#app_col_time"                 "Time"
 
 // -----------------------------------------------------------------------
 // Chat & System Logs view
@@ -165,6 +169,15 @@
 "#app_chat_team_chat"           "Team Chat"
 "#app_chat_alive_players"       "Alive Players"
 "#app_chat_dead_players"        "Dead Players"
+"#app_chat_filter_all"          "All Players"
+"#app_chat_filter_alive"        "Alive Only"
+"#app_chat_filter_dead"         "Dead Only"
+"#app_chat_team_filter"         "Teams:"
+"#app_chat_team_filter_all"     "All Teams"
+"#app_chat_team_filter_allies"  "Allies"
+"#app_chat_team_filter_british" "British"
+"#app_chat_team_filter_axis"    "Axis"
+"#app_chat_team_filter_spectators" "Spectators"
 "#app_chat_system_logs"         "System Logs:"
 "#app_chat_joins_leaves"        "Joins & Leaves"
 "#app_chat_team_changes"        "Team Changes"
@@ -255,6 +268,33 @@
 "#app_weapon_buttstock"           "Stock Strike"
 "#app_weapon_enfieldbayonet"      "Enfield Bayonet"
 "#app_weapon_unknown"             "Unknown Weapon"
+
+"#app_partial_demo_both"           "⚠️ Partial Recording: Started late (Time Left: %s1) and ended early (Time Left: %s2)."
+"#app_partial_demo_start"          "⚠️ Partial Recording: Started late (Time Left: %s1)."
+"#app_partial_demo_end"            "⚠️ Partial Recording: Ended early (Time Left: %s2)."
+"#app_player_reconnected_desc"     "Player disconnected and reconnected during the demo. Stats are accumulated across sessions, but total score may be inaccurate."
+"#app_player_pre_demo_desc"        "Player had non-zero score/kills/deaths before the demo started recording. Total scores on the scoreboard may be inaccurate."
+
+// -----------------------------------------------------------------------
+// Player Details view
+// -----------------------------------------------------------------------
+"#app_player_details_select"        "Select Player:"
+"#app_player_details_hero_class"    "Class"
+"#app_player_details_hero_status"   "Status"
+"#app_player_details_card_score"    "MATCH SCORE"
+"#app_player_details_card_kills"    "KILLS"
+"#app_player_details_card_deaths"   "DEATHS"
+"#app_player_details_card_lifespan" "AVG. LIFESPAN"
+"#app_player_details_weapon_eff"    "Weapon Efficiency"
+"#app_player_details_no_steam"      "Profiling links unavailable (non-Steam client)"
+
+// -----------------------------------------------------------------------
+// Team Details view
+// -----------------------------------------------------------------------
+"#app_team_details_heading"         "Team Details"
+"#app_team_details_round_score"     "Round Score"
+"#app_team_details_team_kd"         "Team K/D"
+"#app_team_details_active_players"  "Active Players"
 
 }
 }

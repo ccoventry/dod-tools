@@ -69,7 +69,7 @@ pub fn use_scoreboard_updates(state: &mut AnalyzerState, event: &AnalyzerEvent) 
             let player = state.find_player_by_client_index_mut(score_short.client_index - 1);
 
             if let Some(player) = player {
-                player.stats = (
+                player.update_session_stats(
                     score_short.score as i32,
                     score_short.kills as i32,
                     score_short.deaths as i32,
@@ -88,7 +88,7 @@ pub fn use_scoreboard_updates(state: &mut AnalyzerState, event: &AnalyzerEvent) 
                 }
                 player.class = Some(score_info.class.clone());
                 player.team = Some(team);
-                player.stats = (
+                player.update_session_stats(
                     score_info.points as i32,
                     score_info.kills as i32,
                     score_info.deaths as i32,
@@ -107,7 +107,7 @@ pub fn use_scoreboard_updates(state: &mut AnalyzerState, event: &AnalyzerEvent) 
                 }
                 player.class = Some(score_info_long.class.clone());
                 player.team = Some(team);
-                player.stats = (
+                player.update_session_stats(
                     score_info_long.score as i32,
                     score_info_long.frags as i32,
                     score_info_long.deaths as i32,
@@ -119,7 +119,7 @@ pub fn use_scoreboard_updates(state: &mut AnalyzerState, event: &AnalyzerEvent) 
             let player = state.find_player_by_client_index_mut(obj_score.client_index - 1);
 
             if let Some(player) = player {
-                player.stats.0 = obj_score.score as i32;
+                player.update_obj_score(obj_score.score as i32);
             }
         }
 
@@ -127,7 +127,7 @@ pub fn use_scoreboard_updates(state: &mut AnalyzerState, event: &AnalyzerEvent) 
             let player = state.find_player_by_client_index_mut(frags.client_index - 1);
 
             if let Some(player) = player {
-                player.stats.1 = frags.frags as i32;
+                player.update_frags(frags.frags as i32);
             }
         }
 
