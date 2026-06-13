@@ -119,10 +119,11 @@ pub fn player_details_ui(
         let ui_left = &mut cols[0];
         ui_left.strong(t("#app_player_details_weapon_breakdown"));
         ui_left.add_space(4.0);
+        let avail_h = ui_left.available_height() - 10.0;
         ScrollArea::vertical()
             .id_salt("player_details_weapons_scroll")
             .auto_shrink(false)
-            .min_scrolled_height(260.)
+            .min_scrolled_height(avail_h)
             .show(ui_left, |ui| {
                 render_weapon_breakdown(&active_player.weapon_breakdown, ui);
             });
@@ -165,10 +166,11 @@ pub fn player_details_ui(
         ui_right.separator();
         ui_right.add_space(4.0);
 
+        let avail_h = ui_right.available_height() - 10.0;
         ScrollArea::vertical()
             .id_salt("player_details_streaks_scroll")
             .auto_shrink(false)
-            .min_scrolled_height(260.)
+            .min_scrolled_height(avail_h)
             .show(ui_right, |ui| {
                 if active_player.kill_streaks.is_empty() {
                     ui.label("No kill streaks found for this player.");
@@ -369,7 +371,10 @@ fn render_weapon_breakdown(
     TableBuilder::new(ui)
         .striped(true)
         .cell_layout(Layout::left_to_right(Align::Center))
-        .columns(Column::auto(), 4)
+        .column(Column::remainder())
+        .column(Column::initial(60.0).resizable(true))
+        .column(Column::initial(120.0).resizable(true))
+        .column(Column::initial(80.0).resizable(true))
         .header(TABLE_ROW_HEIGHT, |mut row| {
             row.col(|ui| { ui.strong(t("#app_col_weapon")); });
             row.col(|ui| { ui.strong(t("#app_col_kills")); });
@@ -529,7 +534,11 @@ fn render_kill_streaks_table(
     TableBuilder::new(ui)
         .striped(false)
         .cell_layout(Layout::left_to_right(Align::Center))
-        .columns(Column::auto(), 5)
+        .column(Column::initial(50.0).resizable(true)) // Wave
+        .column(Column::initial(80.0).resizable(true)) // Total Kills
+        .column(Column::initial(70.0).resizable(true)) // Time
+        .column(Column::initial(70.0).resizable(true)) // Duration
+        .column(Column::remainder())                    // Streak Details
         .header(TABLE_ROW_HEIGHT, |mut row| {
             row.col(|ui| { ui.strong(t("#app_col_wave")); });
             row.col(|ui| { ui.strong(t("#app_col_total_kills")); });

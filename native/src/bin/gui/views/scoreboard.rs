@@ -39,134 +39,151 @@ pub fn scoreboard_ui(
     player_highlighting: &mut PlayerHighlighting,
     ui: &mut Ui,
 ) {
-    let match_result_fragment = if let Some(analysis) = analysis {
-        let is_british = analysis.state.allies_are_british;
-        let allies_team = if is_british { Team::British } else { Team::Allies };
-        let allies_score = analysis.state.team_scores.get_team_score(allies_team);
-        let axis_score = analysis.state.team_scores.get_team_score(Team::Axis);
-        let allies_key = if is_british { "#teamname_british" } else { "#teamname_allies" };
-        let allies_default = if is_british { "British" } else { "Allies" };
-        let allies = translate_key(allies_key).unwrap_or_else(|| allies_default.to_string());
-        let axis = translate_key("#teamname_axis").unwrap_or_else(|| "Axis".to_string());
-        format!(
-            ": {} ({}) {} {} ({})",
-            allies,
-            allies_score,
-            if allies_score > axis_score { ">" } else { "<" },
-            axis,
-            axis_score
-        )
-    } else {
-        String::new()
-    };
+    let total_width = ui.available_width();
+    let desired_width = (total_width * 0.5).max(750.0).min(total_width);
+    let padding = (total_width - desired_width) / 2.0;
 
-    ui.heading(format!(
-        "{}{match_result_fragment}",
-        t("#app_scoreboard_heading")
-    ));
-    ui.add_space(8.0);
+    ui.horizontal(|ui| {
+        if padding > 0.0 {
+            ui.add_space(padding);
+        }
+        ui.vertical(|ui| {
+            ui.set_max_width(desired_width);
 
-    if let Some(analysis) = analysis {
-        if analysis.state.started_late || analysis.state.ended_early {
-            let banner_text = if analysis.state.started_late && analysis.state.ended_early {
-                let first_str = analysis.state.first_time_left.map(format_time_left).unwrap_or_else(|| "??:??".to_string());
-                let last_str = analysis.state.last_time_left.map(format_time_left).unwrap_or_else(|| "??:??".to_string());
-                t("#app_partial_demo_both")
-                    .replace("%s1", &first_str)
-                    .replace("%s2", &last_str)
-            } else if analysis.state.started_late {
-                let first_str = analysis.state.first_time_left.map(format_time_left).unwrap_or_else(|| "??:??".to_string());
-                t("#app_partial_demo_start")
-                    .replace("%s1", &first_str)
+            let match_result_fragment = if let Some(analysis) = analysis {
+                let is_british = analysis.state.allies_are_british;
+                let allies_team = if is_british { Team::British } else { Team::Allies };
+                let allies_score = analysis.state.team_scores.get_team_score(allies_team);
+                let axis_score = analysis.state.team_scores.get_team_score(Team::Axis);
+                let allies_key = if is_british { "#teamname_british" } else { "#teamname_allies" };
+                let allies_default = if is_british { "British" } else { "Allies" };
+                let allies = translate_key(allies_key).unwrap_or_else(|| allies_default.to_string());
+                let axis = translate_key("#teamname_axis").unwrap_or_else(|| "Axis".to_string());
+                format!(
+                    ": {} ({}) {} {} ({})",
+                    allies,
+                    allies_score,
+                    if allies_score > axis_score { ">" } else { "<" },
+                    axis,
+                    axis_score
+                )
             } else {
-                let last_str = analysis.state.last_time_left.map(format_time_left).unwrap_or_else(|| "??:??".to_string());
-                t("#app_partial_demo_end")
-                    .replace("%s2", &last_str)
+                String::new()
             };
 
-            let banner_color = egui::Color32::from_rgb(251, 191, 36); // Amber-400
-            let bg_color = egui::Color32::from_rgba_unmultiplied(251, 191, 36, 15); // Amber-400 with opacity
-            egui::Frame::NONE
-                .fill(bg_color)
-                .stroke(egui::Stroke::new(1.0, banner_color))
-                .corner_radius(4.0)
-                .inner_margin(8.0)
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.colored_label(banner_color, banner_text);
-                    });
-                });
+            ui.heading(format!(
+                "{}{match_result_fragment}",
+                t("#app_scoreboard_heading")
+            ));
             ui.add_space(8.0);
-        }
-    }
 
-    ui.scope(|ui| {
-        let columns = [
-            "#app_col_id",
-            "#app_col_name",
-            "#app_col_team",
-            "#app_col_class",
-            "#app_col_score",
-            "#app_col_kills",
-            "#app_col_deaths",
-        ];
+            if let Some(analysis) = analysis {
+                if analysis.state.started_late || analysis.state.ended_early {
+                    let banner_text = if analysis.state.started_late && analysis.state.ended_early {
+                        let first_str = analysis.state.first_time_left.map(format_time_left).unwrap_or_else(|| "??:??".to_string());
+                        let last_str = analysis.state.last_time_left.map(format_time_left).unwrap_or_else(|| "??:??".to_string());
+                        t("#app_partial_demo_both")
+                            .replace("%s1", &first_str)
+                            .replace("%s2", &last_str)
+                    } else if analysis.state.started_late {
+                        let first_str = analysis.state.first_time_left.map(format_time_left).unwrap_or_else(|| "??:??".to_string());
+                        t("#app_partial_demo_start")
+                            .replace("%s1", &first_str)
+                    } else {
+                        let last_str = analysis.state.last_time_left.map(format_time_left).unwrap_or_else(|| "??:??".to_string());
+                        t("#app_partial_demo_end")
+                            .replace("%s2", &last_str)
+                    };
 
-        let table = TableBuilder::new(ui)
-            .striped(true)
-            .cell_layout(Layout::left_to_right(Align::Center))
-            .max_scroll_height(260.)
-            .column(Column::auto_with_initial_suggestion(150.))
-            .columns(Column::auto(), columns.len() - 1);
-
-        table
-            .header(TABLE_ROW_HEIGHT, |mut header| {
-                for column in columns {
-                    header.col(|ui| {
-                        let col_label = if column.starts_with('#') {
-                            t(column)
-                        } else {
-                            column.to_string()
-                        };
-                        ui.strong(col_label);
-                    });
+                    let banner_color = egui::Color32::from_rgb(251, 191, 36); // Amber-400
+                    let bg_color = egui::Color32::from_rgba_unmultiplied(251, 191, 36, 15); // Amber-400 with opacity
+                    egui::Frame::NONE
+                        .fill(bg_color)
+                        .stroke(egui::Stroke::new(1.0, banner_color))
+                        .corner_radius(4.0)
+                        .inner_margin(8.0)
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.colored_label(banner_color, banner_text);
+                            });
+                        });
+                    ui.add_space(8.0);
                 }
-            })
-            .body(|ref mut body| {
-                if let Some(analysis) = analysis {
-                    struct SortablePlayer<'a> {
-                        player: &'a Player,
-                        steam_id_str: String,
-                    }
+            }
 
-                    let mut players: Vec<SortablePlayer> = analysis
-                        .state
-                        .players
-                        .iter()
-                        .map(|p| {
-                            let steam_id_str = SteamId::try_from(&p.id)
-                                .map(|s| s.to_string())
-                                .unwrap_or_else(|_| p.id.to_string());
-                            SortablePlayer { player: p, steam_id_str }
-                        })
-                        .collect();
+            ui.scope(|ui| {
+                let columns = [
+                    "#app_col_id",
+                    "#app_col_name",
+                    "#app_col_team",
+                    "#app_col_class",
+                    "#app_col_score",
+                    "#app_col_kills",
+                    "#app_col_deaths",
+                ];
 
-                    // Fixed sort order: Team ASC, Score DESC, Kills DESC,
-                    // Deaths ASC, Name ASC, ID ASC.
-                    players.sort_by(|a, b| {
-                        team_sort_rank(a.player.team.as_ref())
-                            .cmp(&team_sort_rank(b.player.team.as_ref()))
-                            .then_with(|| b.player.stats.0.cmp(&a.player.stats.0)) // Score DESC
-                            .then_with(|| b.player.stats.1.cmp(&a.player.stats.1)) // Kills DESC
-                            .then_with(|| a.player.stats.2.cmp(&b.player.stats.2)) // Deaths ASC
-                            .then_with(|| a.player.name.cmp(&b.player.name))       // Name ASC
-                            .then_with(|| a.steam_id_str.cmp(&b.steam_id_str))     // ID ASC
+                let table = TableBuilder::new(ui)
+                    .striped(true)
+                    .cell_layout(Layout::left_to_right(Align::Center))
+                    .column(Column::initial(160.0).resizable(true)) // Steam ID
+                    .column(Column::remainder())                    // Name
+                    .column(Column::initial(100.0).resizable(true)) // Team
+                    .column(Column::initial(120.0).resizable(true)) // Class
+                    .column(Column::initial(70.0).resizable(true))  // Score
+                    .column(Column::initial(70.0).resizable(true))  // Kills
+                    .column(Column::initial(70.0).resizable(true)); // Deaths
+
+                table
+                    .header(TABLE_ROW_HEIGHT, |mut header| {
+                        for column in columns {
+                            header.col(|ui| {
+                                let col_label = if column.starts_with('#') {
+                                    t(column)
+                                } else {
+                                    column.to_string()
+                                };
+                                ui.strong(col_label);
+                            });
+                        }
+                    })
+                    .body(|ref mut body| {
+                        if let Some(analysis) = analysis {
+                            struct SortablePlayer<'a> {
+                                player: &'a Player,
+                                steam_id_str: String,
+                            }
+
+                            let mut players: Vec<SortablePlayer> = analysis
+                                .state
+                                .players
+                                .iter()
+                                .map(|p| {
+                                    let steam_id_str = SteamId::try_from(&p.id)
+                                        .map(|s| s.to_string())
+                                        .unwrap_or_else(|_| p.id.to_string());
+                                    SortablePlayer { player: p, steam_id_str }
+                                })
+                                .collect();
+
+                            // Fixed sort order: Team ASC, Score DESC, Kills DESC,
+                            // Deaths ASC, Name ASC, ID ASC.
+                            players.sort_by(|a, b| {
+                                team_sort_rank(a.player.team.as_ref())
+                                    .cmp(&team_sort_rank(b.player.team.as_ref()))
+                                    .then_with(|| b.player.stats.0.cmp(&a.player.stats.0)) // Score DESC
+                                    .then_with(|| b.player.stats.1.cmp(&a.player.stats.1)) // Kills DESC
+                                    .then_with(|| a.player.stats.2.cmp(&b.player.stats.2)) // Deaths ASC
+                                    .then_with(|| a.player.name.cmp(&b.player.name))       // Name ASC
+                                    .then_with(|| a.steam_id_str.cmp(&b.steam_id_str))     // ID ASC
+                            });
+
+                            for sp in players {
+                                scoreboard_row_ui(sp.player, player_highlighting, body);
+                            }
+                        }
                     });
-
-                    for sp in players {
-                        scoreboard_row_ui(sp.player, player_highlighting, body);
-                    }
-                }
             });
+        });
     });
 }
 

@@ -34,9 +34,10 @@ pub fn team_score_timeline_ui(_file_info: Option<&FileInfo>, r: Option<&Analysis
         };
         let axis_label = translate_key("#teamname_axis").unwrap_or_else(|| "Axis".to_string());
 
+        let plot_height = (ui.available_height() - 20.0).max(350.0);
         let plot = Plot::new("timeline_plot")
             .allow_scroll(false)
-            .height(200.)
+            .height(plot_height)
             .width(ui.max_rect().width())
             .legend(Legend::default().position(Corner::LeftTop))
             .custom_x_axes(vec![]) // Remove the x-axis

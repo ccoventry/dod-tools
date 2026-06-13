@@ -91,7 +91,10 @@ pub fn pov_analytics_ui(_file_info: Option<&FileInfo>, r: Option<&Analysis>, ui:
         TableBuilder::new(ui_left)
             .striped(true)
             .cell_layout(Layout::left_to_right(Align::Center))
-            .columns(Column::auto(), 4)
+            .column(Column::remainder())
+            .column(Column::initial(60.0).resizable(true))
+            .column(Column::initial(80.0).resizable(true))
+            .column(Column::initial(80.0).resizable(true))
             .header(TABLE_ROW_HEIGHT, |mut row| {
                 row.col(|ui| {
                     ui.strong(t("#app_col_weapon"));

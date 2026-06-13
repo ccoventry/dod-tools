@@ -14,7 +14,12 @@ pub fn rounds_ui(_file_info: Option<&FileInfo>, r: Option<&Analysis>, ui: &mut U
         let table = TableBuilder::new(ui)
             .striped(true)
             .cell_layout(Layout::left_to_right(Align::Center))
-            .columns(Column::auto(), 6);
+            .column(Column::exact(10.0))
+            .column(Column::initial(80.0).resizable(true))
+            .column(Column::initial(100.0).resizable(true))
+            .column(Column::initial(100.0).resizable(true))
+            .column(Column::remainder())
+            .column(Column::initial(100.0).resizable(true));
 
         table
             .header(TABLE_ROW_HEIGHT, |mut ui| {
