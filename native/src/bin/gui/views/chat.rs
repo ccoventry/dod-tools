@@ -3,6 +3,22 @@ use crate::views::t;
 use analysis::{Analysis, ChatType, Team};
 use egui::{Color32, RichText, ScrollArea, Ui};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PlayerStatusFilter {
+    All,
+    Alive,
+    Dead,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PlayerTeamFilter {
+    All,
+    Allies,
+    British,
+    Axis,
+    Spectators,
+}
+
 fn format_game_time(d: &std::time::Duration) -> String {
     let total_secs = d.as_secs();
     let mins = total_secs / 60;
@@ -24,8 +40,8 @@ pub fn chat_log_ui(file_info: Option<&FileInfo>, r: Option<&Analysis>, ui: &mut 
 
     let show_mm1_id = tab_id.with("show_mm1");
     let show_mm2_id = tab_id.with("show_mm2");
-    let show_alive_id = tab_id.with("show_alive");
-    let show_dead_id = tab_id.with("show_dead");
+    let show_status_id = tab_id.with("show_status");
+    let show_team_filter_id = tab_id.with("show_team_filter");
     let show_joins_id = tab_id.with("show_joins");
     let show_teams_id = tab_id.with("show_teams");
     let show_gameplay_id = tab_id.with("show_gameplay");
@@ -34,8 +50,14 @@ pub fn chat_log_ui(file_info: Option<&FileInfo>, r: Option<&Analysis>, ui: &mut 
 
     let mut show_mm1 = ui.data(|d| d.get_temp::<bool>(show_mm1_id).unwrap_or(true));
     let mut show_mm2 = ui.data(|d| d.get_temp::<bool>(show_mm2_id).unwrap_or(true));
-    let mut show_alive = ui.data(|d| d.get_temp::<bool>(show_alive_id).unwrap_or(true));
-    let mut show_dead = ui.data(|d| d.get_temp::<bool>(show_dead_id).unwrap_or(true));
+    let mut show_status = ui.data(|d| {
+        d.get_temp::<PlayerStatusFilter>(show_status_id)
+            .unwrap_or(PlayerStatusFilter::All)
+    });
+    let mut show_team_filter = ui.data(|d| {
+        d.get_temp::<PlayerTeamFilter>(show_team_filter_id)
+            .unwrap_or(PlayerTeamFilter::All)
+    });
     let mut show_joins = ui.data(|d| d.get_temp::<bool>(show_joins_id).unwrap_or(true));
     let mut show_teams = ui.data(|d| d.get_temp::<bool>(show_teams_id).unwrap_or(true));
     let mut show_gameplay = ui.data(|d| d.get_temp::<bool>(show_gameplay_id).unwrap_or(true));
@@ -48,8 +70,8 @@ pub fn chat_log_ui(file_info: Option<&FileInfo>, r: Option<&Analysis>, ui: &mut 
         if ui.button(t("#app_chat_select_all")).clicked() {
             show_mm1 = true;
             show_mm2 = true;
-            show_alive = true;
-            show_dead = true;
+            show_status = PlayerStatusFilter::All;
+            show_team_filter = PlayerTeamFilter::All;
             show_joins = true;
             show_teams = true;
             show_gameplay = true;
@@ -59,8 +81,6 @@ pub fn chat_log_ui(file_info: Option<&FileInfo>, r: Option<&Analysis>, ui: &mut 
         if ui.button(t("#app_chat_clear_all")).clicked() {
             show_mm1 = false;
             show_mm2 = false;
-            show_alive = false;
-            show_dead = false;
             show_joins = false;
             show_teams = false;
             show_gameplay = false;
@@ -86,18 +106,64 @@ pub fn chat_log_ui(file_info: Option<&FileInfo>, r: Option<&Analysis>, ui: &mut 
             ui.data_mut(|d| d.insert_temp(show_mm2_id, show_mm2));
         }
         if ui
-            .checkbox(&mut show_alive, t("#app_chat_alive_players"))
+            .radio_value(&mut show_status, PlayerStatusFilter::All, t("#app_chat_filter_all"))
             .changed()
             || changed
         {
-            ui.data_mut(|d| d.insert_temp(show_alive_id, show_alive));
+            ui.data_mut(|d| d.insert_temp(show_status_id, show_status));
         }
         if ui
-            .checkbox(&mut show_dead, t("#app_chat_dead_players"))
+            .radio_value(&mut show_status, PlayerStatusFilter::Alive, t("#app_chat_filter_alive"))
             .changed()
             || changed
         {
-            ui.data_mut(|d| d.insert_temp(show_dead_id, show_dead));
+            ui.data_mut(|d| d.insert_temp(show_status_id, show_status));
+        }
+        if ui
+            .radio_value(&mut show_status, PlayerStatusFilter::Dead, t("#app_chat_filter_dead"))
+            .changed()
+            || changed
+        {
+            ui.data_mut(|d| d.insert_temp(show_status_id, show_status));
+        }
+    });
+
+    ui.horizontal(|ui| {
+        ui.label(t("#app_chat_team_filter"));
+        if ui
+            .radio_value(&mut show_team_filter, PlayerTeamFilter::All, t("#app_chat_team_filter_all"))
+            .changed()
+            || changed
+        {
+            ui.data_mut(|d| d.insert_temp(show_team_filter_id, show_team_filter));
+        }
+        if ui
+            .radio_value(&mut show_team_filter, PlayerTeamFilter::Allies, t("#app_chat_team_filter_allies"))
+            .changed()
+            || changed
+        {
+            ui.data_mut(|d| d.insert_temp(show_team_filter_id, show_team_filter));
+        }
+        if ui
+            .radio_value(&mut show_team_filter, PlayerTeamFilter::British, t("#app_chat_team_filter_british"))
+            .changed()
+            || changed
+        {
+            ui.data_mut(|d| d.insert_temp(show_team_filter_id, show_team_filter));
+        }
+        if ui
+            .radio_value(&mut show_team_filter, PlayerTeamFilter::Axis, t("#app_chat_team_filter_axis"))
+            .changed()
+            || changed
+        {
+            ui.data_mut(|d| d.insert_temp(show_team_filter_id, show_team_filter));
+        }
+        if ui
+            .radio_value(&mut show_team_filter, PlayerTeamFilter::Spectators, t("#app_chat_team_filter_spectators"))
+            .changed()
+            || changed
+        {
+            ui.data_mut(|d| d.insert_temp(show_team_filter_id, show_team_filter));
         }
     });
 
@@ -143,8 +209,8 @@ pub fn chat_log_ui(file_info: Option<&FileInfo>, r: Option<&Analysis>, ui: &mut 
         ui.data_mut(|d| {
             d.insert_temp(show_mm1_id, show_mm1);
             d.insert_temp(show_mm2_id, show_mm2);
-            d.insert_temp(show_alive_id, show_alive);
-            d.insert_temp(show_dead_id, show_dead);
+            d.insert_temp(show_status_id, show_status);
+            d.insert_temp(show_team_filter_id, show_team_filter);
             d.insert_temp(show_joins_id, show_joins);
             d.insert_temp(show_teams_id, show_teams);
             d.insert_temp(show_gameplay_id, show_gameplay);
@@ -176,12 +242,22 @@ pub fn chat_log_ui(file_info: Option<&FileInfo>, r: Option<&Analysis>, ui: &mut 
                     if !show_mm1 {
                         return false;
                     }
-                    let alive_dead_ok = if msg.sender_dead {
-                        show_dead
-                    } else {
-                        show_alive
+                    let alive_dead_ok = match show_status {
+                        PlayerStatusFilter::All => true,
+                        PlayerStatusFilter::Alive => !msg.sender_dead,
+                        PlayerStatusFilter::Dead => msg.sender_dead,
                     };
                     if !alive_dead_ok {
+                        return false;
+                    }
+                    let team_ok = match show_team_filter {
+                        PlayerTeamFilter::All => true,
+                        PlayerTeamFilter::Allies => msg.sender_team == Some(Team::Allies),
+                        PlayerTeamFilter::British => msg.sender_team == Some(Team::British),
+                        PlayerTeamFilter::Axis => msg.sender_team == Some(Team::Axis),
+                        PlayerTeamFilter::Spectators => msg.sender_team == Some(Team::Spectators),
+                    };
+                    if !team_ok {
                         return false;
                     }
                 }
@@ -189,12 +265,22 @@ pub fn chat_log_ui(file_info: Option<&FileInfo>, r: Option<&Analysis>, ui: &mut 
                     if !show_mm2 {
                         return false;
                     }
-                    let alive_dead_ok = if msg.sender_dead {
-                        show_dead
-                    } else {
-                        show_alive
+                    let alive_dead_ok = match show_status {
+                        PlayerStatusFilter::All => true,
+                        PlayerStatusFilter::Alive => !msg.sender_dead,
+                        PlayerStatusFilter::Dead => msg.sender_dead,
                     };
                     if !alive_dead_ok {
+                        return false;
+                    }
+                    let team_ok = match show_team_filter {
+                        PlayerTeamFilter::All => true,
+                        PlayerTeamFilter::Allies => msg.sender_team == Some(Team::Allies),
+                        PlayerTeamFilter::British => msg.sender_team == Some(Team::British),
+                        PlayerTeamFilter::Axis => msg.sender_team == Some(Team::Axis),
+                        PlayerTeamFilter::Spectators => msg.sender_team == Some(Team::Spectators),
+                    };
+                    if !team_ok {
                         return false;
                     }
                 }

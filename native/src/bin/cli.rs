@@ -385,7 +385,7 @@ impl Display for Markdown {
                 ]);
 
                 for (wave, kill_streak) in player.kill_streaks.iter().enumerate() {
-                    if let (Some((start_time, _)), Some((end_time, _))) =
+                    if let (Some((start_time, _, _)), Some((end_time, _, _))) =
                         (kill_streak.kills.first(), kill_streak.kills.last())
                     {
                         let start_time_offset =
@@ -393,7 +393,7 @@ impl Display for Markdown {
                         let streak_duration = Duration::new((end_time - start_time).as_secs(), 0);
 
                         let mut grouped = Vec::new();
-                        for (_, weapon) in &kill_streak.kills {
+                        for (_, weapon, _) in &kill_streak.kills {
                             let name = format!("{weapon:?}");
                             if let Some((last_name, count)) = grouped.last_mut() {
                                 if *last_name == name {

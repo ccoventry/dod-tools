@@ -164,45 +164,42 @@ pub fn pov_analytics_ui(_file_info: Option<&FileInfo>, r: Option<&Analysis>, ui:
                     ui.strong(title);
                     ui.add_space(8.0);
 
-                    egui::Frame::canvas(ui.style()).show(ui, |ui| {
-                        ui.set_width(ui.available_width());
-                        egui::Grid::new("pov_weapon_detail_grid")
-                            .striped(true)
-                            .spacing([12.0, 8.0])
-                            .show(ui, |ui| {
-                                ui.label(t("#app_col_kills"));
-                                ui.label(format!("{}", w_stats.kills));
+                    egui::Grid::new("pov_weapon_detail_grid")
+                        .striped(true)
+                        .spacing([12.0, 8.0])
+                        .show(ui, |ui| {
+                            ui.label(t("#app_col_kills"));
+                            ui.label(format!("{}", w_stats.kills));
+                            ui.end_row();
+
+                            ui.label(t("#app_pov_col_bullets"));
+                            ui.label(format!("{}", w_stats.bullets_fired));
+                            ui.end_row();
+
+                            ui.label(t("#app_pov_col_reloads"));
+                            ui.label(format!("{}", w_stats.reloads));
+                            ui.end_row();
+
+                            if is_sniper {
+                                ui.label(t("#app_pov_detail_scoped"));
+                                ui.label(format!("{}", w_stats.scoped_kills));
                                 ui.end_row();
 
-                                ui.label(t("#app_pov_col_bullets"));
-                                ui.label(format!("{}", w_stats.bullets_fired));
+                                ui.label(t("#app_pov_detail_noscopes"));
+                                ui.label(format!("{}", w_stats.noscopes));
                                 ui.end_row();
 
-                                ui.label(t("#app_pov_col_reloads"));
-                                ui.label(format!("{}", w_stats.reloads));
+                                ui.label(t("#app_pov_detail_ratio"));
+                                let scoped_pct = if w_stats.kills > 0 {
+                                    w_stats.scoped_kills as f32 / w_stats.kills as f32
+                                } else {
+                                    0.0
+                                };
+                                let bar_text = format!("{:.1}% Scoped", scoped_pct * 100.0);
+                                ui.add(egui::ProgressBar::new(scoped_pct).text(bar_text));
                                 ui.end_row();
-
-                                if is_sniper {
-                                    ui.label(t("#app_pov_detail_scoped"));
-                                    ui.label(format!("{}", w_stats.scoped_kills));
-                                    ui.end_row();
-
-                                    ui.label(t("#app_pov_detail_noscopes"));
-                                    ui.label(format!("{}", w_stats.noscopes));
-                                    ui.end_row();
-
-                                    ui.label(t("#app_pov_detail_ratio"));
-                                    let scoped_pct = if w_stats.kills > 0 {
-                                        w_stats.scoped_kills as f32 / w_stats.kills as f32
-                                    } else {
-                                        0.0
-                                    };
-                                    let bar_text = format!("{:.1}% Scoped", scoped_pct * 100.0);
-                                    ui.add(egui::ProgressBar::new(scoped_pct).text(bar_text));
-                                    ui.end_row();
-                                }
-                            });
-                    });
+                            }
+                        });
                 });
             }
         } else {

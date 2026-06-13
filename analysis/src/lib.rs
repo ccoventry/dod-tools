@@ -96,6 +96,8 @@ pub struct AnalyzerState {
     pub pov_stats: PovStats,
     pub hltv_name: Option<String>,
     pub allies_are_british: bool,
+    pub server_name: Option<String>,
+    pub server_address: Option<String>,
 }
 
 #[derive(Default)]
@@ -241,8 +243,48 @@ fn is_close_to_match_end(duration: Duration) -> bool {
     false
 }
 
+fn extract_ip_port(s: &str) -> Option<String> {
+    let bytes = s.as_bytes();
+    let n = bytes.len();
+    for i in 0..n {
+        if bytes[i] == b':' {
+            // Read digits to the right (port)
+            let mut j = i + 1;
+            while j < n && bytes[j].is_ascii_digit() {
+                j += 1;
+            }
+            let port_len = j - (i + 1);
+            if port_len > 0 {
+                // Read valid domain/ip characters to the left
+                let mut k = i;
+                while k > 0 {
+                    let c = bytes[k - 1];
+                    if c.is_ascii_alphanumeric() || c == b'.' || c == b'-' {
+                        k -= 1;
+                    } else {
+                        break;
+                    }
+                }
+                let host_str = &s[k..i];
+                // Must contain at least one dot to be a valid domain or IP
+                if host_str.contains('.') && !host_str.starts_with('.') && !host_str.ends_with('.') {
+                    let port_str = &s[i + 1..j];
+                    return Some(format!("{}:{}", host_str, port_str));
+                }
+            }
+        }
+    }
+    None
+}
+
 pub fn use_general_finalization(state: &mut AnalyzerState, event: &AnalyzerEvent) {
     if let AnalyzerEvent::EngineMessage(EngineMessage::SvcServerInfo(msg)) = event {
+        let hostname = String::from_utf8_lossy(&msg.hostname).trim_end_matches('\0').to_string();
+        state.server_name = Some(hostname.clone());
+        if let Some(addr) = extract_ip_port(&hostname) {
+            state.server_address = Some(addr);
+        }
+
         let map_name = String::from_utf8_lossy(&msg.map_file_name)
             .trim_end_matches('\0')
             .to_string();
@@ -267,6 +309,22 @@ pub fn use_general_finalization(state: &mut AnalyzerState, event: &AnalyzerEvent
             }
         } else {
             state.initial_map_name = Some(clean_map);
+        }
+    }
+
+    if let AnalyzerEvent::EngineMessage(EngineMessage::SvcStuffText(msg)) = event {
+        let cmd = String::from_utf8_lossy(msg.command.as_slice());
+        if let Some(addr) = extract_ip_port(&cmd) {
+            state.server_address = Some(addr);
+        }
+    }
+
+    if let AnalyzerEvent::Frame(frame) = event {
+        if let FrameData::ConsoleCommand(cmd) = &frame.frame_data {
+            let cmd_str = String::from_utf8_lossy(cmd.command.as_slice());
+            if let Some(addr) = extract_ip_port(&cmd_str) {
+                state.server_address = Some(addr);
+            }
         }
     }
 
@@ -794,6 +852,18 @@ fn check_states_equal(left: &AnalyzerState, right: &AnalyzerState) -> Result<(),
     }
     if format!("{:?}", left.team_scores) != format!("{:?}", right.team_scores) {
         return Err(format!("team_scores mismatch"));
+    }
+    if left.server_name != right.server_name {
+        return Err(format!(
+            "server_name mismatch: {:?} vs {:?}",
+            left.server_name, right.server_name
+        ));
+    }
+    if left.server_address != right.server_address {
+        return Err(format!(
+            "server_address mismatch: {:?} vs {:?}",
+            left.server_address, right.server_address
+        ));
     }
     if left.pov_player_index != right.pov_player_index {
         return Err(format!(
