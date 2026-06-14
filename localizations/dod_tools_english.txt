@@ -22,6 +22,7 @@
 
 
 "#app_panel_explorer"           "Explorer"
+"#app_quick_links"              "Quick Links"
 "#app_panel_demos"              "Demos"
 "#app_panel_refresh"            "🔄 Refresh"
 "#app_this_pc"                  "💻 This PC"

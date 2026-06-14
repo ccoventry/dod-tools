@@ -21,7 +21,7 @@ use egui_file_dialog::FileDialog;
 use native::run_analyzer_with_progress;
 
 #[cfg(not(target_arch = "wasm32"))]
-use explorer::{DemoListItem, get_native_roots, render_native_dir_node, scan_dir_async};
+use explorer::{DemoListItem, get_native_roots, render_native_dir_node, scan_dir_async, scan_demo_folders_async, count_demo_files};
 #[cfg(target_arch = "wasm32")]
 use explorer::{DirNode, SendWrapper, WebFile, build_web_tree, render_web_dir_node};
 
@@ -97,6 +97,8 @@ fn main() {}
 struct AppSettings {
     language: String,
     scan_folders_for_demos: bool,
+    demo_folder_history: Vec<std::path::PathBuf>,
+    pinned_folders: Vec<std::path::PathBuf>,
 }
 
 impl Default for AppSettings {
@@ -104,6 +106,8 @@ impl Default for AppSettings {
         Self {
             language: "auto".to_string(),
             scan_folders_for_demos: false,
+            demo_folder_history: Vec::new(),
+            pinned_folders: Vec::new(),
         }
     }
 }
@@ -122,9 +126,29 @@ fn load_settings() -> AppSettings {
                     .get("scan_folders_for_demos")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
+                let demo_folder_history = val
+                    .get("demo_folder_history")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(std::path::PathBuf::from))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let pinned_folders = val
+                    .get("pinned_folders")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(std::path::PathBuf::from))
+                            .collect()
+                    })
+                    .unwrap_or_default();
                 return AppSettings {
                     language,
                     scan_folders_for_demos,
+                    demo_folder_history,
+                    pinned_folders,
                 };
             }
         }
@@ -141,6 +165,26 @@ fn save_settings(settings: &AppSettings) {
     map.insert(
         "scan_folders_for_demos".to_string(),
         serde_json::Value::Bool(settings.scan_folders_for_demos),
+    );
+    map.insert(
+        "demo_folder_history".to_string(),
+        serde_json::Value::Array(
+            settings
+                .demo_folder_history
+                .iter()
+                .map(|p| serde_json::Value::String(p.to_string_lossy().into_owned()))
+                .collect(),
+        ),
+    );
+    map.insert(
+        "pinned_folders".to_string(),
+        serde_json::Value::Array(
+            settings
+                .pinned_folders
+                .iter()
+                .map(|p| serde_json::Value::String(p.to_string_lossy().into_owned()))
+                .collect(),
+        ),
     );
     let val = serde_json::Value::Object(map);
     if let Ok(content) = serde_json::to_string_pretty(&val) {
@@ -346,8 +390,18 @@ struct Gui {
     #[cfg(not(target_arch = "wasm32"))]
     scanning_dir: bool,
 
+    #[cfg(not(target_arch = "wasm32"))]
+    demo_folders: Vec<(PathBuf, usize)>,
+    #[cfg(not(target_arch = "wasm32"))]
+    scanning_demo_folders: bool,
+    #[cfg(not(target_arch = "wasm32"))]
+    current_scan_id: usize,
+
     #[cfg(target_arch = "wasm32")]
     web_files: Vec<WebFile>,
+    #[cfg(target_arch = "wasm32")]
+    demo_folders: Vec<(String, usize)>,
+
     loading_path: Option<String>,
     loading_progress: Option<f32>,
     loading_elapsed: Option<f32>,
@@ -383,6 +437,11 @@ enum GuiMessage {
     DirScanComplete {
         dir: PathBuf,
         files: Vec<DemoListItem>,
+    },
+    #[cfg(not(target_arch = "wasm32"))]
+    DemoFoldersScanComplete {
+        scan_id: usize,
+        folders: Vec<(PathBuf, usize)>,
     },
     #[cfg(target_arch = "wasm32")]
     WebFolderLoaded(Vec<WebFile>),
@@ -470,6 +529,16 @@ impl Gui {
             scan_dir_async(ctx.clone(), self.tx.clone(), dir.clone());
         }
     }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn trigger_demo_folders_scan(&mut self, ctx: &Context) {
+        let root = self.root_dir.clone().or_else(|| self.current_dir.clone());
+        if let Some(dir) = root {
+            self.current_scan_id += 1;
+            self.scanning_demo_folders = true;
+            scan_demo_folders_async(ctx.clone(), self.tx.clone(), dir, self.current_scan_id);
+        }
+    }
 }
 
 impl Default for Gui {
@@ -518,8 +587,18 @@ impl Default for Gui {
             #[cfg(not(target_arch = "wasm32"))]
             scanning_dir: false,
 
+            #[cfg(not(target_arch = "wasm32"))]
+            demo_folders: Vec::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            scanning_demo_folders: false,
+            #[cfg(not(target_arch = "wasm32"))]
+            current_scan_id: 0,
+
             #[cfg(target_arch = "wasm32")]
             web_files: Vec::default(),
+            #[cfg(target_arch = "wasm32")]
+            demo_folders: Vec::default(),
+
             loading_path: None,
             loading_progress: None,
             loading_elapsed: None,
@@ -658,6 +737,7 @@ impl eframe::App for Gui {
                 self.subdir_cache.clear();
                 self.selected_analysis_path = None;
                 self.error_message = None;
+                self.trigger_demo_folders_scan(ctx);
             }
         }
 
@@ -665,9 +745,13 @@ impl eframe::App for Gui {
         #[cfg(not(target_arch = "wasm32"))]
         {
             if self.current_dir != self.last_scanned_dir {
+                let is_first_run = self.last_scanned_dir.is_none();
                 self.last_scanned_dir = self.current_dir.clone();
                 self.desktop_files.clear();
                 self.trigger_dir_scan(ctx);
+                if is_first_run {
+                    self.trigger_demo_folders_scan(ctx);
+                }
             }
         }
 
@@ -713,6 +797,23 @@ impl eframe::App for Gui {
                     if self.current_dir.as_ref() == Some(&dir) {
                         self.desktop_files = files;
                         self.scanning_dir = false;
+
+                        // Add to persistent history if there are demos in this directory!
+                        if !self.desktop_files.is_empty() {
+                            self.settings.demo_folder_history.retain(|p| p != &dir);
+                            self.settings.demo_folder_history.insert(0, dir.clone());
+                            if self.settings.demo_folder_history.len() > 10 {
+                                self.settings.demo_folder_history.truncate(10);
+                            }
+                            save_settings(&self.settings);
+                        }
+                    }
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                GuiMessage::DemoFoldersScanComplete { scan_id, folders } => {
+                    if scan_id == self.current_scan_id {
+                        self.demo_folders = folders;
+                        self.scanning_demo_folders = false;
                     }
                 }
                 #[cfg(target_arch = "wasm32")]
@@ -722,6 +823,23 @@ impl eframe::App for Gui {
                     self.web_tree = Some(build_web_tree(&self.web_files));
                     self.selected_analysis_path = None;
                     self.error_message = None;
+
+                    // Compute demo folders list for WASM
+                    let mut folders = std::collections::HashMap::new();
+                    for file in &self.web_files {
+                        if file.name.ends_with(".dem") {
+                            let relative_path = &file.path;
+                            let folder = if let Some(pos) = relative_path.rfind('/') {
+                                relative_path[..pos].to_string()
+                            } else {
+                                ".".to_string()
+                            };
+                            *folders.entry(folder).or_insert(0) += 1;
+                        }
+                    }
+                    let mut folder_list: Vec<(String, usize)> = folders.into_iter().collect();
+                    folder_list.sort_by(|a, b| a.0.cmp(&b.0));
+                    self.demo_folders = folder_list;
                 }
                 #[cfg(target_arch = "wasm32")]
                 GuiMessage::WebFileParsed {
@@ -824,6 +942,16 @@ impl eframe::App for Gui {
                             {
                                 self.subdir_cache.clear();
                                 self.explorer_demo_cache.clear();
+                                self.demo_folders.clear();
+                                self.settings.demo_folder_history.clear();
+                                save_settings(&self.settings);
+                            }
+                            #[cfg(target_arch = "wasm32")]
+                            {
+                                self.web_files.clear();
+                                self.web_tree = None;
+                                self.selected_web_folder = ".".to_string();
+                                self.demo_folders.clear();
                             }
                             ui.close();
                         }
@@ -897,6 +1025,236 @@ impl eframe::App for Gui {
                 ui.heading(t("#app_panel_explorer"));
                 ui.separator();
 
+                // --- Quick Links Widget ---
+                ui.label(egui::RichText::new(t("#app_quick_links")).strong());
+                
+                // Native Quick Links (Pinned, Recent, Local)
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let root = self.root_dir.clone().or_else(|| self.current_dir.clone());
+                    
+                    ScrollArea::vertical()
+                        .max_height(140.0)
+                        .id_salt("quick_links_scroll")
+                        .show(ui, |ui| {
+                            let mut has_any_links = false;
+
+                            // 1. Pinned Folders
+                            if !self.settings.pinned_folders.is_empty() {
+                                has_any_links = true;
+                                ui.label(egui::RichText::new("📌 Pinned").small().weak());
+                                for folder in self.settings.pinned_folders.clone() {
+                                    let count = *self.explorer_demo_cache.entry(folder.clone()).or_insert_with(|| {
+                                        count_demo_files(&folder)
+                                    });
+
+                                    let display_path = if let Some(ref r) = root {
+                                        if let Ok(rel) = folder.strip_prefix(r) {
+                                            if rel.as_os_str().is_empty() {
+                                                ".".to_string()
+                                            } else {
+                                                rel.to_string_lossy().into_owned()
+                                            }
+                                        } else {
+                                            folder.to_string_lossy().into_owned()
+                                        }
+                                    } else {
+                                        folder.to_string_lossy().into_owned()
+                                    };
+                                    let display_path = display_path.replace('\\', "/");
+
+                                    ui.horizontal(|ui| {
+                                        if ui.selectable_label(true, "📌").on_hover_text("Unpin this folder").clicked() {
+                                            self.settings.pinned_folders.retain(|p| p != &folder);
+                                            save_settings(&self.settings);
+                                        }
+                                        if ui.selectable_label(self.current_dir.as_ref() == Some(&folder), format!("{} ({})", display_path, count)).clicked() {
+                                            if folder.exists() {
+                                                next_dir = Some(folder);
+                                            } else {
+                                                self.settings.pinned_folders.retain(|p| p != &folder);
+                                                self.settings.demo_folder_history.retain(|p| p != &folder);
+                                                save_settings(&self.settings);
+                                                self.error_message = Some(format!("Directory no longer exists: {}", folder.display()));
+                                            }
+                                        }
+                                    });
+                                }
+                                ui.add_space(2.0);
+                            }
+
+                            // 2. Recent Folders
+                            let recent_folders: Vec<PathBuf> = self.settings.demo_folder_history.iter()
+                                .filter(|p| !self.settings.pinned_folders.contains(p))
+                                .cloned()
+                                .collect();
+
+                            if !recent_folders.is_empty() {
+                                has_any_links = true;
+                                ui.label(egui::RichText::new("🕒 Recent").small().weak());
+                                for folder in recent_folders {
+                                    let count = *self.explorer_demo_cache.entry(folder.clone()).or_insert_with(|| {
+                                        count_demo_files(&folder)
+                                    });
+
+                                    let display_path = if let Some(ref r) = root {
+                                        if let Ok(rel) = folder.strip_prefix(r) {
+                                            if rel.as_os_str().is_empty() {
+                                                ".".to_string()
+                                            } else {
+                                                rel.to_string_lossy().into_owned()
+                                            }
+                                        } else {
+                                            folder.to_string_lossy().into_owned()
+                                        }
+                                    } else {
+                                        folder.to_string_lossy().into_owned()
+                                    };
+                                    let display_path = display_path.replace('\\', "/");
+
+                                    ui.horizontal(|ui| {
+                                        if ui.selectable_label(false, "📌").on_hover_text("Pin this folder").clicked() {
+                                            self.settings.pinned_folders.push(folder.clone());
+                                            save_settings(&self.settings);
+                                        }
+                                        if ui.selectable_label(self.current_dir.as_ref() == Some(&folder), format!("{} ({})", display_path, count)).clicked() {
+                                            if folder.exists() {
+                                                next_dir = Some(folder);
+                                            } else {
+                                                self.settings.pinned_folders.retain(|p| p != &folder);
+                                                self.settings.demo_folder_history.retain(|p| p != &folder);
+                                                save_settings(&self.settings);
+                                                self.error_message = Some(format!("Directory no longer exists: {}", folder.display()));
+                                            }
+                                        }
+                                    });
+                                }
+                                ui.add_space(2.0);
+                            }
+
+                            // 3. Local Folders
+                            let local_folders: Vec<(PathBuf, usize)> = self.demo_folders.iter()
+                                .filter(|(p, _)| !self.settings.pinned_folders.contains(p))
+                                .cloned()
+                                .collect();
+
+                            if !local_folders.is_empty() {
+                                has_any_links = true;
+                                ui.label(egui::RichText::new("📂 Local").small().weak());
+                                for (folder, count) in local_folders {
+                                    let display_path = if let Some(ref r) = root {
+                                        if let Ok(rel) = folder.strip_prefix(r) {
+                                            if rel.as_os_str().is_empty() {
+                                                ".".to_string()
+                                            } else {
+                                                rel.to_string_lossy().into_owned()
+                                            }
+                                        } else {
+                                            folder.to_string_lossy().into_owned()
+                                        }
+                                    } else {
+                                        folder.to_string_lossy().into_owned()
+                                    };
+                                    let display_path = display_path.replace('\\', "/");
+
+                                    ui.horizontal(|ui| {
+                                        if ui.selectable_label(false, "📌").on_hover_text("Pin this folder").clicked() {
+                                            self.settings.pinned_folders.push(folder.clone());
+                                            save_settings(&self.settings);
+                                        }
+                                        if ui.selectable_label(self.current_dir.as_ref() == Some(&folder), format!("{} ({})", display_path, count)).clicked() {
+                                            if folder.exists() {
+                                                next_dir = Some(folder);
+                                            } else {
+                                                self.settings.pinned_folders.retain(|p| p != &folder);
+                                                self.settings.demo_folder_history.retain(|p| p != &folder);
+                                                save_settings(&self.settings);
+                                                self.error_message = Some(format!("Directory no longer exists: {}", folder.display()));
+                                            }
+                                        }
+                                    });
+                                }
+                            }
+
+                            if !has_any_links {
+                                if self.scanning_demo_folders {
+                                    ui.horizontal(|ui| {
+                                        ui.spinner();
+                                        ui.weak("Scanning workspace...");
+                                    });
+                                } else {
+                                    ui.weak("No demo folders found.");
+                                }
+                            }
+                        });
+                }
+
+                // Web Assembly Quick Links
+                #[cfg(target_arch = "wasm32")]
+                {
+                    ScrollArea::vertical()
+                        .max_height(140.0)
+                        .id_salt("web_quick_links_scroll")
+                        .show(ui, |ui| {
+                            let mut has_any_links = false;
+
+                            // 1. Pinned Folders (WASM session)
+                            if !self.settings.pinned_folders.is_empty() {
+                                has_any_links = true;
+                                ui.label(egui::RichText::new("📌 Pinned").small().weak());
+                                for folder in self.settings.pinned_folders.clone() {
+                                    let folder_str = folder.to_string_lossy().into_owned();
+                                    let count = self.web_files.iter()
+                                        .filter(|f| {
+                                            if folder_str == "." {
+                                                !f.path.contains('/')
+                                            } else {
+                                                f.path.starts_with(&format!("{}/", folder_str))
+                                            }
+                                        })
+                                        .count();
+
+                                    ui.horizontal(|ui| {
+                                        if ui.selectable_label(true, "📌").clicked() {
+                                            self.settings.pinned_folders.retain(|p| p != &folder);
+                                        }
+                                        if ui.selectable_label(self.selected_web_folder == folder_str, format!("{} ({})", folder_str, count)).clicked() {
+                                            temp_web_folder = folder_str;
+                                        }
+                                    });
+                                }
+                                ui.add_space(2.0);
+                            }
+
+                            // 2. Local Folders (excluding pinned)
+                            let local_folders: Vec<(String, usize)> = self.demo_folders.iter()
+                                .filter(|(p, _)| !self.settings.pinned_folders.contains(&std::path::PathBuf::from(p)))
+                                .cloned()
+                                .collect();
+
+                            if !local_folders.is_empty() {
+                                has_any_links = true;
+                                ui.label(egui::RichText::new("📂 Folders").small().weak());
+                                for (folder, count) in local_folders {
+                                    let folder_pb = std::path::PathBuf::from(&folder);
+                                    ui.horizontal(|ui| {
+                                        if ui.selectable_label(false, "📌").clicked() {
+                                            self.settings.pinned_folders.push(folder_pb);
+                                        }
+                                        if ui.selectable_label(self.selected_web_folder == folder, format!("{} ({})", folder, count)).clicked() {
+                                            temp_web_folder = folder;
+                                        }
+                                    });
+                                }
+                            }
+
+                            if !has_any_links {
+                                ui.weak("No demo folders found.");
+                            }
+                        });
+                }
+                ui.separator();
+
                 // Native Directory Browser
                 #[cfg(not(target_arch = "wasm32"))]
                 {
@@ -905,6 +1263,7 @@ impl eframe::App for Gui {
                             self.subdir_cache.clear();
                             self.explorer_demo_cache.clear();
                             self.trigger_dir_scan(ctx);
+                            self.trigger_demo_folders_scan(ctx);
                         }
                     });
                     ui.add_space(4.0);
