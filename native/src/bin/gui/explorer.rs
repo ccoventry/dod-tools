@@ -222,7 +222,7 @@ pub fn get_native_roots() -> Vec<PathBuf> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn count_demo_files(path: &Path) -> usize {
+pub fn count_demo_files(path: &Path) -> usize {
     let mut count = 0;
     if let Ok(entries) = std::fs::read_dir(path) {
         for entry in entries.filter_map(Result::ok) {
@@ -271,7 +271,10 @@ pub fn render_native_dir_node(
 
     if !has_subdirs {
         ui.horizontal(|ui| {
-            ui.add_space(16.0);
+            ui.add_enabled_ui(false, |ui| {
+                ui.set_invisible();
+                let _ = ui.selectable_label(false, "⏵");
+            });
             if ui
                 .selectable_label(is_selected, format!("{} {}", folder_icon, display_name))
                 .clicked()
@@ -339,7 +342,10 @@ pub fn render_web_dir_node(ui: &mut egui::Ui, node: &DirNode, selected_folder: &
 
     if !has_subdirs {
         ui.horizontal(|ui| {
-            ui.add_space(16.0);
+            ui.add_enabled_ui(false, |ui| {
+                ui.set_invisible();
+                let _ = ui.selectable_label(false, "⏵");
+            });
             if ui
                 .selectable_label(is_selected, format!("📁 {}", node.name))
                 .clicked()
@@ -384,4 +390,84 @@ pub fn render_web_dir_node(ui: &mut egui::Ui, node: &DirNode, selected_folder: &
             });
         }
     }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn is_drive_root(path: &Path) -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        let s = path.to_string_lossy();
+        s.len() <= 3 && s.ends_with(":\\")
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        path == Path::new("/")
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn scan_demo_folders_async(
+    ctx: Context,
+    tx: mpsc::Sender<GuiMessage>,
+    root_dir: PathBuf,
+    scan_id: usize,
+) {
+    tokio::task::spawn_blocking(move || {
+        let mut folders = Vec::new();
+        let walk_recursive = !is_drive_root(&root_dir);
+
+        let mut stack = vec![(root_dir.clone(), 0)];
+        let max_depth = 4;
+        let mut folders_checked = 0;
+        let max_folders_checked = 2000;
+
+        while let Some((dir, depth)) = stack.pop() {
+            folders_checked += 1;
+            if folders_checked > max_folders_checked {
+                break;
+            }
+
+            let mut demo_count = 0;
+            let mut subdirs = Vec::new();
+
+            if let Ok(entries) = std::fs::read_dir(&dir) {
+                for entry in entries.filter_map(Result::ok) {
+                    let path = entry.path();
+                    if path.is_dir() {
+                        if walk_recursive && depth < max_depth {
+                            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                                let name_lower = name.to_lowercase();
+                                if !name.starts_with('.') 
+                                    && !name.starts_with('$') 
+                                    && name_lower != "target" 
+                                    && name_lower != "node_modules"
+                                    && name_lower != ".git"
+                                    && name_lower != "src"
+                                    && name_lower != "assets"
+                                {
+                                    subdirs.push(path);
+                                }
+                            }
+                        }
+                    } else if path.extension().map_or(false, |ext| ext == "dem") {
+                        demo_count += 1;
+                    }
+                }
+            }
+
+            if demo_count > 0 {
+                folders.push((dir, demo_count));
+            }
+
+            subdirs.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
+            for subdir in subdirs {
+                stack.push((subdir, depth + 1));
+            }
+        }
+
+        folders.sort_by(|a, b| a.0.cmp(&b.0));
+
+        let _ = tx.send(GuiMessage::DemoFoldersScanComplete { scan_id, folders });
+        ctx.request_repaint();
+    });
 }
