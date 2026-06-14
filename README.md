@@ -1,98 +1,42 @@
-# dod-tools
+# DoD Demo Analyzer & Tools
 
-A utility for analyzing Day of Defeat (GoldSrc) demo files.
+🎮 A creative fork of the original [cgdangelo/dod-tools](https://github.com/cgdangelo/dod-tools) project, putting a fresh spin on Day of Defeat v1.3 demo analysis. 
 
-![](./assets/gui.png)
+## 💡 About this Fork
+This is a passionate, work-in-progress playground. It is heavily inspired by classic tools like **Complexity Demo Player**, aiming to bring detailed game states, team comparisons, and visual overviews into a modern, native desktop dashboard.
 
-[Example text output](assets/example_report.md)
+## 🛠️ In-Progress Features
+Some of the features currently being developed and refined:
+* **Summary Section:** Comprehensive overview of demo, server, and game metadata.
+* **Individual Player Stats:** Deep-dive performance details for each player, with options to compare players 1:1.
+* **Advanced Chat Log:** Full chat log extraction categorized and filterable by channels, states, and factions.
+* **Updated Kill Streaks UI:** A redesigned kill streaks section for clearer player and interval breakdowns.
 
-## Installation
+## 🌐 WebAssembly (WASM) Deployment Plan
+The project is architected to compile for both native desktop and web page targets.
 
-Download the binaries for your platform from the [latest release](https://github.com/cgdangelo/dod-tools/releases/latest).
+> [!WARNING]
+> The WebAssembly (WASM) target is a work in progress and changes are not always developed in parallel with the native GUI. The web assembly side may lag behind the desktop app in features and functionality.
 
-## Usage
+* **Browser Runtime:** Compiles to WebAssembly via `trunk`, running the parser and analyzer client-side directly in the browser using HTML5 `<canvas>` and `egui`.
+* **Zero Server Overhead:** Demos will be processed locally in-browser via drag-and-drop or file upload selectors—no remote servers or databases required.
+* **WASM Feature Parity:** Work is in progress to align the web interface with the native build, including embedding translation resources and handling web-safe storage.
 
-> [!TIP]
->
-> For best results, use on POV demos where you:
->
-> - Started recording after the clan match timer has finished and teams were respawned
-> - Stopped recording when the match was over
->
-> Demos recorded by HLTV clients or legacy versions of DoD (1.0, 1.1, 1.2) have limited support.
+## 🚀 Quick Start
+* **GUI Desktop Mode:**
+  ```powershell
+  cargo run -p native --bin dod-tools-gui
+  ```
+* **GUI Web Mode (Development Server):**
+  ```powershell
+  trunk serve
+  ```
+* **CLI Analysis Mode:**
+  ```powershell
+  cargo run -p native --bin dod-tools-cli -- "path/to/demo.dem"
+  ```
 
-### GUI mode
+*Stay tuned—features and experimental tools are being added dynamically for fun and testing!*
 
-Run the `dod-tools-gui` program and drag-and-drop 1 or more files onto the main window. Each file will open a report window.
 
-Click the checkbox next to a player in the scoreboard to filter for their results across all open reports.
 
-### CLI mode
-
-<!-- help-start -->
-
-```text
-Usage: dod-tools-cli.exe [OPTIONS] [DEMO_PATHS]...
-
-Arguments:
-  [DEMO_PATHS]...
-          List of paths to demo files
-
-Options:
-      --output-format <OUTPUT_FORMAT>
-          The kind of string output to produce from an analysis
-
-          [default: markdown]
-
-          Possible values:
-          - markdown: Markdown document best used in combination with a Markdown renderer
-          - json:     JSON string for automated tools or custom visualization
-
-  -h, --help
-          Print help (see a summary with '-h')
-
-  -V, --version
-          Print version
-```
-
-<!-- help-end -->
-
-#### Example 1: Viewing with a Markdown renderer (recommended)
-
-> [!TIP]
->
-> The report is too long to be readable in a terminal.
->
-> For improved readability, use something that can render Markdown text to HTML, such as:
->
-> - [Visual Studio Code](https://code.visualstudio.com/docs/languages/markdown)
-> - https://peerpad.net/
-> - https://markdownlivepreview.com/
-
-For quick analysis of a single file, run the program and capture the output to your clipboard. On Windows, for example:
-
-```text
-dod-tools-cli.exe "C:\path\to\demo-file.dem" | clip
-```
-
-The report contents will be in your clipboard now. Paste this into something that can render Markdown text as HTML (see
-above).
-
-#### Example 2: Aggregating results from a list of files into a Markdown document
-
-If you have a list of files in a directory you want to analyze at once, run the program on each file and aggregate the
-results into a single file.
-
-```text
-Get-ChildItem "C:\path\to\demos\*.dem" | ForEach-Object { & dod-tools-cli.exe $_.FullName >> reports.md }
-```
-
-A `reports.md` file will be created with sections for each of the files.
-
-#### Example 3: JSON output
-
-Use the `--output-format json` option to print an array of JSON objects.
-
-```text
-dod-tools-cli.exe --output-format json "C:\path\to\demo-file.dem" > report.json
-```

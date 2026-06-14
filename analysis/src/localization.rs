@@ -1,29 +1,40 @@
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::RwLock;
 
-static ACTIVE_LANGUAGE: Mutex<&'static str> = Mutex::new("english");
-static LOCALIZATIONS: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
+static ACTIVE_LANGUAGE: RwLock<&'static str> = RwLock::new("english");
+static LOCALIZATIONS: RwLock<Option<HashMap<String, String>>> = RwLock::new(None);
 
 pub fn get_active_language() -> &'static str {
-    *ACTIVE_LANGUAGE.lock().unwrap()
+    *ACTIVE_LANGUAGE.read().unwrap()
 }
 
 pub fn set_active_language(lang: &'static str) {
-    let mut active_lock = ACTIVE_LANGUAGE.lock().unwrap();
-    if *active_lock != lang {
-        *active_lock = lang;
-        let mut loc_lock = LOCALIZATIONS.lock().unwrap();
-        *loc_lock = None; // clear cache to force reload
+    if *ACTIVE_LANGUAGE.read().unwrap() != lang {
+        let mut active_lock = ACTIVE_LANGUAGE.write().unwrap();
+        if *active_lock != lang {
+            *active_lock = lang;
+            let mut loc_lock = LOCALIZATIONS.write().unwrap();
+            *loc_lock = None; // clear cache to force reload
+        }
     }
 }
 
 pub fn translate_key(key: &str) -> Option<String> {
-    let mut lock = LOCALIZATIONS.lock().unwrap();
-    if lock.is_none() {
-        let active = *ACTIVE_LANGUAGE.lock().unwrap();
-        *lock = Some(load_localizations_from_disk(active));
+    // 1. Try to read from cache first with a read lock
+    {
+        let read_lock = LOCALIZATIONS.read().unwrap();
+        if let Some(ref map) = *read_lock {
+            return map.get(key).cloned();
+        }
     }
-    lock.as_ref().unwrap().get(key).cloned()
+
+    // 2. If it is None, acquire write lock to initialize it
+    let mut write_lock = LOCALIZATIONS.write().unwrap();
+    if write_lock.is_none() {
+        let active = *ACTIVE_LANGUAGE.read().unwrap();
+        *write_lock = Some(load_localizations_from_disk(active));
+    }
+    write_lock.as_ref().unwrap().get(key).cloned()
 }
 
 fn get_amxx_code(lang: &str) -> &str {
