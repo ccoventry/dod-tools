@@ -1,0 +1,90 @@
+use std::str::from_utf8;
+
+use crate::types::{Delta, DeltaDecoder, DeltaDecoderS};
+
+use super::*;
+
+impl Doer for SvcDeltaDescription {
+    fn id(&self) -> u8 {
+        14
+    }
+
+    fn parse(i: &[u8], aux: AuxRefCell) -> Result<Self> {
+        let (i, name) = null_string(i)?;
+        let (i, total_fields) = le_u16(i)?;
+
+        let clone = i;
+
+        let mut aux = aux.borrow_mut();
+
+        // Delta description is usually in LOADING section and first frame message.
+        // It will detail the deltas being used and its index for correct decoding.
+        // So this would be the only message that modifies the delta decode table.
+
+        let mut br = BitReader::new(i);
+        let default_table = crate::utils::get_initial_delta();
+        let decoder = match aux.delta_decoders.get("delta_description_t\0") {
+            Some(d) => d,
+            None => default_table.get("delta_description_t\0").unwrap(),
+        };
+        let data: Vec<Delta> = (0..total_fields)
+            .map(|_| {
+                parse_delta(
+                    decoder,
+                    &mut br,
+                )
+            })
+            .collect();
+
+        let decoder: DeltaDecoder = data
+            .iter()
+            .map(|entry| {
+                DeltaDecoderS {
+                    name: entry.get("name").unwrap().to_owned(),
+                    bits: u32::from_le_bytes(
+                        entry.get("bits").unwrap().as_slice().try_into().unwrap(),
+                    ), // heh
+                    divisor: f32::from_le_bytes(
+                        entry.get("divisor").unwrap().as_slice().try_into().unwrap(),
+                    ),
+                    flags: u32::from_le_bytes(
+                        entry.get("flags").unwrap().as_slice().try_into().unwrap(),
+                    ),
+                }
+            })
+            .collect();
+
+        let range = br.get_consumed_bytes();
+        let clone = &clone[..range];
+        let (i, _) = take(range)(i)?;
+
+        // mutate delta_decoders
+        aux.delta_decoders
+            .insert(from_utf8(name).unwrap().to_owned(), decoder.clone());
+
+        Ok((
+            i,
+            Self {
+                name: name.to_vec(),
+                total_fields,
+                fields: decoder,
+                clone: clone.to_vec(),
+            },
+        ))
+    }
+
+    fn write(&self, _: AuxRefCell) -> ByteVec {
+        let mut writer = ByteWriter::new();
+
+        writer.append_u8(self.id());
+
+        writer.append_u8_slice(&self.name);
+        writer.append_u16(self.total_fields);
+
+        // This is intentionally done like this because I don't think anyone
+        // would try to modify delta description.
+        writer.append_u8_slice(&self.clone);
+
+        writer.data
+    }
+}
