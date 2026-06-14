@@ -1,0 +1,16 @@
+[package]
+authors = [ "Khang Le <mkhangle20@gmail.com>" ]
+name = "dem"
+description = "GoldSrc demo parser and writer library"
+version = "0.2.3"
+edition = "2021"
+readme = "README.md"
+repository = "https://github.com/khanghugo/dem"
+license-file = "LICENSE"
+keywords = [ "goldsrc", "goldsource", "demo" ]
+exclude = [ "src/tests" ]
+
+[dependencies]
+bitvec = "1.0.1"
+eyre = "0.6.12"
+nom = "7.1.3"

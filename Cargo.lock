@@ -836,8 +836,6 @@ checksum = "f27ae1dd37df86211c42e150270f82743308803d90a6f6e6651cd730d5e1732f"
 [[package]]
 name = "dem"
 version = "0.2.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7130730cbdec5224998b37dde21066ee8e72e2e58e6eda7a528578ec75bb147b"
 dependencies = [
  "bitvec",
  "eyre",
