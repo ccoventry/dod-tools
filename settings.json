@@ -1,4 +1,12 @@
 {
   "language": "auto",
-  "scan_folders_for_demos": true
+  "scan_folders_for_demos": true,
+  "demo_folder_history": [
+    "E:\\Steam\\steamapps\\common\\Half-Life - PRE-Anniversary for Movies\\dod",
+    "E:\\Steam\\steamapps\\common\\Half-Life - PRE-Anniversary for Movies\\dod\\temp demos",
+    "E:\\Steam\\steamapps\\common\\Half-Life\\dod",
+    "D:\\Downloads",
+    "D:\\Repos\\dod-tools\\demos"
+  ],
+  "pinned_folders": []
 }

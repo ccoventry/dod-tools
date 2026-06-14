@@ -61,8 +61,14 @@ pub fn header_ui(file_info: Option<&FileInfo>, analysis: Option<&Analysis>, ui: 
 
         ui.strong(t("#app_summary_file_created"));
         if let Some(fi) = file_info {
-            let local_time = chrono::DateTime::<chrono::Local>::from(fi.created_at);
-            let utc_time = chrono::DateTime::<chrono::Utc>::from(fi.created_at);
+            let duration = fi.created_at
+                .duration_since(web_time::SystemTime::UNIX_EPOCH)
+                .unwrap_or_default();
+            let secs = duration.as_secs() as i64;
+            let nsecs = duration.subsec_nanos();
+            let dt = chrono::DateTime::from_timestamp(secs, nsecs).unwrap_or_default();
+            let local_time = chrono::DateTime::<chrono::Local>::from(dt);
+            let utc_time = chrono::DateTime::<chrono::Utc>::from(dt);
             let formatted_date = format!(
                 "{} / {}",
                 local_time.format("%Y-%m-%d %I:%M %p %Z"),

@@ -10,7 +10,7 @@ use std::io::Read;
 use std::path::PathBuf;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
-use std::time::SystemTime;
+use web_time::SystemTime;
 
 pub struct FileInfo {
     pub created_at: SystemTime,

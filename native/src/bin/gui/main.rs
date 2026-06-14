@@ -24,6 +24,7 @@ use native::run_analyzer_with_progress;
 use explorer::{DemoListItem, get_native_roots, render_native_dir_node, scan_dir_async, scan_demo_folders_async, count_demo_files};
 #[cfg(target_arch = "wasm32")]
 use explorer::{DirNode, SendWrapper, WebFile, build_web_tree, render_web_dir_node};
+use explorer::{DemoCache, CachedDemo};
 
 #[derive(Debug, Parser)]
 struct Args {
@@ -112,6 +113,7 @@ impl Default for AppSettings {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn load_settings() -> AppSettings {
     let path = std::path::PathBuf::from("settings.json");
     if path.exists() {
@@ -156,6 +158,53 @@ fn load_settings() -> AppSettings {
     AppSettings::default()
 }
 
+#[cfg(target_arch = "wasm32")]
+fn load_settings() -> AppSettings {
+    if let Some(window) = web_sys::window() {
+        if let Ok(Some(storage)) = window.local_storage() {
+            if let Ok(Some(content)) = storage.get_item("settings") {
+                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
+                    let language = val
+                        .get("language")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("auto")
+                        .to_string();
+                    let scan_folders_for_demos = val
+                        .get("scan_folders_for_demos")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    let demo_folder_history = val
+                        .get("demo_folder_history")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|v| v.as_str().map(std::path::PathBuf::from))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let pinned_folders = val
+                        .get("pinned_folders")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|v| v.as_str().map(std::path::PathBuf::from))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    return AppSettings {
+                        language,
+                        scan_folders_for_demos,
+                        demo_folder_history,
+                        pinned_folders,
+                    };
+                }
+            }
+        }
+    }
+    AppSettings::default()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn save_settings(settings: &AppSettings) {
     let mut map = serde_json::Map::new();
     map.insert(
@@ -189,6 +238,47 @@ fn save_settings(settings: &AppSettings) {
     let val = serde_json::Value::Object(map);
     if let Ok(content) = serde_json::to_string_pretty(&val) {
         let _ = std::fs::write("settings.json", content);
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn save_settings(settings: &AppSettings) {
+    let mut map = serde_json::Map::new();
+    map.insert(
+        "language".to_string(),
+        serde_json::Value::String(settings.language.clone()),
+    );
+    map.insert(
+        "scan_folders_for_demos".to_string(),
+        serde_json::Value::Bool(settings.scan_folders_for_demos),
+    );
+    map.insert(
+        "demo_folder_history".to_string(),
+        serde_json::Value::Array(
+            settings
+                .demo_folder_history
+                .iter()
+                .map(|p| serde_json::Value::String(p.to_string_lossy().into_owned()))
+                .collect(),
+        ),
+    );
+    map.insert(
+        "pinned_folders".to_string(),
+        serde_json::Value::Array(
+            settings
+                .pinned_folders
+                .iter()
+                .map(|p| serde_json::Value::String(p.to_string_lossy().into_owned()))
+                .collect(),
+        ),
+    );
+    let val = serde_json::Value::Object(map);
+    if let Ok(content) = serde_json::to_string_pretty(&val) {
+        if let Some(window) = web_sys::window() {
+            if let Ok(Some(storage)) = window.local_storage() {
+                let _ = storage.set_item("settings", &content);
+            }
+        }
     }
 }
 
@@ -352,6 +442,7 @@ enum SortColumn {
 struct Gui {
     analyses: HashMap<String, (FileInfo, Analysis)>,
     selected_analysis_path: Option<String>,
+    cache: DemoCache,
     player_highlight: PlayerHighlighting,
     error_message: Option<String>,
     settings: AppSettings,
@@ -454,6 +545,66 @@ enum GuiMessage {
 }
 
 impl Gui {
+    fn save_cache(&self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if let Ok(content) = serde_json::to_string_pretty(&self.cache) {
+                let _ = std::fs::write(".dod-tools-cache.json", content);
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            if let Ok(content) = serde_json::to_string(&self.cache) {
+                if let Some(window) = web_sys::window() {
+                    if let Ok(Some(storage)) = window.local_storage() {
+                        let _ = storage.set_item("demo_cache", &content);
+                    }
+                }
+            }
+        }
+    }
+
+    fn add_analysis_to_cache(&mut self, file_info: &FileInfo, analysis: &Analysis) {
+        let path = file_info.path.clone();
+        
+        let date_str = {
+            let duration = file_info.created_at
+                .duration_since(web_time::SystemTime::UNIX_EPOCH)
+                .unwrap_or_default();
+            let secs = duration.as_secs() as i64;
+            let nsecs = duration.subsec_nanos();
+            let dt = chrono::DateTime::from_timestamp(secs, nsecs).unwrap_or_default();
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                chrono::DateTime::<chrono::Local>::from(dt)
+                    .format("%Y-%m-%d %I:%M %p")
+                    .to_string()
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                dt.format("%Y-%m-%d").to_string()
+            }
+        };
+        
+        let modified_ms = file_info.created_at
+            .duration_since(web_time::SystemTime::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+
+        let cached = CachedDemo {
+            path: path.clone(),
+            name: file_info.name.clone(),
+            map_name: analysis.demo_info.map_name.clone(),
+            date: date_str,
+            demo_type: analysis.demo_info.demo_type.clone(),
+            size_bytes: file_info.size_bytes,
+            modified_ms,
+        };
+
+        self.cache.demos.insert(path, cached);
+        self.save_cache();
+    }
+
     fn filter_demo(&self, name: &str, map_name: &str, date: &str, path_str: &str) -> bool {
         if !self.filter_query.is_empty() {
             let q = self.filter_query.to_lowercase();
@@ -468,6 +619,8 @@ impl Gui {
         if self.filter_type != "All" {
             let demo_type = if let Some((_, analysis)) = self.analyses.get(path_str) {
                 analysis.demo_info.demo_type.as_str()
+            } else if let Some(cached) = self.cache.demos.get(path_str) {
+                cached.demo_type.as_str()
             } else if name.to_lowercase().contains("hltv") {
                 "HLTV"
             } else {
@@ -547,9 +700,37 @@ impl Default for Gui {
         let settings = load_settings();
         apply_language_setting(&settings.language);
 
+        #[cfg(not(target_arch = "wasm32"))]
+        let cache = {
+            let cache_path = std::path::Path::new(".dod-tools-cache.json");
+            if cache_path.exists() {
+                std::fs::read_to_string(cache_path)
+                    .ok()
+                    .and_then(|content| serde_json::from_str::<DemoCache>(&content).ok())
+                    .unwrap_or_default()
+            } else {
+                DemoCache::default()
+            }
+        };
+        #[cfg(target_arch = "wasm32")]
+        let cache = {
+            let mut c = DemoCache::default();
+            if let Some(window) = web_sys::window() {
+                if let Ok(Some(storage)) = window.local_storage() {
+                    if let Ok(Some(content)) = storage.get_item("demo_cache") {
+                        if let Ok(loaded) = serde_json::from_str::<DemoCache>(&content) {
+                            c = loaded;
+                        }
+                    }
+                }
+            }
+            c
+        };
+
         Self {
             analyses: HashMap::default(),
             selected_analysis_path: None,
+            cache,
             player_highlight: PlayerHighlighting::default(),
             error_message: None,
             rx,
@@ -656,7 +837,7 @@ fn parse_web_file(ctx: Context, tx: mpsc::Sender<GuiMessage>, web_file: WebFile)
             let tx_clone = tx.clone();
             let ctx_clone = ctx.clone();
             let path_str = web_file.path.clone();
-            let start_time = std::time::SystemTime::now();
+            let start_time = web_time::SystemTime::now();
 
             let progress_cb = move |processed: usize, total: usize| {
                 if total > 0 {
@@ -688,7 +869,7 @@ fn parse_web_file(ctx: Context, tx: mpsc::Sender<GuiMessage>, web_file: WebFile)
                     .ok()
                     .and_then(|v| v.as_f64())
                     .unwrap_or(0.0);
-                    let created_at = std::time::SystemTime::UNIX_EPOCH
+                    let created_at = web_time::SystemTime::UNIX_EPOCH
                         + std::time::Duration::from_millis(last_modified_ms as u64);
 
                     let size_bytes = file.size() as u64;
@@ -766,6 +947,7 @@ impl eframe::App for Gui {
                     ..
                 } => {
                     let path = file_info.path.clone();
+                    self.add_analysis_to_cache(&file_info, &analysis);
                     self.selected_analysis_path = Some(path.clone());
                     self.analyses.insert(path, (file_info, *analysis));
                     self.loading_path = None;
@@ -847,6 +1029,7 @@ impl eframe::App for Gui {
                     file_info,
                     analysis,
                 } => {
+                    self.add_analysis_to_cache(&file_info, &analysis);
                     self.loading_path = None;
                     self.loading_progress = None;
                     self.loading_elapsed = None;
@@ -906,7 +1089,7 @@ impl eframe::App for Gui {
                         self.error_message = None;
                         let analysis = Analysis::from(&bytes[..]);
                         let file_info = FileInfo {
-                            created_at: std::time::SystemTime::UNIX_EPOCH,
+                            created_at: web_time::SystemTime::UNIX_EPOCH,
                             name: name.clone(),
                             path: name.clone(),
                             size_bytes: bytes.len() as u64,
@@ -1437,6 +1620,8 @@ impl eframe::App for Gui {
                                     let path_b = b.path.to_string_lossy();
                                     let type_a = if let Some((_, analysis)) = self.analyses.get(path_a.as_ref()) {
                                         analysis.demo_info.demo_type.as_str()
+                                    } else if let Some(cached) = self.cache.demos.get(path_a.as_ref()) {
+                                        cached.demo_type.as_str()
                                     } else if a.name.to_lowercase().contains("hltv") {
                                         "HLTV"
                                     } else {
@@ -1444,6 +1629,8 @@ impl eframe::App for Gui {
                                     };
                                     let type_b = if let Some((_, analysis)) = self.analyses.get(path_b.as_ref()) {
                                         analysis.demo_info.demo_type.as_str()
+                                    } else if let Some(cached) = self.cache.demos.get(path_b.as_ref()) {
+                                        cached.demo_type.as_str()
                                     } else if b.name.to_lowercase().contains("hltv") {
                                         "HLTV"
                                     } else {
@@ -1567,6 +1754,8 @@ impl eframe::App for Gui {
                                                         self.analyses.get(&path_str)
                                                     {
                                                         analysis.demo_info.demo_type.as_str()
+                                                    } else if let Some(cached) = self.cache.demos.get(&path_str) {
+                                                        cached.demo_type.as_str()
                                                     } else if item.name.to_lowercase().contains("hltv") {
                                                         "HLTV"
                                                     } else {
@@ -1603,13 +1792,21 @@ impl eframe::App for Gui {
                                 let analysis_opt = self.analyses.get(relative_path);
                                 let map = if let Some((_, analysis)) = analysis_opt {
                                     analysis.demo_info.map_name.as_str()
+                                } else if let Some(cached) = self.cache.demos.get(relative_path) {
+                                    cached.map_name.as_str()
                                 } else {
                                     "-"
                                 };
                                 let date_str = if let Some((file_info, _)) = analysis_opt {
-                                    chrono::DateTime::<chrono::Utc>::from(file_info.created_at)
-                                        .format("%Y-%m-%d")
-                                        .to_string()
+                                    let duration = file_info.created_at
+                                        .duration_since(web_time::SystemTime::UNIX_EPOCH)
+                                        .unwrap_or_default();
+                                    let secs = duration.as_secs() as i64;
+                                    let nsecs = duration.subsec_nanos();
+                                    let dt = chrono::DateTime::from_timestamp(secs, nsecs).unwrap_or_default();
+                                    dt.format("%Y-%m-%d").to_string()
+                                } else if let Some(cached) = self.cache.demos.get(relative_path) {
+                                    cached.date.clone()
                                 } else {
                                     "-".to_string()
                                 };
@@ -1629,17 +1826,23 @@ impl eframe::App for Gui {
 
                                 let map_a = if let Some((_, analysis)) = analysis_opt_a {
                                     analysis.demo_info.map_name.as_str()
+                                } else if let Some(cached) = self.cache.demos.get(relative_path_a) {
+                                    cached.map_name.as_str()
                                 } else {
                                     "-"
                                 };
                                 let map_b = if let Some((_, analysis)) = analysis_opt_b {
                                     analysis.demo_info.map_name.as_str()
+                                } else if let Some(cached) = self.cache.demos.get(relative_path_b) {
+                                    cached.map_name.as_str()
                                 } else {
                                     "-"
                                 };
 
                                 let type_a = if let Some((_, analysis)) = analysis_opt_a {
                                     analysis.demo_info.demo_type.as_str()
+                                } else if let Some(cached) = self.cache.demos.get(relative_path_a) {
+                                    cached.demo_type.as_str()
                                 } else if name_a.to_lowercase().contains("hltv") {
                                     "HLTV"
                                 } else {
@@ -1647,6 +1850,8 @@ impl eframe::App for Gui {
                                 };
                                 let type_b = if let Some((_, analysis)) = analysis_opt_b {
                                     analysis.demo_info.demo_type.as_str()
+                                } else if let Some(cached) = self.cache.demos.get(relative_path_b) {
+                                    cached.demo_type.as_str()
                                 } else if name_b.to_lowercase().contains("hltv") {
                                     "HLTV"
                                 } else {
@@ -1762,7 +1967,7 @@ impl eframe::App for Gui {
                                                     .clicked()
                                                 {
                                                     if !is_selected && !is_loading {
-                                                        parse_file_target = Some(file.clone());
+                                                        parse_file_target = Some((*file).clone());
                                                     }
                                                 }
                                             });
@@ -1770,6 +1975,8 @@ impl eframe::App for Gui {
                                                 let demo_type =
                                                     if let Some((_, analysis)) = analysis_opt {
                                                         analysis.demo_info.demo_type.as_str()
+                                                    } else if let Some(cached) = self.cache.demos.get(relative_path) {
+                                                        cached.demo_type.as_str()
                                                     } else if name.to_lowercase().contains("hltv") {
                                                         "HLTV"
                                                     } else {
@@ -1779,7 +1986,9 @@ impl eframe::App for Gui {
                                             });
                                             row.col(|ui| {
                                                 let map = if let Some((_, analysis)) = analysis_opt {
-                                                    &analysis.demo_info.map_name
+                                                    analysis.demo_info.map_name.as_str()
+                                                } else if let Some(cached) = self.cache.demos.get(relative_path) {
+                                                    cached.map_name.as_str()
                                                 } else {
                                                     "-"
                                                 };

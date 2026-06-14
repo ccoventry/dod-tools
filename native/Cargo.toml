@@ -16,9 +16,11 @@ egui-file-dialog = { workspace = true }
 egui_plot = { workspace = true }
 filetime = { workspace = true }
 humantime = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true, features = ["preserve_order"] }
 tabled = { workspace = true }
 chrono = "0.4.45"
+web-time = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }
@@ -52,4 +54,4 @@ wasm-bindgen = "0.2.100"
 wasm-bindgen-futures = "0.4.50"
 console_error_panic_hook = "0.1.7"
 js-sys = "0.3.77"
-web-sys = { version = "0.3.77", features = ["HtmlCanvasElement", "Window", "Document", "Element", "File"] }
+web-sys = { version = "0.3.77", features = ["HtmlCanvasElement", "Window", "Document", "Element", "File", "Storage"] }
