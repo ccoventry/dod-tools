@@ -64,6 +64,22 @@ pub fn build_web_tree(files: &[WebFile]) -> DirNode {
     root
 }
 
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+pub struct CachedDemo {
+    pub path: String,
+    pub name: String,
+    pub map_name: String,
+    pub date: String,
+    pub demo_type: String,
+    pub size_bytes: u64,
+    pub modified_ms: u64,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Default, Debug)]
+pub struct DemoCache {
+    pub demos: std::collections::HashMap<String, CachedDemo>,
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone)]
 pub struct DemoListItem {
@@ -71,6 +87,7 @@ pub struct DemoListItem {
     pub name: String,
     pub map_name: String,
     pub date: String,
+    pub demo_type: String,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -90,11 +107,35 @@ fn get_demo_map_name(path: &Path) -> String {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn process_demo_file(p: PathBuf) -> DemoListItem {
+fn process_demo_file(p: PathBuf, cache: &DemoCache) -> DemoListItem {
     let name = p.file_name().unwrap().to_string_lossy().into_owned();
+    let path_str = p.to_string_lossy().into_owned();
+
+    let metadata = std::fs::metadata(&p).ok();
+    let size_bytes = metadata.as_ref().map(|m| m.len()).unwrap_or(0);
+    let modified_ms = metadata.as_ref()
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.duration_since(std::time::SystemTime::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+
+    // Try to retrieve from cache first
+    if let Some(cached) = cache.demos.get(&path_str) {
+        if cached.size_bytes == size_bytes && cached.modified_ms == modified_ms {
+            return DemoListItem {
+                path: p,
+                name: cached.name.clone(),
+                map_name: cached.map_name.clone(),
+                date: cached.date.clone(),
+                demo_type: cached.demo_type.clone(),
+            };
+        }
+    }
+
+    // Cache miss or modified: read from file header
     let map_name = get_demo_map_name(&p);
-    let date = if let Ok(metadata) = std::fs::metadata(&p) {
-        if let Ok(created) = metadata.created().or_else(|_| metadata.modified()) {
+    let date = if let Some(m) = metadata {
+        if let Ok(created) = m.created().or_else(|_| m.modified()) {
             chrono::DateTime::<chrono::Local>::from(created)
                 .format("%Y-%m-%d %I:%M %p")
                 .to_string()
@@ -105,16 +146,36 @@ fn process_demo_file(p: PathBuf) -> DemoListItem {
         "-".to_string()
     };
 
+    // Pre-calculate demo type using filename heuristic as fallback
+    let demo_type = if name.to_lowercase().contains("hltv") {
+        "HLTV".to_string()
+    } else {
+        "POV".to_string()
+    };
+
     DemoListItem {
         path: p,
         name,
         map_name,
         date,
+        demo_type,
     }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 fn get_dir_contents_parallel(path: &Path) -> Vec<DemoListItem> {
+    // Load central cache from disk
+    let cache_path = Path::new(".dod-tools-cache.json");
+    let cache = if cache_path.exists() {
+        std::fs::read_to_string(cache_path)
+            .ok()
+            .and_then(|content| serde_json::from_str::<DemoCache>(&content).ok())
+            .unwrap_or_default()
+    } else {
+        DemoCache::default()
+    };
+
+    let cache_arc = std::sync::Arc::new(cache);
     let mut file_paths = vec![];
     if let Ok(entries) = std::fs::read_dir(path) {
         for entry in entries.filter_map(Result::ok) {
@@ -138,7 +199,7 @@ fn get_dir_contents_parallel(path: &Path) -> Vec<DemoListItem> {
 
     if num_threads <= 1 {
         for p in file_paths {
-            results.push(process_demo_file(p));
+            results.push(process_demo_file(p, &cache_arc));
         }
     } else {
         let (tx, rx) = std::sync::mpsc::channel();
@@ -147,9 +208,10 @@ fn get_dir_contents_parallel(path: &Path) -> Vec<DemoListItem> {
         std::thread::scope(|s| {
             for chunk in file_paths.chunks(chunk_size) {
                 let tx = tx.clone();
+                let cache_ref = cache_arc.clone();
                 s.spawn(move || {
                     for p in chunk {
-                        let item = process_demo_file(p.clone());
+                        let item = process_demo_file(p.clone(), &cache_ref);
                         let _ = tx.send(item);
                     }
                 });

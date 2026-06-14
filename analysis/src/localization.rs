@@ -4,6 +4,9 @@ use std::sync::RwLock;
 static ACTIVE_LANGUAGE: RwLock<&'static str> = RwLock::new("english");
 static LOCALIZATIONS: RwLock<Option<HashMap<String, String>>> = RwLock::new(None);
 
+#[cfg(target_arch = "wasm32")]
+include!(concat!(env!("OUT_DIR"), "/embedded_localizations.rs"));
+
 pub fn get_active_language() -> &'static str {
     *ACTIVE_LANGUAGE.read().unwrap()
 }
@@ -218,6 +221,7 @@ fn load_pass(map: &mut HashMap<String, String>, filter_lang: &str, amxx_code: &s
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn read_to_string_lossy_utf16_or_utf8(path: &std::path::Path) -> std::io::Result<String> {
     let bytes = std::fs::read(path)?;
     if bytes.len() >= 2 {
@@ -256,8 +260,35 @@ fn read_to_string_lossy_utf16_or_utf8(path: &std::path::Path) -> std::io::Result
 }
 
 #[cfg(target_arch = "wasm32")]
-fn load_localizations_from_disk(_active_lang: &str) -> HashMap<String, String> {
-    HashMap::new()
+fn load_localizations_from_disk(active_lang: &str) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    let amxx_code = get_amxx_code(active_lang);
+
+    // Pass 1: English baseline
+    load_pass_embedded(&mut map, "english", "en");
+
+    // Pass 2: Active language overlay (if not English)
+    if active_lang != "english" {
+        load_pass_embedded(&mut map, active_lang, amxx_code);
+    }
+
+    map
+}
+
+#[cfg(target_arch = "wasm32")]
+fn load_pass_embedded(map: &mut HashMap<String, String>, filter_lang: &str, amxx_code: &str) {
+    for (name, content) in EMBEDDED_LOCALIZATIONS {
+        let name_lower = name.to_lowercase();
+        let should_load = if name_lower.contains('_') {
+            name_lower.ends_with(&format!("_{}.txt", filter_lang))
+        } else {
+            true
+        };
+
+        if should_load {
+            parse_localization_content(content, map, amxx_code);
+        }
+    }
 }
 
 #[cfg(test)]

@@ -1992,12 +1992,14 @@ dependencies = [
  "filetime",
  "humantime",
  "js-sys",
+ "serde",
  "serde_json",
  "tabled",
  "tokio",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+ "web-time",
 ]
 
 [[package]]
