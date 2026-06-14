@@ -10,18 +10,19 @@ Below are the remaining open tasks in the backlog, structured as a clean, scanna
 
 | ID | Difficulty | Task | Area | Description | Dev Notes |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **M7** | 🟡 **Medium** | **WASM Translation Assets** | GUI / WASM | Embed translation catalogs (e.g. `dod_tools_english.txt`) inside compiled binaries to enable WebAssembly translation. | Use `include_str!("../localizations/dod_tools_english.txt")` to bundle the default catalog directly into the binary for WASM runtime access. |
-| **M8** | 🟡 **Medium** | **Lock-Free Concurrent Lookups** | Core / UI Thread | Replace the localization wrapper's `Mutex` with a read-mostly `RwLock` or `ArcSwap` to prevent widget thread contention. | Refactor the translation cache in `analysis/src/lib.rs` to use `std::sync::RwLock` or `once_cell` instead of standard `Mutex` locks. |
-| **M10** | 🟡 **Medium** | **Project Renaming** | Project / Core | Rename the repository to support a broader set of Half-Life mods (e.g., CS 1.6, Team Fortress Classic). | Perform workspace-wide search & replace of `"dod-tools"` to the new project identifier and rename root config/directories. |
-| **M11** | 🟡 **Medium** | **Server Mod Detection** | Parser / GUI | Detect common server-side mods (AMX/AMXX, Warcraft 3, Super Hero) present during a recorded demo and surface them in the UI. | Scan `TextMsg` / `HudText` / `Motd` content for known plugin signatures (e.g., `[AMX]`, `[ADMIN]`, XP/gold HUD text). Store detected mods as `Vec<DetectedMod>` on `AnalyzerState`. **Important**: presence of AMX must *not* influence match-type classification — KTP is a competitive league that uses AMX heavily. Decide placement (Summary section? tooltip? dedicated field?) before implementing. |
-| **M14** | 🟡 **Medium** | **Group Scoreboard by Team** | GUI / Scoreboard | Remove the "Team" column from the scoreboard table and group players under separate Allies/British and Axis headings. | Refactor `native/src/bin/gui/views/scoreboard.rs` to split the player list by team and build separate tables (or segmented headers) using `TableBuilder` with visual gaps in between them. |
-| **M15** | 🟡 **Medium** | **Announce Round Cap-Outs in Chat** | GUI / Chat Log | Display team cap-out messages (e.g. "Axis Forces Have Capped Out") in the Chat Log tab. | Identify and extract the specific `TextMsg` or `HudText` strings related to team round/match cap-outs (e.g., `#Game_Axis_Capped`) and append them as system announcements to the chat log. |
-| **M16** | 🟡 **Medium** | **Robust Demo Type Guessing** | Parser / Core | Fix the issue where demo type (POV vs HLTV) is guessed on initial parse and then flips or changes after a full parse when clicked. | Implement a lightweight initial scan of the first few packets, or maintain a persistent metadata cache. (See detailed spec below). |
-| **M17** | 🟡 **Medium** | **Announce Flag Captures in Chat** | GUI / Chat Log | Add single-point and double-point flag capture events to the Chat Log. | Track the flag cap events (`CapMsg` or team scoring triggers) in the demo parser, extract the player and flag name, and format them as system chat messages (e.g., `"[system] Player captured Center Flag (+1 point)"`). |
-| **M18** | 🟡 **Medium** | **Demo List Search & Filtering** | GUI / Layout | Add filtering controls (by type, map, date range, search query) and a "Reset Filters" button above the demo list. | Add search query and criteria state to the Explorer UI in `native/src/bin/gui/main.rs` and filter the file list before drawing tree nodes or rows. |
-| **M19** | 🟡 **Medium** | **Explorer Folder Collapsing State Fix** | GUI / Layout | Allow collapsing a folder in the Explorer tree even if the active file is a child of the folder being closed. | Modify the node selection/expansion logic in `native/src/bin/gui/explorer.rs` to prevent auto-expanding parents if they are collapsed by manual user click. |
-| **M20** | 🟡 **Medium** | **Score Reset Resiliency** | Parser / Core | Handle KTP league score updates at the start of the second half to prevent incorrect round-winner or score tracking. | Implement logic in `analysis/src/lib.rs` that detects a mid-match score override/reset at the start of a half and adjusts round counting base values accordingly rather than mis-assigning point deltas. |
-| **M21** | 🟡 **Medium** | **High-Quality / Colored Icons** | GUI / Layout | Replace the monochrome outline folder icons with colored vector outlines or custom colored images. | Support loading custom PNG/SVG assets or styling an icon font with custom color palettes in egui. See detailed spec below. |
+| **M7** | 🟡 **Medium** | **WASM Translation Assets** | GUI / WASM | Embed translation catalogs (e.g. `dod_tools_english.txt`) inside compiled binaries to enable WebAssembly translation. | Use conditional compilation (`#[cfg(target_arch = "wasm32")]`) to bundle all localization files (`dod_tools_english.txt`, `dod_english.txt`, `gameui_english.txt`, and `valve_english.txt`) into the binary. (See detailed spec below). |
+| **M8** | 🟡 **Medium** | **Lock-Free Concurrent Lookups** | Core / UI Thread | Replace the localization wrapper's `Mutex` with a read-mostly `RwLock` or `ArcSwap` to prevent widget thread contention. | Refactor `ACTIVE_LANGUAGE` and `LOCALIZATIONS` in `analysis/src/localization.rs` to use `std::sync::RwLock` instead of standard `Mutex` to prevent lock contention, supporting resetting on runtime language changes. (See detailed spec below). |
+| **M10** | 🟡 **Medium** | **Project Renaming** | Project / Core | Rename the repository to support a broader set of Half-Life mods (e.g., CS 1.6, Team Fortress Classic). | Update workspace configuration files, Cargo declarations, settings paths, and cache files (e.g., `.dod-tools-cache.json`) to prevent breaking user settings and history. |
+| **M11** | 🟡 **Medium** | **Server Mod Detection** | Parser / GUI | Detect common server-side mods (AMX/AMXX, Warcraft 3, Super Hero) present during a recorded demo and surface them in the UI. | Limit scanning to relevant console network frames (`TextMsg`, `HudText`, `Motd`) to avoid parsing overhead. Store as `Vec<DetectedMod>` on `AnalyzerState` and render in the Summary panel. |
+| **M15** | 🟡 **Medium** | **Announce Round Cap-Outs in Chat** | GUI / Chat Log | Display team cap-out messages (e.g. "Axis Forces Have Capped Out") in the Chat Log tab. | Parse `#Game_Allies_Capped`, `#Game_Axis_Capped`, `#Game_Allies_Win`, and `#Game_Axis_Win` text messages in `analysis/src/chat.rs` and route them as `ChatType::System` announcements. |
+| **M16** | 🟡 **Medium** | **Robust Demo Type Guessing** | Parser / Core | Fix the issue where demo type (POV vs HLTV) is guessed on initial parse and then flips or changes after a full parse when clicked. | Implement a persistent local cache file (`.dod-tools-cache.json`) to store maps, demo types, and metadata keyed by file modification time (Option B). (See detailed spec below). |
+| **M17** | 🟡 **Medium** | **Announce Flag Captures in Chat** | GUI / Chat Log | Add single-point and double-point flag capture events to the Chat Log. | Match flag capture event text templates (e.g., `#Game_captured_area`) in the `TextMsg` parser block to generate `[system]` chat entries without heavy network entity tracing. |
+| **M18** | 🟡 **Medium** | **Demo List Search & Filtering** | GUI / Layout | Add filtering controls (by type, map, date range, search query) and a "Reset Filters" button above the demo list. | Add filter controls to a collapsible UI panel above the explorer tree in `main.rs` to keep layouts spacious. |
+| **M19** | 🟡 **Medium** | **Explorer Folder Collapsing State Fix** | GUI / Layout | Allow collapsing a folder in the Explorer tree even if the active file is a child of the folder being closed. | Modify the node expansion logic in `explorer.rs` to check for active folder transitions instead of forcing the parent open on every frame. (See detailed spec below). |
+| **M20** | 🟡 **Medium** | **Score Reset Resiliency** | Parser / Core | Handle KTP league score updates at the start of the second half to prevent incorrect round-winner or score tracking. | Monitor `ResetHUD` and `ScoreInfo` updates mid-match to reset the analyzer's baseline scores when they drop back to 0-0. |
+| **M21** | 🟡 **Medium** | **High-Quality / Colored Icons** | GUI / Layout | Replace the monochrome outline folder icons with colored vector outlines or custom colored images. | Implement Option B: style standard folder emoji labels with custom `egui::RichText` colors based on presence of demo files (e.g., sleek gray vs warm yellow). (See detailed spec below). |
+| **M22** | 🟡 **Medium** | **Auto-Detect Game/Mod Localizations** | Core / GUI | Automatically locate and load language localization catalogs (`dod_*.txt`, `valve_*.txt`) from the user's local Steam or Half-Life installation when a demo folder is loaded. | Add search paths dynamically based on selected explorer directories, checking siblings and parent directories for game resources (e.g., `dod/resource` or `valve/resource`). (See detailed spec below). |
+| **M23** | 🟡 **Medium** | **Premium UI Cards & Accent Tab Styling** | GUI / Layout | Restyle the GUI tabs and summary blocks to use modern metrics cards and colored underline active tab accents. | Redesign the tab headers and player overview cards using styled `egui::Frame` panels and draw active state underline strokes using egui painter. (See detailed spec below). |
 | **H1** | 🔴 **Hard** | **Combine Weapon & POV Tabs** | GUI / Layout | Merge "Weapon Breakdowns" and "POV Analytics" into a player dropdown selector. Show extra POV stats with visual notes only when the POV player is chosen. | Merge `views/weapons.rs` and `views/pov.rs` into a unified player details view. Add dynamic checks to append the POV analytics grid when the POV player is active. |
 | **H2** | 🔴 **Hard** | **Objective Capture Timelines** | Parser / GUI | Track flags captured (`CapMsg`) and interruptions (`CancelProg`) to display objective capture timelines. | Track `CapMsg` and `CancelProg` network messages in `analysis/src/lib.rs` and build a horizontal time-based timeline widget in the GUI. |
 | **H3** | 🔴 **Hard** | **Objective Capture Timelines** | Parser / Core | Trace POV ammo box creation/pickup/decay timelines by decoding delta packet updates (`SvcDeltaPacketEntities`). | Parse `SvcPacketEntities` updates and `SvcDeltaPacketEntities` decoders in `analysis/src/lib.rs` to map `models/w_ammobox.mdl` lifetimes. |
@@ -30,6 +31,8 @@ Below are the remaining open tasks in the backlog, structured as a clean, scanna
 | **H6** | 🔴 **Hard** | **Vec Capacity Pre-allocation** | Parser / Core | Pre-allocate collections (rounds, chat logs) using size-based heuristics to minimize reallocation cycles. | Pre-allocate capacities on vectors (e.g. `Vec::with_capacity`) inside `analysis/src/lib.rs` state updates using demo file size scale factors. |
 | **H7** | 🔴 **Hard** | **"Trim Demo(s)" Tool** | CLI / Core | Slice and trim out demo warmups/setup times (detailed spec below). | Implement the trimming specification (handshake capture, warmup frame pruning, directory rebuilding) in a CLI command. |
 | **H8** | 🔴 **Hard** | **Background Threaded Demo Loading** | GUI / Threading | Prevent the GUI main thread from freezing when loading large demos. Move demo parsing to a background thread and report progress steps/percentage to the UI spinner/bar. | Offload parsing calls to a Rust thread or tokio task, communicating step-by-step progress through a channel to egui. (See detailed spec below). |
+| **H9** | 🔴 **Hard** | **Interactive Minimap & Player Positions** | GUI / Parser | Parse 3D player coordinates and project them onto a 2D minimap canvas overlaying map overview textures during playback. | Extract player origins from packet entities, map them using classic Half-Life map overview configurations, and draw them on a custom egui painter/canvas. (See detailed spec below). |
+
 
 ---
 
@@ -62,6 +65,7 @@ Below is a history of all successfully implemented and verified tasks.
 | **[x] E13** | 🟢 **Easy** | **Player Profile External Links** | GUI / Scoreboard | Add quick web links to popular profiling services (e.g. Legit-Proof, Steam Community) next to a player's ID on the scoreboard. | *Completed:* Consolidated external links (Steam profile and Legit-Proof) directly into the Player Details view. |
 | **[x] E15** | 🟢 **Easy** | **Clean Up System Message Formatting** | Parser / Chat Log | Trim or clean up trailing newlines and raw console command arguments (like `"\nready2 3 4\n"`) from system announcements. | *Completed:* Implemented raw console command filtering and newline/whitespace normalization in system message translation, with associated tests. |
 | **[x] M6** | 🟡 **Medium** | **Maximize Tab Space Layout** | GUI / Layout | Expand widget layouts to consume the full screen width and height since the side-by-side demo comparison panel is gone. | *Completed:* Adjusted default widget widths/margins and TableBuilder Column configurations in `native/src/bin/gui/views/` to occupy 100% of the screen. Centered the scoreboard view and bounded its width to 50% of the screen. |
+| **[x] M14** | 🟡 **Medium** | **Group Scoreboard by Team** | GUI / Scoreboard | Remove the "Team" column from the scoreboard table and group players under separate Allies/British and Axis headings. | *Completed:* Removed the "Team" column from the scoreboard table and refactored `native/src/bin/gui/views/scoreboard.rs` to split the player list by team and render separate Allied/British and Axis headers and tables with total statistics. |
 
 ---
 
@@ -273,19 +277,11 @@ To resolve this, we will move demo loading to a background worker thread. Egui's
 
 Currently, the file explorer uses a simple heuristic to guess the demo type prior to parsing (specifically: if the filename contains "hltv", it is classified as "HLTV", otherwise "POV"). Once selected, the full parser runs, detects the true demo type by checking network structure, and updates the state. This causes visual flipping or twitching in the explorer list (e.g. a file named `axis-vs-allies.dem` starting as "POV" and suddenly changing to "HLTV").
 
-#### Proposed Solutions
-We have two viable approaches:
-
-##### Option A: Lightweight Initial Scanner
-Instead of parsing the entire demo file, we read the demo header and scan the first ~100 network packets/frames.
-- **HLTV Signature**: HLTV demos contain director messages (`SvcDirector` network commands) and multiple player slot updates in rapid succession without client console inputs.
-- **POV Signature**: POV demos contain client-side input commands (`dem_cmd` frames) and a single active view frame matching the recording client.
-- This scan can run in the parallel reader thread pool in `explorer.rs` alongside the map name parsing (`get_demo_map_name`).
-
-##### Option B: Local Metadata Caching
+#### Recommended Approach: Local Metadata Caching (Option B)
 Introduce a persistent local cache file (e.g., `.dod-tools-cache.json` or a SQLite database in the app data folder) storing resolved metadata (filename, map, type, duration) for scanned files.
 - When scanning the directory, if a file's modification time matches the cache entry, read metadata from the cache instantly.
 - If it is a cache miss, queue the file for a background scan, then write back to the cache. This ensures fast load times and persistent, correct classifications.
+- Avoid Option A (Initial scan of files on directory list) because scanning hundreds of files on the main explorer listing would block the UI thread during file dialogs.
 
 ---
 
@@ -293,20 +289,117 @@ Introduce a persistent local cache file (e.g., `.dod-tools-cache.json` or a SQLi
 
 Currently, folder icons (`📁` and `📂`) render as white monochrome vector outlines because `egui` does not load color/bitmap system emoji fonts natively. To make the folder tree visual layout feel premium, we can implement high-quality colorized folder icons.
 
-#### Option A: Load Custom PNG or SVG Images
-Instead of text emoji characters, load small image assets into `egui` textures and render them.
-1. **Asset Storage**: Embed the assets (e.g. `folder_closed.png` and `folder_open_demos.png`) directly into the binary using `include_bytes!`.
-2. **Texture Loading**: In `Gui::default` or during the first frame callback, load these bytes into `egui::TextureHandle` objects using `ctx.load_texture(...)`.
-3. **Rendering**: In `explorer.rs`'s `render_native_dir_node`, draw the texture using `ui.image(...)` instead of rendering text:
-   ```rust
-   let texture = if has_demos { &self.folder_open_demos_texture } else { &self.folder_closed_texture };
-   ui.image(texture, [16.0, 16.0]);
-   ```
-
-#### Option B: Colorized Monochrome Icon Font (e.g. FontAwesome)
-Load a custom icon font (like FontAwesome or Google Material Symbols) that contains modern folder icon glyphs, and apply custom colors to the text widgets.
-1. **Font Registration**: Register the TTF/OTF font file bytes in `egui::FontDefinitions` under `ctx.set_fonts(...)`.
-2. **Icon Selection**: Use the icon font's private use area (PUA) characters (e.g. `\u{f07b}` for folder, `\u{f07c}` for open folder).
-3. **Dynamic Styling**: Draw the labels with explicit text colors using `egui::RichText`:
-   - Regular folder: `RichText::new("📁").color(Color32::from_rgb(120, 120, 120))` (sleek gray).
+#### Recommended Approach: Colorized Monochrome Icons via RichText (Option B)
+Instead of embedding complex external PNG/SVG textures, style standard characters/icons directly with explicit colors using `egui::RichText`.
+1. **Dynamic Styling**: Draw the labels with explicit text colors using `egui::RichText` based on the status of the folder:
+   - Regular empty folder: `RichText::new("📁").color(Color32::from_rgb(120, 120, 120))` (sleek gray).
    - Folder containing demos: `RichText::new("📂").color(Color32::from_rgb(250, 190, 50))` (vibrant warm yellow).
+2. This approach is zero-overhead, compile-time safe, and highly portable between WebAssembly (WASM) and Native platforms.
+
+---
+
+### 7. Explorer Folder Collapsing State Fix [M19 - 🟡 Medium]
+
+#### The Problem
+In [explorer.rs](file:///d:/Repos/dod-tools/native/src/bin/gui/explorer.rs#L283-L293), the directory tree renderer checks if the currently active path resides under a folder node (`is_ancestor`). If true, it overrides the collapsing header state:
+```rust
+if is_ancestor {
+    state.set_open(true);
+    state.store(ui.ctx());
+}
+```
+This runs on **every single frame**, making it impossible for a user to collapse parent folders of the active file—any manual collapse is immediately overwritten and snapped open on the subsequent frame.
+
+#### Resolution Steps
+1. Add a tracking field to the GUI state in `main.rs` (e.g., `last_selected_path: Option<PathBuf>`).
+2. When drawing the tree, only apply `state.set_open(true)` if `last_selected_path` has just changed (a selection transition).
+3. Once the initial auto-expansion runs, do not force the state open on subsequent frames, enabling full manual collapse.
+
+---
+
+### 8. WASM Translation Assets [M7 - 🟡 Medium]
+
+#### The Problem
+Currently, the translation engine in `analysis/src/localization.rs` performs file-system directories scanning to load localization files. On WASM builds (`target_arch = "wasm32"`), disk IO is unsupported, returning an empty translation map.
+
+#### Resolution Steps
+1. Bundle all key translation catalogs (`dod_tools_english.txt`, `dod_english.txt`, `gameui_english.txt`, and `valve_english.txt`) from the `/localizations` directory directly using `include_str!`.
+2. Wrap the assets initialization inside target conditional checks:
+   ```rust
+   #[cfg(target_arch = "wasm32")]
+   fn load_localizations_from_disk(_active_lang: &str) -> HashMap<String, String> {
+       // Parse embedded strings instead of reading from disk
+   }
+   ```
+3. Use a static/lazy initialization step to parse the embedded strings when the application is launched.
+
+---
+
+### 9. Lock-Free Concurrent Lookups [M8 - 🟡 Medium]
+
+#### The Problem
+In `analysis/src/localization.rs`, lookups are protected by standard `Mutex` locks. During UI rendering, translation lookup (`t(...)`) is called multiple times per widget per frame, causing potential lock contention and UI micro-stutters.
+
+#### Resolution Steps
+1. Refactor `LOCALIZATIONS` to use a `std::sync::RwLock` wrapping the `Option<HashMap<String, String>>`.
+2. This allows multiple concurrent reader threads (e.g., parallel rendering or background parsing) to perform lookups concurrently.
+3. When the user changes active languages via UI, acquire a write lock to flush/reset the `HashMap`. Do not use `OnceLock` because `OnceLock` values are immutable and cannot be cleared.
+
+---
+
+### 10. Auto-Detect Game/Mod Localizations [M22 - 🟡 Medium]
+
+#### The Problem
+Currently, localizations are loaded only from relative paths within the application's directory (`localizations` or `../localizations`). If a user has a localized game installed in a custom Steam directory, they would have to manually configure or map their mod folders to see localized text for their language.
+
+#### Resolution Steps
+1. Extend the localization loading API in `analysis/src/localization.rs` to allow dynamically adding directory paths.
+2. In the GUI explorer or main event handler, when a user selects a demos directory:
+   - Check if that directory contains a `resource` folder (e.g., `dod/resource`).
+   - Traverse up parent directories to locate a `Half-Life` root directory.
+   - If found, automatically append the resource folders for `valve` and `dod` (e.g., `Half-Life/valve/resource/` and `Half-Life/dod/resource/`) to the localization search path list.
+3. Trigger a cache flush and reload (`set_active_language(get_active_language())`) using the updated path registry.
+
+---
+
+### 11. Premium UI Cards & Accent Tab Styling [M23 - 🟡 Medium]
+
+#### The Problem
+The current GUI tabs and layout render as basic text/labels with standard borders, failing to reflect the high-quality dashboard aesthetics generated in design mockups (e.g., `gui_dashboard.png`). The interface requires a more premium theme with visual hierarchy and active indicator styling.
+
+#### Resolution Steps
+1. **Metric Cards**: Refactor player stats and summary summaries into visual blocks:
+   - Use `egui::Frame` with round corner radius (`corner_radius(6.0)`), inner margins (`inner_margin(12.0)`), custom background fills (`bg_fill(Color32::from_rgb(26, 26, 26))`), and accent outline strokes.
+   - Group information inside horizontal rows with clear headers and larger font displays for key metrics (Score, Kills, Deaths).
+2. **Active Underline Tabs**:
+   - Instead of standard buttons, draw the navigation tab strip using a custom layout.
+   - For the active tab, paint a thin horizontal accent line (in theme/team color) along the bottom margin of the tab label using `ui.painter().line(...)` after determining the label's bounding box (`rect`).
+
+---
+
+### 12. Interactive Minimap & Player Positions Playback [H9 - 🔴 Hard / High Effort]
+
+#### The Problem
+The dashboard mockup (`gui_dashboard.png`) includes a minimap showing live player positions. The application currently has no geospatial overview of the match.
+
+#### Technical Feasibility & Implementation
+1. **Data Parsing**:
+   - Player 3D coordinates (origins) are present in network frame entities (`SvcPacketEntities` and `SvcDeltaPacketEntities`).
+   - We must extend the parsing loop in `dod` and `analysis` to record players' `(x, y, z)` origins for each frame tick, keeping them in a frame-indexed player lookup table in the `Analysis` structure.
+2. **2D Projection (Overview Files)**:
+   - GoldSrc maps specify 2D projections in `overviews/<map_name>.txt` configs (e.g., `dod_anzio.txt`):
+     - `zoom <f32>` (scale factor)
+     - `origin <x> <y> <z>` (coordinate offset representing map center)
+   - Map `(x, y)` game coordinates to `(u, v)` 2D coordinates on a canvas:
+     - $u = \text{center\_x} + \frac{x - \text{origin\_x}}{\text{zoom}}$
+     - $v = \text{center\_y} - \frac{y - \text{origin\_y}}{\text{zoom}}$
+3. **Overview Texture Rendering**:
+   - Load the overview background map PNG/BMP into an `egui::TextureHandle`.
+   - Native builds can read this dynamically from the game's `overviews/` directory.
+   - WASM builds cannot access the local filesystem, so they must use a placeholder grid or attempt to fetch maps from a public remote repository over HTTPS.
+4. **Drawing and Playback Control**:
+   - Draw the overview image inside a custom egui canvas widget.
+   - Iterate through active player positions for the selected frame index, painting colored dots (Allies/British vs. Axis) with short nickname tags on top of the image.
+   - Implement playback controls (Play, Pause, Speed Slider) linked to the timeline widget.
+
+
