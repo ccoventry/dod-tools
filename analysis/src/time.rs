@@ -3,7 +3,7 @@ use dem::types::EngineMessage;
 use std::{ops::Sub, time::Duration};
 
 /// A moment in time when something happened in game.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct GameTime {
     /// Timestamp that represents the amount opf time relative to 0 (recording start).
     pub real_offset: Duration,

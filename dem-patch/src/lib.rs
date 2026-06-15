@@ -19,8 +19,9 @@
 //!
 //! demo.write_to_file("./src/tests/demo2test.dem").unwrap();
 //! ```
-use std::{ffi::OsStr, path::Path};
+#![allow(mismatched_lifetime_syntaxes)]
 
+use std::{ffi::OsStr, path::Path};
 use nom::{combinator::all_consuming, multi::many0};
 use types::{AuxRefCell, ByteVec, DeltaDecoderTable, Demo, NetMessage};
 

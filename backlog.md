@@ -10,6 +10,7 @@ Below are the remaining open tasks in the backlog, structured as a clean, scanna
 
 | ID | Difficulty | Task | Area | Description | Dev Notes |
 | :--- | :--- | :--- | :--- | :--- | :--- |
+| **E16** | 🟢 **Easy** | **WASM Worker Race Condition Fix** | GUI / WASM | Fix loading stall when drag-and-dropping demos on WebAssembly due to lost parse messages. | Implement a message-passing queue in the worker's JavaScript layer to buffer `parse` messages until WASM is ready. (See detailed spec below). |
 | **M7** | 🟡 **Medium** | **WASM Translation Assets** | GUI / WASM | Embed translation catalogs (e.g. `dod_tools_english.txt`) inside compiled binaries to enable WebAssembly translation. | Use conditional compilation (`#[cfg(target_arch = "wasm32")]`) to bundle all localization files (`dod_tools_english.txt`, `dod_english.txt`, `gameui_english.txt`, and `valve_english.txt`) into the binary. (See detailed spec below). |
 | **M8** | 🟡 **Medium** | **Lock-Free Concurrent Lookups** | Core / UI Thread | Replace the localization wrapper's `Mutex` with a read-mostly `RwLock` or `ArcSwap` to prevent widget thread contention. | Refactor `ACTIVE_LANGUAGE` and `LOCALIZATIONS` in `analysis/src/localization.rs` to use `std::sync::RwLock` instead of standard `Mutex` to prevent lock contention, supporting resetting on runtime language changes. (See detailed spec below). |
 | **M10** | 🟡 **Medium** | **Project Renaming** | Project / Core | Rename the repository to support a broader set of Half-Life mods (e.g., CS 1.6, Team Fortress Classic). | Update workspace configuration files, Cargo declarations, settings paths, and cache files (e.g., `.dod-tools-cache.json`) to prevent breaking user settings and history. |
@@ -23,6 +24,7 @@ Below are the remaining open tasks in the backlog, structured as a clean, scanna
 | **M21** | 🟡 **Medium** | **High-Quality / Colored Icons** | GUI / Layout | Replace the monochrome outline folder icons with colored vector outlines or custom colored images. | Implement Option B: style standard folder emoji labels with custom `egui::RichText` colors based on presence of demo files (e.g., sleek gray vs warm yellow). (See detailed spec below). |
 | **M22** | 🟡 **Medium** | **Auto-Detect Game/Mod Localizations** | Core / GUI | Automatically locate and load language localization catalogs (`dod_*.txt`, `valve_*.txt`) from the user's local Steam or Half-Life installation when a demo folder is loaded. | Add search paths dynamically based on selected explorer directories, checking siblings and parent directories for game resources (e.g., `dod/resource` or `valve/resource`). (See detailed spec below). |
 | **M23** | 🟡 **Medium** | **Premium UI Cards & Accent Tab Styling** | GUI / Layout | Restyle the GUI tabs and summary blocks to use modern metrics cards and colored underline active tab accents. | Redesign the tab headers and player overview cards using styled `egui::Frame` panels and draw active state underline strokes using egui painter. (See detailed spec below). |
+| **M24** | 🟡 **Medium** | **Automated Highlight Capture** | CLI / GUI | Generate patched recording demos automatically for detected player killstreaks. | Integrate the command injection engine from `debug_script` to automatically output ready-to-record `.dem` files for killstreaks selected in the UI. (See detailed spec below). |
 | **H1** | 🔴 **Hard** | **Combine Weapon & POV Tabs** | GUI / Layout | Merge "Weapon Breakdowns" and "POV Analytics" into a player dropdown selector. Show extra POV stats with visual notes only when the POV player is chosen. | Merge `views/weapons.rs` and `views/pov.rs` into a unified player details view. Add dynamic checks to append the POV analytics grid when the POV player is active. |
 | **H2** | 🔴 **Hard** | **Objective Capture Timelines** | Parser / GUI | Track flags captured (`CapMsg`) and interruptions (`CancelProg`) to display objective capture timelines. | Track `CapMsg` and `CancelProg` network messages in `analysis/src/lib.rs` and build a horizontal time-based timeline widget in the GUI. |
 | **H3** | 🔴 **Hard** | **Objective Capture Timelines** | Parser / Core | Trace POV ammo box creation/pickup/decay timelines by decoding delta packet updates (`SvcDeltaPacketEntities`). | Parse `SvcPacketEntities` updates and `SvcDeltaPacketEntities` decoders in `analysis/src/lib.rs` to map `models/w_ammobox.mdl` lifetimes. |
@@ -401,5 +403,248 @@ The dashboard mockup (`gui_dashboard.png`) includes a minimap showing live playe
    - Draw the overview image inside a custom egui canvas widget.
    - Iterate through active player positions for the selected frame index, painting colored dots (Allies/British vs. Axis) with short nickname tags on top of the image.
    - Implement playback controls (Play, Pause, Speed Slider) linked to the timeline widget.
+
+---
+
+### 13. WASM Worker Race Condition Fix [E16 - 🟢 Easy]
+
+#### The Problem
+When dragging and dropping a demo file on WebAssembly, the application hangs indefinitely showing `Loading and preparing... (Elapsed: 0.0s)`. This happens because:
+1. `get_or_spawn_worker` creates the Web Worker and immediately posts the `init` message.
+2. Right after, `parse_bytes_via_worker` posts the `parse` message.
+3. The worker is still asynchronously importing and compiling the WASM module. During this compilation phase, its initial JavaScript listener intercepts the `parse` message, does not recognize it, and discards it.
+4. Once WASM compilation finishes, it calls `wasm_bindgen.init_worker()` which registers the new message listener, but the `parse` message has already been lost.
+
+#### Technical Feasibility & Implementation
+Refactor `native/src/bin/gui/main.rs` to keep the worker's main `onmessage` dispatcher in the JavaScript layer, buffering/queuing messages until WASM is fully initialized:
+
+1. **Update `init_worker` and add `handle_worker_message`** in Rust:
+```rust
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+pub fn init_worker() {
+    console_error_panic_hook::set_once();
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+pub fn handle_worker_message(data: wasm_bindgen::JsValue) {
+    let global = js_sys::global();
+    let post_message = js_sys::Reflect::get(&global, &"postMessage".into())
+        .unwrap()
+        .dyn_into::<js_sys::Function>()
+        .unwrap();
+        
+    let type_val = js_sys::Reflect::get(&data, &"type".into())
+        .unwrap()
+        .as_string()
+        .unwrap_or_default();
+        
+    if type_val == "parse" {
+        let path = js_sys::Reflect::get(&data, &"path".into())
+            .unwrap()
+            .as_string()
+            .unwrap_or_default();
+        let name = js_sys::Reflect::get(&data, &"name".into())
+            .unwrap()
+            .as_string()
+            .unwrap_or_default();
+        let last_modified = js_sys::Reflect::get(&data, &"lastModified".into())
+            .unwrap()
+            .as_f64()
+            .unwrap_or(0.0);
+        let size = js_sys::Reflect::get(&data, &"size".into())
+            .unwrap()
+            .as_f64()
+            .unwrap_or(0.0);
+            
+        let bytes_val = js_sys::Reflect::get(&data, &"bytes".into()).unwrap();
+        let uint8_array = js_sys::Uint8Array::new(&bytes_val);
+        let bytes = uint8_array.to_vec();
+        
+        let path_clone = path.clone();
+        let post_message_clone = post_message.clone();
+        let start_time = web_time::SystemTime::now();
+        
+        let progress_cb = move |processed: usize, total: usize| {
+            if total > 0 {
+                let progress = processed as f32 / total as f32;
+                let elapsed_sec = start_time.elapsed().map(|d| d.as_secs_f32()).unwrap_or(0.0);
+                let eta_sec = if progress > 0.01 {
+                    let total_estimated_sec = elapsed_sec / progress;
+                    Some(total_estimated_sec - elapsed_sec)
+                } else {
+                    None
+                };
+                
+                let progress_obj = js_sys::Object::new();
+                js_sys::Reflect::set(&progress_obj, &"type".into(), &"progress".into()).unwrap();
+                js_sys::Reflect::set(&progress_obj, &"path".into(), &path_clone.clone().into()).unwrap();
+                js_sys::Reflect::set(&progress_obj, &"progress".into(), &progress.into()).unwrap();
+                js_sys::Reflect::set(&progress_obj, &"elapsedSec".into(), &elapsed_sec.into()).unwrap();
+                if let Some(eta) = eta_sec {
+                    js_sys::Reflect::set(&progress_obj, &"etaSec".into(), &eta.into()).unwrap();
+                }
+                
+                let _ = post_message_clone.call1(&js_sys::global(), &progress_obj);
+            }
+        };
+        
+        match Analysis::try_from_bytes_with_progress(&bytes, progress_cb) {
+            Ok(analysis) => {
+                if let Ok(serialized) = serde_json::to_string(&analysis) {
+                    let success_obj = js_sys::Object::new();
+                    js_sys::Reflect::set(&success_obj, &"type".into(), &"success".into()).unwrap();
+                    js_sys::Reflect::set(&success_obj, &"path".into(), &path.into()).unwrap();
+                    js_sys::Reflect::set(&success_obj, &"name".into(), &name.into()).unwrap();
+                    js_sys::Reflect::set(&success_obj, &"lastModified".into(), &last_modified.into()).unwrap();
+                    js_sys::Reflect::set(&success_obj, &"size".into(), &size.into()).unwrap();
+                    js_sys::Reflect::set(&success_obj, &"analysisJson".into(), &serialized.into()).unwrap();
+                    
+                    let _ = post_message.call1(&js_sys::global(), &success_obj);
+                } else {
+                    let error_obj = js_sys::Object::new();
+                    js_sys::Reflect::set(&error_obj, &"type".into(), &"error".into()).unwrap();
+                    js_sys::Reflect::set(&error_obj, &"path".into(), &path.into()).unwrap();
+                    js_sys::Reflect::set(&error_obj, &"error".into(), &"Failed to serialize Analysis".into()).unwrap();
+                    
+                    let _ = post_message.call1(&js_sys::global(), &error_obj);
+                }
+            }
+            Err(err) => {
+                let error_obj = js_sys::Object::new();
+                js_sys::Reflect::set(&error_obj, &"type".into(), &"error".into()).unwrap();
+                js_sys::Reflect::set(&error_obj, &"path".into(), &path.into()).unwrap();
+                js_sys::Reflect::set(&error_obj, &"error".into(), &err.into()).unwrap();
+                
+                let _ = post_message.call1(&js_sys::global(), &error_obj);
+            }
+        }
+    }
+}
+```
+
+2. **Update the worker JS setup** in `get_or_spawn_worker`:
+```rust
+        let blob_code = format!(
+            r#"
+            let wasm_bindgen = null;
+            let wasm_promise = null;
+            let pending_messages = [];
+
+            self.onmessage = async function(e) {{
+                const data = e.data;
+                if (data && data.type === 'init') {{
+                    if (wasm_promise) return;
+                    wasm_promise = (async () => {{
+                        try {{
+                            wasm_bindgen = await import(data.jsUrl);
+                            await wasm_bindgen.default(data.wasmUrl);
+                            wasm_bindgen.init_worker();
+                            self.postMessage({{ type: 'ready' }});
+                            for (const msg of pending_messages) {{
+                                wasm_bindgen.handle_worker_message(msg);
+                            }}
+                            pending_messages = [];
+                        }} catch (err) {{
+                            self.postMessage({{ type: 'error', error: err.toString() }});
+                        }}
+                    }})();
+                } else {{
+                    if (wasm_bindgen) {{
+                        wasm_bindgen.handle_worker_message(data);
+                    }} else {{
+                        pending_messages.push(data);
+                    }}
+             }};
+             "#
+         );
+ ```
+
+### 14. Programmatic Demo Movie Recording Commands Injector (HLAE / -demoedit)
+
+For movie makers running Day of Defeat 1.3 (or other GoldSrc mods) with HLAE, manually adding events with `-demoedit` is a tedious process. Programmatically injecting console commands directly into the demo files (`.dem`) offers a much faster workflow.
+
+#### Mechanics
+
+1. **`ConsoleCommand` Frames**: The GoldSrc demo parser handles console commands through `ConsoleCommand` frames (type `3`).
+2. **Execution Timing (`playdemo` vs `viewdemo`)**: 
+   - **`playdemo` is highly recommended** for this automation loop. It functions as a pure sequential stream reader.
+   - Unlike `viewdemo`, `playdemo` completely ignores the demo's directory index at the end of the file. This means if directory byte alignment or offsets are off, `playdemo` will still read and play the file perfectly, bypassing engine index-read crashes.
+3. **HLAE & Speed Automation**: To skip "dead zones" between highlights, the tool automates speed transitions. In GoldSrc, `host_framerate` controls time advancement per rendered frame:
+   - `host_framerate 0` runs the game in real-time (normal speed).
+   - `host_framerate 1` advances one second of game time per frame (extreme fast-forward).
+   However, because GoldSrc's audio buffer desyncs when shifting speeds, we must drop speed back to real-time prior to recording to let the audio engine settle.
+
+#### The Automation Loop
+
+For each target highlight interval `[start_time, stop_time]`:
+- **Initial Setup (Playback Start)**: Inject `host_framerate 1` (fast-forward).
+- **Pre-Streak Normalization (`start_time - 4.0s`)**: Inject `host_framerate 0` to drop back to real-time speed. This gives the game engine 2 full seconds of normal playback to flush audio desyncs and catch up.
+- **Record Start (`start_time - 2.0s`)**: Inject `mirv_recordmovie_start` to start capturing.
+- **Record Stop (`stop_time + 2.0s`)**: Inject `mirv_recordmovie_stop` to stop capturing.
+- **Post-Streak Fast-Forward (`stop_time + 2.1s`)**: Inject `host_framerate 1` to resume fast-forwarding to the next interval.
+
+#### Batch Capture & Process Manager
+
+GoldSrc has legacy memory allocation limits that make it prone to crashes when multiple demos are "daisy-chained" in a single session. To capture multiple demos safely, use a Process Manager workflow:
+1. Pass the `--quit` or `-q` flag to the patch script. This will automatically append a `quit` command 0.5s after the final recording stop event.
+2. Write a wrapper script (e.g. Python or PowerShell) to sequentially launch the game via HLAE using the command-line options, waiting for each instance to shut down before launching the next:
+   ```python
+   # Python sequential launcher using HLAE
+   import subprocess
+   
+   hlae_exe = r"C:\Path\To\HLAE\hlae.exe"
+   game_exe = r"C:\Program Files (x86)\Steam\steamapps\common\Half-Life\hl.exe"
+   
+   for demo in ["capture_01", "capture_02"]:
+       args = [
+           hlae_exe,
+           "-afxHookGoldSrc",
+           "-noGui",
+           "-autoStart",
+           "-gamePath", game_exe,
+           "-modification", "dod",
+           "-customCmdLine", f"-demoedit +playdemo {demo}"
+       ]
+       subprocess.run(args)
+   ```
+
+#### Patch Script (`scratch/debug.rs`)
+
+A compiled utility is located at [debug.rs](file:///d:/Repos/dod-tools/scratch/debug.rs) to handle parsing, frame injection, time sorting, frame re-indexing, and writing back the patched `.dem` file.
+
+To run the script:
+```powershell
+cargo run --release --bin debug_script <input_demo_path> <output_demo_path> <start_time_1> <stop_time_1> [<start_time_2> <stop_time_2> ...] [--quit | -q]
+```
+
+---
+
+### 15. Automated Highlight Capture Generator [M24 - 🟡 Medium]
+
+Build a feature that allows users to export automated HLAE capture demos directly from the analyzed killstreaks within the UI or CLI.
+
+#### Phased Implementation Breakdown
+
+1. **Step 1: The Core Engine (Headless CLI Subcommand)**
+   - Build a foundational command-line interface subcommand in `native` (without GUI components) to run and test the binary injector.
+   - Automatically locate the start and stop game-times of a player's killstreak from the analyzer, translate them to frame times (`real_offset` to `frame.time`), calculate lead-in/lead-out buffers, and inject basic commands (`host_framerate 1`/`0`, `mirv_recordmovie_start`/`stop`).
+   - Export to a new `.dem` file.
+
+2. **Step 2: The Custom Command Framework & GUI Integration**
+   - Add an "Export Capture Demo" button next to player killstreak items in the **Streaks** tab of the GUI.
+   - Build a settings dialog to let users define custom console commands for "Recording" states (e.g. `r_decals 5555; hud_draw 1`) and "Fast-Forwarding" states (e.g. `r_decals 0; hud_draw 0`).
+   - Inject these custom command strings into the exported demos at the corresponding speed transition events.
+
+3. **Step 3: The Death Notice Logic (Clearing Pre-Streak Spills)**
+   - Detect if the target player died within 5.0 seconds before the start of the killstreak (standard GoldSrc death notice fade time).
+   - If they did, delay the injection of custom long-lasting death notice commands (e.g., `hud_deathnotice_time 5555`) until exactly 1 tick before their *first* kill of the streak, allowing prior death notifications to clear.
+
+4. **Step 4: The Automation Queue (Sequential Capture Launcher)**
+   - Support batch exporting all killstreaks above a certain length to a series of capture demos (e.g., `capture_01.dem`, `capture_02.dem`, etc.) and automatically inject a `quit` command 0.5s after the final stop record event.
+   - Write a helper Python script (`capture_queue.py`) using `subprocess` to launch the game sequentially, run each demo via `playdemo`, and terminate on exit.
+
+#### Testing Plan
 
 

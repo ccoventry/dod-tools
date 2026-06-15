@@ -1,9 +1,10 @@
 //! Demo analyzer that runs in a terminal and produces text output.
 
 use analysis::{Analysis, MortalityState, Round, SteamId, Team};
-use clap::{Parser, ValueEnum};
+use clap::{Parser, Subcommand, ValueEnum};
 use humantime::{format_duration, format_rfc3339_seconds};
 use native::{FileInfo, run_analyzer};
+use native::patch::{patch_demo_highlights, PatchOptions};
 use serde_json::{Value, json};
 use std::fmt::{Display, Formatter};
 use std::path::PathBuf;
@@ -13,8 +14,56 @@ use tabled::{builder::Builder, settings::Style};
 fn main() {
     let args = Args::parse();
 
+    if let Some(command) = args.command {
+        match command {
+            Commands::Analyze { demo_paths, output_format } => {
+                run_analyze_subcommand(demo_paths, output_format);
+            }
+            Commands::PatchStreak {
+                input,
+                output,
+                player,
+                weapon,
+                min_streak,
+                quit,
+                fast_forward_speed,
+                initial_delay,
+                pre_record_buffer,
+                record_start_lead,
+                record_stop_trail,
+                post_record_buffer,
+            } => {
+                if let Err(e) = run_patch_streak_subcommand(
+                    input,
+                    output,
+                    player,
+                    weapon,
+                    min_streak,
+                    quit,
+                    fast_forward_speed,
+                    initial_delay,
+                    pre_record_buffer,
+                    record_start_lead,
+                    record_stop_trail,
+                    post_record_buffer,
+                ) {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+    } else {
+        if args.demo_paths.is_empty() {
+            eprintln!("Error: Please specify at least one demo file to analyze, or use a subcommand.");
+            std::process::exit(1);
+        }
+        run_analyze_subcommand(args.demo_paths, args.output_format);
+    }
+}
+
+fn run_analyze_subcommand(demo_paths: Vec<PathBuf>, output_format: OutputFormat) {
     let mut analyses = vec![];
-    for p in &args.demo_paths {
+    for p in &demo_paths {
         match run_analyzer(p) {
             Ok(res) => analyses.push(res),
             Err(e) => {
@@ -23,7 +72,7 @@ fn main() {
         }
     }
 
-    match args.output_format {
+    match output_format {
         OutputFormat::Json => println!("{}", Json::from_iter(analyses)),
 
         OutputFormat::Markdown => analyses.into_iter().map(Markdown::from).for_each(|output| {
@@ -32,15 +81,191 @@ fn main() {
     };
 }
 
+fn run_patch_streak_subcommand(
+    input: PathBuf,
+    output: PathBuf,
+    player_query: String,
+    weapon_query: Option<String>,
+    min_streak: usize,
+    quit: bool,
+    fast_forward_speed: f32,
+    initial_delay: f32,
+    pre_record_buffer: f32,
+    record_start_lead: f32,
+    record_stop_trail: f32,
+    post_record_buffer: f32,
+) -> Result<(), String> {
+    println!("Analyzing input demo: {}", input.display());
+    let (_file_info, analysis) = run_analyzer(&input)?;
+
+    // Find player
+    let target_player = analysis.state.players.iter().find(|p| {
+        let steam_id = SteamId::try_from(&p.id)
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+        p.id.to_string() == player_query
+            || steam_id == player_query
+            || p.name.to_lowercase() == player_query.to_lowercase()
+    });
+
+    let player = match target_player {
+        Some(p) => p,
+        None => {
+            return Err(format!(
+                "Could not find player matching query '{}'. Available players: {}",
+                player_query,
+                analysis.state.players.iter().map(|p| p.name.as_str()).collect::<Vec<_>>().join(", ")
+            ));
+        }
+    };
+
+    println!("Found player: {} ({})", player.name, player.id);
+
+    // Collect killstreaks matching weapon & count filters
+    let mut intervals = vec![];
+    for streak in &player.kill_streaks {
+        if streak.kills.len() < min_streak {
+            continue;
+        }
+
+        // If weapon query is provided, check if any kill in the streak matches
+        if let Some(ref w_query) = weapon_query {
+            let matched = streak.kills.iter().any(|(_, weapon, _)| {
+                format!("{:?}", weapon).to_lowercase().contains(&w_query.to_lowercase())
+            });
+            if !matched {
+                continue;
+            }
+        }
+
+        if let (Some(first_kill), Some(last_kill)) = (streak.kills.first(), streak.kills.last()) {
+            let start_time = first_kill.0.real_offset.as_secs_f32();
+            let stop_time = last_kill.0.real_offset.as_secs_f32();
+            intervals.push((start_time, stop_time));
+            println!(
+                "Selected Streak: {} kills starting at {:.2}s, ending at {:.2}s",
+                streak.kills.len(),
+                start_time,
+                stop_time
+            );
+        }
+    }
+
+    if intervals.is_empty() {
+        return Err("No killstreaks found matching the criteria.".to_string());
+    }
+
+    println!("Reading raw demo bytes...");
+    let demo_bytes = std::fs::read(&input)
+        .map_err(|e| format!("Failed to read input demo file: {}", e))?;
+
+    let hltv_spec_player = if analysis.demo_info.demo_type == "HLTV" {
+        Some(player.name.clone())
+    } else {
+        None
+    };
+
+    let options = PatchOptions {
+        exit_on_finish: quit,
+        init_commands: vec![],
+        start_commands: vec![],
+        stop_commands: vec![],
+        fast_forward_speed: Some(fast_forward_speed),
+        hltv_spec_player,
+        initial_delay: Some(initial_delay),
+        pre_record_buffer: Some(pre_record_buffer),
+        record_start_lead: Some(record_start_lead),
+        record_stop_trail: Some(record_stop_trail),
+        post_record_buffer: Some(post_record_buffer),
+    };
+
+    println!("Patching demo highlights...");
+    let patched_bytes = patch_demo_highlights(&demo_bytes, &intervals, &options)?;
+
+    println!("Writing patched demo to: {}", output.display());
+    std::fs::write(&output, patched_bytes)
+        .map_err(|e| format!("Failed to write patched demo file: {}", e))?;
+
+    println!("Successfully exported patched demo!");
+    Ok(())
+}
+
 #[derive(Debug, Parser)]
 #[command(version)]
 struct Args {
+    #[command(subcommand)]
+    command: Option<Commands>,
+
     /// List of paths to demo files
+    #[arg(value_name = "DEMO_PATHS", num_args = 0..)]
     demo_paths: Vec<PathBuf>,
 
     /// The kind of string output to produce from an analysis
     #[arg(long, value_enum, default_value_t = OutputFormat::Markdown)]
     output_format: OutputFormat,
+}
+
+#[derive(Debug, Subcommand)]
+enum Commands {
+    /// Analyze one or more demos
+    Analyze {
+        /// List of paths to demo files
+        demo_paths: Vec<PathBuf>,
+
+        /// The kind of string output to produce from an analysis
+        #[arg(long, value_enum, default_value_t = OutputFormat::Markdown)]
+        output_format: OutputFormat,
+    },
+    /// Export patched demo capturing player killstreaks
+    PatchStreak {
+        /// Input demo file path
+        #[arg(short, long)]
+        input: PathBuf,
+
+        /// Output demo file path
+        #[arg(short, long)]
+        output: PathBuf,
+
+        /// Filter by player name or SteamID / GlobalID
+        #[arg(short, long)]
+        player: String,
+
+        /// Filter by weapon (case-insensitive substring, e.g. "k98", "garand")
+        #[arg(short, long)]
+        weapon: Option<String>,
+
+        /// Minimum killstreak count (default: 3)
+        #[arg(short, long, default_value_t = 3)]
+        min_streak: usize,
+
+        /// Automatically exit the game 0.5s after playback ends
+        #[arg(short, long)]
+        quit: bool,
+
+        /// Fast-forward speed multiplier (default: 0.2)
+        #[arg(short = 'f', long, default_value_t = 0.2)]
+        fast_forward_speed: f32,
+
+        /// Initial delay at normal speed before fast-forwarding in seconds (default: 3.0)
+        #[arg(long, default_value_t = 3.0)]
+        initial_delay: f32,
+
+        /// Time before killstreak to normalize speed in seconds (default: 6.0)
+        #[arg(long, default_value_t = 6.0)]
+        pre_record_buffer: f32,
+
+        /// Time before first kill of a streak to start recording in seconds (default: 2.0)
+        #[arg(long, default_value_t = 2.0)]
+        record_start_lead: f32,
+
+        /// Time after last kill of a streak to stop recording in seconds (default: 2.0)
+        #[arg(long, default_value_t = 2.0)]
+        record_stop_trail: f32,
+
+        /// Time after last kill of a streak to resume fast-forwarding in seconds (default: 4.0)
+        #[arg(long, default_value_t = 4.0)]
+        post_record_buffer: f32,
+    },
 }
 
 #[derive(Clone, Debug, ValueEnum)]

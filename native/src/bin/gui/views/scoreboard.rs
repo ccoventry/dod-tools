@@ -1,5 +1,5 @@
 use crate::views::{PlayerHighlighting, TABLE_ROW_HEIGHT, t, ALLIES_COLOR, BRITISH_COLOR, AXIS_COLOR};
-use analysis::{Analysis, Player, SteamId, Team, translate_key};
+use analysis::{Analysis, Player, Team, translate_key};
 use egui::{Align, Layout, Ui};
 use egui_extras::{Column, TableBody, TableBuilder};
 
@@ -36,6 +36,7 @@ fn get_team_color(team: &Team) -> egui::Color32 {
 pub fn scoreboard_ui(
     analysis: Option<&Analysis>,
     player_highlighting: &mut PlayerHighlighting,
+    scoreboard_cache: &crate::ScoreboardCache,
     ui: &mut Ui,
 ) {
     let total_width = ui.available_width();
@@ -167,110 +168,56 @@ pub fn scoreboard_ui(
                         });
 
                         if let Some(analysis) = analysis {
-                            struct SortablePlayer<'a> {
-
-                                player: &'a Player,
-                                steam_id_str: String,
-                            }
-
-                            let mut players: Vec<SortablePlayer> = analysis
-                                .state
-                                .players
-                                .iter()
-                                .map(|p| {
-                                    let steam_id_str = SteamId::try_from(&p.id)
-                                        .map(|s| s.to_string())
-                                        .unwrap_or_else(|_| p.id.to_string());
-                                    SortablePlayer { player: p, steam_id_str }
-                                })
-                                .collect();
-
-                            // Sort players by Score DESC, Kills DESC, Deaths ASC, Name ASC, ID ASC.
-                            players.sort_by(|a, b| {
-                                b.player.stats.0.cmp(&a.player.stats.0) // Score DESC
-                                    .then_with(|| b.player.stats.1.cmp(&a.player.stats.1)) // Kills DESC
-                                    .then_with(|| a.player.stats.2.cmp(&b.player.stats.2)) // Deaths ASC
-                                    .then_with(|| a.player.name.cmp(&b.player.name))       // Name ASC
-                                    .then_with(|| a.steam_id_str.cmp(&b.steam_id_str))     // ID ASC
-                            });
-
                             let is_british = analysis.state.allies_are_british;
                             let allies_team = if is_british { Team::British } else { Team::Allies };
 
-                            struct TeamGroup<'a> {
+                            struct TeamGroup {
                                 team: Team,
                                 title: String,
-                                players: Vec<SortablePlayer<'a>>,
+                                player_indices: Vec<usize>,
                                 total_score: i32,
                                 total_kills: i32,
                                 total_deaths: i32,
                             }
 
-                            let mut allies_group = TeamGroup {
+                            let allies_group = TeamGroup {
                                 team: allies_team.clone(),
                                 title: team_name(&allies_team),
-                                players: Vec::new(),
-                                total_score: analysis.state.team_scores.get_team_score(allies_team.clone()),
-                                total_kills: 0,
-                                total_deaths: 0,
+                                player_indices: scoreboard_cache.allies_players.clone(),
+                                total_score: scoreboard_cache.allies_totals.0,
+                                total_kills: scoreboard_cache.allies_totals.1,
+                                total_deaths: scoreboard_cache.allies_totals.2,
                             };
-                            let mut axis_group = TeamGroup {
+                            let axis_group = TeamGroup {
                                 team: Team::Axis,
                                 title: team_name(&Team::Axis),
-                                players: Vec::new(),
-                                total_score: analysis.state.team_scores.get_team_score(Team::Axis),
-                                total_kills: 0,
-                                total_deaths: 0,
+                                player_indices: scoreboard_cache.axis_players.clone(),
+                                total_score: scoreboard_cache.axis_totals.0,
+                                total_kills: scoreboard_cache.axis_totals.1,
+                                total_deaths: scoreboard_cache.axis_totals.2,
                             };
-                            let mut spec_group = TeamGroup {
+                            let spec_group = TeamGroup {
                                 team: Team::Spectators,
                                 title: team_name(&Team::Spectators),
-                                players: Vec::new(),
-                                total_score: 0,
-                                total_kills: 0,
-                                total_deaths: 0,
+                                player_indices: scoreboard_cache.spec_players.clone(),
+                                total_score: scoreboard_cache.spec_totals.0,
+                                total_kills: scoreboard_cache.spec_totals.1,
+                                total_deaths: scoreboard_cache.spec_totals.2,
                             };
-                            let mut unassigned_group = TeamGroup {
+                            let unassigned_group = TeamGroup {
                                 team: Team::Unassigned,
                                 title: team_name(&Team::Unassigned),
-                                players: Vec::new(),
-                                total_score: 0,
-                                total_kills: 0,
-                                total_deaths: 0,
+                                player_indices: scoreboard_cache.unassigned_players.clone(),
+                                total_score: scoreboard_cache.unassigned_totals.0,
+                                total_kills: scoreboard_cache.unassigned_totals.1,
+                                total_deaths: scoreboard_cache.unassigned_totals.2,
                             };
 
-                            for sp in players {
-                                match sp.player.team.as_ref() {
-                                    Some(Team::Allies) | Some(Team::British) => {
-                                        allies_group.total_kills += sp.player.stats.1;
-                                        allies_group.total_deaths += sp.player.stats.2;
-                                        allies_group.players.push(sp);
-                                    }
-                                    Some(Team::Axis) => {
-                                        axis_group.total_kills += sp.player.stats.1;
-                                        axis_group.total_deaths += sp.player.stats.2;
-                                        axis_group.players.push(sp);
-                                    }
-                                    Some(Team::Spectators) => {
-                                        spec_group.total_score += sp.player.stats.0;
-                                        spec_group.total_kills += sp.player.stats.1;
-                                        spec_group.total_deaths += sp.player.stats.2;
-                                        spec_group.players.push(sp);
-                                    }
-                                    Some(Team::Unassigned) | None => {
-                                        unassigned_group.total_score += sp.player.stats.0;
-                                        unassigned_group.total_kills += sp.player.stats.1;
-                                        unassigned_group.total_deaths += sp.player.stats.2;
-                                        unassigned_group.players.push(sp);
-                                    }
-                                }
-                            }
-
                             let mut groups = vec![allies_group, axis_group];
-                            if !spec_group.players.is_empty() {
+                            if !spec_group.player_indices.is_empty() {
                                 groups.push(spec_group);
                             }
-                            if !unassigned_group.players.is_empty() {
+                            if !unassigned_group.player_indices.is_empty() {
                                 groups.push(unassigned_group);
                             }
 
@@ -286,7 +233,7 @@ pub fn scoreboard_ui(
                                 }
                                 first = false;
 
-                                let count = group.players.len();
+                                let count = group.player_indices.len();
                                 let label_text = format!(
                                     "{}  -  {} {}",
                                     group.title,
@@ -345,8 +292,9 @@ pub fn scoreboard_ui(
                                 });
 
                                 // Render player rows
-                                for sp in group.players {
-                                    scoreboard_row_ui(sp.player, player_highlighting, &group.team, total_table_width, table_painter.clone(), parent_clip_rect, body);
+                                for p_idx in group.player_indices {
+                                    let p = &analysis.state.players[p_idx];
+                                    scoreboard_row_ui(p, player_highlighting, &group.team, total_table_width, table_painter.clone(), parent_clip_rect, body);
                                 }
                             }
                         }

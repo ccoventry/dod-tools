@@ -29,6 +29,7 @@ fn parse_userinfo(user_info: &dem::types::ByteString) -> std::collections::HashM
         })
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 enum Event {
     Connect { slot: u8, name: String, sid: String },

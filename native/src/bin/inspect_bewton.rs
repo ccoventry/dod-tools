@@ -1,6 +1,6 @@
 use analysis::Analysis;
 use dem::open_demo_from_bytes;
-use dem::types::{FrameData, MessageData, EngineMessage};
+use dem::types::{FrameData, MessageData};
 use std::fs;
 
 fn inspect_demo(path: &str) {

@@ -12,6 +12,9 @@ use std::path::PathBuf;
 use std::time::Duration;
 use web_time::SystemTime;
 
+pub mod patch;
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct FileInfo {
     pub created_at: SystemTime,
     pub name: String,

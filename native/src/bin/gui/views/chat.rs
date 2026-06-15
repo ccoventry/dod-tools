@@ -4,14 +4,14 @@ use analysis::{Analysis, ChatType, Team};
 use egui::{Color32, RichText, ScrollArea, Ui};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PlayerStatusFilter {
+pub enum PlayerStatusFilter {
     All,
     Alive,
     Dead,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PlayerTeamFilter {
+pub enum PlayerTeamFilter {
     All,
     Allies,
     British,
@@ -28,7 +28,12 @@ fn format_game_time(d: &std::time::Duration) -> String {
     format!("{:02}:{:02}:{:02}", mins, secs, centis)
 }
 
-pub fn chat_log_ui(file_info: Option<&FileInfo>, r: Option<&Analysis>, ui: &mut Ui) {
+pub fn chat_log_ui(
+    file_info: Option<&FileInfo>,
+    r: Option<&Analysis>,
+    chat_cache: &mut crate::ChatCache,
+    ui: &mut Ui,
+) {
     ui.heading(t("#app_chat_heading"));
     ui.add_space(8.0);
 
@@ -233,126 +238,148 @@ pub fn chat_log_ui(file_info: Option<&FileInfo>, r: Option<&Analysis>, ui: &mut 
         return;
     }
 
-    let query = filter_text.to_lowercase();
-    let filtered: Vec<_> = messages
-        .iter()
-        .filter(|msg| {
-            match msg.chat_type {
-                ChatType::Mm1 => {
-                    if !show_mm1 {
-                        return false;
+    let current_path = file_info.map(|fi| fi.path.clone());
+    let current_filter = crate::ChatFilterState {
+        show_mm1,
+        show_mm2,
+        show_status,
+        show_team_filter,
+        show_joins,
+        show_teams,
+        show_gameplay,
+        show_other_sys,
+        filter_text: filter_text.clone(),
+    };
+
+    let cache_invalid = chat_cache.path != current_path || chat_cache.filter_state.as_ref() != Some(&current_filter);
+
+    if cache_invalid {
+        chat_cache.path = current_path;
+        chat_cache.filter_state = Some(current_filter);
+
+        let query = filter_text.to_lowercase();
+        chat_cache.filtered_indices = messages
+            .iter()
+            .enumerate()
+            .filter(|(_, msg)| {
+                match msg.chat_type {
+                    ChatType::Mm1 => {
+                        if !show_mm1 {
+                            return false;
+                        }
+                        let alive_dead_ok = match show_status {
+                            PlayerStatusFilter::All => true,
+                            PlayerStatusFilter::Alive => !msg.sender_dead,
+                            PlayerStatusFilter::Dead => msg.sender_dead,
+                        };
+                        if !alive_dead_ok {
+                            return false;
+                        }
+                        let team_ok = match show_team_filter {
+                            PlayerTeamFilter::All => true,
+                            PlayerTeamFilter::Allies => msg.sender_team == Some(Team::Allies),
+                            PlayerTeamFilter::British => msg.sender_team == Some(Team::British),
+                            PlayerTeamFilter::Axis => msg.sender_team == Some(Team::Axis),
+                            PlayerTeamFilter::Spectators => msg.sender_team == Some(Team::Spectators),
+                        };
+                        if !team_ok {
+                            return false;
+                        }
                     }
-                    let alive_dead_ok = match show_status {
-                        PlayerStatusFilter::All => true,
-                        PlayerStatusFilter::Alive => !msg.sender_dead,
-                        PlayerStatusFilter::Dead => msg.sender_dead,
-                    };
-                    if !alive_dead_ok {
-                        return false;
+                    ChatType::Mm2 => {
+                        if !show_mm2 {
+                            return false;
+                        }
+                        let alive_dead_ok = match show_status {
+                            PlayerStatusFilter::All => true,
+                            PlayerStatusFilter::Alive => !msg.sender_dead,
+                            PlayerStatusFilter::Dead => msg.sender_dead,
+                        };
+                        if !alive_dead_ok {
+                            return false;
+                        }
+                        let team_ok = match show_team_filter {
+                            PlayerTeamFilter::All => true,
+                            PlayerTeamFilter::Allies => msg.sender_team == Some(Team::Allies),
+                            PlayerTeamFilter::British => msg.sender_team == Some(Team::British),
+                            PlayerTeamFilter::Axis => msg.sender_team == Some(Team::Axis),
+                            PlayerTeamFilter::Spectators => msg.sender_team == Some(Team::Spectators),
+                        };
+                        if !team_ok {
+                            return false;
+                        }
                     }
-                    let team_ok = match show_team_filter {
-                        PlayerTeamFilter::All => true,
-                        PlayerTeamFilter::Allies => msg.sender_team == Some(Team::Allies),
-                        PlayerTeamFilter::British => msg.sender_team == Some(Team::British),
-                        PlayerTeamFilter::Axis => msg.sender_team == Some(Team::Axis),
-                        PlayerTeamFilter::Spectators => msg.sender_team == Some(Team::Spectators),
-                    };
-                    if !team_ok {
-                        return false;
-                    }
-                }
-                ChatType::Mm2 => {
-                    if !show_mm2 {
-                        return false;
-                    }
-                    let alive_dead_ok = match show_status {
-                        PlayerStatusFilter::All => true,
-                        PlayerStatusFilter::Alive => !msg.sender_dead,
-                        PlayerStatusFilter::Dead => msg.sender_dead,
-                    };
-                    if !alive_dead_ok {
-                        return false;
-                    }
-                    let team_ok = match show_team_filter {
-                        PlayerTeamFilter::All => true,
-                        PlayerTeamFilter::Allies => msg.sender_team == Some(Team::Allies),
-                        PlayerTeamFilter::British => msg.sender_team == Some(Team::British),
-                        PlayerTeamFilter::Axis => msg.sender_team == Some(Team::Axis),
-                        PlayerTeamFilter::Spectators => msg.sender_team == Some(Team::Spectators),
-                    };
-                    if !team_ok {
-                        return false;
-                    }
-                }
-                ChatType::System => {
-                    let sys_category = if let Some(ref token) = msg.system_token {
-                        let token_lower = token.to_lowercase();
-                        if token_lower.contains("connect")
-                            || token_lower.contains("join_game")
-                            || token_lower.contains("joined_game")
-                            || token_lower.contains("kick")
-                            || token_lower.contains("disconnect")
-                        {
-                            "join_leave"
-                        } else if token_lower.contains("joined_team")
-                            || token_lower.contains("team")
-                        {
-                            "team_change"
-                        } else if token_lower.contains("score")
-                            || token_lower.contains("capture")
-                            || token_lower.contains("cap")
-                            || token_lower.contains("reinforce")
-                        {
-                            "gameplay"
+                    ChatType::System => {
+                        let sys_category = if let Some(ref token) = msg.system_token {
+                            let token_lower = token.to_lowercase();
+                            if token_lower.contains("connect")
+                                || token_lower.contains("join_game")
+                                || token_lower.contains("joined_game")
+                                || token_lower.contains("kick")
+                                || token_lower.contains("disconnect")
+                            {
+                                "join_leave"
+                            } else if token_lower.contains("joined_team")
+                                || token_lower.contains("team")
+                            {
+                                "team_change"
+                            } else if token_lower.contains("score")
+                                || token_lower.contains("capture")
+                                || token_lower.contains("cap")
+                                || token_lower.contains("reinforce")
+                            {
+                                "gameplay"
+                            } else {
+                                "other"
+                            }
                         } else {
                             "other"
-                        }
-                    } else {
-                        "other"
-                    };
+                        };
 
-                    match sys_category {
-                        "join_leave" => {
-                            if !show_joins {
-                                return false;
+                        match sys_category {
+                            "join_leave" => {
+                                if !show_joins {
+                                    return false;
+                                }
                             }
-                        }
-                        "team_change" => {
-                            if !show_teams {
-                                return false;
+                            "team_change" => {
+                                if !show_teams {
+                                    return false;
+                                }
                             }
-                        }
-                        "gameplay" => {
-                            if !show_gameplay {
-                                return false;
+                            "gameplay" => {
+                                if !show_gameplay {
+                                    return false;
+                                }
                             }
-                        }
-                        _ => {
-                            if !show_other_sys {
-                                return false;
+                            _ => {
+                                if !show_other_sys {
+                                    return false;
+                                }
                             }
                         }
                     }
                 }
-            }
 
-            if !query.is_empty() {
-                let name_matches = msg
-                    .sender_name
-                    .as_ref()
-                    .map(|n| n.to_lowercase().contains(&query))
-                    .unwrap_or(false);
-                let text_matches = msg.text.to_lowercase().contains(&query);
-                if !name_matches && !text_matches {
-                    return false;
+                if !query.is_empty() {
+                    let name_matches = msg
+                        .sender_name
+                        .as_ref()
+                        .map(|n| n.to_lowercase().contains(&query))
+                        .unwrap_or(false);
+                    let text_matches = msg.text.to_lowercase().contains(&query);
+                    if !name_matches && !text_matches {
+                        return false;
+                    }
                 }
-            }
 
-            true
-        })
-        .collect();
+                true
+            })
+            .map(|(idx, _)| idx)
+            .collect();
+    }
 
-    if filtered.is_empty() {
+    if chat_cache.filtered_indices.is_empty() {
         ui.label(t("#app_chat_no_match"));
         return;
     }
@@ -363,10 +390,11 @@ pub fn chat_log_ui(file_info: Option<&FileInfo>, r: Option<&Analysis>, ui: &mut 
     ScrollArea::vertical().auto_shrink([false; 2]).show_rows(
         ui,
         row_height,
-        filtered.len(),
+        chat_cache.filtered_indices.len(),
         |ui, row_range| {
-            for idx in row_range {
-                let msg = filtered[idx];
+            for i in row_range {
+                let msg_idx = chat_cache.filtered_indices[i];
+                let msg = &messages[msg_idx];
                 ui.horizontal(|ui| {
                     let time_str = format!("[{}]", format_game_time(&msg.time.viewdemo_offset));
                     ui.colored_label(Color32::from_rgb(140, 140, 140), time_str);

@@ -107,7 +107,7 @@ pub enum UserMessage {
     YouDied(YouDied),
 }
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Team {
     Allies,
     Axis,
@@ -116,7 +116,7 @@ pub enum Team {
     British,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Class {
     AxisMortar,
     Bazooka,
@@ -162,7 +162,7 @@ impl Class {
     }
 }
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Weapon {
     Unknown = 0,
     Kabar = 1,

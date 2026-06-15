@@ -10,6 +10,7 @@ use std::time::Duration;
 pub fn player_details_ui(
     analysis: Option<&Analysis>,
     player_highlighting: &mut PlayerHighlighting,
+    cache: &mut crate::PlayerDetailsCache,
     ui: &mut Ui,
 ) {
     let analysis = match analysis {
@@ -105,6 +106,38 @@ pub fn player_details_ui(
         None => return,
     };
 
+    // Lazy initialization or update of PlayerDetailsCache
+    let cache_invalid = cache.player_id.as_ref() != Some(&active_player.id);
+    if cache_invalid {
+        cache.player_id = Some(active_player.id.clone());
+        cache.disabled_weapons.clear();
+
+        let mut all_weapons: Vec<Weapon> = active_player
+            .kill_streaks
+            .iter()
+            .flat_map(|s| s.kills.iter().map(|(_, w, _)| w.clone()))
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+        all_weapons.sort_by_key(|w| weapon_name(w));
+        cache.sorted_weapons = all_weapons;
+
+        let mut weapon_breakdown: Vec<(Weapon, (u32, u32))> = active_player.weapon_breakdown
+            .iter()
+            .map(|(w, stats)| (w.clone(), *stats))
+            .collect();
+        weapon_breakdown.sort_by(|(w_a, l), (w_b, r)| {
+            let cmp = l.cmp(r).reverse();
+            if cmp == std::cmp::Ordering::Equal {
+                weapon_name(w_a).cmp(&weapon_name(w_b))
+            } else {
+                cmp
+            }
+        });
+        cache.sorted_weapon_breakdown = weapon_breakdown;
+        cache.filtered_streaks = rebuild_filtered_streaks(active_player, &cache.disabled_weapons);
+    }
+
     // 1. Hero Card Header
     render_hero_card(active_player, ui);
     ui.add_space(12.0);
@@ -125,41 +158,31 @@ pub fn player_details_ui(
             .auto_shrink(false)
             .min_scrolled_height(avail_h)
             .show(ui_left, |ui| {
-                render_weapon_breakdown(&active_player.weapon_breakdown, ui);
+                render_weapon_breakdown(&cache.sorted_weapon_breakdown, ui);
             });
 
         // Right Column: Kill Streaks
         let ui_right = &mut cols[1];
         ui_right.strong(t("#app_player_details_kill_streaks"));
         ui_right.add_space(4.0);
-        
-        let filter_key = egui::Id::new("player_details_streak_filters").with(&active_player.id);
-        let mut disabled_weapons: HashSet<String> = ui_right.data(|d| d.get_temp(filter_key).unwrap_or_default());
 
-        let mut all_weapons: Vec<Weapon> = active_player
-            .kill_streaks
-            .iter()
-            .flat_map(|s| s.kills.iter().map(|(_, w, _)| w.clone()))
-            .collect::<HashSet<_>>()
-            .into_iter()
-            .collect();
-        all_weapons.sort_by_key(|w| weapon_name(w));
-
-        if !all_weapons.is_empty() {
+        if !cache.sorted_weapons.is_empty() {
             ui_right.horizontal(|ui| {
                 ui.label(egui::RichText::new(t("#app_streaks_filter_weapons")).small().weak());
                 if ui.small_button(t("#app_chat_select_all")).clicked() {
-                    disabled_weapons.clear();
-                    ui.data_mut(|d| d.insert_temp(filter_key, disabled_weapons.clone()));
+                    cache.disabled_weapons.clear();
+                    cache.filtered_streaks = rebuild_filtered_streaks(active_player, &cache.disabled_weapons);
                 }
                 if ui.small_button(t("#app_chat_clear_all")).clicked() {
-                    disabled_weapons = all_weapons.iter().map(|w| format!("{:?}", w)).collect();
-                    ui.data_mut(|d| d.insert_temp(filter_key, disabled_weapons.clone()));
+                    cache.disabled_weapons = cache.sorted_weapons.iter().cloned().collect();
+                    cache.filtered_streaks = rebuild_filtered_streaks(active_player, &cache.disabled_weapons);
                 }
             });
 
             // Grouped checkboxes
-            render_streak_weapon_filters(&all_weapons, &mut disabled_weapons, filter_key, ui_right);
+            if render_streak_weapon_filters(&cache.sorted_weapons, &mut cache.disabled_weapons, ui_right) {
+                cache.filtered_streaks = rebuild_filtered_streaks(active_player, &cache.disabled_weapons);
+            }
             ui_right.add_space(4.0);
         }
 
@@ -175,11 +198,13 @@ pub fn player_details_ui(
                 if active_player.kill_streaks.is_empty() {
                     ui.label("No kill streaks found for this player.");
                 } else {
+                    let filtered = cache.filtered_streaks.clone();
                     render_kill_streaks_table(
                         active_player,
-                        &disabled_weapons,
+                        &filtered,
                         analysis,
                         player_highlighting,
+                        cache,
                         ui,
                     );
                 }
@@ -349,23 +374,9 @@ fn render_card(ui: &mut Ui, width: f32, height: f32, title: String, value: Strin
 }
 
 fn render_weapon_breakdown(
-    breakdown: &std::collections::HashMap<Weapon, (u32, u32)>,
+    weapon_breakdown: &[(Weapon, (u32, u32))],
     ui: &mut Ui,
 ) {
-    let mut weapon_breakdown: Vec<(String, (u32, u32))> = breakdown
-        .iter()
-        .map(|(w, stats)| (weapon_name(w), *stats))
-        .collect();
-
-    weapon_breakdown.sort_by(|(name_a, l), (name_b, r)| {
-        let cmp = l.cmp(r).reverse();
-        if cmp == std::cmp::Ordering::Equal {
-            name_a.cmp(name_b)
-        } else {
-            cmp
-        }
-    });
-
     let total_kills = weapon_breakdown.iter().map(|(_, (k, _))| k).sum::<u32>();
 
     TableBuilder::new(ui)
@@ -382,13 +393,14 @@ fn render_weapon_breakdown(
             row.col(|ui| { ui.strong(t("#app_col_teamkills")); });
         })
         .body(|mut body| {
-            for (w_name, (kills, teamkills)) in weapon_breakdown {
+            for (weapon, (kills, teamkills)) in weapon_breakdown {
+                let w_name = weapon_name(weapon);
                 body.row(TABLE_ROW_HEIGHT, |mut row| {
                     row.col(|ui| { ui.label(w_name); });
                     row.col(|ui| { ui.label(format!("{}", kills)); });
                     row.col(|ui| {
                         let pct = if total_kills > 0 {
-                            (kills as f32 / total_kills as f32) * 100.0
+                            (*kills as f32 / total_kills as f32) * 100.0
                         } else {
                             0.0
                         };
@@ -405,10 +417,9 @@ fn render_weapon_breakdown(
 
 fn render_streak_weapon_filters(
     all_weapons: &[Weapon],
-    disabled_weapons: &mut HashSet<String>,
-    filter_key: egui::Id,
+    disabled_weapons: &mut HashSet<Weapon>,
     ui: &mut Ui,
-) {
+) -> bool {
     let categories: &[(&str, &[Weapon])] = &[
         ("Grenades", &[
             Weapon::Mk2Grenade, Weapon::StickGrenade, Weapon::MillsBomb,
@@ -433,13 +444,15 @@ fn render_streak_weapon_filters(
         ]),
     ];
 
-    let categorized: HashSet<String> = categories
+    let mut changed = false;
+
+    let categorized: HashSet<Weapon> = categories
         .iter()
-        .flat_map(|(_, weapons)| weapons.iter().map(|w| format!("{:?}", w)))
+        .flat_map(|(_, weapons)| weapons.iter().cloned())
         .collect();
     let mut other_weapons: Vec<&Weapon> = all_weapons
         .iter()
-        .filter(|w| !categorized.contains(&format!("{:?}", w)))
+        .filter(|w| !categorized.contains(w))
         .collect();
     other_weapons.sort_by_key(|w| weapon_name(w));
 
@@ -452,11 +465,7 @@ fn render_streak_weapon_filters(
             continue;
         }
 
-        let group_keys: Vec<String> = present
-            .iter()
-            .map(|w| format!("{:?}", w))
-            .collect();
-        let all_enabled = group_keys.iter().all(|k| !disabled_weapons.contains(k));
+        let all_enabled = present.iter().all(|&w| !disabled_weapons.contains(w));
 
         ui.horizontal_wrapped(|ui| {
             let label_text = egui::RichText::new(format!("[{}]", group_label))
@@ -469,33 +478,28 @@ fn render_streak_weapon_filters(
                 ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
             }
             if resp.clicked() {
+                changed = true;
                 if all_enabled {
-                    for k in &group_keys { disabled_weapons.insert(k.clone()); }
+                    for &w in &present { disabled_weapons.insert(w.clone()); }
                 } else {
-                    for k in &group_keys { disabled_weapons.remove(k); }
+                    for &w in &present { disabled_weapons.remove(w); }
                 }
-                ui.data_mut(|d| d.insert_temp(filter_key, disabled_weapons.clone()));
             }
 
-            for weapon in &present {
+            for &weapon in &present {
                 let name = weapon_name(weapon);
-                let key = format!("{:?}", weapon);
-                let mut enabled = !disabled_weapons.contains(&key);
+                let mut enabled = !disabled_weapons.contains(weapon);
                 if ui.checkbox(&mut enabled, &name).changed() {
-                    if enabled { disabled_weapons.remove(&key); }
-                    else { disabled_weapons.insert(key); }
-                    ui.data_mut(|d| d.insert_temp(filter_key, disabled_weapons.clone()));
+                    changed = true;
+                    if enabled { disabled_weapons.remove(weapon); }
+                    else { disabled_weapons.insert(weapon.clone()); }
                 }
             }
         });
     }
 
     if !other_weapons.is_empty() {
-        let other_keys: Vec<String> = other_weapons
-            .iter()
-            .map(|w| format!("{:?}", w))
-            .collect();
-        let all_enabled = other_keys.iter().all(|k| !disabled_weapons.contains(k));
+        let all_enabled = other_weapons.iter().all(|&w| !disabled_weapons.contains(w));
         ui.horizontal_wrapped(|ui| {
             let label_text = egui::RichText::new("[Other]").small().strong();
             let resp = ui.add(egui::Label::new(label_text).sense(egui::Sense::click()));
@@ -503,32 +507,55 @@ fn render_streak_weapon_filters(
                 ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
             }
             if resp.clicked() {
+                changed = true;
                 if all_enabled {
-                    for k in &other_keys { disabled_weapons.insert(k.clone()); }
+                    for &w in &other_weapons { disabled_weapons.insert(w.clone()); }
                 } else {
-                    for k in &other_keys { disabled_weapons.remove(k); }
+                    for &w in &other_weapons { disabled_weapons.remove(w); }
                 }
-                ui.data_mut(|d| d.insert_temp(filter_key, disabled_weapons.clone()));
             }
-            for weapon in &other_weapons {
+            for &weapon in &other_weapons {
                 let name = weapon_name(weapon);
-                let key = format!("{:?}", weapon);
-                let mut enabled = !disabled_weapons.contains(&key);
+                let mut enabled = !disabled_weapons.contains(weapon);
                 if ui.checkbox(&mut enabled, &name).changed() {
-                    if enabled { disabled_weapons.remove(&key); }
-                    else { disabled_weapons.insert(key); }
-                    ui.data_mut(|d| d.insert_temp(filter_key, disabled_weapons.clone()));
+                    changed = true;
+                    if enabled { disabled_weapons.remove(weapon); }
+                    else { disabled_weapons.insert(weapon.clone()); }
                 }
             }
         });
     }
+
+    changed
+}
+
+fn rebuild_filtered_streaks(
+    active_player: &Player,
+    disabled_weapons: &std::collections::HashSet<analysis::Weapon>,
+) -> Vec<(usize, Vec<usize>)> {
+    let mut filtered_streaks = Vec::new();
+    for (s_idx, streak) in active_player.kill_streaks.iter().enumerate() {
+        let filtered_kills: Vec<usize> = streak
+            .kills
+            .iter()
+            .enumerate()
+            .filter(|(_, (_, w, _))| !disabled_weapons.contains(w))
+            .map(|(k_idx, _)| k_idx)
+            .collect();
+
+        if !filtered_kills.is_empty() {
+            filtered_streaks.push((s_idx, filtered_kills));
+        }
+    }
+    filtered_streaks
 }
 
 fn render_kill_streaks_table(
     p: &Player,
-    disabled_weapons: &HashSet<String>,
+    filtered_streaks: &[(usize, Vec<usize>)],
     analysis: &Analysis,
     player_highlighting: &mut PlayerHighlighting,
+    cache: &mut crate::PlayerDetailsCache,
     ui: &mut Ui,
 ) {
     TableBuilder::new(ui)
@@ -538,39 +565,33 @@ fn render_kill_streaks_table(
         .column(Column::initial(80.0).resizable(true)) // Total Kills
         .column(Column::initial(70.0).resizable(true)) // Time
         .column(Column::initial(70.0).resizable(true)) // Duration
+        .column(Column::initial(50.0).resizable(true)) // Action
         .column(Column::remainder())                    // Streak Details
         .header(TABLE_ROW_HEIGHT, |mut row| {
             row.col(|ui| { ui.strong(t("#app_col_wave")); });
             row.col(|ui| { ui.strong(t("#app_col_total_kills")); });
             row.col(|ui| { ui.strong(t("#app_col_time")); });
             row.col(|ui| { ui.strong(t("#app_col_duration")); });
+            row.col(|ui| { ui.strong("Action"); });
             row.col(|ui| { ui.strong(t("#app_col_streak_details")); });
         })
         .body(|mut body| {
             let mut displayed_wave = 0usize;
 
-            for streak in &p.kill_streaks {
-                let filtered_kills: Vec<_> = streak
-                    .kills
-                    .iter()
-                    .filter(|(_, w, _)| !disabled_weapons.contains(&format!("{:?}", w)))
-                    .collect();
-
-                if filtered_kills.is_empty() {
-                    continue;
-                }
-
+            for &(streak_idx, ref kill_indices) in filtered_streaks {
+                let streak = &p.kill_streaks[streak_idx];
                 displayed_wave += 1;
 
-                let first = filtered_kills.first().unwrap();
-                let last = filtered_kills.last().unwrap();
-                let start_dur = first.0.viewdemo_offset;
-                let total_dur = last.0.viewdemo_offset
-                    .checked_sub(first.0.viewdemo_offset)
+                let first_kill = &streak.kills[kill_indices[0]];
+                let last_kill = &streak.kills[*kill_indices.last().unwrap()];
+                let start_dur = first_kill.0.viewdemo_offset;
+                let total_dur = last_kill.0.viewdemo_offset
+                    .checked_sub(first_kill.0.viewdemo_offset)
                     .unwrap_or(Duration::ZERO);
 
                 let mut grouped: Vec<(String, usize)> = Vec::new();
-                for (_, weapon, _) in &filtered_kills {
+                for &k_idx in kill_indices {
+                    let (_, weapon, _) = &streak.kills[k_idx];
                     let name = weapon_name(weapon);
                     if let Some((last_name, count)) = grouped.last_mut() {
                         if *last_name == name {
@@ -590,17 +611,36 @@ fn render_kill_streaks_table(
 
                 body.row(TABLE_ROW_HEIGHT, |mut row| {
                     row.col(|ui| { ui.label(displayed_wave.to_string()); });
-                    row.col(|ui| { ui.label(filtered_kills.len().to_string()); });
+                    row.col(|ui| { ui.label(kill_indices.len().to_string()); });
                     row.col(|ui| { ui.label(format_game_time(&start_dur)); });
                     row.col(|ui| { ui.label(format_duration_ms(&total_dur)); });
+                    row.col(|ui| {
+                        #[cfg(not(target_arch = "wasm32"))]
+                        {
+                            if ui.button("🎥").on_hover_text("Export HLAE capture demo for this streak").clicked() {
+                                let start_time = first_kill.0.real_offset.as_secs_f32();
+                                let stop_time = last_kill.0.real_offset.as_secs_f32();
+                                cache.export_request = Some(crate::ExportRequest {
+                                    start_time,
+                                    stop_time,
+                                });
+                            }
+                        }
+                        #[cfg(target_arch = "wasm32")]
+                        {
+                            ui.weak("N/A");
+                        }
+                    });
                     row.col(|ui| { ui.label(&weapons_summary); });
                 });
 
-                for (i, (time, weapon, victim_id)) in filtered_kills.iter().enumerate() {
+                for (i, &k_idx) in kill_indices.iter().enumerate() {
+                    let (time, weapon, victim_id) = &streak.kills[k_idx];
                     let delta_label = if i == 0 {
                         "  —".to_string()
                     } else {
-                        let prev_time = &filtered_kills[i - 1].0;
+                        let prev_k_idx = kill_indices[i - 1];
+                        let prev_time = &streak.kills[prev_k_idx].0;
                         let delta = time.viewdemo_offset
                             .checked_sub(prev_time.viewdemo_offset)
                             .unwrap_or(Duration::ZERO);
@@ -624,6 +664,7 @@ fn render_kill_streaks_table(
                         row.col(|ui| {
                             ui.label(egui::RichText::new(&delta_label).small());
                         });
+                        row.col(|_ui| {}); // empty action column for sub-rows
                         row.col(|ui| {
                             ui.horizontal(|ui| {
                                 ui.label(

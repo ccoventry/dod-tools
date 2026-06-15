@@ -14,6 +14,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::mpsc;
 use views::{PlayerHighlighting, report_ui, t};
+use views::chat::{PlayerStatusFilter, PlayerTeamFilter};
 
 #[cfg(not(target_arch = "wasm32"))]
 use egui_file_dialog::FileDialog;
@@ -100,6 +101,15 @@ struct AppSettings {
     scan_folders_for_demos: bool,
     demo_folder_history: Vec<std::path::PathBuf>,
     pinned_folders: Vec<std::path::PathBuf>,
+    capture_init_commands: String,
+    capture_start_commands: String,
+    capture_stop_commands: String,
+    capture_initial_delay: f32,
+    capture_fast_forward_speed: f32,
+    capture_pre_record_buffer: f32,
+    capture_record_start_lead: f32,
+    capture_record_stop_trail: f32,
+    capture_post_record_buffer: f32,
 }
 
 impl Default for AppSettings {
@@ -109,6 +119,15 @@ impl Default for AppSettings {
             scan_folders_for_demos: false,
             demo_folder_history: Vec::new(),
             pinned_folders: Vec::new(),
+            capture_init_commands: "".to_string(),
+            capture_start_commands: "r_decals 5555; hud_deathnotice_time 5555; hud_draw 1".to_string(),
+            capture_stop_commands: "r_decals 0; hud_deathnotice_time 5; hud_draw 0".to_string(),
+            capture_initial_delay: 3.0,
+            capture_fast_forward_speed: 0.2,
+            capture_pre_record_buffer: 6.0,
+            capture_record_start_lead: 2.0,
+            capture_record_stop_trail: 2.0,
+            capture_post_record_buffer: 4.0,
         }
     }
 }
@@ -146,11 +165,41 @@ fn load_settings() -> AppSettings {
                             .collect()
                     })
                     .unwrap_or_default();
+                let capture_init_commands = val
+                    .get("capture_init_commands")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let capture_start_commands = val
+                    .get("capture_start_commands")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("r_decals 5555; hud_deathnotice_time 5555; hud_draw 1")
+                    .to_string();
+                let capture_stop_commands = val
+                    .get("capture_stop_commands")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("r_decals 0; hud_deathnotice_time 5; hud_draw 0")
+                    .to_string();
+                let capture_initial_delay = val.get("capture_initial_delay").and_then(|v| v.as_f64()).unwrap_or(3.0) as f32;
+                let capture_fast_forward_speed = val.get("capture_fast_forward_speed").and_then(|v| v.as_f64()).unwrap_or(0.2) as f32;
+                let capture_pre_record_buffer = val.get("capture_pre_record_buffer").and_then(|v| v.as_f64()).unwrap_or(6.0) as f32;
+                let capture_record_start_lead = val.get("capture_record_start_lead").and_then(|v| v.as_f64()).unwrap_or(2.0) as f32;
+                let capture_record_stop_trail = val.get("capture_record_stop_trail").and_then(|v| v.as_f64()).unwrap_or(2.0) as f32;
+                let capture_post_record_buffer = val.get("capture_post_record_buffer").and_then(|v| v.as_f64()).unwrap_or(4.0) as f32;
                 return AppSettings {
                     language,
                     scan_folders_for_demos,
                     demo_folder_history,
                     pinned_folders,
+                    capture_init_commands,
+                    capture_start_commands,
+                    capture_stop_commands,
+                    capture_initial_delay,
+                    capture_fast_forward_speed,
+                    capture_pre_record_buffer,
+                    capture_record_start_lead,
+                    capture_record_stop_trail,
+                    capture_post_record_buffer,
                 };
             }
         }
@@ -191,11 +240,41 @@ fn load_settings() -> AppSettings {
                                 .collect()
                         })
                         .unwrap_or_default();
+                    let capture_init_commands = val
+                        .get("capture_init_commands")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let capture_start_commands = val
+                        .get("capture_start_commands")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("r_decals 5555; hud_deathnotice_time 5555; hud_draw 1")
+                        .to_string();
+                    let capture_stop_commands = val
+                        .get("capture_stop_commands")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("r_decals 0; hud_deathnotice_time 5; hud_draw 0")
+                        .to_string();
+                    let capture_initial_delay = val.get("capture_initial_delay").and_then(|v| v.as_f64()).unwrap_or(3.0) as f32;
+                    let capture_fast_forward_speed = val.get("capture_fast_forward_speed").and_then(|v| v.as_f64()).unwrap_or(0.2) as f32;
+                    let capture_pre_record_buffer = val.get("capture_pre_record_buffer").and_then(|v| v.as_f64()).unwrap_or(6.0) as f32;
+                    let capture_record_start_lead = val.get("capture_record_start_lead").and_then(|v| v.as_f64()).unwrap_or(2.0) as f32;
+                    let capture_record_stop_trail = val.get("capture_record_stop_trail").and_then(|v| v.as_f64()).unwrap_or(2.0) as f32;
+                    let capture_post_record_buffer = val.get("capture_post_record_buffer").and_then(|v| v.as_f64()).unwrap_or(4.0) as f32;
                     return AppSettings {
                         language,
                         scan_folders_for_demos,
                         demo_folder_history,
                         pinned_folders,
+                        capture_init_commands,
+                        capture_start_commands,
+                        capture_stop_commands,
+                        capture_initial_delay,
+                        capture_fast_forward_speed,
+                        capture_pre_record_buffer,
+                        capture_record_start_lead,
+                        capture_record_stop_trail,
+                        capture_post_record_buffer,
                     };
                 }
             }
@@ -235,6 +314,42 @@ fn save_settings(settings: &AppSettings) {
                 .collect(),
         ),
     );
+    map.insert(
+        "capture_init_commands".to_string(),
+        serde_json::Value::String(settings.capture_init_commands.clone()),
+    );
+    map.insert(
+        "capture_start_commands".to_string(),
+        serde_json::Value::String(settings.capture_start_commands.clone()),
+    );
+    map.insert(
+        "capture_stop_commands".to_string(),
+        serde_json::Value::String(settings.capture_stop_commands.clone()),
+    );
+    map.insert(
+        "capture_initial_delay".to_string(),
+        serde_json::Value::Number(serde_json::Number::from_f64(settings.capture_initial_delay as f64).unwrap()),
+    );
+    map.insert(
+        "capture_fast_forward_speed".to_string(),
+        serde_json::Value::Number(serde_json::Number::from_f64(settings.capture_fast_forward_speed as f64).unwrap()),
+    );
+    map.insert(
+        "capture_pre_record_buffer".to_string(),
+        serde_json::Value::Number(serde_json::Number::from_f64(settings.capture_pre_record_buffer as f64).unwrap()),
+    );
+    map.insert(
+        "capture_record_start_lead".to_string(),
+        serde_json::Value::Number(serde_json::Number::from_f64(settings.capture_record_start_lead as f64).unwrap()),
+    );
+    map.insert(
+        "capture_record_stop_trail".to_string(),
+        serde_json::Value::Number(serde_json::Number::from_f64(settings.capture_record_stop_trail as f64).unwrap()),
+    );
+    map.insert(
+        "capture_post_record_buffer".to_string(),
+        serde_json::Value::Number(serde_json::Number::from_f64(settings.capture_post_record_buffer as f64).unwrap()),
+    );
     let val = serde_json::Value::Object(map);
     if let Ok(content) = serde_json::to_string_pretty(&val) {
         let _ = std::fs::write("settings.json", content);
@@ -271,6 +386,42 @@ fn save_settings(settings: &AppSettings) {
                 .map(|p| serde_json::Value::String(p.to_string_lossy().into_owned()))
                 .collect(),
         ),
+    );
+    map.insert(
+        "capture_init_commands".to_string(),
+        serde_json::Value::String(settings.capture_init_commands.clone()),
+    );
+    map.insert(
+        "capture_start_commands".to_string(),
+        serde_json::Value::String(settings.capture_start_commands.clone()),
+    );
+    map.insert(
+        "capture_stop_commands".to_string(),
+        serde_json::Value::String(settings.capture_stop_commands.clone()),
+    );
+    map.insert(
+        "capture_initial_delay".to_string(),
+        serde_json::Value::Number(serde_json::Number::from_f64(settings.capture_initial_delay as f64).unwrap()),
+    );
+    map.insert(
+        "capture_fast_forward_speed".to_string(),
+        serde_json::Value::Number(serde_json::Number::from_f64(settings.capture_fast_forward_speed as f64).unwrap()),
+    );
+    map.insert(
+        "capture_pre_record_buffer".to_string(),
+        serde_json::Value::Number(serde_json::Number::from_f64(settings.capture_pre_record_buffer as f64).unwrap()),
+    );
+    map.insert(
+        "capture_record_start_lead".to_string(),
+        serde_json::Value::Number(serde_json::Number::from_f64(settings.capture_record_start_lead as f64).unwrap()),
+    );
+    map.insert(
+        "capture_record_stop_trail".to_string(),
+        serde_json::Value::Number(serde_json::Number::from_f64(settings.capture_record_stop_trail as f64).unwrap()),
+    );
+    map.insert(
+        "capture_post_record_buffer".to_string(),
+        serde_json::Value::Number(serde_json::Number::from_f64(settings.capture_post_record_buffer as f64).unwrap()),
     );
     let val = serde_json::Value::Object(map);
     if let Ok(content) = serde_json::to_string_pretty(&val) {
@@ -439,6 +590,66 @@ enum SortColumn {
     Date,
 }
 
+#[derive(Default)]
+pub struct ScoreboardCache {
+    pub path: Option<String>,
+    pub allies_players: Vec<usize>, // indices in analysis.state.players
+    pub axis_players: Vec<usize>,
+    pub spec_players: Vec<usize>,
+    pub unassigned_players: Vec<usize>,
+    pub allies_totals: (i32, i32, i32), // score, kills, deaths
+    pub axis_totals: (i32, i32, i32),
+    pub spec_totals: (i32, i32, i32),
+    pub unassigned_totals: (i32, i32, i32),
+    pub player_steam_ids: HashMap<analysis::PlayerGlobalId, String>,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct ChatFilterState {
+    pub show_mm1: bool,
+    pub show_mm2: bool,
+    pub show_status: PlayerStatusFilter,
+    pub show_team_filter: PlayerTeamFilter,
+    pub show_joins: bool,
+    pub show_teams: bool,
+    pub show_gameplay: bool,
+    pub show_other_sys: bool,
+    pub filter_text: String,
+}
+
+#[derive(Default)]
+pub struct ChatCache {
+    pub path: Option<String>,
+    pub filter_state: Option<ChatFilterState>,
+    pub filtered_indices: Vec<usize>, // indices in analysis.state.chat_messages
+}
+
+#[derive(Clone, Debug)]
+pub struct ExportRequest {
+    pub start_time: f32,
+    pub stop_time: f32,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone, Debug)]
+struct PendingStreakExport {
+    input_path: std::path::PathBuf,
+    player_id: analysis::PlayerGlobalId,
+    start_time: f32,
+    stop_time: f32,
+}
+
+#[derive(Default)]
+pub struct PlayerDetailsCache {
+    pub path: Option<String>,
+    pub player_id: Option<analysis::PlayerGlobalId>,
+    pub disabled_weapons: std::collections::HashSet<analysis::Weapon>,
+    pub sorted_weapons: Vec<analysis::Weapon>,
+    pub sorted_weapon_breakdown: Vec<(analysis::Weapon, (u32, u32))>,
+    pub filtered_streaks: Vec<(usize, Vec<usize>)>, // (streak_index, Vec<kill_index>)
+    pub export_request: Option<ExportRequest>,
+}
+
 struct Gui {
     analyses: HashMap<String, (FileInfo, Analysis)>,
     selected_analysis_path: Option<String>,
@@ -463,6 +674,10 @@ struct Gui {
 
     #[cfg(not(target_arch = "wasm32"))]
     file_picker: FileDialog,
+    #[cfg(not(target_arch = "wasm32"))]
+    capture_export_picker: FileDialog,
+    #[cfg(not(target_arch = "wasm32"))]
+    pending_streak_export: Option<PendingStreakExport>,
     #[cfg(not(target_arch = "wasm32"))]
     root_dir: Option<PathBuf>,
     #[cfg(not(target_arch = "wasm32"))]
@@ -501,6 +716,12 @@ struct Gui {
     selected_web_folder: String,
     #[cfg(target_arch = "wasm32")]
     web_tree: Option<DirNode>,
+    #[cfg(target_arch = "wasm32")]
+    parser_worker: Option<web_sys::Worker>,
+
+    scoreboard_cache: ScoreboardCache,
+    chat_cache: ChatCache,
+    player_details_cache: PlayerDetailsCache,
 }
 
 #[allow(dead_code)]
@@ -545,6 +766,116 @@ enum GuiMessage {
 }
 
 impl Gui {
+    fn check_scoreboard_cache(&mut self) {
+        let path = match &self.selected_analysis_path {
+            Some(p) => p.clone(),
+            None => {
+                self.scoreboard_cache = ScoreboardCache::default();
+                return;
+            }
+        };
+
+        if self.scoreboard_cache.path.as_ref() == Some(&path) {
+            return;
+        }
+
+        let Some((_, analysis)) = self.analyses.get(&path) else {
+            self.scoreboard_cache = ScoreboardCache::default();
+            return;
+        };
+
+        use analysis::Team;
+        use std::collections::HashMap;
+
+        let mut player_steam_ids = HashMap::new();
+        struct SortablePlayer {
+            index: usize,
+            score: i32,
+            kills: i32,
+            deaths: i32,
+            name: String,
+            steam_id_str: String,
+        }
+
+        let mut sorted_players: Vec<SortablePlayer> = analysis.state.players.iter().enumerate().map(|(idx, p)| {
+            let steam_id_str = analysis::SteamId::try_from(&p.id)
+                .map(|s| s.to_string())
+                .unwrap_or_else(|_| p.id.to_string());
+            player_steam_ids.insert(p.id.clone(), steam_id_str.clone());
+            SortablePlayer {
+                index: idx,
+                score: p.stats.0,
+                kills: p.stats.1,
+                deaths: p.stats.2,
+                name: p.name.clone(),
+                steam_id_str,
+            }
+        }).collect();
+
+        // Sort by Score DESC, Kills DESC, Deaths ASC, Name ASC, ID ASC.
+        sorted_players.sort_by(|a, b| {
+            b.score.cmp(&a.score)
+                .then_with(|| b.kills.cmp(&a.kills))
+                .then_with(|| a.deaths.cmp(&b.deaths))
+                .then_with(|| a.name.cmp(&b.name))
+                .then_with(|| a.steam_id_str.cmp(&b.steam_id_str))
+        });
+
+        let is_british = analysis.state.allies_are_british;
+        let allies_team = if is_british { Team::British } else { Team::Allies };
+
+        let mut allies_players = Vec::new();
+        let mut axis_players = Vec::new();
+        let mut spec_players = Vec::new();
+        let mut unassigned_players = Vec::new();
+
+        let mut allies_totals = (analysis.state.team_scores.get_team_score(allies_team.clone()), 0, 0);
+        let mut axis_totals = (analysis.state.team_scores.get_team_score(Team::Axis), 0, 0);
+        let mut spec_totals = (0, 0, 0);
+        let mut unassigned_totals = (0, 0, 0);
+
+        for sp in sorted_players {
+            let p = &analysis.state.players[sp.index];
+            match p.team.as_ref() {
+                Some(Team::Allies) | Some(Team::British) => {
+                    allies_totals.1 += sp.kills;
+                    allies_totals.2 += sp.deaths;
+                    allies_players.push(sp.index);
+                }
+                Some(Team::Axis) => {
+                    axis_totals.1 += sp.kills;
+                    axis_totals.2 += sp.deaths;
+                    axis_players.push(sp.index);
+                }
+                Some(Team::Spectators) => {
+                    spec_totals.0 += sp.score;
+                    spec_totals.1 += sp.kills;
+                    spec_totals.2 += sp.deaths;
+                    spec_players.push(sp.index);
+                }
+                Some(Team::Unassigned) | None => {
+                    unassigned_totals.0 += sp.score;
+                    unassigned_totals.1 += sp.kills;
+                    unassigned_totals.2 += sp.deaths;
+                    unassigned_players.push(sp.index);
+                }
+            }
+        }
+
+        self.scoreboard_cache = ScoreboardCache {
+            path: Some(path),
+            allies_players,
+            axis_players,
+            spec_players,
+            unassigned_players,
+            allies_totals,
+            axis_totals,
+            spec_totals,
+            unassigned_totals,
+            player_steam_ids,
+        };
+    }
+
     fn save_cache(&self) {
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -751,6 +1082,10 @@ impl Default for Gui {
             #[cfg(not(target_arch = "wasm32"))]
             file_picker: FileDialog::default(),
             #[cfg(not(target_arch = "wasm32"))]
+            capture_export_picker: FileDialog::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            pending_streak_export: None,
+            #[cfg(not(target_arch = "wasm32"))]
             root_dir: std::env::current_dir().ok(),
             #[cfg(not(target_arch = "wasm32"))]
             current_dir: std::env::current_dir().ok(),
@@ -788,6 +1123,12 @@ impl Default for Gui {
             selected_web_folder: ".".to_string(),
             #[cfg(target_arch = "wasm32")]
             web_tree: None,
+            #[cfg(target_arch = "wasm32")]
+            parser_worker: None,
+
+            scoreboard_cache: ScoreboardCache::default(),
+            chat_cache: ChatCache::default(),
+            player_details_cache: PlayerDetailsCache::default(),
         }
     }
 }
@@ -825,80 +1166,414 @@ fn pick_web_folder(ctx: Context, tx: mpsc::Sender<GuiMessage>) {
 }
 
 #[cfg(target_arch = "wasm32")]
-fn parse_web_file(ctx: Context, tx: mpsc::Sender<GuiMessage>, web_file: WebFile) {
-    wasm_bindgen_futures::spawn_local(async move {
-        let file = &web_file.js_file.0;
-        let promise = file.array_buffer();
-        if let Ok(array_buffer_val) = wasm_bindgen_futures::JsFuture::from(promise).await {
-            let array_buffer = js_sys::ArrayBuffer::from(array_buffer_val);
-            let uint8_array = js_sys::Uint8Array::new(&array_buffer);
-            let bytes = uint8_array.to_vec();
+#[wasm_bindgen]
+pub fn init_worker() {
+    console_error_panic_hook::set_once();
+}
 
-            let tx_clone = tx.clone();
-            let ctx_clone = ctx.clone();
-            let path_str = web_file.path.clone();
-            let start_time = web_time::SystemTime::now();
-
-            let progress_cb = move |processed: usize, total: usize| {
-                if total > 0 {
-                    let progress = processed as f32 / total as f32;
-                    let elapsed_sec = start_time.elapsed().map(|d| d.as_secs_f32()).unwrap_or(0.0);
-                    let eta_sec = if progress > 0.01 {
-                        let total_estimated_sec = elapsed_sec / progress;
-                        Some(total_estimated_sec - elapsed_sec)
-                    } else {
-                        None
-                    };
-
-                    let _ = tx_clone.send(GuiMessage::DemoParsingProgress {
-                        path: path_str.clone(),
-                        progress,
-                        elapsed_sec,
-                        eta_sec,
-                    });
-                    ctx_clone.request_repaint();
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+pub fn handle_worker_message(data: wasm_bindgen::JsValue) {
+    let global = js_sys::global();
+    let post_message = js_sys::Reflect::get(&global, &"postMessage".into())
+        .unwrap()
+        .dyn_into::<js_sys::Function>()
+        .unwrap();
+        
+    let type_val = js_sys::Reflect::get(&data, &"type".into())
+        .unwrap()
+        .as_string()
+        .unwrap_or_default();
+        
+    if type_val == "parse" {
+        let path = js_sys::Reflect::get(&data, &"path".into())
+            .unwrap()
+            .as_string()
+            .unwrap_or_default();
+        let name = js_sys::Reflect::get(&data, &"name".into())
+            .unwrap()
+            .as_string()
+            .unwrap_or_default();
+        let last_modified = js_sys::Reflect::get(&data, &"lastModified".into())
+            .unwrap()
+            .as_f64()
+            .unwrap_or(0.0);
+        let size = js_sys::Reflect::get(&data, &"size".into())
+            .unwrap()
+            .as_f64()
+            .unwrap_or(0.0);
+            
+        let bytes_val = js_sys::Reflect::get(&data, &"bytes".into()).unwrap();
+        let uint8_array = js_sys::Uint8Array::new(&bytes_val);
+        let bytes = uint8_array.to_vec();
+        
+        let path_clone = path.clone();
+        let post_message_clone = post_message.clone();
+        let start_time = web_time::SystemTime::now();
+        
+        let progress_cb = move |processed: usize, total: usize| {
+            if total > 0 {
+                let progress = processed as f32 / total as f32;
+                let elapsed_sec = start_time.elapsed().map(|d| d.as_secs_f32()).unwrap_or(0.0);
+                let eta_sec = if progress > 0.01 {
+                    let total_estimated_sec = elapsed_sec / progress;
+                    Some(total_estimated_sec - elapsed_sec)
+                } else {
+                    None
+                };
+                
+                let progress_obj = js_sys::Object::new();
+                js_sys::Reflect::set(&progress_obj, &"type".into(), &"progress".into()).unwrap();
+                js_sys::Reflect::set(&progress_obj, &"path".into(), &path_clone.clone().into()).unwrap();
+                js_sys::Reflect::set(&progress_obj, &"progress".into(), &progress.into()).unwrap();
+                js_sys::Reflect::set(&progress_obj, &"elapsedSec".into(), &elapsed_sec.into()).unwrap();
+                if let Some(eta) = eta_sec {
+                    js_sys::Reflect::set(&progress_obj, &"etaSec".into(), &eta.into()).unwrap();
                 }
-            };
-
-            match Analysis::try_from_bytes_with_progress(bytes.as_slice(), progress_cb) {
-                Ok(analysis) => {
-                    let last_modified_ms = js_sys::Reflect::get(
-                        file.as_ref(),
-                        &wasm_bindgen::JsValue::from_str("lastModified"),
-                    )
-                    .ok()
-                    .and_then(|v| v.as_f64())
-                    .unwrap_or(0.0);
-                    let created_at = web_time::SystemTime::UNIX_EPOCH
-                        + std::time::Duration::from_millis(last_modified_ms as u64);
-
-                    let size_bytes = file.size() as u64;
-                    let file_info = FileInfo {
-                        created_at,
-                        name: web_file.name.clone(),
-                        path: web_file.path.clone(),
-                        size_bytes,
-                    };
-
-                    tx.send(GuiMessage::WebFileParsed {
-                        path: web_file.path.clone(),
-                        file_info,
-                        analysis: Box::new(analysis),
-                    })
-                    .ok();
-                }
-                Err(e) => {
-                    tx.send(GuiMessage::AnalyzerError {
-                        path: web_file.path.clone(),
-                        error: e,
-                    })
-                    .ok();
+                
+                let _ = post_message_clone.call1(&js_sys::global(), &progress_obj);
+            }
+        };
+        
+        match Analysis::try_from_bytes_with_progress(&bytes, progress_cb) {
+            Ok(analysis) => {
+                if let Ok(serialized) = serde_json::to_string(&analysis) {
+                    let success_obj = js_sys::Object::new();
+                    js_sys::Reflect::set(&success_obj, &"type".into(), &"success".into()).unwrap();
+                    js_sys::Reflect::set(&success_obj, &"path".into(), &path.into()).unwrap();
+                    js_sys::Reflect::set(&success_obj, &"name".into(), &name.into()).unwrap();
+                    js_sys::Reflect::set(&success_obj, &"lastModified".into(), &last_modified.into()).unwrap();
+                    js_sys::Reflect::set(&success_obj, &"size".into(), &size.into()).unwrap();
+                    js_sys::Reflect::set(&success_obj, &"analysisJson".into(), &serialized.into()).unwrap();
+                    
+                    let _ = post_message.call1(&js_sys::global(), &success_obj);
+                } else {
+                    let error_obj = js_sys::Object::new();
+                    js_sys::Reflect::set(&error_obj, &"type".into(), &"error".into()).unwrap();
+                    js_sys::Reflect::set(&error_obj, &"path".into(), &path.into()).unwrap();
+                    js_sys::Reflect::set(&error_obj, &"error".into(), &"Failed to serialize Analysis".into()).unwrap();
+                    
+                    let _ = post_message.call1(&js_sys::global(), &error_obj);
                 }
             }
-            ctx.request_repaint();
+            Err(err) => {
+                let error_obj = js_sys::Object::new();
+                js_sys::Reflect::set(&error_obj, &"type".into(), &"error".into()).unwrap();
+                js_sys::Reflect::set(&error_obj, &"path".into(), &path.into()).unwrap();
+                js_sys::Reflect::set(&error_obj, &"error".into(), &err.into()).unwrap();
+                
+                let _ = post_message.call1(&js_sys::global(), &error_obj);
+            }
         }
-    });
+    }
 }
+
+#[cfg(target_arch = "wasm32")]
+impl Gui {
+    fn get_or_spawn_worker(&mut self, ctx: &Context) -> Option<&web_sys::Worker> {
+        if self.parser_worker.is_some() {
+            return self.parser_worker.as_ref();
+        }
+        
+        let window = web_sys::window()?;
+        let document = window.document()?;
+        let origin = window.location().origin().unwrap_or_default();
+        
+        let mut js_url = String::new();
+        let mut wasm_url = String::new();
+        
+        // 1. Try modulepreload link or link[href*="dod-tools-gui"]
+        if let Ok(Some(link)) = document.query_selector("link[rel=\"modulepreload\"]") {
+            if let Ok(href) = js_sys::Reflect::get(&link, &"href".into()) {
+                if let Some(href_str) = href.as_string() {
+                    js_url = href_str;
+                }
+            }
+        }
+        if js_url.is_empty() {
+            if let Ok(Some(link)) = document.query_selector("link[href*=\"dod-tools-gui\"][href*=\".js\"]") {
+                if let Ok(href) = js_sys::Reflect::get(&link, &"href".into()) {
+                    if let Some(href_str) = href.as_string() {
+                        js_url = href_str;
+                    }
+                }
+            }
+        }
+        
+        // 2. Try link[href*=".wasm"]
+        if let Ok(Some(link)) = document.query_selector("link[href*=\".wasm\"]") {
+            if let Ok(href) = js_sys::Reflect::get(&link, &"href".into()) {
+                if let Some(href_str) = href.as_string() {
+                    wasm_url = href_str;
+                }
+            }
+        }
+        
+        // 3. Fallback: scan scripts content or src
+        let scripts = document.scripts();
+        for i in 0..scripts.length() {
+            if let Some(script) = scripts.item(i) {
+                if let Ok(src) = js_sys::Reflect::get(&script, &"src".into()) {
+                    if let Some(src_str) = src.as_string() {
+                        if src_str.contains("dod-tools-gui") {
+                            if js_url.is_empty() {
+                                js_url = src_str;
+                            }
+                            continue;
+                        }
+                    }
+                }
+                
+                if let Ok(text) = js_sys::Reflect::get(&script, &"textContent".into()) {
+                    if let Some(text_str) = text.as_string() {
+                        if text_str.contains("dod-tools-gui") {
+                            if js_url.is_empty() {
+                                if let Some(start) = text_str.find("from '") {
+                                    let rest = &text_str[start + 6..];
+                                    if let Some(end) = rest.find('\'') {
+                                        js_url = rest[..end].to_string();
+                                    }
+                                } else if let Some(start) = text_str.find("from \"") {
+                                    let rest = &text_str[start + 6..];
+                                    if let Some(end) = rest.find('"') {
+                                        js_url = rest[..end].to_string();
+                                    }
+                                }
+                            }
+                            
+                            if wasm_url.is_empty() {
+                                if let Some(start) = text_str.find("init('") {
+                                    let rest = &text_str[start + 6..];
+                                    if let Some(end) = rest.find('\'') {
+                                        wasm_url = rest[..end].to_string();
+                                    }
+                                } else if let Some(start) = text_str.find("init(\"") {
+                                    let rest = &text_str[start + 6..];
+                                    if let Some(end) = rest.find('"') {
+                                        wasm_url = rest[..end].to_string();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        if js_url.is_empty() {
+            js_url = "dod-tools-gui.js".to_string();
+        }
+        if wasm_url.is_empty() {
+            wasm_url = "dod-tools-gui_bg.wasm".to_string();
+        }
+        
+        let make_absolute = |url: String, origin: &str| -> String {
+            if url.starts_with("http://") || url.starts_with("https://") || url.starts_with("blob:") {
+                url
+            } else if url.starts_with('/') {
+                format!("{}{}", origin, url)
+            } else {
+                format!("{}/{}", origin, url)
+            }
+        };
+        
+        let js_url_abs = make_absolute(js_url, &origin);
+        let wasm_url_abs = make_absolute(wasm_url, &origin);
+        
+        let blob_code = format!(
+            r#"
+            self.onmessage = async function(e) {{
+                const {{ type, jsUrl, wasmUrl }} = e.data;
+                if (type === 'init') {{
+                    try {{
+                        const wasm_bindgen = await import(jsUrl);
+                        await wasm_bindgen.default(wasmUrl);
+                        wasm_bindgen.init_worker();
+                        self.postMessage({{ type: 'ready' }});
+                    }} catch (err) {{
+                        self.postMessage({{ type: 'error', error: err.toString() }});
+                    }}
+                }}
+            }};
+            "#
+        );
+        
+        let blob = web_sys::Blob::new_with_str_sequence(
+            &js_sys::Array::of1(&wasm_bindgen::JsValue::from_str(&blob_code))
+        ).ok()?;
+        let blob_url = web_sys::Url::create_object_url_with_blob(&blob).ok()?;
+        
+        // Spawn the Worker as an ES module worker: new Worker(blob_url, { type: "module" })
+        let options = js_sys::Object::new();
+        js_sys::Reflect::set(&options, &"type".into(), &"module".into()).unwrap();
+        let args = js_sys::Array::of2(&blob_url.clone().into(), &options.into());
+        let global = js_sys::global();
+        let worker_constructor = js_sys::Reflect::get(&global, &"Worker".into())
+            .ok()
+            .and_then(|v| v.dyn_into::<js_sys::Function>().ok())?;
+        
+        let worker: web_sys::Worker = js_sys::Reflect::construct(&worker_constructor, &args)
+            .ok()
+            .and_then(|w| w.dyn_into::<web_sys::Worker>().ok())?;
+        
+        let init_obj = js_sys::Object::new();
+        js_sys::Reflect::set(&init_obj, &"type".into(), &"init".into()).unwrap();
+        js_sys::Reflect::set(&init_obj, &"jsUrl".into(), &js_url_abs.into()).unwrap();
+        js_sys::Reflect::set(&init_obj, &"wasmUrl".into(), &wasm_url_abs.into()).unwrap();
+        let _ = worker.post_message(&init_obj);
+        
+        let tx = self.tx.clone();
+        let ctx_for_repaint = ctx.clone();
+        
+        let onmessage_callback = Closure::wrap(Box::new(move |event: web_sys::MessageEvent| {
+            let data = event.data();
+            let type_val = js_sys::Reflect::get(&data, &"type".into())
+                .unwrap()
+                .as_string()
+                .unwrap_or_default();
+                
+            if type_val == "progress" {
+                let path = js_sys::Reflect::get(&data, &"path".into())
+                    .unwrap()
+                    .as_string()
+                    .unwrap_or_default();
+                let progress = js_sys::Reflect::get(&data, &"progress".into())
+                    .unwrap()
+                    .as_f64()
+                    .unwrap_or(0.0) as f32;
+                let elapsed_sec = js_sys::Reflect::get(&data, &"elapsedSec".into())
+                    .unwrap()
+                    .as_f64()
+                    .unwrap_or(0.0) as f32;
+                let eta_sec = js_sys::Reflect::get(&data, &"etaSec".into())
+                    .ok()
+                    .and_then(|v| v.as_f64())
+                    .map(|v| v as f32);
+                
+                let _ = tx.send(GuiMessage::DemoParsingProgress {
+                    path,
+                    progress,
+                    elapsed_sec,
+                    eta_sec,
+                });
+                ctx_for_repaint.request_repaint();
+            } else if type_val == "success" {
+                let path = js_sys::Reflect::get(&data, &"path".into())
+                    .unwrap()
+                    .as_string()
+                    .unwrap_or_default();
+                let name = js_sys::Reflect::get(&data, &"name".into())
+                    .unwrap()
+                    .as_string()
+                    .unwrap_or_default();
+                let last_modified = js_sys::Reflect::get(&data, &"lastModified".into())
+                    .unwrap()
+                    .as_f64()
+                    .unwrap_or(0.0);
+                let size = js_sys::Reflect::get(&data, &"size".into())
+                    .unwrap()
+                    .as_f64()
+                    .unwrap_or(0.0);
+                let analysis_json = js_sys::Reflect::get(&data, &"analysisJson".into())
+                    .unwrap()
+                    .as_string()
+                    .unwrap_or_default();
+                
+                if let Ok(analysis) = serde_json::from_str::<Analysis>(&analysis_json) {
+                    let created_at = web_time::SystemTime::UNIX_EPOCH
+                        + std::time::Duration::from_millis(last_modified as u64);
+                    let file_info = FileInfo {
+                        created_at,
+                        name,
+                        path: path.clone(),
+                        size_bytes: size as u64,
+                    };
+                    
+                    let _ = tx.send(GuiMessage::WebFileParsed {
+                        path,
+                        file_info,
+                        analysis: Box::new(analysis),
+                    });
+                }
+                ctx_for_repaint.request_repaint();
+            } else if type_val == "error" {
+                let path = js_sys::Reflect::get(&data, &"path".into())
+                    .unwrap()
+                    .as_string()
+                    .unwrap_or_default();
+                let error = js_sys::Reflect::get(&data, &"error".into())
+                    .unwrap()
+                    .as_string()
+                    .unwrap_or_default();
+                
+                let _ = tx.send(GuiMessage::AnalyzerError {
+                    path,
+                    error,
+                });
+                ctx_for_repaint.request_repaint();
+            }
+        }) as Box<dyn FnMut(web_sys::MessageEvent)>);
+        
+        worker.set_onmessage(Some(onmessage_callback.as_ref().unchecked_ref()));
+        onmessage_callback.forget();
+        
+        self.parser_worker = Some(worker);
+        self.parser_worker.as_ref()
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn parse_web_file(&mut self, ctx: &Context, web_file: WebFile) {
+        let file = &web_file.js_file.0;
+        let last_modified_ms = js_sys::Reflect::get(
+            file.as_ref(),
+            &wasm_bindgen::JsValue::from_str("lastModified"),
+        )
+        .ok()
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
+        let size_bytes = file.size() as f64;
+        let path = web_file.path.clone();
+        let name = web_file.name.clone();
+        
+        let promise = file.array_buffer();
+        
+        if let Some(worker) = self.get_or_spawn_worker(ctx) {
+            let worker_clone = worker.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                if let Ok(array_buffer_val) = wasm_bindgen_futures::JsFuture::from(promise).await {
+                    let parse_obj = js_sys::Object::new();
+                    js_sys::Reflect::set(&parse_obj, &"type".into(), &"parse".into()).unwrap();
+                    js_sys::Reflect::set(&parse_obj, &"path".into(), &path.into()).unwrap();
+                    js_sys::Reflect::set(&parse_obj, &"name".into(), &name.into()).unwrap();
+                    js_sys::Reflect::set(&parse_obj, &"lastModified".into(), &last_modified_ms.into()).unwrap();
+                    js_sys::Reflect::set(&parse_obj, &"size".into(), &size_bytes.into()).unwrap();
+                    js_sys::Reflect::set(&parse_obj, &"bytes".into(), &array_buffer_val.into()).unwrap();
+                    
+                    let _ = worker_clone.post_message(&parse_obj);
+                }
+            });
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn parse_bytes_via_worker(&mut self, ctx: &Context, name: String, bytes: Vec<u8>) {
+        if let Some(worker) = self.get_or_spawn_worker(ctx) {
+            let parse_obj = js_sys::Object::new();
+            js_sys::Reflect::set(&parse_obj, &"type".into(), &"parse".into()).unwrap();
+            js_sys::Reflect::set(&parse_obj, &"path".into(), &name.clone().into()).unwrap();
+            js_sys::Reflect::set(&parse_obj, &"name".into(), &name.clone().into()).unwrap();
+            js_sys::Reflect::set(&parse_obj, &"lastModified".into(), &0.0.into()).unwrap();
+            js_sys::Reflect::set(&parse_obj, &"size".into(), &(bytes.len() as f64).into()).unwrap();
+            
+            let uint8_array = js_sys::Uint8Array::from(bytes.as_slice());
+            let array_buffer = uint8_array.buffer();
+            js_sys::Reflect::set(&parse_obj, &"bytes".into(), &array_buffer.into()).unwrap();
+            
+            let _ = worker.post_message(&parse_obj);
+        }
+    }
+}
+
 
 impl eframe::App for Gui {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
@@ -919,6 +1594,55 @@ impl eframe::App for Gui {
                 self.selected_analysis_path = None;
                 self.error_message = None;
                 self.trigger_demo_folders_scan(ctx);
+            }
+
+            self.capture_export_picker.update(ctx);
+            if let Some(save_path) = self.capture_export_picker.take_picked() {
+                if let Some(export_info) = self.pending_streak_export.take() {
+                    match std::fs::read(&export_info.input_path) {
+                        Ok(demo_bytes) => {
+                            let hltv_spec_player = if let Some(analysis) = self.analyses.get(&export_info.input_path.to_string_lossy().into_owned()).map(|(_, a)| a) {
+                                if analysis.demo_info.demo_type == "HLTV" {
+                                    analysis.state.players.iter()
+                                        .find(|p| p.id == export_info.player_id)
+                                        .map(|p| p.name.clone())
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            };
+
+                            let options = native::patch::PatchOptions {
+                                exit_on_finish: false,
+                                init_commands: self.settings.capture_init_commands.lines().map(String::from).collect(),
+                                start_commands: self.settings.capture_start_commands.lines().map(String::from).collect(),
+                                stop_commands: self.settings.capture_stop_commands.lines().map(String::from).collect(),
+                                fast_forward_speed: Some(self.settings.capture_fast_forward_speed),
+                                hltv_spec_player,
+                                initial_delay: Some(self.settings.capture_initial_delay),
+                                pre_record_buffer: Some(self.settings.capture_pre_record_buffer),
+                                record_start_lead: Some(self.settings.capture_record_start_lead),
+                                record_stop_trail: Some(self.settings.capture_record_stop_trail),
+                                post_record_buffer: Some(self.settings.capture_post_record_buffer),
+                            };
+                            let intervals = &[(export_info.start_time, export_info.stop_time)];
+                            match native::patch::patch_demo_highlights(&demo_bytes, intervals, &options) {
+                                Ok(patched_bytes) => {
+                                    if let Err(e) = std::fs::write(&save_path, patched_bytes) {
+                                        self.error_message = Some(format!("Failed to write patched demo: {}", e));
+                                    }
+                                }
+                                Err(e) => {
+                                    self.error_message = Some(format!("Failed to patch demo: {}", e));
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            self.error_message = Some(format!("Failed to read source demo: {}", e));
+                        }
+                    }
+                }
             }
         }
 
@@ -1086,16 +1810,14 @@ impl eframe::App for Gui {
                         self.selected_analysis_path = Some(name);
                         self.error_message = None;
                     } else {
+                        self.selected_analysis_path = None;
                         self.error_message = None;
-                        let analysis = Analysis::from(&bytes[..]);
-                        let file_info = FileInfo {
-                            created_at: web_time::SystemTime::UNIX_EPOCH,
-                            name: name.clone(),
-                            path: name.clone(),
-                            size_bytes: bytes.len() as u64,
-                        };
-                        self.selected_analysis_path = Some(name.clone());
-                        self.analyses.insert(name, (file_info, analysis));
+                        self.loading_path = Some(name.clone());
+                        self.loading_progress = Some(0.0);
+                        self.loading_elapsed = Some(0.0);
+                        self.loading_eta = None;
+
+                        self.parse_bytes_via_worker(ctx, name, bytes.to_vec());
                     }
                 }
             }
@@ -2063,6 +2785,7 @@ impl eframe::App for Gui {
                     });
                 });
             } else {
+                self.check_scoreboard_cache();
                 let show_blank = if let Some(path) = &self.selected_analysis_path {
                     !self.analyses.contains_key(path)
                 } else {
@@ -2073,7 +2796,15 @@ impl eframe::App for Gui {
                     ScrollArea::vertical()
                         .id_salt("report_scroll_area")
                         .show(ui, |ui| {
-                            report_ui(None, None, &mut self.player_highlight, ui);
+                            report_ui(
+                                None,
+                                None,
+                                &mut self.player_highlight,
+                                &mut self.scoreboard_cache,
+                                &mut self.chat_cache,
+                                &mut self.player_details_cache,
+                                ui,
+                            );
                         });
                 } else if let Some(path) = &self.selected_analysis_path {
                     if let Some((file_info, analysis)) = self.analyses.get(path) {
@@ -2084,6 +2815,9 @@ impl eframe::App for Gui {
                                     Some(file_info),
                                     Some(analysis),
                                     &mut self.player_highlight,
+                                    &mut self.scoreboard_cache,
+                                    &mut self.chat_cache,
+                                    &mut self.player_details_cache,
                                     ui,
                                 );
                             });
@@ -2169,7 +2903,7 @@ impl eframe::App for Gui {
                     self.loading_progress = Some(0.0);
                     self.loading_elapsed = Some(0.0);
                     self.loading_eta = None;
-                    parse_web_file(ctx.clone(), self.tx.clone(), file);
+                    self.parse_web_file(ctx, file);
                 }
             }
         }
@@ -2273,6 +3007,90 @@ impl eframe::App for Gui {
                             ctx.request_repaint();
                         }
 
+                        ui.add_space(8.0);
+                        ui.separator();
+                        ui.add_space(8.0);
+                        ui.heading("Highlight Capture Settings");
+                        ui.add_space(4.0);
+
+                        egui::Grid::new("capture_settings_grid")
+                            .num_columns(2)
+                            .spacing([8.0, 8.0])
+                            .striped(true)
+                            .show(ui, |ui| {
+                                ui.label("Init Commands (startup):");
+                                let mut val = self.settings.capture_init_commands.clone();
+                                if ui.text_edit_multiline(&mut val).changed() {
+                                    self.settings.capture_init_commands = val;
+                                    save_settings(&self.settings);
+                                }
+                                ui.end_row();
+
+                                ui.label("Start Record Commands:");
+                                let mut val = self.settings.capture_start_commands.clone();
+                                if ui.text_edit_multiline(&mut val).changed() {
+                                    self.settings.capture_start_commands = val;
+                                    save_settings(&self.settings);
+                                }
+                                ui.end_row();
+
+                                ui.label("Stop Record Commands:");
+                                let mut val = self.settings.capture_stop_commands.clone();
+                                if ui.text_edit_multiline(&mut val).changed() {
+                                    self.settings.capture_stop_commands = val;
+                                    save_settings(&self.settings);
+                                }
+                                ui.end_row();
+
+                                ui.label("Initial Load Delay (s):");
+                                let mut val = self.settings.capture_initial_delay;
+                                if ui.add(egui::Slider::new(&mut val, 0.0..=30.0).step_by(0.5)).changed() {
+                                    self.settings.capture_initial_delay = val;
+                                    save_settings(&self.settings);
+                                }
+                                ui.end_row();
+
+                                ui.label("Fast-Forward Speed:");
+                                let mut val = self.settings.capture_fast_forward_speed;
+                                if ui.add(egui::Slider::new(&mut val, 0.01..=5.0).step_by(0.05)).changed() {
+                                    self.settings.capture_fast_forward_speed = val;
+                                    save_settings(&self.settings);
+                                }
+                                ui.end_row();
+
+                                ui.label("Pre-Record Buffer (s):");
+                                let mut val = self.settings.capture_pre_record_buffer;
+                                if ui.add(egui::Slider::new(&mut val, 0.0..=30.0).step_by(0.5)).changed() {
+                                    self.settings.capture_pre_record_buffer = val;
+                                    save_settings(&self.settings);
+                                }
+                                ui.end_row();
+
+                                ui.label("Record Start Lead (s):");
+                                let mut val = self.settings.capture_record_start_lead;
+                                if ui.add(egui::Slider::new(&mut val, 0.0..=10.0).step_by(0.5)).changed() {
+                                    self.settings.capture_record_start_lead = val;
+                                    save_settings(&self.settings);
+                                }
+                                ui.end_row();
+
+                                ui.label("Record Stop Trail (s):");
+                                let mut val = self.settings.capture_record_stop_trail;
+                                if ui.add(egui::Slider::new(&mut val, 0.0..=10.0).step_by(0.5)).changed() {
+                                    self.settings.capture_record_stop_trail = val;
+                                    save_settings(&self.settings);
+                                }
+                                ui.end_row();
+
+                                ui.label("Post-Record Buffer (s):");
+                                let mut val = self.settings.capture_post_record_buffer;
+                                if ui.add(egui::Slider::new(&mut val, 0.0..=30.0).step_by(0.5)).changed() {
+                                    self.settings.capture_post_record_buffer = val;
+                                    save_settings(&self.settings);
+                                }
+                                ui.end_row();
+                            });
+
                         ui.add_space(16.0);
                         ui.separator();
                         ui.add_space(8.0);
@@ -2320,6 +3138,30 @@ impl eframe::App for Gui {
                     });
                 });
             self.show_about_window = open && !close_clicked;
+        }
+        // Handle export request from Player Details view
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if let Some(req) = self.player_details_cache.export_request.take() {
+                if let Some(ref active_path_str) = self.selected_analysis_path {
+                    if let Some(player_id) = self.player_details_cache.player_id.clone() {
+                        let input_path = std::path::PathBuf::from(active_path_str);
+                        let stem = input_path.file_stem().and_then(|s| s.to_str()).unwrap_or("patched");
+                        let default_name = format!("{}_streak_{:.0}.dem", stem, req.start_time);
+                        
+                        self.pending_streak_export = Some(PendingStreakExport {
+                            input_path,
+                            player_id,
+                            start_time: req.start_time,
+                            stop_time: req.stop_time,
+                        });
+                        
+                        self.capture_export_picker = std::mem::take(&mut self.capture_export_picker)
+                            .default_file_name(&default_name);
+                        self.capture_export_picker.save_file();
+                    }
+                }
+            }
         }
     }
 }
