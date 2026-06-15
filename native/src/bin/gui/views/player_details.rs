@@ -565,7 +565,7 @@ fn render_kill_streaks_table(
         .column(Column::initial(80.0).resizable(true)) // Total Kills
         .column(Column::initial(70.0).resizable(true)) // Time
         .column(Column::initial(70.0).resizable(true)) // Duration
-        .column(Column::initial(50.0).resizable(true)) // Action
+        .column(Column::initial(70.0).resizable(true)) // Action
         .column(Column::remainder())                    // Streak Details
         .header(TABLE_ROW_HEIGHT, |mut row| {
             row.col(|ui| { ui.strong(t("#app_col_wave")); });
@@ -617,14 +617,26 @@ fn render_kill_streaks_table(
                     row.col(|ui| {
                         #[cfg(not(target_arch = "wasm32"))]
                         {
-                            if ui.button("🎥").on_hover_text("Export HLAE capture demo for this streak").clicked() {
-                                let start_time = first_kill.0.real_offset.as_secs_f32();
-                                let stop_time = last_kill.0.real_offset.as_secs_f32();
-                                cache.export_request = Some(crate::ExportRequest {
-                                    start_time,
-                                    stop_time,
-                                });
-                            }
+                            ui.horizontal(|ui| {
+                                if ui.button("🎥").on_hover_text("Export HLAE capture demo for this streak").clicked() {
+                                    let start_time = first_kill.0.real_offset.as_secs_f32();
+                                    let stop_time = last_kill.0.real_offset.as_secs_f32();
+                                    cache.export_request = Some(crate::ExportRequest {
+                                        start_time,
+                                        stop_time,
+                                    });
+                                }
+                                if ui.button("➕").on_hover_text("Add this streak to Batch Queue").clicked() {
+                                    let start_time = first_kill.0.real_offset.as_secs_f32();
+                                    let stop_time = last_kill.0.real_offset.as_secs_f32();
+                                    cache.add_to_queue_request = Some(crate::AddToQueueRequest {
+                                        start_time,
+                                        stop_time,
+                                        streak_idx,
+                                        kills_count: kill_indices.len(),
+                                    });
+                                }
+                            });
                         }
                         #[cfg(target_arch = "wasm32")]
                         {

@@ -2,11 +2,67 @@
   "language": "auto",
   "scan_folders_for_demos": true,
   "demo_folder_history": [
-    "E:\\Steam\\steamapps\\common\\Half-Life - PRE-Anniversary for Movies\\dod",
     "E:\\Steam\\steamapps\\common\\Half-Life - PRE-Anniversary for Movies\\dod\\temp demos",
     "E:\\Steam\\steamapps\\common\\Half-Life\\dod",
+    "E:\\Steam\\steamapps\\common\\Half-Life - PRE-Anniversary for Movies\\dod",
     "D:\\Downloads",
     "D:\\Repos\\dod-tools\\demos"
   ],
-  "pinned_folders": []
+  "pinned_folders": [],
+  "capture_init_commands": "",
+  "custom_commands": [
+    {
+      "command": "r_decals 5555",
+      "offset": 2.0,
+      "relation": "Before"
+    },
+    {
+      "command": "hud_deathnotice_time 5555",
+      "offset": 2.0,
+      "relation": "Before"
+    },
+    {
+      "command": "hud_draw 1",
+      "offset": 2.0,
+      "relation": "Before"
+    },
+    {
+      "command": "r_decals 0",
+      "offset": 2.0,
+      "relation": "After"
+    },
+    {
+      "command": "hud_deathnotice_time 5",
+      "offset": 2.0,
+      "relation": "After"
+    },
+    {
+      "command": "hud_draw 0",
+      "offset": 2.0,
+      "relation": "After"
+    },
+    {
+      "command": "r_decals 0",
+      "offset": 6.0,
+      "relation": "Before"
+    },
+    {
+      "command": "hud_deathnotice_time 5",
+      "offset": 6.0,
+      "relation": "Before"
+    },
+    {
+      "command": "hud_draw 0",
+      "offset": 6.0,
+      "relation": "Before"
+    }
+  ],
+  "capture_initial_delay": 3.0,
+  "capture_fast_forward_speed": 0.20999999344348907,
+  "capture_pre_record_buffer": 6.0,
+  "capture_record_start_lead": 2.0,
+  "capture_record_stop_trail": 2.0,
+  "capture_post_record_buffer": 4.0,
+  "hlae_path": "",
+  "game_path": ""
 }

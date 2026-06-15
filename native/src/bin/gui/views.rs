@@ -87,6 +87,7 @@ pub mod scoreboard;
 pub mod summary;
 pub mod team_details;
 pub mod timeline;
+pub mod batch_queue;
 
 pub use chat::chat_log_ui;
 pub use player_details::player_details_ui;
@@ -96,6 +97,7 @@ pub use scoreboard::scoreboard_ui;
 pub use summary::header_ui;
 pub use team_details::team_details_ui;
 pub use timeline::team_score_timeline_ui;
+pub use batch_queue::batch_queue_ui;
 
 pub fn report_ui(
     file_info: Option<&FileInfo>,
@@ -104,6 +106,8 @@ pub fn report_ui(
     scoreboard_cache: &mut crate::ScoreboardCache,
     chat_cache: &mut crate::ChatCache,
     player_details_cache: &mut crate::PlayerDetailsCache,
+    export_queue: &mut Vec<crate::QueuedStreakExport>,
+    settings: &mut crate::AppSettings,
     ui: &mut Ui,
 ) {
     let tab_id = if let Some(fi) = file_info {
@@ -145,6 +149,13 @@ pub fn report_ui(
         ui.selectable_value(&mut current_tab, "Rounds".to_string(), t("#app_tab_rounds"));
         ui.selectable_value(&mut current_tab, "Chat Log".to_string(), t("#app_tab_chat"));
 
+        let active_count = export_queue.iter().filter(|item| item.enabled).count();
+        ui.selectable_value(
+            &mut current_tab,
+            "Batch Queue".to_string(),
+            format!("Batch Queue ({})", active_count),
+        );
+
         let is_pov = r
             .map(|a| a.demo_info.demo_type.as_str() == "POV")
             .unwrap_or(false);
@@ -172,6 +183,7 @@ pub fn report_ui(
         "Rounds" => rounds_ui(file_info, r, ui),
         "Chat Log" => chat_log_ui(file_info, r, chat_cache, ui),
         "POV Analytics" => pov_analytics_ui(file_info, r, ui),
+        "Batch Queue" => batch_queue_ui(export_queue, settings, player_details_cache, ui),
         _ => {}
     }
 }

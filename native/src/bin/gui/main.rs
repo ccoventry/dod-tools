@@ -102,14 +102,15 @@ struct AppSettings {
     demo_folder_history: Vec<std::path::PathBuf>,
     pinned_folders: Vec<std::path::PathBuf>,
     capture_init_commands: String,
-    capture_start_commands: String,
-    capture_stop_commands: String,
+    custom_commands: Vec<native::patch::CustomCommand>,
     capture_initial_delay: f32,
     capture_fast_forward_speed: f32,
     capture_pre_record_buffer: f32,
     capture_record_start_lead: f32,
     capture_record_stop_trail: f32,
     capture_post_record_buffer: f32,
+    hlae_path: String,
+    game_path: String,
 }
 
 impl Default for AppSettings {
@@ -120,14 +121,61 @@ impl Default for AppSettings {
             demo_folder_history: Vec::new(),
             pinned_folders: Vec::new(),
             capture_init_commands: "".to_string(),
-            capture_start_commands: "r_decals 5555; hud_deathnotice_time 5555; hud_draw 1".to_string(),
-            capture_stop_commands: "r_decals 0; hud_deathnotice_time 5; hud_draw 0".to_string(),
+            custom_commands: vec![
+                native::patch::CustomCommand {
+                    command: "r_decals 5555".to_string(),
+                    offset: 2.0,
+                    relation: native::patch::CommandRelation::Before,
+                },
+                native::patch::CustomCommand {
+                    command: "hud_deathnotice_time 5555".to_string(),
+                    offset: 2.0,
+                    relation: native::patch::CommandRelation::Before,
+                },
+                native::patch::CustomCommand {
+                    command: "hud_draw 1".to_string(),
+                    offset: 2.0,
+                    relation: native::patch::CommandRelation::Before,
+                },
+                native::patch::CustomCommand {
+                    command: "r_decals 0".to_string(),
+                    offset: 2.0,
+                    relation: native::patch::CommandRelation::After,
+                },
+                native::patch::CustomCommand {
+                    command: "hud_deathnotice_time 5".to_string(),
+                    offset: 2.0,
+                    relation: native::patch::CommandRelation::After,
+                },
+                native::patch::CustomCommand {
+                    command: "hud_draw 0".to_string(),
+                    offset: 2.0,
+                    relation: native::patch::CommandRelation::After,
+                },
+                native::patch::CustomCommand {
+                    command: "r_decals 0".to_string(),
+                    offset: 6.0,
+                    relation: native::patch::CommandRelation::Before,
+                },
+                native::patch::CustomCommand {
+                    command: "hud_deathnotice_time 5".to_string(),
+                    offset: 6.0,
+                    relation: native::patch::CommandRelation::Before,
+                },
+                native::patch::CustomCommand {
+                    command: "hud_draw 0".to_string(),
+                    offset: 6.0,
+                    relation: native::patch::CommandRelation::Before,
+                },
+            ],
             capture_initial_delay: 3.0,
             capture_fast_forward_speed: 0.2,
             capture_pre_record_buffer: 6.0,
             capture_record_start_lead: 2.0,
             capture_record_stop_trail: 2.0,
             capture_post_record_buffer: 4.0,
+            hlae_path: "".to_string(),
+            game_path: "".to_string(),
         }
     }
 }
@@ -170,36 +218,97 @@ fn load_settings() -> AppSettings {
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
-                let capture_start_commands = val
-                    .get("capture_start_commands")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("r_decals 5555; hud_deathnotice_time 5555; hud_draw 1")
-                    .to_string();
-                let capture_stop_commands = val
-                    .get("capture_stop_commands")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("r_decals 0; hud_deathnotice_time 5; hud_draw 0")
-                    .to_string();
+                let custom_commands = val
+                    .get("custom_commands")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| {
+                                let cmd = v.get("command")?.as_str()?.to_string();
+                                let offset = v.get("offset")?.as_f64()? as f32;
+                                let rel_str = v.get("relation")?.as_str()?;
+                                let relation = match rel_str {
+                                    "After" => native::patch::CommandRelation::After,
+                                    _ => native::patch::CommandRelation::Before,
+                                };
+                                Some(native::patch::CustomCommand {
+                                    command: cmd,
+                                    offset,
+                                    relation,
+                                })
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_else(|| vec![
+                        native::patch::CustomCommand {
+                            command: "r_decals 5555".to_string(),
+                            offset: 2.0,
+                            relation: native::patch::CommandRelation::Before,
+                        },
+                        native::patch::CustomCommand {
+                            command: "hud_deathnotice_time 5555".to_string(),
+                            offset: 2.0,
+                            relation: native::patch::CommandRelation::Before,
+                        },
+                        native::patch::CustomCommand {
+                            command: "hud_draw 1".to_string(),
+                            offset: 2.0,
+                            relation: native::patch::CommandRelation::Before,
+                        },
+                        native::patch::CustomCommand {
+                            command: "r_decals 0".to_string(),
+                            offset: 2.0,
+                            relation: native::patch::CommandRelation::After,
+                        },
+                        native::patch::CustomCommand {
+                            command: "hud_deathnotice_time 5".to_string(),
+                            offset: 2.0,
+                            relation: native::patch::CommandRelation::After,
+                        },
+                        native::patch::CustomCommand {
+                            command: "hud_draw 0".to_string(),
+                            offset: 2.0,
+                            relation: native::patch::CommandRelation::After,
+                        },
+                        native::patch::CustomCommand {
+                            command: "r_decals 0".to_string(),
+                            offset: 6.0,
+                            relation: native::patch::CommandRelation::Before,
+                        },
+                        native::patch::CustomCommand {
+                            command: "hud_deathnotice_time 5".to_string(),
+                            offset: 6.0,
+                            relation: native::patch::CommandRelation::Before,
+                        },
+                        native::patch::CustomCommand {
+                            command: "hud_draw 0".to_string(),
+                            offset: 6.0,
+                            relation: native::patch::CommandRelation::Before,
+                        },
+                    ]);
                 let capture_initial_delay = val.get("capture_initial_delay").and_then(|v| v.as_f64()).unwrap_or(3.0) as f32;
                 let capture_fast_forward_speed = val.get("capture_fast_forward_speed").and_then(|v| v.as_f64()).unwrap_or(0.2) as f32;
                 let capture_pre_record_buffer = val.get("capture_pre_record_buffer").and_then(|v| v.as_f64()).unwrap_or(6.0) as f32;
                 let capture_record_start_lead = val.get("capture_record_start_lead").and_then(|v| v.as_f64()).unwrap_or(2.0) as f32;
                 let capture_record_stop_trail = val.get("capture_record_stop_trail").and_then(|v| v.as_f64()).unwrap_or(2.0) as f32;
                 let capture_post_record_buffer = val.get("capture_post_record_buffer").and_then(|v| v.as_f64()).unwrap_or(4.0) as f32;
+                let hlae_path = val.get("hlae_path").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let game_path = val.get("game_path").and_then(|v| v.as_str()).unwrap_or("").to_string();
                 return AppSettings {
                     language,
                     scan_folders_for_demos,
                     demo_folder_history,
                     pinned_folders,
                     capture_init_commands,
-                    capture_start_commands,
-                    capture_stop_commands,
+                    custom_commands,
                     capture_initial_delay,
                     capture_fast_forward_speed,
                     capture_pre_record_buffer,
                     capture_record_start_lead,
                     capture_record_stop_trail,
                     capture_post_record_buffer,
+                    hlae_path,
+                    game_path,
                 };
             }
         }
@@ -245,36 +354,97 @@ fn load_settings() -> AppSettings {
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string();
-                    let capture_start_commands = val
-                        .get("capture_start_commands")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("r_decals 5555; hud_deathnotice_time 5555; hud_draw 1")
-                        .to_string();
-                    let capture_stop_commands = val
-                        .get("capture_stop_commands")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("r_decals 0; hud_deathnotice_time 5; hud_draw 0")
-                        .to_string();
+                    let custom_commands = val
+                        .get("custom_commands")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|v| {
+                                    let cmd = v.get("command")?.as_str()?.to_string();
+                                    let offset = v.get("offset")?.as_f64()? as f32;
+                                    let rel_str = v.get("relation")?.as_str()?;
+                                    let relation = match rel_str {
+                                        "After" => native::patch::CommandRelation::After,
+                                        _ => native::patch::CommandRelation::Before,
+                                    };
+                                    Some(native::patch::CustomCommand {
+                                        command: cmd,
+                                        offset,
+                                        relation,
+                                    })
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_else(|| vec![
+                            native::patch::CustomCommand {
+                                command: "r_decals 5555".to_string(),
+                                offset: 2.0,
+                                relation: native::patch::CommandRelation::Before,
+                            },
+                            native::patch::CustomCommand {
+                                command: "hud_deathnotice_time 5555".to_string(),
+                                offset: 2.0,
+                                relation: native::patch::CommandRelation::Before,
+                            },
+                            native::patch::CustomCommand {
+                                command: "hud_draw 1".to_string(),
+                                offset: 2.0,
+                                relation: native::patch::CommandRelation::Before,
+                            },
+                            native::patch::CustomCommand {
+                                command: "r_decals 0".to_string(),
+                                offset: 2.0,
+                                relation: native::patch::CommandRelation::After,
+                            },
+                            native::patch::CustomCommand {
+                                command: "hud_deathnotice_time 5".to_string(),
+                                offset: 2.0,
+                                relation: native::patch::CommandRelation::After,
+                            },
+                            native::patch::CustomCommand {
+                                command: "hud_draw 0".to_string(),
+                                offset: 2.0,
+                                relation: native::patch::CommandRelation::After,
+                            },
+                            native::patch::CustomCommand {
+                                command: "r_decals 0".to_string(),
+                                offset: 6.0,
+                                relation: native::patch::CommandRelation::Before,
+                            },
+                            native::patch::CustomCommand {
+                                command: "hud_deathnotice_time 5".to_string(),
+                                offset: 6.0,
+                                relation: native::patch::CommandRelation::Before,
+                            },
+                            native::patch::CustomCommand {
+                                command: "hud_draw 0".to_string(),
+                                offset: 6.0,
+                                relation: native::patch::CommandRelation::Before,
+                            },
+                        ]);
                     let capture_initial_delay = val.get("capture_initial_delay").and_then(|v| v.as_f64()).unwrap_or(3.0) as f32;
                     let capture_fast_forward_speed = val.get("capture_fast_forward_speed").and_then(|v| v.as_f64()).unwrap_or(0.2) as f32;
                     let capture_pre_record_buffer = val.get("capture_pre_record_buffer").and_then(|v| v.as_f64()).unwrap_or(6.0) as f32;
                     let capture_record_start_lead = val.get("capture_record_start_lead").and_then(|v| v.as_f64()).unwrap_or(2.0) as f32;
                     let capture_record_stop_trail = val.get("capture_record_stop_trail").and_then(|v| v.as_f64()).unwrap_or(2.0) as f32;
                     let capture_post_record_buffer = val.get("capture_post_record_buffer").and_then(|v| v.as_f64()).unwrap_or(4.0) as f32;
+                    let hlae_path = val.get("hlae_path").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let game_path = val.get("game_path").and_then(|v| v.as_str()).unwrap_or("").to_string();
                     return AppSettings {
                         language,
                         scan_folders_for_demos,
                         demo_folder_history,
                         pinned_folders,
                         capture_init_commands,
-                        capture_start_commands,
-                        capture_stop_commands,
+                        custom_commands,
                         capture_initial_delay,
                         capture_fast_forward_speed,
                         capture_pre_record_buffer,
                         capture_record_start_lead,
                         capture_record_stop_trail,
                         capture_post_record_buffer,
+                        hlae_path,
+                        game_path,
                     };
                 }
             }
@@ -284,7 +454,7 @@ fn load_settings() -> AppSettings {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn save_settings(settings: &AppSettings) {
+pub(crate) fn save_settings(settings: &AppSettings) {
     let mut map = serde_json::Map::new();
     map.insert(
         "language".to_string(),
@@ -318,14 +488,19 @@ fn save_settings(settings: &AppSettings) {
         "capture_init_commands".to_string(),
         serde_json::Value::String(settings.capture_init_commands.clone()),
     );
-    map.insert(
-        "capture_start_commands".to_string(),
-        serde_json::Value::String(settings.capture_start_commands.clone()),
-    );
-    map.insert(
-        "capture_stop_commands".to_string(),
-        serde_json::Value::String(settings.capture_stop_commands.clone()),
-    );
+    let mut custom_cmds_json = vec![];
+    for cmd in &settings.custom_commands {
+        let mut cmd_map = serde_json::Map::new();
+        cmd_map.insert("command".to_string(), serde_json::Value::String(cmd.command.clone()));
+        cmd_map.insert("offset".to_string(), serde_json::Value::Number(serde_json::Number::from_f64(cmd.offset as f64).unwrap()));
+        let rel_str = match cmd.relation {
+            native::patch::CommandRelation::Before => "Before",
+            native::patch::CommandRelation::After => "After",
+        };
+        cmd_map.insert("relation".to_string(), serde_json::Value::String(rel_str.to_string()));
+        custom_cmds_json.push(serde_json::Value::Object(cmd_map));
+    }
+    map.insert("custom_commands".to_string(), serde_json::Value::Array(custom_cmds_json));
     map.insert(
         "capture_initial_delay".to_string(),
         serde_json::Value::Number(serde_json::Number::from_f64(settings.capture_initial_delay as f64).unwrap()),
@@ -349,6 +524,14 @@ fn save_settings(settings: &AppSettings) {
     map.insert(
         "capture_post_record_buffer".to_string(),
         serde_json::Value::Number(serde_json::Number::from_f64(settings.capture_post_record_buffer as f64).unwrap()),
+    );
+    map.insert(
+        "hlae_path".to_string(),
+        serde_json::Value::String(settings.hlae_path.clone()),
+    );
+    map.insert(
+        "game_path".to_string(),
+        serde_json::Value::String(settings.game_path.clone()),
     );
     let val = serde_json::Value::Object(map);
     if let Ok(content) = serde_json::to_string_pretty(&val) {
@@ -357,7 +540,7 @@ fn save_settings(settings: &AppSettings) {
 }
 
 #[cfg(target_arch = "wasm32")]
-fn save_settings(settings: &AppSettings) {
+pub(crate) fn save_settings(settings: &AppSettings) {
     let mut map = serde_json::Map::new();
     map.insert(
         "language".to_string(),
@@ -391,14 +574,19 @@ fn save_settings(settings: &AppSettings) {
         "capture_init_commands".to_string(),
         serde_json::Value::String(settings.capture_init_commands.clone()),
     );
-    map.insert(
-        "capture_start_commands".to_string(),
-        serde_json::Value::String(settings.capture_start_commands.clone()),
-    );
-    map.insert(
-        "capture_stop_commands".to_string(),
-        serde_json::Value::String(settings.capture_stop_commands.clone()),
-    );
+    let mut custom_cmds_json = vec![];
+    for cmd in &settings.custom_commands {
+        let mut cmd_map = serde_json::Map::new();
+        cmd_map.insert("command".to_string(), serde_json::Value::String(cmd.command.clone()));
+        cmd_map.insert("offset".to_string(), serde_json::Value::Number(serde_json::Number::from_f64(cmd.offset as f64).unwrap()));
+        let rel_str = match cmd.relation {
+            native::patch::CommandRelation::Before => "Before",
+            native::patch::CommandRelation::After => "After",
+        };
+        cmd_map.insert("relation".to_string(), serde_json::Value::String(rel_str.to_string()));
+        custom_cmds_json.push(serde_json::Value::Object(cmd_map));
+    }
+    map.insert("custom_commands".to_string(), serde_json::Value::Array(custom_cmds_json));
     map.insert(
         "capture_initial_delay".to_string(),
         serde_json::Value::Number(serde_json::Number::from_f64(settings.capture_initial_delay as f64).unwrap()),
@@ -422,6 +610,14 @@ fn save_settings(settings: &AppSettings) {
     map.insert(
         "capture_post_record_buffer".to_string(),
         serde_json::Value::Number(serde_json::Number::from_f64(settings.capture_post_record_buffer as f64).unwrap()),
+    );
+    map.insert(
+        "hlae_path".to_string(),
+        serde_json::Value::String(settings.hlae_path.clone()),
+    );
+    map.insert(
+        "game_path".to_string(),
+        serde_json::Value::String(settings.game_path.clone()),
     );
     let val = serde_json::Value::Object(map);
     if let Ok(content) = serde_json::to_string_pretty(&val) {
@@ -630,6 +826,38 @@ pub struct ExportRequest {
     pub stop_time: f32,
 }
 
+#[derive(Clone, Debug)]
+pub struct AddToQueueRequest {
+    pub start_time: f32,
+    pub stop_time: f32,
+    pub streak_idx: usize,
+    pub kills_count: usize,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct QueuedStreakExport {
+    pub id: String,
+    pub input_path: std::path::PathBuf,
+    pub player_id: analysis::PlayerGlobalId,
+    pub player_name: String,
+    pub start_time: f32,
+    pub stop_time: f32,
+    pub streak_idx: usize,
+    pub kills_count: usize,
+    pub output_name: String,
+    pub enabled: bool,
+    pub exit_on_finish: bool,
+    pub init_commands: String,
+    pub custom_commands: Vec<native::patch::CustomCommand>,
+    pub fast_forward_speed: f32,
+    pub hltv_spec_player: Option<String>,
+    pub initial_delay: f32,
+    pub pre_record_buffer: f32,
+    pub record_start_lead: f32,
+    pub record_stop_trail: f32,
+    pub post_record_buffer: f32,
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Debug)]
 struct PendingStreakExport {
@@ -648,6 +876,14 @@ pub struct PlayerDetailsCache {
     pub sorted_weapon_breakdown: Vec<(analysis::Weapon, (u32, u32))>,
     pub filtered_streaks: Vec<(usize, Vec<usize>)>, // (streak_index, Vec<kill_index>)
     pub export_request: Option<ExportRequest>,
+    pub add_to_queue_request: Option<AddToQueueRequest>,
+    pub batch_export_request: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SidebarTab {
+    Files,
+    Settings,
 }
 
 struct Gui {
@@ -657,8 +893,8 @@ struct Gui {
     player_highlight: PlayerHighlighting,
     error_message: Option<String>,
     settings: AppSettings,
-    show_settings_window: bool,
     show_about_window: bool,
+    active_sidebar_tab: SidebarTab,
 
     filter_query: String,
     filter_type: String,
@@ -722,6 +958,9 @@ struct Gui {
     scoreboard_cache: ScoreboardCache,
     chat_cache: ChatCache,
     player_details_cache: PlayerDetailsCache,
+    export_queue: Vec<QueuedStreakExport>,
+    #[cfg(not(target_arch = "wasm32"))]
+    batch_export_picker: FileDialog,
 }
 
 #[allow(dead_code)]
@@ -1067,8 +1306,8 @@ impl Default for Gui {
             rx,
             tx,
             settings,
-            show_settings_window: false,
             show_about_window: false,
+            active_sidebar_tab: SidebarTab::Files,
 
             filter_query: String::new(),
             filter_type: "All".to_string(),
@@ -1129,6 +1368,9 @@ impl Default for Gui {
             scoreboard_cache: ScoreboardCache::default(),
             chat_cache: ChatCache::default(),
             player_details_cache: PlayerDetailsCache::default(),
+            export_queue: Vec::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            batch_export_picker: FileDialog::default(),
         }
     }
 }
@@ -1572,16 +1814,257 @@ impl Gui {
             let _ = worker.post_message(&parse_obj);
         }
     }
+
+    fn render_settings_ui(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        ui.vertical(|ui| {
+            ui.heading(t("#app_prefs_general"));
+            ui.add_space(8.0);
+
+            ui.horizontal(|ui| {
+                ui.label(t("#app_prefs_language"));
+                let mut current_lang = self.settings.language.clone();
+                egui::ComboBox::from_id_salt("language_select")
+                    .selected_text(match current_lang.as_str() {
+                        "auto" => t("#app_prefs_lang_auto"),
+                        other => {
+                            let mut chars = other.chars();
+                            match chars.next() {
+                                None => String::new(),
+                                Some(f) => {
+                                    f.to_uppercase().collect::<String>()
+                                        + chars.as_str()
+                                }
+                            }
+                        }
+                    })
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut current_lang,
+                            "auto".to_string(),
+                            t("#app_prefs_lang_auto"),
+                        );
+                        ui.separator();
+                        ui.selectable_value(
+                            &mut current_lang,
+                            "english".to_string(),
+                            "English",
+                        );
+                        ui.selectable_value(
+                            &mut current_lang,
+                            "french".to_string(),
+                            "French",
+                        );
+                        ui.selectable_value(
+                            &mut current_lang,
+                            "german".to_string(),
+                            "German",
+                        );
+                        ui.selectable_value(
+                            &mut current_lang,
+                            "spanish".to_string(),
+                            "Spanish",
+                        );
+                        ui.selectable_value(
+                            &mut current_lang,
+                            "russian".to_string(),
+                            "Russian",
+                        );
+                        ui.selectable_value(
+                            &mut current_lang,
+                            "serbian".to_string(),
+                            "Serbian",
+                        );
+                        ui.selectable_value(
+                            &mut current_lang,
+                            "polish".to_string(),
+                            "Polish",
+                        );
+                        ui.selectable_value(
+                            &mut current_lang,
+                            "turkish".to_string(),
+                            "Turkish",
+                        );
+                    });
+
+                if current_lang != self.settings.language {
+                    self.settings.language = current_lang;
+                    apply_language_setting(&self.settings.language);
+                    save_settings(&self.settings);
+                    ctx.request_repaint();
+                }
+            });
+
+            ui.add_space(8.0);
+            let mut scan_val = self.settings.scan_folders_for_demos;
+            if ui.checkbox(&mut scan_val, t("#app_prefs_scan_folders")).changed() {
+                self.settings.scan_folders_for_demos = scan_val;
+                save_settings(&self.settings);
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    self.subdir_cache.clear();
+                    self.explorer_demo_cache.clear();
+                }
+                ctx.request_repaint();
+            }
+
+            ui.add_space(8.0);
+            ui.separator();
+            ui.add_space(8.0);
+            ui.heading("Highlight Capture Settings");
+            ui.add_space(8.0);
+
+            ui.label("Init Commands (startup):");
+            let mut val = self.settings.capture_init_commands.clone();
+            if ui.text_edit_multiline(&mut val).changed() {
+                self.settings.capture_init_commands = val;
+                save_settings(&self.settings);
+            }
+            
+            ui.add_space(8.0);
+            ui.label("Default Custom Commands:");
+            ui.add_space(4.0);
+            ui.vertical(|ui| {
+                let mut changed = false;
+                let mut delete_idx = None;
+                
+                egui::ScrollArea::vertical()
+                    .max_height(120.0)
+                    .id_salt("default_commands_scroll")
+                    .show(ui, |ui| {
+                        for (i, cmd) in self.settings.custom_commands.iter_mut().enumerate() {
+                            ui.horizontal(|ui| {
+                                if ui.add(egui::TextEdit::singleline(&mut cmd.command).desired_width(120.0)).changed() {
+                                    changed = true;
+                                }
+                                
+                                let is_after = cmd.relation == native::patch::CommandRelation::After;
+                                if ui.selectable_label(!is_after, "B").on_hover_text("Before Highlight").clicked() {
+                                    cmd.relation = native::patch::CommandRelation::Before;
+                                    changed = true;
+                                }
+                                if ui.selectable_label(is_after, "A").on_hover_text("After Highlight").clicked() {
+                                    cmd.relation = native::patch::CommandRelation::After;
+                                    changed = true;
+                                }
+                                
+                                if ui.add(egui::DragValue::new(&mut cmd.offset).speed(0.1).range(0.0..=60.0).suffix("s")).changed() {
+                                    changed = true;
+                                }
+                                if ui.button("❌").clicked() {
+                                    delete_idx = Some(i);
+                                    changed = true;
+                                }
+                            });
+                        }
+                    });
+
+                if let Some(i) = delete_idx {
+                    self.settings.custom_commands.remove(i);
+                }
+                if ui.button("➕ Add Default").clicked() {
+                    self.settings.custom_commands.push(native::patch::CustomCommand {
+                        command: "".to_string(),
+                        offset: 2.0,
+                        relation: native::patch::CommandRelation::Before,
+                    });
+                    changed = true;
+                }
+                if changed {
+                    save_settings(&self.settings);
+                }
+            });
+
+            ui.add_space(8.0);
+            ui.separator();
+            ui.add_space(8.0);
+            ui.strong("Timeline Buffers");
+            ui.add_space(4.0);
+
+            ui.label("Initial Load Delay:");
+            let mut val = self.settings.capture_initial_delay;
+            if ui.add(egui::Slider::new(&mut val, 0.0..=30.0).step_by(0.5).suffix("s")).changed() {
+                self.settings.capture_initial_delay = val;
+                save_settings(&self.settings);
+            }
+
+            ui.label("Fast-Forward Speed:");
+            let mut val = self.settings.capture_fast_forward_speed;
+            if ui.add(egui::Slider::new(&mut val, 0.01..=5.0).step_by(0.05)).changed() {
+                self.settings.capture_fast_forward_speed = val;
+                save_settings(&self.settings);
+            }
+
+            ui.label("Pre-Record Buffer:");
+            let mut val = self.settings.capture_pre_record_buffer;
+            if ui.add(egui::Slider::new(&mut val, 0.0..=30.0).step_by(0.5).suffix("s")).changed() {
+                self.settings.capture_pre_record_buffer = val;
+                save_settings(&self.settings);
+            }
+
+            ui.label("Record Start Lead:");
+            let mut val = self.settings.capture_record_start_lead;
+            if ui.add(egui::Slider::new(&mut val, 0.0..=10.0).step_by(0.5).suffix("s")).changed() {
+                self.settings.capture_record_start_lead = val;
+                save_settings(&self.settings);
+            }
+
+            ui.label("Record Stop Trail:");
+            let mut val = self.settings.capture_record_stop_trail;
+            if ui.add(egui::Slider::new(&mut val, 0.0..=10.0).step_by(0.5).suffix("s")).changed() {
+                self.settings.capture_record_stop_trail = val;
+                save_settings(&self.settings);
+            }
+
+            ui.label("Post-Record Buffer:");
+            let mut val = self.settings.capture_post_record_buffer;
+            if ui.add(egui::Slider::new(&mut val, 0.0..=30.0).step_by(0.5).suffix("s")).changed() {
+                self.settings.capture_post_record_buffer = val;
+                save_settings(&self.settings);
+            }
+        });
+    }
 }
 
 
 impl eframe::App for Gui {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
-        let modal_open = self.show_settings_window || self.show_about_window;
+        let modal_open = self.show_about_window;
 
         if self.loading_path.is_some() {
             ctx.request_repaint();
         }
+
+        // Left-most narrow Navigation Sidebar
+        SidePanel::left("navigation_sidebar")
+            .resizable(false)
+            .exact_width(48.0)
+            .frame(Frame::side_top_panel(&ctx.style())
+                .fill(ctx.style().visuals.extreme_bg_color)
+                .inner_margin(egui::Margin::same(4.0)))
+            .show(ctx, |ui| {
+                if modal_open {
+                    ui.disable();
+                }
+                ui.vertical_centered(|ui| {
+                    ui.add_space(8.0);
+                    
+                    let files_active = self.active_sidebar_tab == SidebarTab::Files;
+                    let files_btn = egui::Button::new(egui::RichText::new("📄").size(18.0))
+                        .selected(files_active);
+                    if ui.add(files_btn).on_hover_text("Demos File Explorer").clicked() {
+                        self.active_sidebar_tab = SidebarTab::Files;
+                    }
+                    
+                    ui.add_space(8.0);
+                    
+                    let settings_active = self.active_sidebar_tab == SidebarTab::Settings;
+                    let settings_btn = egui::Button::new(egui::RichText::new("⚙").size(18.0))
+                        .selected(settings_active);
+                    if ui.add(settings_btn).on_hover_text("Application Settings").clicked() {
+                        self.active_sidebar_tab = SidebarTab::Settings;
+                    }
+                });
+            });
 
         // Update native file picker
         #[cfg(not(target_arch = "wasm32"))]
@@ -1613,11 +2096,23 @@ impl eframe::App for Gui {
                                 None
                             };
 
+                            let player_deaths = if let Some(ref analysis) = self.analyses.get(&export_info.input_path.to_string_lossy().into_owned()).map(|(_, a)| a) {
+                                if let Some(player) = analysis.state.players.iter().find(|p| p.id == export_info.player_id) {
+                                    player.mortality.iter()
+                                        .filter(|change| matches!(change.mortality(), analysis::Mortality::Dead))
+                                        .map(|change| change.time().real_offset.as_secs_f32())
+                                        .collect::<Vec<_>>()
+                                } else {
+                                    vec![]
+                                }
+                            } else {
+                                vec![]
+                            };
+
                             let options = native::patch::PatchOptions {
                                 exit_on_finish: false,
                                 init_commands: self.settings.capture_init_commands.lines().map(String::from).collect(),
-                                start_commands: self.settings.capture_start_commands.lines().map(String::from).collect(),
-                                stop_commands: self.settings.capture_stop_commands.lines().map(String::from).collect(),
+                                custom_commands: self.settings.custom_commands.clone(),
                                 fast_forward_speed: Some(self.settings.capture_fast_forward_speed),
                                 hltv_spec_player,
                                 initial_delay: Some(self.settings.capture_initial_delay),
@@ -1625,6 +2120,7 @@ impl eframe::App for Gui {
                                 record_start_lead: Some(self.settings.capture_record_start_lead),
                                 record_stop_trail: Some(self.settings.capture_record_stop_trail),
                                 post_record_buffer: Some(self.settings.capture_post_record_buffer),
+                                player_deaths: Some(player_deaths),
                             };
                             let intervals = &[(export_info.start_time, export_info.stop_time)];
                             match native::patch::patch_demo_highlights(&demo_bytes, intervals, &options) {
@@ -1640,6 +2136,109 @@ impl eframe::App for Gui {
                         }
                         Err(e) => {
                             self.error_message = Some(format!("Failed to read source demo: {}", e));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Update batch export folder picker
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.batch_export_picker.update(ctx);
+            if let Some(dest_dir) = self.batch_export_picker.take_picked() {
+                let enabled_items: Vec<QueuedStreakExport> = self.export_queue.iter()
+                    .filter(|item| item.enabled)
+                    .cloned()
+                    .collect();
+
+                if !enabled_items.is_empty() {
+                    let mut queue_info = vec![];
+                    let mut has_error = false;
+
+                    let mut file_cache: HashMap<std::path::PathBuf, Result<Vec<u8>, String>> = HashMap::new();
+
+                    for item in &enabled_items {
+                        let demo_bytes = file_cache.entry(item.input_path.clone())
+                            .or_insert_with(|| {
+                                std::fs::read(&item.input_path)
+                                    .map_err(|e| format!("Failed to read source demo {}: {}", item.input_path.display(), e))
+                            });
+
+                        match demo_bytes {
+                            Ok(bytes) => {
+                                let player_deaths = if let Some(ref analysis) = self.analyses.get(&item.input_path.to_string_lossy().into_owned()).map(|(_, a)| a) {
+                                    if let Some(player) = analysis.state.players.iter().find(|p| p.id == item.player_id) {
+                                        player.mortality.iter()
+                                            .filter(|change| matches!(change.mortality(), analysis::Mortality::Dead))
+                                            .map(|change| change.time().real_offset.as_secs_f32())
+                                            .collect::<Vec<_>>()
+                                    } else {
+                                        vec![]
+                                    }
+                                } else {
+                                    vec![]
+                                };
+
+                                let options = native::patch::PatchOptions {
+                                    exit_on_finish: item.exit_on_finish,
+                                    init_commands: item.init_commands.lines().map(String::from).collect(),
+                                    custom_commands: item.custom_commands.clone(),
+                                    fast_forward_speed: Some(item.fast_forward_speed),
+                                    hltv_spec_player: item.hltv_spec_player.clone(),
+                                    initial_delay: Some(item.initial_delay),
+                                    pre_record_buffer: Some(item.pre_record_buffer),
+                                    record_start_lead: Some(item.record_start_lead),
+                                    record_stop_trail: Some(item.record_stop_trail),
+                                    post_record_buffer: Some(item.post_record_buffer),
+                                    player_deaths: Some(player_deaths),
+                                };
+
+                                let intervals = &[(item.start_time, item.stop_time)];
+                                match native::patch::patch_demo_highlights(bytes, intervals, &options) {
+                                    Ok(patched_bytes) => {
+                                        let out_path = dest_dir.join(&item.output_name);
+                                        if let Err(e) = std::fs::write(&out_path, patched_bytes) {
+                                            self.error_message = Some(format!("Failed to write patched demo: {}", e));
+                                            has_error = true;
+                                            break;
+                                        }
+                                        queue_info.push(serde_json::json!({
+                                            "demo_path": out_path.to_string_lossy().into_owned(),
+                                            "player": item.player_name.clone(),
+                                            "streak_index": item.streak_idx,
+                                            "kills": item.kills_count,
+                                        }));
+                                    }
+                                    Err(e) => {
+                                        self.error_message = Some(format!("Failed to patch demo: {}", e));
+                                        has_error = true;
+                                        break;
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                self.error_message = Some(e.clone());
+                                has_error = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    if !has_error && !queue_info.is_empty() {
+                        let queue_json_path = dest_dir.join("capture_queue.json");
+                        let json_write = std::fs::write(
+                            &queue_json_path,
+                            serde_json::to_string_pretty(&queue_info).unwrap_or_default(),
+                        );
+                        if let Err(e) = json_write {
+                            self.error_message = Some(format!("Failed to write capture_queue.json: {}", e));
+                        }
+
+                        let queue_py_path = dest_dir.join("capture_queue.py");
+                        let py_script = generate_python_queue_sequencer(&self.settings.hlae_path, &self.settings.game_path);
+                        if let Err(e) = std::fs::write(&queue_py_path, py_script) {
+                            self.error_message = Some(format!("Failed to write capture_queue.py: {}", e));
                         }
                     }
                 }
@@ -1862,7 +2461,7 @@ impl eframe::App for Gui {
                         }
 
                         if ui.button(t("#app_menu_preferences")).clicked() {
-                            self.show_settings_window = true;
+                            self.active_sidebar_tab = SidebarTab::Settings;
                             ui.close();
                         }
 
@@ -2803,6 +3402,8 @@ impl eframe::App for Gui {
                                 &mut self.scoreboard_cache,
                                 &mut self.chat_cache,
                                 &mut self.player_details_cache,
+                                &mut self.export_queue,
+                                &mut self.settings,
                                 ui,
                             );
                         });
@@ -2818,6 +3419,8 @@ impl eframe::App for Gui {
                                     &mut self.scoreboard_cache,
                                     &mut self.chat_cache,
                                     &mut self.player_details_cache,
+                                    &mut self.export_queue,
+                                    &mut self.settings,
                                     ui,
                                 );
                             });
@@ -3026,20 +3629,57 @@ impl eframe::App for Gui {
                                 }
                                 ui.end_row();
 
-                                ui.label("Start Record Commands:");
-                                let mut val = self.settings.capture_start_commands.clone();
-                                if ui.text_edit_multiline(&mut val).changed() {
-                                    self.settings.capture_start_commands = val;
-                                    save_settings(&self.settings);
-                                }
-                                ui.end_row();
+                                ui.label("Default Custom Commands:");
+                                ui.vertical(|ui| {
+                                    let mut changed = false;
+                                    let mut delete_idx = None;
+                                    
+                                    egui::ScrollArea::vertical()
+                                        .max_height(120.0)
+                                        .id_salt("default_commands_scroll")
+                                        .show(ui, |ui| {
+                                            for (i, cmd) in self.settings.custom_commands.iter_mut().enumerate() {
+                                                ui.horizontal(|ui| {
+                                                    if ui.add(egui::TextEdit::singleline(&mut cmd.command).desired_width(180.0)).changed() {
+                                                        changed = true;
+                                                    }
+                                                    
+                                                    let is_after = cmd.relation == native::patch::CommandRelation::After;
+                                                    if ui.selectable_label(!is_after, "Before").clicked() {
+                                                        cmd.relation = native::patch::CommandRelation::Before;
+                                                        changed = true;
+                                                    }
+                                                    if ui.selectable_label(is_after, "After").clicked() {
+                                                        cmd.relation = native::patch::CommandRelation::After;
+                                                        changed = true;
+                                                    }
+                                                    
+                                                    if ui.add(egui::DragValue::new(&mut cmd.offset).speed(0.1).range(0.0..=60.0).suffix("s")).changed() {
+                                                        changed = true;
+                                                    }
+                                                    if ui.button("❌").clicked() {
+                                                        delete_idx = Some(i);
+                                                        changed = true;
+                                                    }
+                                                });
+                                            }
+                                        });
 
-                                ui.label("Stop Record Commands:");
-                                let mut val = self.settings.capture_stop_commands.clone();
-                                if ui.text_edit_multiline(&mut val).changed() {
-                                    self.settings.capture_stop_commands = val;
-                                    save_settings(&self.settings);
-                                }
+                                    if let Some(i) = delete_idx {
+                                        self.settings.custom_commands.remove(i);
+                                    }
+                                    if ui.button("➕ Add Default Command").clicked() {
+                                        self.settings.custom_commands.push(native::patch::CustomCommand {
+                                            command: "".to_string(),
+                                            offset: 2.0,
+                                            relation: native::patch::CommandRelation::Before,
+                                        });
+                                        changed = true;
+                                    }
+                                    if changed {
+                                        save_settings(&self.settings);
+                                    }
+                                });
                                 ui.end_row();
 
                                 ui.label("Initial Load Delay (s):");
@@ -3139,6 +3779,15 @@ impl eframe::App for Gui {
                 });
             self.show_about_window = open && !close_clicked;
         }
+        // Handle batch export request from Batch Queue view
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if self.player_details_cache.batch_export_request {
+                self.player_details_cache.batch_export_request = false;
+                self.batch_export_picker.pick_directory();
+            }
+        }
+
         // Handle export request from Player Details view
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -3159,6 +3808,73 @@ impl eframe::App for Gui {
                         self.capture_export_picker = std::mem::take(&mut self.capture_export_picker)
                             .default_file_name(&default_name);
                         self.capture_export_picker.save_file();
+                    }
+                }
+            }
+        }
+
+        // Handle add-to-queue request from Player Details view
+        if let Some(req) = self.player_details_cache.add_to_queue_request.take() {
+            if let Some(ref active_path_str) = self.selected_analysis_path {
+                if let Some(player_id) = self.player_details_cache.player_id.clone() {
+                    let input_path = std::path::PathBuf::from(active_path_str);
+                    
+                    let player_name = if let Some((_, analysis)) = self.analyses.get(active_path_str) {
+                        analysis.state.players.iter()
+                            .find(|p| p.id == player_id)
+                            .map(|p| p.name.clone())
+                            .unwrap_or_else(|| "player".to_string())
+                    } else {
+                        "player".to_string()
+                    };
+
+                    let clean_player = player_name.chars()
+                        .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
+                        .collect::<String>();
+                    let clean_player = if clean_player.is_empty() { "player".to_string() } else { clean_player };
+
+                    let stem = input_path.file_stem().and_then(|s| s.to_str()).unwrap_or("patched");
+                    let clean_stem = stem.chars()
+                        .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
+                        .collect::<String>();
+
+                    let default_name = format!("{}_ks_{}_{}.dem", clean_stem, clean_player, req.streak_idx);
+
+                    let hltv_spec_player = if let Some((_, analysis)) = self.analyses.get(active_path_str) {
+                        if analysis.demo_info.demo_type == "HLTV" {
+                            Some(player_name.clone())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+
+                    let new_id = format!("{}_{}_{}", active_path_str, player_id, req.streak_idx);
+
+                    if !self.export_queue.iter().any(|item| item.id == new_id) {
+                        self.export_queue.push(QueuedStreakExport {
+                            id: new_id,
+                            input_path,
+                            player_id,
+                            player_name,
+                            start_time: req.start_time,
+                            stop_time: req.stop_time,
+                            streak_idx: req.streak_idx,
+                            kills_count: req.kills_count,
+                            output_name: default_name,
+                            enabled: true,
+                            exit_on_finish: true,
+                            init_commands: self.settings.capture_init_commands.clone(),
+                            custom_commands: self.settings.custom_commands.clone(),
+                            fast_forward_speed: self.settings.capture_fast_forward_speed,
+                            hltv_spec_player,
+                            initial_delay: self.settings.capture_initial_delay,
+                            pre_record_buffer: self.settings.capture_pre_record_buffer,
+                            record_start_lead: self.settings.capture_record_start_lead,
+                            record_stop_trail: self.settings.capture_record_stop_trail,
+                            post_record_buffer: self.settings.capture_post_record_buffer,
+                        });
                     }
                 }
             }
@@ -3224,4 +3940,104 @@ fn analyze_files_async(ctx: Context, tx: mpsc::Sender<GuiMessage>, paths: Vec<Pa
 
         tx.send(GuiMessage::Idle).unwrap();
     });
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn generate_python_queue_sequencer(hlae_path: &str, game_path: &str) -> String {
+    format!(
+        r#"# Automated Day of Defeat Highlight Recording Sequencer
+import os
+import sys
+import shutil
+import subprocess
+import time
+import json
+
+HLAE_PATH = r"{hlae_path}"
+GAME_PATH = r"{game_path}"
+
+def main():
+    print("=== Day of Defeat Highlight Recording Sequencer ===")
+    
+    # Check settings
+    hlae = HLAE_PATH
+    game = GAME_PATH
+    
+    if not hlae or not os.path.exists(hlae):
+        print(f"Error: HLAE path '{{hlae}}' not found. Please edit this script or configure it in the UI.")
+        sys.exit(1)
+        
+    if not game or not os.path.exists(game):
+        print(f"Error: Game (hl.exe) path '{{game}}' not found. Please edit this script or configure it in the UI.")
+        sys.exit(1)
+        
+    game_dir = os.path.dirname(game)
+    dod_dir = os.path.join(game_dir, "dod")
+    if not os.path.isdir(dod_dir):
+        print(f"Error: 'dod' folder not found at '{{dod_dir}}'.")
+        sys.exit(1)
+        
+    queue_json = os.path.join(os.path.dirname(os.path.abspath(__file__)), "capture_queue.json")
+    if not os.path.exists(queue_json):
+        print(f"Error: capture_queue.json not found.")
+        sys.exit(1)
+        
+    with open(queue_json, "r", encoding="utf-8") as f:
+        queue = json.load(f)
+        
+    print(f"Found {{len(queue)}} highlight(s) to capture.\n")
+    
+    for idx, item in enumerate(queue):
+        src_demo = item["demo_path"]
+        player = item["player"]
+        kills = item["kills"]
+        streak_idx = item["streak_index"]
+        
+        if not os.path.exists(src_demo):
+            print(f"[{{idx+1}}/{{len(queue)}}] Error: Demo file '{{src_demo}}' does not exist. Skipping.")
+            continue
+            
+        demo_name = os.path.basename(src_demo)
+        dest_demo_path = os.path.join(dod_dir, demo_name)
+        
+        print(f"[{{idx+1}}/{{len(queue)}}] Recording streak {{streak_idx}} ({{kills}} kills) by {{player}}")
+        print(f"  Copying demo to game folder...")
+        shutil.copy2(src_demo, dest_demo_path)
+        
+        # Strip .dem extension for playdemo
+        demo_name_no_ext = os.path.splitext(demo_name)[0]
+        
+        # Launch HLAE
+        cmd = [
+            hlae,
+            "-customLoader",
+            "-programPath", game,
+            "-args", f"-game dod -windowed -w 1280 -h 720 +playdemo {{demo_name_no_ext}}"
+        ]
+        
+        print(f"  Running: {{' '.join(cmd)}}")
+        process = subprocess.Popen(cmd)
+        
+        print(f"  Waiting for recording to complete (the game will auto-close when done)...")
+        process.wait()
+        
+        # Clean up
+        print(f"  Cleaning up demo file from game folder...")
+        try:
+            if os.path.exists(dest_demo_path):
+                os.remove(dest_demo_path)
+        except Exception as e:
+            print(f"  Warning: Failed to delete temporary demo '{{dest_demo_path}}': {{e}}")
+            
+        print(f"  Finished recording streak.\n")
+        time.sleep(1.0)
+        
+    print("=== All recordings completed! ===")
+
+if __name__ == '__main__':
+    main()
+"#,
+        hlae_path = hlae_path,
+        game_path = game_path
+    )
 }

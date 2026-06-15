@@ -28,7 +28,7 @@ use std::time::Duration;
 pub use crate::{
     chat::{ChatMessage, ChatType, translate_system_message},
     localization::{get_active_language, set_active_language, translate_key},
-    mortality::MortalityState,
+    mortality::{MortalityState, Mortality, MortalityChange},
     player::{Connection, Player, PlayerGlobalId, SteamId},
     round::Round,
 };
