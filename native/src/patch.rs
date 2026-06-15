@@ -1,12 +1,24 @@
 use dem::open_demo_from_bytes;
 use dem::types::{Frame, FrameData, ConsoleCommand, ByteString};
 
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct CustomCommand {
+    pub command: String,
+    pub offset: f32,
+    pub relation: CommandRelation,
+}
+
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub enum CommandRelation {
+    Before,
+    After,
+}
+
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct PatchOptions {
     pub exit_on_finish: bool,
     pub init_commands: Vec<String>,
-    pub start_commands: Vec<String>,
-    pub stop_commands: Vec<String>,
+    pub custom_commands: Vec<CustomCommand>,
     pub fast_forward_speed: Option<f32>,
     pub hltv_spec_player: Option<String>,
     pub initial_delay: Option<f32>,
@@ -14,6 +26,7 @@ pub struct PatchOptions {
     pub record_start_lead: Option<f32>,
     pub record_stop_trail: Option<f32>,
     pub post_record_buffer: Option<f32>,
+    pub player_deaths: Option<Vec<f32>>,
 }
 
 pub fn patch_demo_highlights(
@@ -91,6 +104,17 @@ pub fn patch_demo_highlights(
     }
 
     for &(start_time, stop_time) in &merged_intervals {
+        // Check if player died within 5.0 seconds before streak start
+        let mut delay_deathnotice = false;
+        if let Some(ref deaths) = options.player_deaths {
+            for &death_time in deaths {
+                if death_time >= start_time - 5.0 && death_time < start_time {
+                    delay_deathnotice = true;
+                    break;
+                }
+            }
+        }
+
         // a. Pre-Streak Normalization: drop speed and run stop_commands
         let norm_time = (start_time - pre_record_buffer).max(start_of_playback + initial_delay + 0.1);
         
@@ -120,29 +144,34 @@ pub fn patch_demo_highlights(
             });
         }
 
-        for cmd in &options.stop_commands {
+        for item in &options.custom_commands {
+            let mut time = match item.relation {
+                CommandRelation::Before => start_time - item.offset,
+                CommandRelation::After => stop_time + item.offset,
+            };
+
+            // Apply death notice delay scenario
+            if delay_deathnotice 
+                && item.relation == CommandRelation::Before
+                && item.command.to_lowercase().contains("hud_deathnotice_time")
+                && time < start_time - 0.01 
+            {
+                time = start_time - 0.01;
+            }
+
+            let final_time = time.max(start_of_playback + initial_delay + 0.1);
+
             entry.frames.push(Frame {
-                time: norm_time + 0.01,
+                time: final_time,
                 frame: 0,
                 frame_data: FrameData::ConsoleCommand(ConsoleCommand {
-                    command: ByteString::from(cmd.as_str()),
+                    command: ByteString::from(item.command.as_str()),
                 }),
             });
         }
 
-        // b. Record Start: run start_commands and mirv_recordmovie_start
+        // b. Record Start: mirv_recordmovie_start
         let record_start_time = (start_time - record_start_lead).max(start_of_playback + initial_delay + 0.2);
-
-        for cmd in &options.start_commands {
-            entry.frames.push(Frame {
-                time: record_start_time - 0.01,
-                frame: 0,
-                frame_data: FrameData::ConsoleCommand(ConsoleCommand {
-                    command: ByteString::from(cmd.as_str()),
-                }),
-            });
-        }
-
         entry.frames.push(Frame {
             time: record_start_time,
             frame: 0,
@@ -160,17 +189,6 @@ pub fn patch_demo_highlights(
                 command: ByteString::from("mirv_recordmovie_stop"),
             }),
         });
-
-        // Run stop_commands right after recording stops to clean up state
-        for cmd in &options.stop_commands {
-            entry.frames.push(Frame {
-                time: record_stop_time + 0.01,
-                frame: 0,
-                frame_data: FrameData::ConsoleCommand(ConsoleCommand {
-                    command: ByteString::from(cmd.as_str()),
-                }),
-            });
-        }
 
         // d. Post-Streak Fast-Forward: resume host_framerate <ff_speed>
         let resume_ff_time = stop_time + post_record_buffer;

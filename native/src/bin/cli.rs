@@ -1,6 +1,6 @@
 //! Demo analyzer that runs in a terminal and produces text output.
 
-use analysis::{Analysis, MortalityState, Round, SteamId, Team};
+use analysis::{Analysis, MortalityState, Round, SteamId, Team, Mortality};
 use clap::{Parser, Subcommand, ValueEnum};
 use humantime::{format_duration, format_rfc3339_seconds};
 use native::{FileInfo, run_analyzer};
@@ -165,11 +165,15 @@ fn run_patch_streak_subcommand(
         None
     };
 
+    let player_deaths = player.mortality.iter()
+        .filter(|change| matches!(change.mortality(), Mortality::Dead))
+        .map(|change| change.time().real_offset.as_secs_f32())
+        .collect::<Vec<_>>();
+
     let options = PatchOptions {
         exit_on_finish: quit,
         init_commands: vec![],
-        start_commands: vec![],
-        stop_commands: vec![],
+        custom_commands: vec![],
         fast_forward_speed: Some(fast_forward_speed),
         hltv_spec_player,
         initial_delay: Some(initial_delay),
@@ -177,6 +181,7 @@ fn run_patch_streak_subcommand(
         record_start_lead: Some(record_start_lead),
         record_stop_trail: Some(record_stop_trail),
         post_record_buffer: Some(post_record_buffer),
+        player_deaths: Some(player_deaths),
     };
 
     println!("Patching demo highlights...");
