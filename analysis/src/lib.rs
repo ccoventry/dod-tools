@@ -44,7 +44,7 @@ pub enum AnalyzerEvent<'a> {
     UserMessage(UserMessage),
 }
 
-#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, Hash, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct WeaponPovStats {
     pub bullets_fired: u32,
     pub reloads: u32,
@@ -53,7 +53,7 @@ pub struct WeaponPovStats {
     pub scoped_kills: u32,
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct PovStats {
     pub is_scoped: bool,
     pub hits_taken: u32,
@@ -70,7 +70,7 @@ pub struct PovStats {
     pub has_received_health: bool,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct AnalyzerState {
     clan_match_detection: ClanMatchDetection,
     /// Set to `true` as soon as any definitive clan-match signal is observed
@@ -100,7 +100,7 @@ pub struct AnalyzerState {
     pub server_address: Option<String>,
 }
 
-#[derive(Default)]
+#[derive(Default, serde::Serialize, serde::Deserialize)]
 pub struct DemoInfo {
     /// Version of the demo protocol used to encode the demo.
     pub demo_protocol: i32,
@@ -187,7 +187,7 @@ impl From<Demo> for DemoInfo {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, serde::Serialize, serde::Deserialize)]
 pub struct Analysis {
     pub demo_info: DemoInfo,
     pub state: AnalyzerState,

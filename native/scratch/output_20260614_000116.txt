@@ -1,0 +1,5 @@
+    Checking dod v0.10.0 (D:\Repos\dod-tools\dod)
+    Checking analysis v0.10.0 (D:\Repos\dod-tools\analysis)
+    Checking native v0.10.0 (D:\Repos\dod-tools\native)
+    Checking dod-benchmark v0.10.0 (D:\Repos\dod-tools\benchmark)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.48s

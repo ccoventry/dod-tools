@@ -2,7 +2,7 @@ use crate::time::GameTime;
 use crate::{AnalyzerEvent, AnalyzerState};
 use dod::{RoundState, Team, UserMessage};
 
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub enum Round {
     Active {
         allies_kills: u32,

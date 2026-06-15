@@ -2,7 +2,7 @@ use crate::{AnalyzerEvent, AnalyzerState, time::GameTime};
 use dod::{Team, UserMessage};
 use std::collections::HashMap;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct TeamScores {
     current_scores: HashMap<Team, i32>,
     timeline: Vec<(GameTime, Team, i32)>,

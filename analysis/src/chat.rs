@@ -2,14 +2,14 @@ use crate::mortality::MortalityState;
 use crate::{AnalyzerEvent, AnalyzerState, time::GameTime};
 use dod::{Team, UserMessage};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ChatType {
     Mm1,    // Public chat
     Mm2,    // Team chat
     System, // System message / Console
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ChatMessage {
     pub time: GameTime,
     pub frame_index: usize,

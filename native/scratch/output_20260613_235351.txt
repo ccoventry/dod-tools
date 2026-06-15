@@ -1,0 +1,1168 @@
+warning: hiding a lifetime that's elided elsewhere is confusing
+  --> dem-patch\src\lib.rs:52:24
+   |
+52 | pub fn parse_netmsg(i: &[u8], aux: AuxRefCell) -> Result<Vec<NetMessage>> {
+   |                        ^^^^^                      ^^^^^^^^^^^^^^^^^^^^^^^ the same lifetime is hidden here
+   |                        |
+   |                        the lifetime is elided here
+   |
+   = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+   = note: `#[warn(mismatched_lifetime_syntaxes)]` on by default
+help: use `'_` for type paths
+   |
+52 | pub fn parse_netmsg(i: &[u8], aux: AuxRefCell) -> Result<'_, Vec<NetMessage>> {
+   |                                                          +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+  --> dem-patch\src\nom_helper.rs:14:23
+   |
+14 | pub fn null_string(i: &[u8]) -> Result<&[u8]> {
+   |                       ^^^^^     ^^^^^^^^^^^^^
+   |                       |         |      |
+   |                       |         |      the same lifetime is elided here
+   |                       |         the same lifetime is hidden here
+   |                       the lifetime is elided here
+   |
+   = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+   |
+14 | pub fn null_string(i: &[u8]) -> Result<'_, &[u8]> {
+   |                                        +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+  --> dem-patch\src\nom_helper.rs:19:28
+   |
+19 | pub fn take_point_float(i: &[u8]) -> Result<Vec<f32>> {
+   |                            ^^^^^     ^^^^^^^^^^^^^^^^ the same lifetime is hidden here
+   |                            |
+   |                            the lifetime is elided here
+   |
+   = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+   |
+19 | pub fn take_point_float(i: &[u8]) -> Result<'_, Vec<f32>> {
+   |                                             +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+  --> dem-patch\src\demo_parser.rs:47:22
+   |
+47 | pub fn parse_demo(i: &[u8], netmsg_parse_mode: MessageDataParseMode) -> Result<Demo> {
+   |                      ^^^^^ the lifetime is elided here                  ^^^^^^^^^^^^ the same lifetime is hidden here
+   |
+   = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+   |
+47 | pub fn parse_demo(i: &[u8], netmsg_parse_mode: MessageDataParseMode) -> Result<'_, Demo> {
+   |                                                                                +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+  --> dem-patch\src\demo_parser.rs:74:24
+   |
+74 | pub fn parse_header(i: &[u8]) -> Result<Header> {
+   |                        ^^^^^     ^^^^^^^^^^^^^^ the same lifetime is hidden here
+   |                        |
+   |                        the lifetime is elided here
+   |
+   = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+   |
+74 | pub fn parse_header(i: &[u8]) -> Result<'_, Header> {
+   |                                         +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> dem-patch\src\demo_parser.rs:254:8
+    |
+254 |     i: &[u8],
+    |        ^^^^^ the lifetime is elided here
+...
+257 | ) -> Result<Frame> {
+    |      ^^^^^^^^^^^^^ the same lifetime is hidden here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+257 | ) -> Result<'_, Frame> {
+    |             +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> dem-patch\src\demo_parser.rs:291:33
+    |
+291 | pub fn parse_console_command(i: &[u8]) -> Result<ConsoleCommand> {
+    |                                 ^^^^^     ^^^^^^^^^^^^^^^^^^^^^^ the same lifetime is hidden here
+    |                                 |
+    |                                 the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+291 | pub fn parse_console_command(i: &[u8]) -> Result<'_, ConsoleCommand> {
+    |                                                  +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> dem-patch\src\demo_parser.rs:297:29
+    |
+297 | pub fn parse_client_data(i: &[u8]) -> Result<ClientData> {
+    |                             ^^^^^     ^^^^^^^^^^^^^^^^^^ the same lifetime is hidden here
+    |                             |
+    |                             the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+297 | pub fn parse_client_data(i: &[u8]) -> Result<'_, ClientData> {
+    |                                              +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> dem-patch\src\demo_parser.rs:309:23
+    |
+309 | pub fn parse_event(i: &[u8]) -> Result<Event> {
+    |                       ^^^^^     ^^^^^^^^^^^^^ the same lifetime is hidden here
+    |                       |
+    |                       the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+309 | pub fn parse_event(i: &[u8]) -> Result<'_, Event> {
+    |                                        +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> dem-patch\src\demo_parser.rs:321:28
+    |
+321 | pub fn parse_event_args(i: &[u8]) -> Result<EventArgs> {
+    |                            ^^^^^     ^^^^^^^^^^^^^^^^^ the same lifetime is hidden here
+    |                            |
+    |                            the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+321 | pub fn parse_event_args(i: &[u8]) -> Result<'_, EventArgs> {
+    |                                             +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> dem-patch\src\demo_parser.rs:367:34
+    |
+367 | pub fn parse_weapon_animation(i: &[u8]) -> Result<WeaponAnimation> {
+    |                                  ^^^^^     ^^^^^^^^^^^^^^^^^^^^^^^ the same lifetime is hidden here
+    |                                  |
+    |                                  the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+367 | pub fn parse_weapon_animation(i: &[u8]) -> Result<'_, WeaponAnimation> {
+    |                                                   +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> dem-patch\src\demo_parser.rs:374:23
+    |
+374 | pub fn parse_sound(i: &[u8]) -> Result<Sound> {
+    |                       ^^^^^     ^^^^^^^^^^^^^ the same lifetime is hidden here
+    |                       |
+    |                       the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+374 | pub fn parse_sound(i: &[u8]) -> Result<'_, Sound> {
+    |                                        +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> dem-patch\src\demo_parser.rs:395:29
+    |
+395 | pub fn parse_demo_buffer(i: &[u8]) -> Result<DemoBuffer> {
+    |                             ^^^^^     ^^^^^^^^^^^^^^^^^^ the same lifetime is hidden here
+    |                             |
+    |                             the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+395 | pub fn parse_demo_buffer(i: &[u8]) -> Result<'_, DemoBuffer> {
+    |                                              +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> dem-patch\src\demo_parser.rs:404:8
+    |
+404 |     i: &[u8],
+    |        ^^^^^ the lifetime is elided here
+...
+407 | ) -> Result<NetworkMessage> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^ the same lifetime is hidden here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+407 | ) -> Result<'_, NetworkMessage> {
+    |             +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> dem-patch\src\demo_parser.rs:443:39
+    |
+443 | pub fn parse_network_messages_info(i: &[u8]) -> Result<DemoInfo> {
+    |                                       ^^^^^     ^^^^^^^^^^^^^^^^ the same lifetime is hidden here
+    |                                       |
+    |                                       the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+443 | pub fn parse_network_messages_info(i: &[u8]) -> Result<'_, DemoInfo> {
+    |                                                        +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> dem-patch\src\demo_parser.rs:464:27
+    |
+464 | pub fn parse_refparams(i: &[u8]) -> Result<RefParams> {
+    |                           ^^^^^     ^^^^^^^^^^^^^^^^^ the same lifetime is hidden here
+    |                           |
+    |                           the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+464 | pub fn parse_refparams(i: &[u8]) -> Result<'_, RefParams> {
+    |                                            +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> dem-patch\src\demo_parser.rs:571:25
+    |
+571 | pub fn parse_usercmd(i: &[u8]) -> Result<UserCmd> {
+    |                         ^^^^^     ^^^^^^^^^^^^^^^ the same lifetime is hidden here
+    |                         |
+    |                         the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+571 | pub fn parse_usercmd(i: &[u8]) -> Result<'_, UserCmd> {
+    |                                          +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> dem-patch\src\demo_parser.rs:629:26
+    |
+629 | pub fn parse_movevars(i: &[u8]) -> Result<MoveVars> {
+    |                          ^^^^^     ^^^^^^^^^^^^^^^^ the same lifetime is hidden here
+    |                          |
+    |                          the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+629 | pub fn parse_movevars(i: &[u8]) -> Result<'_, MoveVars> {
+    |                                           +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> dem-patch\src\demo_parser.rs:692:31
+    |
+692 | pub fn parse_sequence_info(i: &[u8]) -> Result<SequenceInfo> {
+    |                               ^^^^^     ^^^^^^^^^^^^^^^^^^^^ the same lifetime is hidden here
+    |                               |
+    |                               the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+692 | pub fn parse_sequence_info(i: &[u8]) -> Result<'_, SequenceInfo> {
+    |                                                +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+  --> dem-patch\src\netmsg_doer\mod.rs:91:17
+   |
+91 |     fn parse(i: &[u8], aux: AuxRefCell) -> Result<Self>
+   |                 ^^^^^                      ^^^^^^^^^^^^ the same lifetime is hidden here
+   |                 |
+   |                 the lifetime is elided here
+   |
+   = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+   |
+91 |     fn parse(i: &[u8], aux: AuxRefCell) -> Result<'_, Self>
+   |                                                   +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> dem-patch\src\netmsg_doer\mod.rs:124:21
+    |
+124 |     pub fn parse(i: &[u8], aux: AuxRefCell) -> Result<NetMessage> {
+    |                     ^^^^^                      ^^^^^^^^^^^^^^^^^^ the same lifetime is hidden here
+    |                     |
+    |                     the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+124 |     pub fn parse(i: &[u8], aux: AuxRefCell) -> Result<'_, NetMessage> {
+    |                                                       +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> dem-patch\src\netmsg_doer\mod.rs:148:17
+    |
+148 |     fn parse(i: &[u8], id: u8, aux: AuxRefCell) -> Result<UserMessage> {
+    |                 ^^^^^ the lifetime is elided here  ^^^^^^^^^^^^^^^^^^^ the same lifetime is hidden here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+148 |     fn parse(i: &[u8], id: u8, aux: AuxRefCell) -> Result<'_, UserMessage> {
+    |                                                           +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> dem-patch\src\netmsg_doer\mod.rs:197:17
+    |
+197 |     fn parse(i: &[u8], type_: u8, aux: AuxRefCell) -> Result<EngineMessage> {
+    |                 ^^^^^ the lifetime is elided here     ^^^^^^^^^^^^^^^^^^^^^ the same lifetime is hidden here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+197 |     fn parse(i: &[u8], type_: u8, aux: AuxRefCell) -> Result<'_, EngineMessage> {
+    |                                                              +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+ --> dem-patch\src\netmsg_doer\add_angle.rs:8:17
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<Self> {
+  |                 ^^^^^                    ^^^^^^^^^^^^ the same lifetime is hidden here
+  |                 |
+  |                 the lifetime is elided here
+  |
+  = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<'_, Self> {
+  |                                                 +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+ --> dem-patch\src\netmsg_doer\cd_track.rs:8:17
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<Self> {
+  |                 ^^^^^                    ^^^^^^^^^^^^ the same lifetime is hidden here
+  |                 |
+  |                 the lifetime is elided here
+  |
+  = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<'_, Self> {
+  |                                                 +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+ --> dem-patch\src\netmsg_doer\center_print.rs:8:17
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<Self> {
+  |                 ^^^^^                    ^^^^^^^^^^^^ the same lifetime is hidden here
+  |                 |
+  |                 the lifetime is elided here
+  |
+  = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<'_, Self> {
+  |                                                 +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+  --> dem-patch\src\netmsg_doer\client_data.rs:11:17
+   |
+11 |     fn parse(i: &[u8], aux: AuxRefCell) -> Result<Self> {
+   |                 ^^^^^                      ^^^^^^^^^^^^ the same lifetime is hidden here
+   |                 |
+   |                 the lifetime is elided here
+   |
+   = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+   |
+11 |     fn parse(i: &[u8], aux: AuxRefCell) -> Result<'_, Self> {
+   |                                                   +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+ --> dem-patch\src\netmsg_doer\crosshair_angle.rs:8:17
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<Self> {
+  |                 ^^^^^                    ^^^^^^^^^^^^ the same lifetime is hidden here
+  |                 |
+  |                 the lifetime is elided here
+  |
+  = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<'_, Self> {
+  |                                                 +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+ --> dem-patch\src\netmsg_doer\customization.rs:8:17
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<Self> {
+  |                 ^^^^^                    ^^^^^^^^^^^^ the same lifetime is hidden here
+  |                 |
+  |                 the lifetime is elided here
+  |
+  = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<'_, Self> {
+  |                                                 +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+ --> dem-patch\src\netmsg_doer\cutscene.rs:8:17
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<Self> {
+  |                 ^^^^^                    ^^^^^^^^^^^^ the same lifetime is hidden here
+  |                 |
+  |                 the lifetime is elided here
+  |
+  = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<'_, Self> {
+  |                                                 +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+ --> dem-patch\src\netmsg_doer\decal_name.rs:8:17
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<Self> {
+  |                 ^^^^^                    ^^^^^^^^^^^^ the same lifetime is hidden here
+  |                 |
+  |                 the lifetime is elided here
+  |
+  = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<'_, Self> {
+  |                                                 +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+  --> dem-patch\src\netmsg_doer\delta_description.rs:12:17
+   |
+12 |     fn parse(i: &[u8], aux: AuxRefCell) -> Result<Self> {
+   |                 ^^^^^                      ^^^^^^^^^^^^ the same lifetime is hidden here
+   |                 |
+   |                 the lifetime is elided here
+   |
+   = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+   |
+12 |     fn parse(i: &[u8], aux: AuxRefCell) -> Result<'_, Self> {
+   |                                                   +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+  --> dem-patch\src\netmsg_doer\delta_packet_entities.rs:11:17
+   |
+11 |     fn parse(i: &[u8], aux: AuxRefCell) -> Result<Self> {
+   |                 ^^^^^                      ^^^^^^^^^^^^ the same lifetime is hidden here
+   |                 |
+   |                 the lifetime is elided here
+   |
+   = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+   |
+11 |     fn parse(i: &[u8], aux: AuxRefCell) -> Result<'_, Self> {
+   |                                                   +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+ --> dem-patch\src\netmsg_doer\director.rs:8:17
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<Self> {
+  |                 ^^^^^                    ^^^^^^^^^^^^ the same lifetime is hidden here
+  |                 |
+  |                 the lifetime is elided here
+  |
+  = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<'_, Self> {
+  |                                                 +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+ --> dem-patch\src\netmsg_doer\disconnect.rs:8:17
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<Self> {
+  |                 ^^^^^                    ^^^^^^^^^^^^ the same lifetime is hidden here
+  |                 |
+  |                 the lifetime is elided here
+  |
+  = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<'_, Self> {
+  |                                                 +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+  --> dem-patch\src\netmsg_doer\event.rs:11:17
+   |
+11 |     fn parse(i: &[u8], aux: AuxRefCell) -> Result<Self> {
+   |                 ^^^^^                      ^^^^^^^^^^^^ the same lifetime is hidden here
+   |                 |
+   |                 the lifetime is elided here
+   |
+   = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+   |
+11 |     fn parse(i: &[u8], aux: AuxRefCell) -> Result<'_, Self> {
+   |                                                   +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+ --> dem-patch\src\netmsg_doer\event_reliable.rs:9:17
+  |
+9 |     fn parse(i: &[u8], aux: AuxRefCell) -> Result<Self> {
+  |                 ^^^^^                      ^^^^^^^^^^^^ the same lifetime is hidden here
+  |                 |
+  |                 the lifetime is elided here
+  |
+  = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+  |
+9 |     fn parse(i: &[u8], aux: AuxRefCell) -> Result<'_, Self> {
+  |                                                   +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+ --> dem-patch\src\netmsg_doer\file_txfer_failed.rs:8:17
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<Self> {
+  |                 ^^^^^                    ^^^^^^^^^^^^ the same lifetime is hidden here
+  |                 |
+  |                 the lifetime is elided here
+  |
+  = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<'_, Self> {
+  |                                                 +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+ --> dem-patch\src\netmsg_doer\finale.rs:8:17
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<Self> {
+  |                 ^^^^^                    ^^^^^^^^^^^^ the same lifetime is hidden here
+  |                 |
+  |                 the lifetime is elided here
+  |
+  = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<'_, Self> {
+  |                                                 +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+ --> dem-patch\src\netmsg_doer\hltv.rs:8:17
+  |
+8 |     fn parse(i: &[u8], aux: AuxRefCell) -> Result<Self> {
+  |                 ^^^^^                      ^^^^^^^^^^^^ the same lifetime is hidden here
+  |                 |
+  |                 the lifetime is elided here
+  |
+  = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+  |
+8 |     fn parse(i: &[u8], aux: AuxRefCell) -> Result<'_, Self> {
+  |                                                   +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+ --> dem-patch\src\netmsg_doer\light_style.rs:8:17
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<Self> {
+  |                 ^^^^^                    ^^^^^^^^^^^^ the same lifetime is hidden here
+  |                 |
+  |                 the lifetime is elided here
+  |
+  = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<'_, Self> {
+  |                                                 +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+ --> dem-patch\src\netmsg_doer\new_movevars.rs:8:17
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<Self> {
+  |                 ^^^^^                    ^^^^^^^^^^^^ the same lifetime is hidden here
+  |                 |
+  |                 the lifetime is elided here
+  |
+  = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<'_, Self> {
+  |                                                 +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+ --> dem-patch\src\netmsg_doer\new_user_msg.rs:8:17
+  |
+8 |     fn parse(i: &[u8], aux: AuxRefCell) -> Result<Self> {
+  |                 ^^^^^                      ^^^^^^^^^^^^ the same lifetime is hidden here
+  |                 |
+  |                 the lifetime is elided here
+  |
+  = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+  |
+8 |     fn parse(i: &[u8], aux: AuxRefCell) -> Result<'_, Self> {
+  |                                                   +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+  --> dem-patch\src\netmsg_doer\packet_entities.rs:11:17
+   |
+11 |     fn parse(i: &[u8], aux: AuxRefCell) -> Result<Self> {
+   |                 ^^^^^                      ^^^^^^^^^^^^ the same lifetime is hidden here
+   |                 |
+   |                 the lifetime is elided here
+   |
+   = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+   |
+11 |     fn parse(i: &[u8], aux: AuxRefCell) -> Result<'_, Self> {
+   |                                                   +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+ --> dem-patch\src\netmsg_doer\particle.rs:8:17
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<Self> {
+  |                 ^^^^^                    ^^^^^^^^^^^^ the same lifetime is hidden here
+  |                 |
+  |                 the lifetime is elided here
+  |
+  = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<'_, Self> {
+  |                                                 +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+  --> dem-patch\src\netmsg_doer\pings.rs:10:17
+   |
+10 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<Self> {
+   |                 ^^^^^                    ^^^^^^^^^^^^ the same lifetime is hidden here
+   |                 |
+   |                 the lifetime is elided here
+   |
+   = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+   |
+10 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<'_, Self> {
+   |                                                 +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+ --> dem-patch\src\netmsg_doer\print.rs:8:17
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<Self> {
+  |                 ^^^^^                    ^^^^^^^^^^^^ the same lifetime is hidden here
+  |                 |
+  |                 the lifetime is elided here
+  |
+  = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<'_, Self> {
+  |                                                 +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+  --> dem-patch\src\netmsg_doer\resource_list.rs:10:17
+   |
+10 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<Self> {
+   |                 ^^^^^                    ^^^^^^^^^^^^ the same lifetime is hidden here
+   |                 |
+   |                 the lifetime is elided here
+   |
+   = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+   |
+10 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<'_, Self> {
+   |                                                 +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+ --> dem-patch\src\netmsg_doer\resource_location.rs:8:17
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<Self> {
+  |                 ^^^^^                    ^^^^^^^^^^^^ the same lifetime is hidden here
+  |                 |
+  |                 the lifetime is elided here
+  |
+  = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<'_, Self> {
+  |                                                 +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+ --> dem-patch\src\netmsg_doer\resource_request.rs:8:17
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<Self> {
+  |                 ^^^^^                    ^^^^^^^^^^^^ the same lifetime is hidden here
+  |                 |
+  |                 the lifetime is elided here
+  |
+  = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<'_, Self> {
+  |                                                 +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+ --> dem-patch\src\netmsg_doer\restore.rs:8:17
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<Self> {
+  |                 ^^^^^                    ^^^^^^^^^^^^ the same lifetime is hidden here
+  |                 |
+  |                 the lifetime is elided here
+  |
+  = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<'_, Self> {
+  |                                                 +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+ --> dem-patch\src\netmsg_doer\room_type.rs:8:17
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<Self> {
+  |                 ^^^^^                    ^^^^^^^^^^^^ the same lifetime is hidden here
+  |                 |
+  |                 the lifetime is elided here
+  |
+  = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<'_, Self> {
+  |                                                 +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+ --> dem-patch\src\netmsg_doer\send_cvar_value.rs:8:17
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<Self> {
+  |                 ^^^^^                    ^^^^^^^^^^^^ the same lifetime is hidden here
+  |                 |
+  |                 the lifetime is elided here
+  |
+  = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<'_, Self> {
+  |                                                 +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+ --> dem-patch\src\netmsg_doer\send_cvar_value_2.rs:8:17
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<Self> {
+  |                 ^^^^^                    ^^^^^^^^^^^^ the same lifetime is hidden here
+  |                 |
+  |                 the lifetime is elided here
+  |
+  = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<'_, Self> {
+  |                                                 +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+ --> dem-patch\src\netmsg_doer\send_extra_info.rs:8:17
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<Self> {
+  |                 ^^^^^                    ^^^^^^^^^^^^ the same lifetime is hidden here
+  |                 |
+  |                 the lifetime is elided here
+  |
+  = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<'_, Self> {
+  |                                                 +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+ --> dem-patch\src\netmsg_doer\server_info.rs:8:17
+  |
+8 |     fn parse(i: &[u8], aux: AuxRefCell) -> Result<Self> {
+  |                 ^^^^^                      ^^^^^^^^^^^^ the same lifetime is hidden here
+  |                 |
+  |                 the lifetime is elided here
+  |
+  = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+  |
+8 |     fn parse(i: &[u8], aux: AuxRefCell) -> Result<'_, Self> {
+  |                                                   +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+ --> dem-patch\src\netmsg_doer\set_angle.rs:8:17
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<Self> {
+  |                 ^^^^^                    ^^^^^^^^^^^^ the same lifetime is hidden here
+  |                 |
+  |                 the lifetime is elided here
+  |
+  = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<'_, Self> {
+  |                                                 +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+ --> dem-patch\src\netmsg_doer\set_pause.rs:8:17
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<Self> {
+  |                 ^^^^^                    ^^^^^^^^^^^^ the same lifetime is hidden here
+  |                 |
+  |                 the lifetime is elided here
+  |
+  = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<'_, Self> {
+  |                                                 +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+ --> dem-patch\src\netmsg_doer\set_view.rs:8:17
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<Self> {
+  |                 ^^^^^                    ^^^^^^^^^^^^ the same lifetime is hidden here
+  |                 |
+  |                 the lifetime is elided here
+  |
+  = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<'_, Self> {
+  |                                                 +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+ --> dem-patch\src\netmsg_doer\sign_on_num.rs:8:17
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<Self> {
+  |                 ^^^^^                    ^^^^^^^^^^^^ the same lifetime is hidden here
+  |                 |
+  |                 the lifetime is elided here
+  |
+  = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<'_, Self> {
+  |                                                 +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+  --> dem-patch\src\netmsg_doer\sound.rs:10:17
+   |
+10 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<Self> {
+   |                 ^^^^^                    ^^^^^^^^^^^^ the same lifetime is hidden here
+   |                 |
+   |                 the lifetime is elided here
+   |
+   = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+   |
+10 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<'_, Self> {
+   |                                                 +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+ --> dem-patch\src\netmsg_doer\sound_fade.rs:8:17
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<Self> {
+  |                 ^^^^^                    ^^^^^^^^^^^^ the same lifetime is hidden here
+  |                 |
+  |                 the lifetime is elided here
+  |
+  = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<'_, Self> {
+  |                                                 +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+  --> dem-patch\src\netmsg_doer\spawn_baseline.rs:11:17
+   |
+11 |     fn parse(i: &[u8], aux: AuxRefCell) -> Result<Self> {
+   |                 ^^^^^                      ^^^^^^^^^^^^ the same lifetime is hidden here
+   |                 |
+   |                 the lifetime is elided here
+   |
+   = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+   |
+11 |     fn parse(i: &[u8], aux: AuxRefCell) -> Result<'_, Self> {
+   |                                                   +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+ --> dem-patch\src\netmsg_doer\spawn_static.rs:8:17
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<Self> {
+  |                 ^^^^^                    ^^^^^^^^^^^^ the same lifetime is hidden here
+  |                 |
+  |                 the lifetime is elided here
+  |
+  = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<'_, Self> {
+  |                                                 +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+ --> dem-patch\src\netmsg_doer\spawn_static_sound.rs:8:17
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<Self> {
+  |                 ^^^^^                    ^^^^^^^^^^^^ the same lifetime is hidden here
+  |                 |
+  |                 the lifetime is elided here
+  |
+  = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<'_, Self> {
+  |                                                 +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+ --> dem-patch\src\netmsg_doer\stop_sound.rs:8:17
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<Self> {
+  |                 ^^^^^                    ^^^^^^^^^^^^ the same lifetime is hidden here
+  |                 |
+  |                 the lifetime is elided here
+  |
+  = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<'_, Self> {
+  |                                                 +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+ --> dem-patch\src\netmsg_doer\stuff_text.rs:8:17
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<Self> {
+  |                 ^^^^^                    ^^^^^^^^^^^^ the same lifetime is hidden here
+  |                 |
+  |                 the lifetime is elided here
+  |
+  = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<'_, Self> {
+  |                                                 +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+  --> dem-patch\src\netmsg_doer\temp_entity\mod.rs:21:17
+   |
+21 |     fn parse(i: &[u8], aux: AuxRefCell) -> Result<Self> {
+   |                 ^^^^^                      ^^^^^^^^^^^^ the same lifetime is hidden here
+   |                 |
+   |                 the lifetime is elided here
+   |
+   = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+   |
+21 |     fn parse(i: &[u8], aux: AuxRefCell) -> Result<'_, Self> {
+   |                                                   +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+ --> dem-patch\src\netmsg_doer\temp_entity\beam_points.rs:8:17
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<Self> {
+  |                 ^^^^^                    ^^^^^^^^^^^^ the same lifetime is hidden here
+  |                 |
+  |                 the lifetime is elided here
+  |
+  = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<'_, Self> {
+  |                                                 +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+ --> dem-patch\src\netmsg_doer\temp_entity\bsp_decal.rs:8:17
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<Self> {
+  |                 ^^^^^                    ^^^^^^^^^^^^ the same lifetime is hidden here
+  |                 |
+  |                 the lifetime is elided here
+  |
+  = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<'_, Self> {
+  |                                                 +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+ --> dem-patch\src\netmsg_doer\temp_entity\text_message.rs:8:17
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<Self> {
+  |                 ^^^^^                    ^^^^^^^^^^^^ the same lifetime is hidden here
+  |                 |
+  |                 the lifetime is elided here
+  |
+  = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<'_, Self> {
+  |                                                 +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+ --> dem-patch\src\netmsg_doer\time.rs:8:17
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<Self> {
+  |                 ^^^^^                    ^^^^^^^^^^^^ the same lifetime is hidden here
+  |                 |
+  |                 the lifetime is elided here
+  |
+  = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<'_, Self> {
+  |                                                 +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+ --> dem-patch\src\netmsg_doer\time_scale.rs:8:17
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<Self> {
+  |                 ^^^^^                    ^^^^^^^^^^^^ the same lifetime is hidden here
+  |                 |
+  |                 the lifetime is elided here
+  |
+  = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<'_, Self> {
+  |                                                 +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+ --> dem-patch\src\netmsg_doer\update_user_info.rs:8:17
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<Self> {
+  |                 ^^^^^                    ^^^^^^^^^^^^ the same lifetime is hidden here
+  |                 |
+  |                 the lifetime is elided here
+  |
+  = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<'_, Self> {
+  |                                                 +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+ --> dem-patch\src\netmsg_doer\version.rs:8:17
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<Self> {
+  |                 ^^^^^                    ^^^^^^^^^^^^ the same lifetime is hidden here
+  |                 |
+  |                 the lifetime is elided here
+  |
+  = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<'_, Self> {
+  |                                                 +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+ --> dem-patch\src\netmsg_doer\voice_data.rs:8:17
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<Self> {
+  |                 ^^^^^                    ^^^^^^^^^^^^ the same lifetime is hidden here
+  |                 |
+  |                 the lifetime is elided here
+  |
+  = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<'_, Self> {
+  |                                                 +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+ --> dem-patch\src\netmsg_doer\voice_init.rs:8:17
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<Self> {
+  |                 ^^^^^                    ^^^^^^^^^^^^ the same lifetime is hidden here
+  |                 |
+  |                 the lifetime is elided here
+  |
+  = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<'_, Self> {
+  |                                                 +++
+System.Management.Automation.RemoteException
+warning: hiding a lifetime that's elided elsewhere is confusing
+ --> dem-patch\src\netmsg_doer\weapon_anim.rs:8:17
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<Self> {
+  |                 ^^^^^                    ^^^^^^^^^^^^ the same lifetime is hidden here
+  |                 |
+  |                 the lifetime is elided here
+  |
+  = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+  |
+8 |     fn parse(i: &[u8], _: AuxRefCell) -> Result<'_, Self> {
+  |                                                 +++
+System.Management.Automation.RemoteException
+warning: `dem` (lib) generated 78 warnings (run `cargo fix --lib -p dem` to apply 78 suggestions)
+warning: unused import: `EngineMessage`
+ --> native\src\bin\inspect_bewton.rs:3:42
+  |
+3 | use dem::types::{FrameData, MessageData, EngineMessage};
+  |                                          ^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+System.Management.Automation.RemoteException
+    Checking native v0.10.0 (D:\Repos\dod-tools\native)
+warning: fields `slot`, `name`, and `sid` are never read
+  --> native\src\bin\inspect_reconnect.rs:34:15
+   |
+34 |     Connect { slot: u8, name: String, sid: String },
+   |     -------   ^^^^      ^^^^          ^^^
+   |     |
+   |     fields in this variant
+   |
+   = note: `Event` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+System.Management.Automation.RemoteException
+warning: fields `slot` and `name` are never read
+  --> native\src\bin\inspect_reconnect.rs:35:18
+   |
+35 |     Disconnect { slot: u8, name: String },
+   |     ----------   ^^^^      ^^^^
+   |     |
+   |     fields in this variant
+   |
+   = note: `Event` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+System.Management.Automation.RemoteException
+warning: fields `slot`, `name`, and `frags` are never read
+  --> native\src\bin\inspect_reconnect.rs:36:13
+   |
+36 |     Frags { slot: u8, name: String, frags: i16 },
+   |     -----   ^^^^      ^^^^          ^^^^^
+   |     |
+   |     fields in this variant
+   |
+   = note: `Event` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+System.Management.Automation.RemoteException
+warning: fields `slot`, `name`, `score`, `kills`, and `deaths` are never read
+  --> native\src\bin\inspect_reconnect.rs:37:18
+   |
+37 |     ScoreShort { slot: u8, name: String, score: i16, kills: i16, deaths: i16 },
+   |     ----------   ^^^^      ^^^^          ^^^^^       ^^^^^       ^^^^^^
+   |     |
+   |     fields in this variant
+   |
+   = note: `Event` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+System.Management.Automation.RemoteException
+warning: fields `killer_slot`, `killer_name`, `victim_slot`, `victim_name`, and `weapon` are never read
+  --> native\src\bin\inspect_reconnect.rs:38:16
+   |
+38 |     DeathMsg { killer_slot: u8, killer_name: String, victim_slot: u8, victim_name: String, weapon: String },
+   |     --------   ^^^^^^^^^^^      ^^^^^^^^^^^          ^^^^^^^^^^^      ^^^^^^^^^^^          ^^^^^^
+   |     |
+   |     fields in this variant
+   |
+   = note: `Event` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+System.Management.Automation.RemoteException
+warning: `native` (bin "inspect_bewton") generated 1 warning (run `cargo fix --bin "inspect_bewton" -p native` to apply 1 suggestion)
+warning: `native` (bin "inspect_reconnect") generated 5 warnings
+warning: field `demo_type` is never read
+  --> native\src\bin\gui\explorer.rs:90:9
+   |
+85 | pub struct DemoListItem {
+   |            ------------ field in this struct
+...
+90 |     pub demo_type: String,
+   |         ^^^^^^^^^
+   |
+   = note: `DemoListItem` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+System.Management.Automation.RemoteException
+warning: `native` (bin "dod-tools-gui") generated 1 warning
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.83s

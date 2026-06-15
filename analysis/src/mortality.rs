@@ -3,7 +3,7 @@ use dod::UserMessage;
 use std::time::Duration;
 
 /// Represents whether something is alive.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Mortality {
     Alive,
     Dead,
@@ -111,7 +111,7 @@ pub trait MortalityState {
 }
 
 /// Timed event when an object's [Mortality] has changed.
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct MortalityChange(GameTime, Mortality);
 
 impl MortalityChange {

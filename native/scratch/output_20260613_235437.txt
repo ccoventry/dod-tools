@@ -1,0 +1,79 @@
+    Checking dem v0.2.3 (D:\Repos\dod-tools\dem-patch)
+    Checking analysis v0.10.0 (D:\Repos\dod-tools\analysis)
+    Checking native v0.10.0 (D:\Repos\dod-tools\native)
+    Checking dod-benchmark v0.10.0 (D:\Repos\dod-tools\benchmark)
+warning: unused import: `EngineMessage`
+ --> native\src\bin\inspect_bewton.rs:3:42
+  |
+3 | use dem::types::{FrameData, MessageData, EngineMessage};
+  |                                          ^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+System.Management.Automation.RemoteException
+warning: fields `slot`, `name`, and `sid` are never read
+  --> native\src\bin\inspect_reconnect.rs:34:15
+   |
+34 |     Connect { slot: u8, name: String, sid: String },
+   |     -------   ^^^^      ^^^^          ^^^
+   |     |
+   |     fields in this variant
+   |
+   = note: `Event` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+System.Management.Automation.RemoteException
+warning: fields `slot` and `name` are never read
+  --> native\src\bin\inspect_reconnect.rs:35:18
+   |
+35 |     Disconnect { slot: u8, name: String },
+   |     ----------   ^^^^      ^^^^
+   |     |
+   |     fields in this variant
+   |
+   = note: `Event` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+System.Management.Automation.RemoteException
+warning: fields `slot`, `name`, and `frags` are never read
+  --> native\src\bin\inspect_reconnect.rs:36:13
+   |
+36 |     Frags { slot: u8, name: String, frags: i16 },
+   |     -----   ^^^^      ^^^^          ^^^^^
+   |     |
+   |     fields in this variant
+   |
+   = note: `Event` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+System.Management.Automation.RemoteException
+warning: fields `slot`, `name`, `score`, `kills`, and `deaths` are never read
+  --> native\src\bin\inspect_reconnect.rs:37:18
+   |
+37 |     ScoreShort { slot: u8, name: String, score: i16, kills: i16, deaths: i16 },
+   |     ----------   ^^^^      ^^^^          ^^^^^       ^^^^^       ^^^^^^
+   |     |
+   |     fields in this variant
+   |
+   = note: `Event` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+System.Management.Automation.RemoteException
+warning: fields `killer_slot`, `killer_name`, `victim_slot`, `victim_name`, and `weapon` are never read
+  --> native\src\bin\inspect_reconnect.rs:38:16
+   |
+38 |     DeathMsg { killer_slot: u8, killer_name: String, victim_slot: u8, victim_name: String, weapon: String },
+   |     --------   ^^^^^^^^^^^      ^^^^^^^^^^^          ^^^^^^^^^^^      ^^^^^^^^^^^          ^^^^^^
+   |     |
+   |     fields in this variant
+   |
+   = note: `Event` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+System.Management.Automation.RemoteException
+warning: `native` (bin "inspect_reconnect") generated 5 warnings
+warning: `native` (bin "inspect_bewton") generated 1 warning (run `cargo fix --bin "inspect_bewton" -p native` to apply 1 suggestion)
+warning: field `demo_type` is never read
+  --> native\src\bin\gui\explorer.rs:90:9
+   |
+85 | pub struct DemoListItem {
+   |            ------------ field in this struct
+...
+90 |     pub demo_type: String,
+   |         ^^^^^^^^^
+   |
+   = note: `DemoListItem` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+System.Management.Automation.RemoteException
+warning: `native` (bin "dod-tools-gui") generated 1 warning
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.94s

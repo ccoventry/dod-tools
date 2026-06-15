@@ -1,0 +1,2 @@
+    Checking native v0.10.0 (D:\Repos\dod-tools\native)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.86s

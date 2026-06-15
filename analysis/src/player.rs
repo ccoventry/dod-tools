@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::hash::{Hash, Hasher};
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct PlayerGlobalId(String);
 
 impl Display for PlayerGlobalId {
@@ -14,7 +14,7 @@ impl Display for PlayerGlobalId {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct Player {
     pub id: PlayerGlobalId,
     pub connection: Connection,
@@ -144,7 +144,7 @@ impl Player {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SteamId(String);
 
 impl Display for SteamId {
@@ -173,7 +173,7 @@ impl TryFrom<&PlayerGlobalId> for SteamId {
 }
 
 /// Represents whether a [Player] is connected to the server.
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub enum Connection {
     /// Player is currently connected to the server.
     Connected {

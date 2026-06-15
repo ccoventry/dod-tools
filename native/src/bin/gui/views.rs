@@ -101,6 +101,9 @@ pub fn report_ui(
     file_info: Option<&FileInfo>,
     r: Option<&Analysis>,
     player_highlighting: &mut PlayerHighlighting,
+    scoreboard_cache: &mut crate::ScoreboardCache,
+    chat_cache: &mut crate::ChatCache,
+    player_details_cache: &mut crate::PlayerDetailsCache,
     ui: &mut Ui,
 ) {
     let tab_id = if let Some(fi) = file_info {
@@ -162,12 +165,12 @@ pub fn report_ui(
 
     match current_tab.as_str() {
         "Summary" => header_ui(file_info, r, ui),
-        "Scoreboard" => scoreboard_ui(r, player_highlighting, ui),
-        "Player Details" => player_details_ui(r, player_highlighting, ui),
+        "Scoreboard" => scoreboard_ui(r, player_highlighting, scoreboard_cache, ui),
+        "Player Details" => player_details_ui(r, player_highlighting, player_details_cache, ui),
         "Team Details" => team_details_ui(r, ui),
         "Timeline" => team_score_timeline_ui(file_info, r, ui),
         "Rounds" => rounds_ui(file_info, r, ui),
-        "Chat Log" => chat_log_ui(file_info, r, ui),
+        "Chat Log" => chat_log_ui(file_info, r, chat_cache, ui),
         "POV Analytics" => pov_analytics_ui(file_info, r, ui),
         _ => {}
     }

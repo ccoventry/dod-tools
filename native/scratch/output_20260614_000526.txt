@@ -1,0 +1,5 @@
+    Checking web-time v1.1.0
+    Checking egui-winit v0.32.0
+    Checking eframe v0.32.0
+    Checking native v0.10.0 (D:\Repos\dod-tools\native)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.16s

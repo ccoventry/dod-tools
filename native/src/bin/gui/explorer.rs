@@ -87,6 +87,7 @@ pub struct DemoListItem {
     pub name: String,
     pub map_name: String,
     pub date: String,
+    #[allow(dead_code)]
     pub demo_type: String,
 }
 

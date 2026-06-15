@@ -1,7 +1,7 @@
 use crate::{AnalyzerEvent, AnalyzerState, mortality::MortalityState, time::GameTime, player::PlayerGlobalId};
 use dod::{RoundState, UserMessage, Weapon};
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct KillStreak {
     pub kills: Vec<(GameTime, Weapon, PlayerGlobalId)>,
 }

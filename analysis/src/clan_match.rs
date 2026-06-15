@@ -3,7 +3,7 @@ use crate::{AnalyzerEvent, AnalyzerState, round::Round, time::GameTime};
 use dod::{RoundState, UserMessage};
 use std::time::Duration;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
 pub enum ClanMatchDetection {
     #[default]
     WaitingForReset,
