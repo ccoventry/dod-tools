@@ -895,7 +895,6 @@ struct Gui {
     error_message: Option<String>,
     settings: AppSettings,
     show_about_window: bool,
-    show_settings_window: bool,
     active_sidebar_tab: SidebarTab,
 
     filter_query: String,
@@ -1309,7 +1308,6 @@ impl Default for Gui {
             tx,
             settings,
             show_about_window: false,
-            show_settings_window: false,
             active_sidebar_tab: SidebarTab::Files,
 
             filter_query: String::new(),
@@ -2552,7 +2550,7 @@ impl eframe::App for Gui {
                 {
                     let root = self.root_dir.clone().or_else(|| self.current_dir.clone());
                     
-                    ScrollArea::vertical()
+                    ScrollArea::both()
                         .max_height(140.0)
                         .id_salt("quick_links_scroll")
                         .show(ui, |ui| {
@@ -2711,7 +2709,7 @@ impl eframe::App for Gui {
                 // Web Assembly Quick Links
                 #[cfg(target_arch = "wasm32")]
                 {
-                    ScrollArea::vertical()
+                    ScrollArea::both()
                         .max_height(140.0)
                         .id_salt("web_quick_links_scroll")
                         .show(ui, |ui| {
@@ -2787,7 +2785,7 @@ impl eframe::App for Gui {
                     });
                     ui.add_space(4.0);
 
-                    ScrollArea::vertical().show(ui, |ui| {
+                    ScrollArea::both().show(ui, |ui| {
                         let mut cache = std::mem::take(&mut self.subdir_cache);
                         let mut demo_cache = std::mem::take(&mut self.explorer_demo_cache);
 
@@ -2843,7 +2841,7 @@ impl eframe::App for Gui {
                         });
                         ui.add_space(4.0);
 
-                        ScrollArea::vertical().show(ui, |ui| {
+                        ScrollArea::both().show(ui, |ui| {
                             render_web_dir_node(ui, tree, &mut temp_web_folder);
                         });
                     } else {
@@ -2990,127 +2988,129 @@ impl eframe::App for Gui {
                                 });
                             }
 
-                            TableBuilder::new(ui)
-                                .striped(true)
-                                .cell_layout(Layout::left_to_right(Align::Center))
-                                .column(Column::initial(300.0).resizable(true).clip(true)) // Name
-                                .column(Column::initial(80.0).resizable(true)) // Type
-                                .column(Column::initial(150.0).resizable(true)) // Map
-                                .column(Column::initial(150.0)) // Date
-                                .header(20.0, |mut header| {
-                                    header.col(|ui| {
-                                        let label = match (self.sort_column, self.sort_ascending) {
-                                            (Some(SortColumn::Name), true) => format!("{} ⏶", t("#app_col_name")),
-                                            (Some(SortColumn::Name), false) => format!("{} ⏷", t("#app_col_name")),
-                                            _ => t("#app_col_name"),
-                                        };
-                                        if ui.add(egui::Button::new(label).frame(false)).clicked() {
-                                            self.toggle_sort(SortColumn::Name);
-                                        }
-                                    });
-                                    header.col(|ui| {
-                                        let label = match (self.sort_column, self.sort_ascending) {
-                                            (Some(SortColumn::Type), true) => format!("{} ⏶", t("#app_col_type")),
-                                            (Some(SortColumn::Type), false) => format!("{} ⏷", t("#app_col_type")),
-                                            _ => t("#app_col_type"),
-                                        };
-                                        if ui.add(egui::Button::new(label).frame(false)).clicked() {
-                                            self.toggle_sort(SortColumn::Type);
-                                        }
-                                    });
-                                    header.col(|ui| {
-                                        let label = match (self.sort_column, self.sort_ascending) {
-                                            (Some(SortColumn::Map), true) => format!("{} ⏶", t("#app_col_map")),
-                                            (Some(SortColumn::Map), false) => format!("{} ⏷", t("#app_col_map")),
-                                            _ => t("#app_col_map"),
-                                        };
-                                        if ui.add(egui::Button::new(label).frame(false)).clicked() {
-                                            self.toggle_sort(SortColumn::Map);
-                                        }
-                                    });
-                                    header.col(|ui| {
-                                        let label = match (self.sort_column, self.sort_ascending) {
-                                            (Some(SortColumn::Date), true) => format!("{} ⏶", t("#app_col_date")),
-                                            (Some(SortColumn::Date), false) => format!("{} ⏷", t("#app_col_date")),
-                                            _ => t("#app_col_date"),
-                                        };
-                                        if ui.add(egui::Button::new(label).frame(false)).clicked() {
-                                            self.toggle_sort(SortColumn::Date);
-                                        }
-                                    });
-                                })
-                                .body(|mut body| {
-                                    if self.desktop_files.is_empty() {
-                                        body.row(18.0, |mut row| {
-                                            row.col(|ui| {
-                                                ui.weak(t("#app_no_demos_found"));
-                                            });
-                                            row.col(|_| {});
-                                            row.col(|_| {});
-                                            row.col(|_| {});
+                            ScrollArea::horizontal().show(ui, |ui| {
+                                TableBuilder::new(ui)
+                                    .striped(true)
+                                    .cell_layout(Layout::left_to_right(Align::Center))
+                                    .column(Column::initial(300.0).resizable(true).clip(true)) // Name
+                                    .column(Column::initial(80.0).resizable(true)) // Type
+                                    .column(Column::initial(150.0).resizable(true)) // Map
+                                    .column(Column::initial(150.0)) // Date
+                                    .header(20.0, |mut header| {
+                                        header.col(|ui| {
+                                            let label = match (self.sort_column, self.sort_ascending) {
+                                                (Some(SortColumn::Name), true) => format!("{} ⏶", t("#app_col_name")),
+                                                (Some(SortColumn::Name), false) => format!("{} ⏷", t("#app_col_name")),
+                                                _ => t("#app_col_name"),
+                                            };
+                                            if ui.add(egui::Button::new(label).frame(false)).clicked() {
+                                                self.toggle_sort(SortColumn::Name);
+                                            }
                                         });
-                                    } else if display_files.is_empty() {
-                                        body.row(18.0, |mut row| {
-                                            row.col(|ui| {
-                                                ui.weak(t("#app_no_matching_demos"));
-                                            });
-                                            row.col(|_| {});
-                                            row.col(|_| {});
-                                            row.col(|_| {});
+                                        header.col(|ui| {
+                                            let label = match (self.sort_column, self.sort_ascending) {
+                                                (Some(SortColumn::Type), true) => format!("{} ⏶", t("#app_col_type")),
+                                                (Some(SortColumn::Type), false) => format!("{} ⏷", t("#app_col_type")),
+                                                _ => t("#app_col_type"),
+                                            };
+                                            if ui.add(egui::Button::new(label).frame(false)).clicked() {
+                                                self.toggle_sort(SortColumn::Type);
+                                            }
                                         });
-                                    } else {
-                                        for item in &display_files {
-                                            let path_str = item.path.to_string_lossy().into_owned();
-
-                                            let is_selected = selected_path.as_ref() == Some(&path_str);
-                                            let is_loading =
-                                                self.loading_path.as_deref() == Some(path_str.as_str());
-
+                                        header.col(|ui| {
+                                            let label = match (self.sort_column, self.sort_ascending) {
+                                                (Some(SortColumn::Map), true) => format!("{} ⏶", t("#app_col_map")),
+                                                (Some(SortColumn::Map), false) => format!("{} ⏷", t("#app_col_map")),
+                                                _ => t("#app_col_map"),
+                                            };
+                                            if ui.add(egui::Button::new(label).frame(false)).clicked() {
+                                                self.toggle_sort(SortColumn::Map);
+                                            }
+                                        });
+                                        header.col(|ui| {
+                                            let label = match (self.sort_column, self.sort_ascending) {
+                                                (Some(SortColumn::Date), true) => format!("{} ⏶", t("#app_col_date")),
+                                                (Some(SortColumn::Date), false) => format!("{} ⏷", t("#app_col_date")),
+                                                _ => t("#app_col_date"),
+                                            };
+                                            if ui.add(egui::Button::new(label).frame(false)).clicked() {
+                                                self.toggle_sort(SortColumn::Date);
+                                            }
+                                        });
+                                    })
+                                    .body(|mut body| {
+                                        if self.desktop_files.is_empty() {
                                             body.row(18.0, |mut row| {
-                                                row.set_selected(is_selected);
                                                 row.col(|ui| {
-                                                    ui.horizontal(|ui| {
-                                                        if is_loading {
-                                                            ui.spinner();
-                                                        }
-                                                        if ui
-                                                            .selectable_label(
-                                                                is_selected,
-                                                                format!("📄 {}", item.name),
-                                                            )
-                                                            .clicked()
-                                                        {
-                                                            if !is_selected {
-                                                                analyze_target_file =
-                                                                    Some(item.path.clone());
+                                                    ui.weak(t("#app_no_demos_found"));
+                                                });
+                                                row.col(|_| {});
+                                                row.col(|_| {});
+                                                row.col(|_| {});
+                                            });
+                                        } else if display_files.is_empty() {
+                                            body.row(18.0, |mut row| {
+                                                row.col(|ui| {
+                                                    ui.weak(t("#app_no_matching_demos"));
+                                                });
+                                                row.col(|_| {});
+                                                row.col(|_| {});
+                                                row.col(|_| {});
+                                            });
+                                        } else {
+                                            for item in &display_files {
+                                                let path_str = item.path.to_string_lossy().into_owned();
+
+                                                let is_selected = selected_path.as_ref() == Some(&path_str);
+                                                let is_loading =
+                                                    self.loading_path.as_deref() == Some(path_str.as_str());
+
+                                                body.row(18.0, |mut row| {
+                                                    row.set_selected(is_selected);
+                                                    row.col(|ui| {
+                                                        ui.horizontal(|ui| {
+                                                            if is_loading {
+                                                                ui.spinner();
                                                             }
-                                                        }
+                                                            if ui
+                                                                .selectable_label(
+                                                                    is_selected,
+                                                                    format!("📄 {}", item.name),
+                                                                )
+                                                                .clicked()
+                                                            {
+                                                                if !is_selected {
+                                                                    analyze_target_file =
+                                                                        Some(item.path.clone());
+                                                                }
+                                                            }
+                                                        });
+                                                    });
+                                                    row.col(|ui| {
+                                                        let demo_type = if let Some((_, analysis)) =
+                                                            self.analyses.get(&path_str)
+                                                        {
+                                                            analysis.demo_info.demo_type.as_str()
+                                                        } else if let Some(cached) = self.cache.demos.get(&path_str) {
+                                                            cached.demo_type.as_str()
+                                                        } else if item.name.to_lowercase().contains("hltv") {
+                                                            "HLTV"
+                                                        } else {
+                                                            "POV"
+                                                        };
+                                                        ui.label(demo_type);
+                                                    });
+                                                    row.col(|ui| {
+                                                        ui.label(&item.map_name);
+                                                    });
+                                                    row.col(|ui| {
+                                                        ui.label(&item.date);
                                                     });
                                                 });
-                                                row.col(|ui| {
-                                                    let demo_type = if let Some((_, analysis)) =
-                                                        self.analyses.get(&path_str)
-                                                    {
-                                                        analysis.demo_info.demo_type.as_str()
-                                                    } else if let Some(cached) = self.cache.demos.get(&path_str) {
-                                                        cached.demo_type.as_str()
-                                                    } else if item.name.to_lowercase().contains("hltv") {
-                                                        "HLTV"
-                                                    } else {
-                                                        "POV"
-                                                    };
-                                                    ui.label(demo_type);
-                                                });
-                                                row.col(|ui| {
-                                                    ui.label(&item.map_name);
-                                                });
-                                                row.col(|ui| {
-                                                    ui.label(&item.date);
-                                                });
-                                            });
+                                            }
                                         }
-                                    }
-                                });
+                                    });
+                            });
                         }
                     }
                 }
@@ -3215,137 +3215,139 @@ impl eframe::App for Gui {
                             });
                         }
 
-                        TableBuilder::new(ui)
-                            .striped(true)
-                            .cell_layout(Layout::left_to_right(Align::Center))
-                            .column(Column::initial(300.0).resizable(true).clip(true)) // Name
-                            .column(Column::initial(80.0).resizable(true)) // Type
-                            .column(Column::initial(150.0).resizable(true)) // Map
-                            .column(Column::initial(100.0)) // Status
-                            .header(20.0, |mut header| {
-                                header.col(|ui| {
-                                    let label = match (self.sort_column, self.sort_ascending) {
-                                        (Some(SortColumn::Name), true) => format!("{} ⏶", t("#app_col_name")),
-                                        (Some(SortColumn::Name), false) => format!("{} ⏷", t("#app_col_name")),
-                                        _ => t("#app_col_name"),
-                                    };
-                                    if ui.add(egui::Button::new(label).frame(false)).clicked() {
-                                        self.toggle_sort(SortColumn::Name);
-                                    }
-                                });
-                                header.col(|ui| {
-                                    let label = match (self.sort_column, self.sort_ascending) {
-                                        (Some(SortColumn::Type), true) => format!("{} ⏶", t("#app_col_type")),
-                                        (Some(SortColumn::Type), false) => format!("{} ⏷", t("#app_col_type")),
-                                        _ => t("#app_col_type"),
-                                    };
-                                    if ui.add(egui::Button::new(label).frame(false)).clicked() {
-                                        self.toggle_sort(SortColumn::Type);
-                                    }
-                                });
-                                header.col(|ui| {
-                                    let label = match (self.sort_column, self.sort_ascending) {
-                                        (Some(SortColumn::Map), true) => format!("{} ⏶", t("#app_col_map")),
-                                        (Some(SortColumn::Map), false) => format!("{} ⏷", t("#app_col_map")),
-                                        _ => t("#app_col_map"),
-                                    };
-                                    if ui.add(egui::Button::new(label).frame(false)).clicked() {
-                                        self.toggle_sort(SortColumn::Map);
-                                    }
-                                });
-                                header.col(|ui| {
-                                    let label = match (self.sort_column, self.sort_ascending) {
-                                        (Some(SortColumn::Date), true) => format!("{} ⏶", t("#app_col_status")),
-                                        (Some(SortColumn::Date), false) => format!("{} ⏷", t("#app_col_status")),
-                                        _ => t("#app_col_status"),
-                                    };
-                                    if ui.add(egui::Button::new(label).frame(false)).clicked() {
-                                        self.toggle_sort(SortColumn::Date);
-                                    }
-                                });
-                            })
-                            .body(|mut body| {
-                                if filtered_web_files.is_empty() {
-                                    body.row(18.0, |mut row| {
-                                        row.col(|ui| {
-                                            ui.weak(t("#app_no_demos_found"));
-                                        });
-                                        row.col(|_| {});
-                                        row.col(|_| {});
-                                        row.col(|_| {});
+                        ScrollArea::horizontal().show(ui, |ui| {
+                            TableBuilder::new(ui)
+                                .striped(true)
+                                .cell_layout(Layout::left_to_right(Align::Center))
+                                .column(Column::initial(300.0).resizable(true).clip(true)) // Name
+                                .column(Column::initial(80.0).resizable(true)) // Type
+                                .column(Column::initial(150.0).resizable(true)) // Map
+                                .column(Column::initial(100.0)) // Status
+                                .header(20.0, |mut header| {
+                                    header.col(|ui| {
+                                        let label = match (self.sort_column, self.sort_ascending) {
+                                            (Some(SortColumn::Name), true) => format!("{} ⏶", t("#app_col_name")),
+                                            (Some(SortColumn::Name), false) => format!("{} ⏷", t("#app_col_name")),
+                                            _ => t("#app_col_name"),
+                                        };
+                                        if ui.add(egui::Button::new(label).frame(false)).clicked() {
+                                            self.toggle_sort(SortColumn::Name);
+                                        }
                                     });
-                                } else if display_files.is_empty() {
-                                    body.row(18.0, |mut row| {
-                                        row.col(|ui| {
-                                            ui.weak(t("#app_no_matching_demos"));
-                                        });
-                                        row.col(|_| {});
-                                        row.col(|_| {});
-                                        row.col(|_| {});
+                                    header.col(|ui| {
+                                        let label = match (self.sort_column, self.sort_ascending) {
+                                            (Some(SortColumn::Type), true) => format!("{} ⏶", t("#app_col_type")),
+                                            (Some(SortColumn::Type), false) => format!("{} ⏷", t("#app_col_type")),
+                                            _ => t("#app_col_type"),
+                                        };
+                                        if ui.add(egui::Button::new(label).frame(false)).clicked() {
+                                            self.toggle_sort(SortColumn::Type);
+                                        }
                                     });
-                                } else {
-                                    for file in &display_files {
-                                        let relative_path = &file.path;
-                                        let name = &file.name;
-
-                                        let analysis_opt = self.analyses.get(relative_path);
-
-                                        let is_selected = selected_path.as_ref() == Some(relative_path);
-                                        let is_loaded = analysis_opt.is_some();
-                                        let is_loading = loading_path.as_ref() == Some(relative_path);
-
+                                    header.col(|ui| {
+                                        let label = match (self.sort_column, self.sort_ascending) {
+                                            (Some(SortColumn::Map), true) => format!("{} ⏶", t("#app_col_map")),
+                                            (Some(SortColumn::Map), false) => format!("{} ⏷", t("#app_col_map")),
+                                            _ => t("#app_col_map"),
+                                        };
+                                        if ui.add(egui::Button::new(label).frame(false)).clicked() {
+                                            self.toggle_sort(SortColumn::Map);
+                                        }
+                                    });
+                                    header.col(|ui| {
+                                        let label = match (self.sort_column, self.sort_ascending) {
+                                            (Some(SortColumn::Date), true) => format!("{} ⏶", t("#app_col_status")),
+                                            (Some(SortColumn::Date), false) => format!("{} ⏷", t("#app_col_status")),
+                                            _ => t("#app_col_status"),
+                                        };
+                                        if ui.add(egui::Button::new(label).frame(false)).clicked() {
+                                            self.toggle_sort(SortColumn::Date);
+                                        }
+                                    });
+                                })
+                                .body(|mut body| {
+                                    if filtered_web_files.is_empty() {
                                         body.row(18.0, |mut row| {
-                                            row.set_selected(is_selected);
                                             row.col(|ui| {
-                                                if ui
-                                                    .selectable_label(
-                                                        is_selected,
-                                                        format!("📄 {}", name),
-                                                    )
-                                                    .clicked()
-                                                {
-                                                    if !is_selected && !is_loading {
-                                                        parse_file_target = Some((*file).clone());
-                                                    }
-                                                }
+                                                ui.weak(t("#app_no_demos_found"));
                                             });
-                                            row.col(|ui| {
-                                                let demo_type =
-                                                    if let Some((_, analysis)) = analysis_opt {
-                                                        analysis.demo_info.demo_type.as_str()
-                                                    } else if let Some(cached) = self.cache.demos.get(relative_path) {
-                                                        cached.demo_type.as_str()
-                                                    } else if name.to_lowercase().contains("hltv") {
-                                                        "HLTV"
-                                                    } else {
-                                                        "POV"
-                                                    };
-                                                ui.label(demo_type);
-                                            });
-                                            row.col(|ui| {
-                                                let map = if let Some((_, analysis)) = analysis_opt {
-                                                    analysis.demo_info.map_name.as_str()
-                                                } else if let Some(cached) = self.cache.demos.get(relative_path) {
-                                                    cached.map_name.as_str()
-                                                } else {
-                                                    "-"
-                                                };
-                                                ui.label(map);
-                                            });
-                                            row.col(|ui| {
-                                                let status = if is_loading {
-                                                    t("#app_status_loading")
-                                                } else if is_loaded {
-                                                    t("#app_status_loaded")
-                                                } else {
-                                                    t("#app_status_not_loaded")
-                                                };
-                                                ui.label(status);
-                                            });
+                                            row.col(|_| {});
+                                            row.col(|_| {});
+                                            row.col(|_| {});
                                         });
+                                    } else if display_files.is_empty() {
+                                        body.row(18.0, |mut row| {
+                                            row.col(|ui| {
+                                                ui.weak(t("#app_no_matching_demos"));
+                                            });
+                                            row.col(|_| {});
+                                            row.col(|_| {});
+                                            row.col(|_| {});
+                                        });
+                                    } else {
+                                        for file in &display_files {
+                                            let relative_path = &file.path;
+                                            let name = &file.name;
+
+                                            let analysis_opt = self.analyses.get(relative_path);
+
+                                            let is_selected = selected_path.as_ref() == Some(relative_path);
+                                            let is_loaded = analysis_opt.is_some();
+                                            let is_loading = loading_path.as_ref() == Some(relative_path);
+
+                                            body.row(18.0, |mut row| {
+                                                row.set_selected(is_selected);
+                                                row.col(|ui| {
+                                                    if ui
+                                                        .selectable_label(
+                                                            is_selected,
+                                                            format!("📄 {}", name),
+                                                        )
+                                                        .clicked()
+                                                    {
+                                                        if !is_selected && !is_loading {
+                                                            parse_file_target = Some((*file).clone());
+                                                        }
+                                                    }
+                                                });
+                                                row.col(|ui| {
+                                                    let demo_type =
+                                                        if let Some((_, analysis)) = analysis_opt {
+                                                            analysis.demo_info.demo_type.as_str()
+                                                        } else if let Some(cached) = self.cache.demos.get(relative_path) {
+                                                            cached.demo_type.as_str()
+                                                        } else if name.to_lowercase().contains("hltv") {
+                                                            "HLTV"
+                                                        } else {
+                                                            "POV"
+                                                        };
+                                                    ui.label(demo_type);
+                                                });
+                                                row.col(|ui| {
+                                                    let map = if let Some((_, analysis)) = analysis_opt {
+                                                        analysis.demo_info.map_name.as_str()
+                                                    } else if let Some(cached) = self.cache.demos.get(relative_path) {
+                                                        cached.map_name.as_str()
+                                                    } else {
+                                                        "-"
+                                                    };
+                                                    ui.label(map);
+                                                });
+                                                row.col(|ui| {
+                                                    let status = if is_loading {
+                                                        t("#app_status_loading")
+                                                    } else if is_loaded {
+                                                        t("#app_status_loaded")
+                                                    } else {
+                                                        t("#app_status_not_loaded")
+                                                    };
+                                                    ui.label(status);
+                                                });
+                                            });
+                                        }
                                     }
-                                }
-                            });
+                                });
+                        });
                     }
                 }
             });

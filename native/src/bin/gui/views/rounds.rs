@@ -127,6 +127,8 @@ pub fn rounds_ui(_file_info: Option<&FileInfo>, r: Option<&Analysis>, ui: &mut U
                             ui.label(format_duration(match_duration).to_string());
                         });
                         row.col(|_| {});
+                        row.col(|_| {});
+                        row.col(|_| {});
                     });
                 }
             });
