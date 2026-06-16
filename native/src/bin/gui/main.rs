@@ -883,6 +883,7 @@ pub struct PlayerDetailsCache {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SidebarTab {
     Files,
+    BatchMode,
     Settings,
 }
 
@@ -894,6 +895,7 @@ struct Gui {
     error_message: Option<String>,
     settings: AppSettings,
     show_about_window: bool,
+    show_settings_window: bool,
     active_sidebar_tab: SidebarTab,
 
     filter_query: String,
@@ -1307,6 +1309,7 @@ impl Default for Gui {
             tx,
             settings,
             show_about_window: false,
+            show_settings_window: false,
             active_sidebar_tab: SidebarTab::Files,
 
             filter_query: String::new(),
@@ -1814,7 +1817,9 @@ impl Gui {
             let _ = worker.post_message(&parse_obj);
         }
     }
+}
 
+impl Gui {
     fn render_settings_ui(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         ui.vertical(|ui| {
             ui.heading(t("#app_prefs_general"));
@@ -2040,7 +2045,7 @@ impl eframe::App for Gui {
             .exact_width(48.0)
             .frame(Frame::side_top_panel(&ctx.style())
                 .fill(ctx.style().visuals.extreme_bg_color)
-                .inner_margin(egui::Margin::same(4.0)))
+                .inner_margin(egui::Margin::same(4_i8)))
             .show(ctx, |ui| {
                 if modal_open {
                     ui.disable();
@@ -2055,6 +2060,15 @@ impl eframe::App for Gui {
                         self.active_sidebar_tab = SidebarTab::Files;
                     }
                     
+                    ui.add_space(8.0);
+
+                    let batch_active = self.active_sidebar_tab == SidebarTab::BatchMode;
+                    let batch_btn = egui::Button::new(egui::RichText::new("📦").size(18.0))
+                        .selected(batch_active);
+                    if ui.add(batch_btn).on_hover_text("Batch Export Mode").clicked() {
+                        self.active_sidebar_tab = SidebarTab::BatchMode;
+                    }
+
                     ui.add_space(8.0);
                     
                     let settings_active = self.active_sidebar_tab == SidebarTab::Settings;
@@ -2517,12 +2531,13 @@ impl eframe::App for Gui {
         let mut parse_file_target = None;
 
         // Sidebar Explorer panel (Folder Tree only)
-        SidePanel::left("explorer_panel")
-            .default_width(260.)
-            .min_width(200.)
-            .max_width(400.)
-            .frame(Frame::side_top_panel(&ctx.style()).inner_margin(6.))
-            .show(ctx, |ui| {
+        if self.active_sidebar_tab == SidebarTab::Files {
+            SidePanel::left("explorer_panel")
+                .default_width(260.)
+                .min_width(200.)
+                .max_width(400.)
+                .frame(Frame::side_top_panel(&ctx.style()).inner_margin(6.))
+                .show(ctx, |ui| {
                 if modal_open {
                     ui.disable();
                 }
@@ -2839,15 +2854,17 @@ impl eframe::App for Gui {
                     }
                 }
             });
+        }
 
         // Demos List Top Panel
-        TopBottomPanel::top("demos_list_panel")
-            .resizable(true)
-            .default_height(220.)
-            .min_height(100.)
-            .max_height(400.)
-            .frame(Frame::side_top_panel(&ctx.style()).inner_margin(6.))
-            .show(ctx, |ui| {
+        if self.active_sidebar_tab == SidebarTab::Files {
+            TopBottomPanel::top("demos_list_panel")
+                .resizable(true)
+                .default_height(220.)
+                .min_height(100.)
+                .max_height(400.)
+                .frame(Frame::side_top_panel(&ctx.style()).inner_margin(6.))
+                .show(ctx, |ui| {
                 if modal_open {
                     ui.disable();
                 }
@@ -3332,6 +3349,7 @@ impl eframe::App for Gui {
                     }
                 }
             });
+        }
 
         CentralPanel::default().show(ctx, |ui| {
             if modal_open {
@@ -3384,45 +3402,68 @@ impl eframe::App for Gui {
                     });
                 });
             } else {
-                self.check_scoreboard_cache();
-                let show_blank = if let Some(path) = &self.selected_analysis_path {
-                    !self.analyses.contains_key(path)
-                } else {
-                    self.loading_path.is_none()
-                };
+                match self.active_sidebar_tab {
+                    SidebarTab::Files => {
+                        self.check_scoreboard_cache();
+                        let show_blank = if let Some(path) = &self.selected_analysis_path {
+                            !self.analyses.contains_key(path)
+                        } else {
+                            self.loading_path.is_none()
+                        };
 
-                if show_blank {
-                    ScrollArea::vertical()
-                        .id_salt("report_scroll_area")
-                        .show(ui, |ui| {
-                            report_ui(
-                                None,
-                                None,
-                                &mut self.player_highlight,
-                                &mut self.scoreboard_cache,
-                                &mut self.chat_cache,
-                                &mut self.player_details_cache,
-                                &mut self.export_queue,
-                                &mut self.settings,
-                                ui,
-                            );
-                        });
-                } else if let Some(path) = &self.selected_analysis_path {
-                    if let Some((file_info, analysis)) = self.analyses.get(path) {
+                        if show_blank {
+                            ScrollArea::vertical()
+                                .id_salt("report_scroll_area")
+                                .show(ui, |ui| {
+                                    report_ui(
+                                        None,
+                                        None,
+                                        &mut self.player_highlight,
+                                        &mut self.scoreboard_cache,
+                                        &mut self.chat_cache,
+                                        &mut self.player_details_cache,
+                                        &mut self.export_queue,
+                                        &mut self.settings,
+                                        ui,
+                                    );
+                                });
+                        } else if let Some(path) = &self.selected_analysis_path {
+                            if let Some((file_info, analysis)) = self.analyses.get(path) {
+                                ScrollArea::vertical()
+                                    .id_salt("report_scroll_area")
+                                    .show(ui, |ui| {
+                                        report_ui(
+                                            Some(file_info),
+                                            Some(analysis),
+                                            &mut self.player_highlight,
+                                            &mut self.scoreboard_cache,
+                                            &mut self.chat_cache,
+                                            &mut self.player_details_cache,
+                                            &mut self.export_queue,
+                                            &mut self.settings,
+                                            ui,
+                                        );
+                                    });
+                            }
+                        }
+                    }
+                    SidebarTab::BatchMode => {
                         ScrollArea::vertical()
-                            .id_salt("report_scroll_area")
+                            .id_salt("batch_mode_scroll_area")
                             .show(ui, |ui| {
-                                report_ui(
-                                    Some(file_info),
-                                    Some(analysis),
-                                    &mut self.player_highlight,
-                                    &mut self.scoreboard_cache,
-                                    &mut self.chat_cache,
-                                    &mut self.player_details_cache,
+                                views::batch_queue_ui(
                                     &mut self.export_queue,
                                     &mut self.settings,
+                                    &mut self.player_details_cache,
                                     ui,
                                 );
+                            });
+                    }
+                    SidebarTab::Settings => {
+                        ScrollArea::vertical()
+                            .id_salt("settings_scroll_area")
+                            .show(ui, |ui| {
+                                self.render_settings_ui(ui, ctx);
                             });
                     }
                 }
@@ -3511,238 +3552,7 @@ impl eframe::App for Gui {
             }
         }
 
-        if self.show_settings_window {
-            let mut open = true;
-            let mut close_clicked = false;
-            egui::Window::new(t("#app_prefs_title"))
-                .open(&mut open)
-                .resizable(false)
-                .collapsible(false)
-                .show(ctx, |ui| {
-                    ui.vertical(|ui| {
-                        ui.heading(t("#app_prefs_general"));
-                        ui.add_space(8.0);
-
-                        ui.horizontal(|ui| {
-                            ui.label(t("#app_prefs_language"));
-                            let mut current_lang = self.settings.language.clone();
-                            egui::ComboBox::from_id_salt("language_select")
-                                .selected_text(match current_lang.as_str() {
-                                    "auto" => t("#app_prefs_lang_auto"),
-                                    other => {
-                                        let mut chars = other.chars();
-                                        match chars.next() {
-                                            None => String::new(),
-                                            Some(f) => {
-                                                f.to_uppercase().collect::<String>()
-                                                    + chars.as_str()
-                                            }
-                                        }
-                                    }
-                                })
-                                .show_ui(ui, |ui| {
-                                    ui.selectable_value(
-                                        &mut current_lang,
-                                        "auto".to_string(),
-                                        t("#app_prefs_lang_auto"),
-                                    );
-                                    ui.separator();
-                                    ui.selectable_value(
-                                        &mut current_lang,
-                                        "english".to_string(),
-                                        "English",
-                                    );
-                                    ui.selectable_value(
-                                        &mut current_lang,
-                                        "french".to_string(),
-                                        "French",
-                                    );
-                                    ui.selectable_value(
-                                        &mut current_lang,
-                                        "german".to_string(),
-                                        "German",
-                                    );
-                                    ui.selectable_value(
-                                        &mut current_lang,
-                                        "spanish".to_string(),
-                                        "Spanish",
-                                    );
-                                    ui.selectable_value(
-                                        &mut current_lang,
-                                        "russian".to_string(),
-                                        "Russian",
-                                    );
-                                    ui.selectable_value(
-                                        &mut current_lang,
-                                        "serbian".to_string(),
-                                        "Serbian",
-                                    );
-                                    ui.selectable_value(
-                                        &mut current_lang,
-                                        "polish".to_string(),
-                                        "Polish",
-                                    );
-                                    ui.selectable_value(
-                                        &mut current_lang,
-                                        "turkish".to_string(),
-                                        "Turkish",
-                                    );
-                                });
-
-                            if current_lang != self.settings.language {
-                                self.settings.language = current_lang;
-                                apply_language_setting(&self.settings.language);
-                                save_settings(&self.settings);
-                                ctx.request_repaint();
-                            }
-                        });
-
-                        ui.add_space(8.0);
-                        let mut scan_val = self.settings.scan_folders_for_demos;
-                        if ui.checkbox(&mut scan_val, t("#app_prefs_scan_folders")).changed() {
-                            self.settings.scan_folders_for_demos = scan_val;
-                            save_settings(&self.settings);
-                            #[cfg(not(target_arch = "wasm32"))]
-                            {
-                                self.subdir_cache.clear();
-                                self.explorer_demo_cache.clear();
-                            }
-                            ctx.request_repaint();
-                        }
-
-                        ui.add_space(8.0);
-                        ui.separator();
-                        ui.add_space(8.0);
-                        ui.heading("Highlight Capture Settings");
-                        ui.add_space(4.0);
-
-                        egui::Grid::new("capture_settings_grid")
-                            .num_columns(2)
-                            .spacing([8.0, 8.0])
-                            .striped(true)
-                            .show(ui, |ui| {
-                                ui.label("Init Commands (startup):");
-                                let mut val = self.settings.capture_init_commands.clone();
-                                if ui.text_edit_multiline(&mut val).changed() {
-                                    self.settings.capture_init_commands = val;
-                                    save_settings(&self.settings);
-                                }
-                                ui.end_row();
-
-                                ui.label("Default Custom Commands:");
-                                ui.vertical(|ui| {
-                                    let mut changed = false;
-                                    let mut delete_idx = None;
-                                    
-                                    egui::ScrollArea::vertical()
-                                        .max_height(120.0)
-                                        .id_salt("default_commands_scroll")
-                                        .show(ui, |ui| {
-                                            for (i, cmd) in self.settings.custom_commands.iter_mut().enumerate() {
-                                                ui.horizontal(|ui| {
-                                                    if ui.add(egui::TextEdit::singleline(&mut cmd.command).desired_width(180.0)).changed() {
-                                                        changed = true;
-                                                    }
-                                                    
-                                                    let is_after = cmd.relation == native::patch::CommandRelation::After;
-                                                    if ui.selectable_label(!is_after, "Before").clicked() {
-                                                        cmd.relation = native::patch::CommandRelation::Before;
-                                                        changed = true;
-                                                    }
-                                                    if ui.selectable_label(is_after, "After").clicked() {
-                                                        cmd.relation = native::patch::CommandRelation::After;
-                                                        changed = true;
-                                                    }
-                                                    
-                                                    if ui.add(egui::DragValue::new(&mut cmd.offset).speed(0.1).range(0.0..=60.0).suffix("s")).changed() {
-                                                        changed = true;
-                                                    }
-                                                    if ui.button("❌").clicked() {
-                                                        delete_idx = Some(i);
-                                                        changed = true;
-                                                    }
-                                                });
-                                            }
-                                        });
-
-                                    if let Some(i) = delete_idx {
-                                        self.settings.custom_commands.remove(i);
-                                    }
-                                    if ui.button("➕ Add Default Command").clicked() {
-                                        self.settings.custom_commands.push(native::patch::CustomCommand {
-                                            command: "".to_string(),
-                                            offset: 2.0,
-                                            relation: native::patch::CommandRelation::Before,
-                                        });
-                                        changed = true;
-                                    }
-                                    if changed {
-                                        save_settings(&self.settings);
-                                    }
-                                });
-                                ui.end_row();
-
-                                ui.label("Initial Load Delay (s):");
-                                let mut val = self.settings.capture_initial_delay;
-                                if ui.add(egui::Slider::new(&mut val, 0.0..=30.0).step_by(0.5)).changed() {
-                                    self.settings.capture_initial_delay = val;
-                                    save_settings(&self.settings);
-                                }
-                                ui.end_row();
-
-                                ui.label("Fast-Forward Speed:");
-                                let mut val = self.settings.capture_fast_forward_speed;
-                                if ui.add(egui::Slider::new(&mut val, 0.01..=5.0).step_by(0.05)).changed() {
-                                    self.settings.capture_fast_forward_speed = val;
-                                    save_settings(&self.settings);
-                                }
-                                ui.end_row();
-
-                                ui.label("Pre-Record Buffer (s):");
-                                let mut val = self.settings.capture_pre_record_buffer;
-                                if ui.add(egui::Slider::new(&mut val, 0.0..=30.0).step_by(0.5)).changed() {
-                                    self.settings.capture_pre_record_buffer = val;
-                                    save_settings(&self.settings);
-                                }
-                                ui.end_row();
-
-                                ui.label("Record Start Lead (s):");
-                                let mut val = self.settings.capture_record_start_lead;
-                                if ui.add(egui::Slider::new(&mut val, 0.0..=10.0).step_by(0.5)).changed() {
-                                    self.settings.capture_record_start_lead = val;
-                                    save_settings(&self.settings);
-                                }
-                                ui.end_row();
-
-                                ui.label("Record Stop Trail (s):");
-                                let mut val = self.settings.capture_record_stop_trail;
-                                if ui.add(egui::Slider::new(&mut val, 0.0..=10.0).step_by(0.5)).changed() {
-                                    self.settings.capture_record_stop_trail = val;
-                                    save_settings(&self.settings);
-                                }
-                                ui.end_row();
-
-                                ui.label("Post-Record Buffer (s):");
-                                let mut val = self.settings.capture_post_record_buffer;
-                                if ui.add(egui::Slider::new(&mut val, 0.0..=30.0).step_by(0.5)).changed() {
-                                    self.settings.capture_post_record_buffer = val;
-                                    save_settings(&self.settings);
-                                }
-                                ui.end_row();
-                            });
-
-                        ui.add_space(16.0);
-                        ui.separator();
-                        ui.add_space(8.0);
-                        ui.horizontal(|ui| {
-                            if ui.button(t("#app_prefs_close")).clicked() {
-                                close_clicked = true;
-                            }
-                        });
-                    });
-                });
-            self.show_settings_window = open && !close_clicked;
-        }
+        // Settings are now drawn inline in the Settings sidebar tab!
 
         if self.show_about_window {
             let mut open = true;
