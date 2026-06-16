@@ -111,11 +111,7 @@ pub fn report_ui(
     _settings: &mut crate::AppSettings,
     ui: &mut Ui,
 ) {
-    let tab_id = if let Some(fi) = file_info {
-        egui::Id::new(&fi.path).with("active_tab")
-    } else {
-        egui::Id::new("blank_report").with("active_tab")
-    };
+    let tab_id = egui::Id::new("active_report_tab");
     let mut current_tab = ui.data(|d| {
         d.get_temp::<String>(tab_id)
             .unwrap_or_else(|| "Summary".to_string())

@@ -1,5 +1,50 @@
 {
   "demos": {
+    "E:\\Steam\\steamapps\\common\\Half-Life - PRE-Anniversary for Movies\\dod\\jlynch-as1.dem": {
+      "path": "E:\\Steam\\steamapps\\common\\Half-Life - PRE-Anniversary for Movies\\dod\\jlynch-as1.dem",
+      "name": "jlynch-as1.dem",
+      "map_name": "dod_thunder2_b1c",
+      "date": "2022-04-25 08:58 PM",
+      "demo_type": "POV",
+      "size_bytes": 90792405,
+      "modified_ms": 1650941904000
+    },
+    "D:\\Repos\\dod-tools\\demos\\ktps8w1-m00cat_soul_lenn_h2.dem": {
+      "path": "D:\\Repos\\dod-tools\\demos\\ktps8w1-m00cat_soul_lenn_h2.dem",
+      "name": "ktps8w1-m00cat_soul_lenn_h2.dem",
+      "map_name": "dod_lennon2",
+      "date": "2025-09-21 08:01 PM",
+      "demo_type": "POV",
+      "size_bytes": 86177815,
+      "modified_ms": 1758506484000
+    },
+    "E:\\Steam\\steamapps\\common\\Half-Life - PRE-Anniversary for Movies\\dod\\bb-scrim-harr-h2.dem": {
+      "path": "E:\\Steam\\steamapps\\common\\Half-Life - PRE-Anniversary for Movies\\dod\\bb-scrim-harr-h2.dem",
+      "name": "bb-scrim-harr-h2.dem",
+      "map_name": "dod_harrington",
+      "date": "2026-02-12 12:46 AM",
+      "demo_type": "HLTV",
+      "size_bytes": 11987051,
+      "modified_ms": 1770882409680
+    },
+    "D:\\Downloads\\bandits-ktps5w8-lennon-clinic-allies-milo.dem": {
+      "path": "D:\\Downloads\\bandits-ktps5w8-lennon-clinic-allies-milo.dem",
+      "name": "bandits-ktps5w8-lennon-clinic-allies-milo.dem",
+      "map_name": "dod_lennon2",
+      "date": "2024-12-12 06:07 PM",
+      "demo_type": "POV",
+      "size_bytes": 91340190,
+      "modified_ms": 1734052076901
+    },
+    "D:\\Downloads\\decdraft_f12_railyard_allies.dem": {
+      "path": "D:\\Downloads\\decdraft_f12_railyard_allies.dem",
+      "name": "decdraft_f12_railyard_allies.dem",
+      "map_name": "dod_railyard_test",
+      "date": "2022-12-21 03:16 PM",
+      "demo_type": "POV",
+      "size_bytes": 98723411,
+      "modified_ms": 1671660985541
+    },
     "E:\\Steam\\steamapps\\common\\Half-Life - PRE-Anniversary for Movies\\dod\\jlynch-draftvicmap5half2.dem": {
       "path": "E:\\Steam\\steamapps\\common\\Half-Life - PRE-Anniversary for Movies\\dod\\jlynch-draftvicmap5half2.dem",
       "name": "jlynch-draftvicmap5half2.dem",
@@ -18,59 +63,32 @@
       "size_bytes": 99888223,
       "modified_ms": 1776843366252
     },
-    "E:\\Steam\\steamapps\\common\\Half-Life - PRE-Anniversary for Movies\\dod\\temp demos\\zexarmoryalliessemis.dem": {
-      "path": "E:\\Steam\\steamapps\\common\\Half-Life - PRE-Anniversary for Movies\\dod\\temp demos\\zexarmoryalliessemis.dem",
-      "name": "zexarmoryalliessemis.dem",
-      "map_name": "dod_armory_b6",
-      "date": "2024-05-25 02:40 PM",
-      "demo_type": "POV",
-      "size_bytes": 73650307,
-      "modified_ms": 1716669659000
+    "D:\\Repos\\dod-tools\\demos\\bb-scrim-railyard-h1.dem": {
+      "path": "D:\\Repos\\dod-tools\\demos\\bb-scrim-railyard-h1.dem",
+      "name": "bb-scrim-railyard-h1.dem",
+      "map_name": "dod_railyard_b6",
+      "date": "2026-02-12 12:46 AM",
+      "demo_type": "HLTV",
+      "size_bytes": 11668031,
+      "modified_ms": 1770882408766
     },
-    "E:\\Steam\\steamapps\\common\\Half-Life - PRE-Anniversary for Movies\\dod\\jlynch-as1.dem": {
-      "path": "E:\\Steam\\steamapps\\common\\Half-Life - PRE-Anniversary for Movies\\dod\\jlynch-as1.dem",
-      "name": "jlynch-as1.dem",
-      "map_name": "dod_thunder2_b1c",
-      "date": "2022-04-25 08:58 PM",
-      "demo_type": "POV",
-      "size_bytes": 90792405,
-      "modified_ms": 1650941904000
+    "D:\\Downloads\\hltv-ktps8-wk8-gold-saints-dice-vs-icyhot-half1.dem": {
+      "path": "D:\\Downloads\\hltv-ktps8-wk8-gold-saints-dice-vs-icyhot-half1.dem",
+      "name": "hltv-ktps8-wk8-gold-saints-dice-vs-icyhot-half1.dem",
+      "map_name": "dod_saints2_b2",
+      "date": "2025-11-24 11:06 PM",
+      "demo_type": "HLTV",
+      "size_bytes": 18991232,
+      "modified_ms": 1764050816210
     },
-    "E:\\Steam\\steamapps\\common\\Half-Life - PRE-Anniversary for Movies\\dod\\icyvsdiceharryhalf1.dem": {
-      "path": "E:\\Steam\\steamapps\\common\\Half-Life - PRE-Anniversary for Movies\\dod\\icyvsdiceharryhalf1.dem",
-      "name": "icyvsdiceharryhalf1.dem",
-      "map_name": "dod_thunder2_b5a",
-      "date": "2025-08-03 05:34 PM",
-      "demo_type": "POV",
-      "size_bytes": 98396401,
-      "modified_ms": 1754264078000
-    },
-    "E:\\Steam\\steamapps\\common\\Half-Life\\dod\\2021draft-rd1-harrington-allies.dem": {
-      "path": "E:\\Steam\\steamapps\\common\\Half-Life\\dod\\2021draft-rd1-harrington-allies.dem",
-      "name": "2021draft-rd1-harrington-allies.dem",
-      "map_name": "dod_harrington",
-      "date": "2021-05-01 12:15 PM",
-      "demo_type": "POV",
-      "size_bytes": 58038869,
-      "modified_ms": 1619892930000
-    },
-    "E:\\Steam\\steamapps\\common\\Half-Life - PRE-Anniversary for Movies\\dod\\temp demos\\teamboo-lennon-allies.dem": {
-      "path": "E:\\Steam\\steamapps\\common\\Half-Life - PRE-Anniversary for Movies\\dod\\temp demos\\teamboo-lennon-allies.dem",
-      "name": "teamboo-lennon-allies.dem",
-      "map_name": "dod_lennon_test",
-      "date": "2023-07-15 02:49 PM",
-      "demo_type": "POV",
-      "size_bytes": 89813394,
-      "modified_ms": 1689454148000
-    },
-    "E:\\Steam\\steamapps\\common\\Half-Life - PRE-Anniversary for Movies\\dod\\icyvsdiceharryhalf2.dem": {
-      "path": "E:\\Steam\\steamapps\\common\\Half-Life - PRE-Anniversary for Movies\\dod\\icyvsdiceharryhalf2.dem",
-      "name": "icyvsdiceharryhalf2.dem",
-      "map_name": "dod_thunder2_b5a",
-      "date": "2025-08-03 05:57 PM",
-      "demo_type": "POV",
-      "size_bytes": 89021195,
-      "modified_ms": 1754265448000
+    "E:\\Steam\\steamapps\\common\\Half-Life - PRE-Anniversary for Movies\\dod\\bb-scrim-railyard-h1.dem": {
+      "path": "E:\\Steam\\steamapps\\common\\Half-Life - PRE-Anniversary for Movies\\dod\\bb-scrim-railyard-h1.dem",
+      "name": "bb-scrim-railyard-h1.dem",
+      "map_name": "dod_railyard_b6",
+      "date": "2026-02-12 12:46 AM",
+      "demo_type": "HLTV",
+      "size_bytes": 11668031,
+      "modified_ms": 1770882408766
     },
     "E:\\Steam\\steamapps\\common\\Half-Life - PRE-Anniversary for Movies\\dod\\icyvsdicearmoryhalf1.dem": {
       "path": "E:\\Steam\\steamapps\\common\\Half-Life - PRE-Anniversary for Movies\\dod\\icyvsdicearmoryhalf1.dem",
@@ -81,6 +99,33 @@
       "size_bytes": 16174598,
       "modified_ms": 1754266508000
     },
+    "E:\\Steam\\steamapps\\common\\Half-Life - PRE-Anniversary for Movies\\dod\\icyvsdiceharryhalf2.dem": {
+      "path": "E:\\Steam\\steamapps\\common\\Half-Life - PRE-Anniversary for Movies\\dod\\icyvsdiceharryhalf2.dem",
+      "name": "icyvsdiceharryhalf2.dem",
+      "map_name": "dod_thunder2_b5a",
+      "date": "2025-08-03 05:57 PM",
+      "demo_type": "POV",
+      "size_bytes": 89021195,
+      "modified_ms": 1754265448000
+    },
+    "E:\\Steam\\steamapps\\common\\Half-Life - PRE-Anniversary for Movies\\dod\\temp demos\\zexarmoryalliessemis.dem": {
+      "path": "E:\\Steam\\steamapps\\common\\Half-Life - PRE-Anniversary for Movies\\dod\\temp demos\\zexarmoryalliessemis.dem",
+      "name": "zexarmoryalliessemis.dem",
+      "map_name": "dod_armory_b6",
+      "date": "2024-05-25 02:40 PM",
+      "demo_type": "POV",
+      "size_bytes": 73650307,
+      "modified_ms": 1716669659000
+    },
+    "D:\\Downloads\\decdraft_f12_railyard_axis.dem": {
+      "path": "D:\\Downloads\\decdraft_f12_railyard_axis.dem",
+      "name": "decdraft_f12_railyard_axis.dem",
+      "map_name": "dod_railyard_test",
+      "date": "2022-12-21 03:16 PM",
+      "demo_type": "POV",
+      "size_bytes": 108097498,
+      "modified_ms": 1671660999364
+    },
     "E:\\Steam\\steamapps\\common\\Half-Life - PRE-Anniversary for Movies\\dod\\bewton-playoffs-round1-armory-allied.dem": {
       "path": "E:\\Steam\\steamapps\\common\\Half-Life - PRE-Anniversary for Movies\\dod\\bewton-playoffs-round1-armory-allied.dem",
       "name": "bewton-playoffs-round1-armory-allied.dem",
@@ -90,23 +135,23 @@
       "size_bytes": 102241075,
       "modified_ms": 1776843377265
     },
-    "E:\\Steam\\steamapps\\common\\Half-Life - PRE-Anniversary for Movies\\dod\\bb-scrim-harr-h2.dem": {
-      "path": "E:\\Steam\\steamapps\\common\\Half-Life - PRE-Anniversary for Movies\\dod\\bb-scrim-harr-h2.dem",
-      "name": "bb-scrim-harr-h2.dem",
+    "E:\\Steam\\steamapps\\common\\Half-Life\\dod\\2021draft-rd1-harrington-allies.dem": {
+      "path": "E:\\Steam\\steamapps\\common\\Half-Life\\dod\\2021draft-rd1-harrington-allies.dem",
+      "name": "2021draft-rd1-harrington-allies.dem",
       "map_name": "dod_harrington",
-      "date": "2026-02-12 12:46 AM",
-      "demo_type": "HLTV",
-      "size_bytes": 11987051,
-      "modified_ms": 1770882409680
-    },
-    "E:\\Steam\\steamapps\\common\\Half-Life\\dod\\k4-draft91325-aleutian-axis.dem": {
-      "path": "E:\\Steam\\steamapps\\common\\Half-Life\\dod\\k4-draft91325-aleutian-axis.dem",
-      "name": "k4-draft91325-aleutian-axis.dem",
-      "map_name": "dod_aleutian2_test3",
-      "date": "2025-09-13 11:20 AM",
+      "date": "2021-05-01 12:15 PM",
       "demo_type": "POV",
-      "size_bytes": 58411114,
-      "modified_ms": 1757784025193
+      "size_bytes": 58038869,
+      "modified_ms": 1619892930000
+    },
+    "D:\\Downloads\\bandits-ktps5w10-map1-lennon-over-axis-milo.dem": {
+      "path": "D:\\Downloads\\bandits-ktps5w10-map1-lennon-over-axis-milo.dem",
+      "name": "bandits-ktps5w10-map1-lennon-over-axis-milo.dem",
+      "map_name": "dod_lennon2",
+      "date": "2024-12-12 06:07 PM",
+      "demo_type": "POV",
+      "size_bytes": 90650579,
+      "modified_ms": 1734052036293
     },
     "E:\\Steam\\steamapps\\common\\Half-Life - PRE-Anniversary for Movies\\dod\\temp demos\\05_06_2023_draft_lennon_kar.dem": {
       "path": "E:\\Steam\\steamapps\\common\\Half-Life - PRE-Anniversary for Movies\\dod\\temp demos\\05_06_2023_draft_lennon_kar.dem",
@@ -117,6 +162,33 @@
       "size_bytes": 88072440,
       "modified_ms": 1685218139000
     },
+    "E:\\Steam\\steamapps\\common\\Half-Life - PRE-Anniversary for Movies\\dod\\temp demos\\teamboo-lennon-allies.dem": {
+      "path": "E:\\Steam\\steamapps\\common\\Half-Life - PRE-Anniversary for Movies\\dod\\temp demos\\teamboo-lennon-allies.dem",
+      "name": "teamboo-lennon-allies.dem",
+      "map_name": "dod_lennon_test",
+      "date": "2023-07-15 02:49 PM",
+      "demo_type": "POV",
+      "size_bytes": 89813394,
+      "modified_ms": 1689454148000
+    },
+    "D:\\Downloads\\bb-scrim-harr-h1.dem": {
+      "path": "D:\\Downloads\\bb-scrim-harr-h1.dem",
+      "name": "bb-scrim-harr-h1.dem",
+      "map_name": "dod_harrington",
+      "date": "2026-02-12 12:46 AM",
+      "demo_type": "HLTV",
+      "size_bytes": 11984413,
+      "modified_ms": 1770882407836
+    },
+    "E:\\Steam\\steamapps\\common\\Half-Life - PRE-Anniversary for Movies\\dod\\icyvsdiceharryhalf1.dem": {
+      "path": "E:\\Steam\\steamapps\\common\\Half-Life - PRE-Anniversary for Movies\\dod\\icyvsdiceharryhalf1.dem",
+      "name": "icyvsdiceharryhalf1.dem",
+      "map_name": "dod_thunder2_b5a",
+      "date": "2025-08-03 05:34 PM",
+      "demo_type": "POV",
+      "size_bytes": 98396401,
+      "modified_ms": 1754264078000
+    },
     "E:\\Steam\\steamapps\\common\\Half-Life - PRE-Anniversary for Movies\\dod\\icyvsdicearmoryhalf2.dem": {
       "path": "E:\\Steam\\steamapps\\common\\Half-Life - PRE-Anniversary for Movies\\dod\\icyvsdicearmoryhalf2.dem",
       "name": "icyvsdicearmoryhalf2.dem",
@@ -126,14 +198,14 @@
       "size_bytes": 86458948,
       "modified_ms": 1754269196000
     },
-    "E:\\Steam\\steamapps\\common\\Half-Life - PRE-Anniversary for Movies\\dod\\bb-scrim-railyard-h1.dem": {
-      "path": "E:\\Steam\\steamapps\\common\\Half-Life - PRE-Anniversary for Movies\\dod\\bb-scrim-railyard-h1.dem",
-      "name": "bb-scrim-railyard-h1.dem",
-      "map_name": "dod_railyard_b6",
-      "date": "2026-02-12 12:46 AM",
-      "demo_type": "HLTV",
-      "size_bytes": 11668031,
-      "modified_ms": 1770882408766
+    "E:\\Steam\\steamapps\\common\\Half-Life\\dod\\k4-draft91325-aleutian-axis.dem": {
+      "path": "E:\\Steam\\steamapps\\common\\Half-Life\\dod\\k4-draft91325-aleutian-axis.dem",
+      "name": "k4-draft91325-aleutian-axis.dem",
+      "map_name": "dod_aleutian2_test3",
+      "date": "2025-09-13 11:20 AM",
+      "demo_type": "POV",
+      "size_bytes": 58411114,
+      "modified_ms": 1757784025193
     }
   }
 }

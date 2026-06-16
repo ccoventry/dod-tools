@@ -294,7 +294,7 @@ pub fn scoreboard_ui(
                                 // Render player rows
                                 for p_idx in group.player_indices {
                                     let p = &analysis.state.players[p_idx];
-                                    scoreboard_row_ui(p, player_highlighting, &group.team, total_table_width, table_painter.clone(), parent_clip_rect, body);
+                                    scoreboard_row_ui(analysis, p, player_highlighting, &group.team, total_table_width, table_painter.clone(), parent_clip_rect, body);
                                 }
                             }
                         }
@@ -305,6 +305,7 @@ pub fn scoreboard_ui(
 }
 
 pub fn scoreboard_row_ui(
+    analysis: &Analysis,
     p: &Player,
     player_highlighting: &mut PlayerHighlighting,
     team: &Team,
@@ -313,6 +314,28 @@ pub fn scoreboard_row_ui(
     parent_clip_rect: egui::Rect,
     body: &mut TableBody,
 ) {
+    let is_pov_demo = analysis.demo_info.demo_type == "POV";
+    let is_recorder = is_pov_demo && {
+        if let Some(pov_idx) = analysis.state.pov_player_index {
+            let conn_matches = match p.connection {
+                analysis::Connection::Connected { client_id } => client_id == pov_idx,
+                _ => false,
+            };
+            if conn_matches {
+                true
+            } else if let Some(rec) = analysis.state.players.iter().find(|pl| match pl.connection {
+                analysis::Connection::Connected { client_id } => client_id == pov_idx,
+                _ => false,
+            }) {
+                p.id == rec.id || p.name == rec.name
+            } else {
+                false
+            }
+        } else {
+            false
+        }
+    };
+
     let is_selected = player_highlighting.highlighted.contains(&p.id);
     let team_color = if is_selected {
         egui::Color32::WHITE
@@ -366,6 +389,10 @@ pub fn scoreboard_row_ui(
 
             ui.horizontal(|ui| {
                 cell_label(ui, &p.name, row_hovered);
+                if is_recorder {
+                    ui.add_space(2.0);
+                    ui.label(egui::RichText::new("🎥"));
+                }
                 if p.has_reconnected {
                     ui.add_space(2.0);
                     ui.colored_label(egui::Color32::from_rgb(251, 191, 36), "🔄")
