@@ -4,6 +4,7 @@ use analysis::{Analysis, Weapon};
 use egui::{Align, Layout, Ui};
 use egui_extras::{Column, TableBuilder};
 
+#[allow(dead_code)]
 pub fn pov_analytics_ui(_file_info: Option<&FileInfo>, r: Option<&Analysis>, ui: &mut Ui) {
     ui.heading(t("#app_pov_heading"));
     ui.add_space(8.0);

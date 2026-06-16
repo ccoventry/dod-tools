@@ -26,6 +26,7 @@ Below are the remaining open tasks in the backlog, structured as a clean, scanna
 | **M23** | 🟡 **Medium** | **Premium UI Cards & Accent Tab Styling** | GUI / Layout | Restyle the GUI tabs and summary blocks to use modern metrics cards and colored underline active tab accents. | Redesign the tab headers and player overview cards using styled `egui::Frame` panels and draw active state underline strokes using egui painter. (See detailed spec below). |
 | **M24b** | 🟡 **Medium** | **Highlight Capture - Smart Death Notice Clearing** | CLI / GUI / Parser | Inspect target player's recent deaths to delay `hud_deathnotice_time` pin commands, clearing their own death notices before recording. | Implement logic to check if target player died within 5.0 seconds before the streak start. Delay pinning custom death notice times until 1 tick before their first kill. |
 | **M24c** | 🟡 **Medium** | **Highlight Capture - Batch Queue Automation** | CLI / GUI / Python | Support batch-exporting multiple selected killstreaks with sequential demo patching, automatic exit, and a Python queue sequencer. | Generate patched demos with automatic `quit` command, write out a batch execution JSON, and create a `capture_queue.py` sequencer script to run them automatically in HLAE. |
+| **M25** | 🟡 **Medium** | **Graceful Demo Corruption & High-Bit Flags Recovery** | Parser / Core | Handle corrupted frames or non-standard `0x800000` bitflags in network `message_length` fields instead of failing the entire parse. | Re-enable/refactor graceful parser frame-skipping inside `dem-patch/src/demo_parser.rs` or implement a parser mask/repair option. (See detailed spec below). |
 | **H1** | 🔴 **Hard** | **Combine Weapon & POV Tabs** | GUI / Layout | Merge "Weapon Breakdowns" and "POV Analytics" into a player dropdown selector. Show extra POV stats with visual notes only when the POV player is chosen. | Merge `views/weapons.rs` and `views/pov.rs` into a unified player details view. Add dynamic checks to append the POV analytics grid when the POV player is active. |
 | **H2** | 🔴 **Hard** | **Objective Capture Timelines** | Parser / GUI | Track flags captured (`CapMsg`) and interruptions (`CancelProg`) to display objective capture timelines. | Track `CapMsg` and `CancelProg` network messages in `analysis/src/lib.rs` and build a horizontal time-based timeline widget in the GUI. |
 | **H3** | 🔴 **Hard** | **Objective Capture Timelines** | Parser / Core | Trace POV ammo box creation/pickup/decay timelines by decoding delta packet updates (`SvcDeltaPacketEntities`). | Parse `SvcPacketEntities` updates and `SvcDeltaPacketEntities` decoders in `analysis/src/lib.rs` to map `models/w_ammobox.mdl` lifetimes. |
@@ -649,5 +650,38 @@ Build a feature that allows users to export automated HLAE capture demos directl
    - Write a helper Python script (`capture_queue.py`) using `subprocess` to launch the game sequentially, run each demo via `playdemo`, and terminate on exit.
 
 #### Testing Plan
+
+---
+
+### 16. Graceful Demo Corruption & High-Bit Flags Recovery [M25 - 🟡 Medium]
+
+Demos from certain sources or recorded under specific conditions (e.g., HLTV proxies, custom servers, or with network glitches) can contain corrupted frames or non-standard flags in network message frames.
+
+#### Findings & Diagnostics
+In the demo `icyvsdiceanziohalf1.dem`, parsing fails at Playback frame `14843` (offset `2433784`) because the network `message_length` field is read as `8388709` (`0x00800065`):
+- The `0x800000` bit is set in the 32-bit length field.
+- If masked using `message_length & 0x7FFFFF`, the length yields exactly `101` bytes.
+- However, when limiting the payload to `101` bytes, parsing succeeds for the first few sub-messages (e.g. `SvcTime` and `SvcClientData`) but then encounters an `Eof` error on a subsequent message (`247`), indicating that the payload is actually longer or structured differently (e.g. split/compressed or offset by custom engine commands).
+- Leaving the unmasked `8388709` length triggers the parser's safety check (`message_length > 65536`), which immediately aborts.
+
+#### Options for Future Implementation
+
+1. **Option A: Graceful Parser Abort & Partial Load**
+   Refactor [demo_parser.rs](file:///d:/Repos/dod-tools/dem-patch/src/demo_parser.rs) to handle frame parsing errors within the directory entry parser loop gracefully. Instead of propagating the error via `?` (which fails the entire demo analysis), the loop breaks and returns all frames successfully parsed up to that point:
+   ```rust
+   loop {
+       let (end_current_frame, frame) = match parse_frame(frames_start, netmsg_parse_mode, aux.clone()) {
+           Ok(r) => r,
+           Err(_) => break, // Gracefully yield frames parsed so far
+       };
+       // ...
+   }
+   ```
+   *Pros*: Allows loading and visualizing the majority of a partially corrupt demo in the GUI (e.g. 14,843 frames parsed out of a 15,000 frame playback).
+   *Cons*: Might mask underlying bugs in the parser or display incomplete metrics.
+
+2. **Option B: Strict Validation & User Repair Flow (Current Preference)**
+   Keep the strict validation intact to ensure data integrity. When a parsing error occurs, surface a clean, specific error in the UI identifying the corrupted frame index, and offer a tool to "Repair/Sanitize" or "Trim" the demo file by truncating it at the last known safe offset.
+
 
 

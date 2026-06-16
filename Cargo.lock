@@ -1992,6 +1992,7 @@ dependencies = [
  "filetime",
  "humantime",
  "js-sys",
+ "nom 8.0.0",
  "serde",
  "serde_json",
  "tabled",

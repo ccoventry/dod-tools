@@ -91,6 +91,7 @@ pub mod batch_queue;
 
 pub use chat::chat_log_ui;
 pub use player_details::player_details_ui;
+#[allow(unused_imports)]
 pub use pov::pov_analytics_ui;
 pub use rounds::rounds_ui;
 pub use scoreboard::scoreboard_ui;
@@ -106,8 +107,8 @@ pub fn report_ui(
     scoreboard_cache: &mut crate::ScoreboardCache,
     chat_cache: &mut crate::ChatCache,
     player_details_cache: &mut crate::PlayerDetailsCache,
-    export_queue: &mut Vec<crate::QueuedStreakExport>,
-    settings: &mut crate::AppSettings,
+    _export_queue: &mut Vec<crate::QueuedStreakExport>,
+    _settings: &mut crate::AppSettings,
     ui: &mut Ui,
 ) {
     let tab_id = if let Some(fi) = file_info {
@@ -148,26 +149,6 @@ pub fn report_ui(
         );
         ui.selectable_value(&mut current_tab, "Rounds".to_string(), t("#app_tab_rounds"));
         ui.selectable_value(&mut current_tab, "Chat Log".to_string(), t("#app_tab_chat"));
-
-        let active_count = export_queue.iter().filter(|item| item.enabled).count();
-        ui.selectable_value(
-            &mut current_tab,
-            "Batch Queue".to_string(),
-            format!("Batch Queue ({})", active_count),
-        );
-
-        let is_pov = r
-            .map(|a| a.demo_info.demo_type.as_str() == "POV")
-            .unwrap_or(false);
-        if ui
-            .add_enabled(
-                is_pov,
-                egui::Button::selectable(current_tab == "POV Analytics", t("#app_tab_pov")),
-            )
-            .clicked()
-        {
-            current_tab = "POV Analytics".to_string();
-        }
     });
 
     ui.separator();
@@ -182,8 +163,6 @@ pub fn report_ui(
         "Timeline" => team_score_timeline_ui(file_info, r, ui),
         "Rounds" => rounds_ui(file_info, r, ui),
         "Chat Log" => chat_log_ui(file_info, r, chat_cache, ui),
-        "POV Analytics" => pov_analytics_ui(file_info, r, ui),
-        "Batch Queue" => batch_queue_ui(export_queue, settings, player_details_cache, ui),
         _ => {}
     }
 }
