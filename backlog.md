@@ -36,6 +36,7 @@ Below are the remaining open tasks in the backlog, structured as a clean, scanna
 | **H7** | 🔴 **Hard** | **"Trim Demo(s)" Tool** | CLI / Core | Slice and trim out demo warmups/setup times (detailed spec below). | Implement the trimming specification (handshake capture, warmup frame pruning, directory rebuilding) in a CLI command. |
 | **H8** | 🔴 **Hard** | **Background Threaded Demo Loading** | GUI / Threading | Prevent the GUI main thread from freezing when loading large demos. Move demo parsing to a background thread and report progress steps/percentage to the UI spinner/bar. | Offload parsing calls to a Rust thread or tokio task, communicating step-by-step progress through a channel to egui. (See detailed spec below). |
 | **H9** | 🔴 **Hard** | **Interactive Minimap & Player Positions** | GUI / Parser | Parse 3D player coordinates and project them onto a 2D minimap canvas overlaying map overview textures during playback. | Extract player origins from packet entities, map them using classic Half-Life map overview configurations, and draw them on a custom egui painter/canvas. (See detailed spec below). |
+| **H10** | 🔴 **Hard** | **Automated Match Clustering** | Parser / GUI | Group demo files from the same match and half into hierarchical "Match Folders" in the UI using deep content fingerprinting, completely ignoring OS file dates. | Update local cache schema to include player_roster_hash and event_signature. Implement early-exit partial parsing to read headers/initial network messages. Update explorer.rs to render nested trees grouped by (map_name, server_ip, roster_hash). (See detailed spec below). |
 
 
 ---
@@ -682,20 +683,46 @@ In the demo `icyvsdiceanziohalf1.dem`, parsing fails at Playback frame `14843` (
 
 2. **Option B: Strict Validation & User Repair Flow (Current Preference)**
    Keep the strict validation intact to ensure data integrity. When a parsing error occurs, surface a clean, specific error in the UI identifying the corrupted frame index, and offer a tool to "Repair/Sanitize" or "Trim" the demo file by truncating it at the last known safe offset.
+### 17. Automated Match Clustering Engine [H10 - 🔴 Hard]
 
+#### The Problem
+When players download team POV and HLTV demos from discord/web, Windows overrides the file creation/modification dates (mtime) with the download time. Grouping files via temporal metadata fails entirely. This results in a messy, flat Explorer UI list where finding synchronized files from a single match is highly tedious for movie makers.
 
+#### Resolution Strategy: Deep Content Fingerprinting
+Abandon filesystem dates. Cluster demos by analyzing the immutable game data embedded early in the binary stream. If multiple files share the exact same Map, Server IP, Player Roster, and Kill Event Sequence, they are mathematically proven to be from the exact same match.
 
+#### Technical Implementation Steps
 
+1. **Update the Cache Schema (`native/src/bin/gui/cache.rs` or core)**
+   Modify the `DemoMetadata` struct that serializes to `.dod-tools-cache.json` to store content fingerprints rather than timestamps:
+   ```rust
+   #[derive(Serialize, Deserialize, Clone, Debug)]
+   pub struct DemoMetadata {
+       pub file_path: PathBuf,
+       pub map_name: String,
+       pub server_ip: String,
+       pub demo_type: DemoType, // POV vs HLTV
+       pub player_roster_hash: u64, // SipHash/AHash of the sorted array of active SteamIDs
+       pub event_signature: Vec<String>, // Array of the first 10 DeathMsg strings (e.g., ["id1>id2:weapon"])
+   }
+   ```
 
-# Adding this at the bottom for now, laid out this plan with gemini AI web version. Will get this organized into the proper spot in this file later:
+2. **Implement Partial Parsing (Early-Exit Background Scan)**
+   We must not parse entire 45-minute binaries just to populate the UI. The parser must stop early.
+   In `dod` parser / analysis engine:
+   - Implement a `parse_fingerprint()` function.
+   - Read the header to extract the `map_name`.
+   - Stream frames until the `SvcServerInfo` packet yields the `server_ip`.
+   - Continue streaming frames to collect the initial roster (via `SvcUpdateStringTable` or `ScoreInfo`) and the first 10 `DeathMsg` frames.
+   - **The Early Exit**: Once `event_signature.len() == 10`, immediately return the DemoMetadata struct and drop the file reader. This keeps I/O extremely light.
 
-Here is the exact Markdown specification tailored for the AI assistant. It provides explicit file references, strict logic gates, and exact schema modifications so the AI will not invent random parser logic or hallucinate dependencies.You can paste this directly into your backlog.md document.In the Active Task Board Table:IDDifficultyTaskAreaDescriptionDev NotesH10🔴 HardAutomated Match ClusteringParser / GUIGroup demo files from the same match and half into hierarchical "Match Folders" in the UI using deep content fingerprinting, completely ignoring OS file dates.Update local cache schema to include player_roster_hash and event_signature. Implement early-exit partial parsing to read headers/initial network messages. Update explorer.rs to render nested trees grouped by (map_name, server_ip, roster_hash). (See detailed spec below).In the Detailed Feature Specifications Section:16. Automated Match Clustering Engine [H10 - 🔴 Hard]The ProblemWhen players download team POV and HLTV demos from discord/web, Windows overrides the file creation/modification dates (mtime) with the download time. Grouping files via temporal metadata fails entirely. This results in a messy, flat Explorer UI list where finding synchronized files from a single match is highly tedious for movie makers.Resolution Strategy: Deep Content FingerprintingAbandon filesystem dates. Cluster demos by analyzing the immutable game data embedded early in the binary stream. If multiple files share the exact same Map, Server IP, Player Roster, and Kill Event Sequence, they are mathematically proven to be from the exact same match.Technical Implementation Steps for the AI Assistant:1. Update the Cache Schema (native/src/bin/gui/cache.rs or core)Modify the DemoMetadata struct that serializes to .dod-tools-cache.json to store content fingerprints rather than timestamps:Rust#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct DemoMetadata {
-    pub file_path: PathBuf,
-    pub map_name: String,
-    pub server_ip: String,
-    pub demo_type: DemoType, // POV vs HLTV
-    pub player_roster_hash: u64, // SipHash/AHash of the sorted array of active SteamIDs
-    pub event_signature: Vec<String>, // Array of the first 10 DeathMsg strings (e.g., ["id1>id2:weapon"])
-}
-2. Implement Partial Parsing (Early-Exit Background Scan)We must not parse entire 45-minute binaries just to populate the UI. The parser must stop early.In dod parser / analysis engine: Implement a parse_fingerprint() function.Read the header to extract the map_name.Stream frames until the SvcServerInfo packet yields the server_ip.Continue streaming frames to collect the initial roster (via SvcUpdateStringTable or ScoreInfo) and the first 10 DeathMsg frames.The Early Exit: Once event_signature.len() == 10, immediately return the DemoMetadata struct and drop the file reader. This keeps I/O extremely light.3. Grouping Algorithm (The Aggregator)When loading a directory's cache:Create a HashMap grouped by a composite key: (map_name, server_ip, player_roster_hash).Collision check: If two files fall into the same bucket but their event_signature vectors diverge completely (e.g., back-to-back matches on the same server), split them into separate bucket groups.4. Update the egui Explorer UI (native/src/bin/gui/explorer.rs)Refactor the directory tree rendering to interpret clustered demos as virtual parent folders.Render the cluster parent node with a specific layout (e.g., 🎮 Match: dod_anzio — 192.168.1.100:27015).Clicking the parent node expands it to reveal the contained demos (🎥 HLTV Perspective, 🧑 kaboom POV, etc.).Add a context menu (Right-Click) to the virtual parent node: "Export all perspectives for this match to Batch Queue".
+3. **Grouping Algorithm (The Aggregator)**
+   When loading a directory's cache:
+   - Create a `HashMap` grouped by a composite key: `(map_name, server_ip, player_roster_hash)`.
+   - **Collision check**: If two files fall into the same bucket but their `event_signature` vectors diverge completely (e.g., back-to-back matches on the same server), split them into separate bucket groups.
+
+4. **Update the egui Explorer UI (`native/src/bin/gui/explorer.rs`)**
+   - Refactor the directory tree rendering to interpret clustered demos as virtual parent folders.
+   - Render the cluster parent node with a specific layout (e.g., `🎮 Match: dod_anzio — 192.168.1.100:27015`).
+   - Clicking the parent node expands it to reveal the contained demos (`🎥 HLTV Perspective`, `🧑 kaboom POV`, etc.).
+   - Add a context menu (Right-Click) to the virtual parent node: "Export all perspectives for this match to Batch Queue".

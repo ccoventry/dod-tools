@@ -24,9 +24,10 @@ fn main() {
 
     println!("Scanning directories...");
     let mut files = vec![];
+    let cancel = std::sync::atomic::AtomicBool::new(false);
     for folder in &args.paths {
         if folder.exists() {
-            scan_dir(folder, &mut files);
+            scan_dir(folder, &mut files, &cancel, &None);
         } else {
             eprintln!("Warning: Path does not exist: {}", folder.display());
         }
@@ -38,7 +39,7 @@ fn main() {
     );
 
     let (unique_files, duplicate_groups, duplicate_count, space_wasted_bytes) =
-        find_duplicates(files);
+        find_duplicates(files, &cancel, &None);
 
     println!(
         "Audit complete: {} unique files, {} duplicates found. Wasted space: {:.2} GB",
@@ -70,7 +71,7 @@ fn main() {
 
     for (i, group) in duplicate_groups.iter().enumerate() {
         let size_mb = group.key.size as f64 / (1024.0 * 1024.0);
-        let total_wasted_mb = size_mb * group.duplicates.len() as f64;
+        let total_wasted_mb = size_mb * (group.files.len() - 1) as f64;
         report_content.push_str(&format!(
             "### Group {} (Size: {:.2} MB, Wasted: {:.2} MB, Hash: {:x})\n",
             i + 1,
@@ -79,13 +80,9 @@ fn main() {
             group.key.header_hash
         ));
 
-        report_content.push_str(&format!(
-            "* **Original File**: `{}`\n",
-            group.original.display()
-        ));
-        report_content.push_str("* **Duplicates**:\n");
-        for dup in &group.duplicates {
-            report_content.push_str(&format!("  - `{}`\n", dup.display()));
+        report_content.push_str("* **Identical Files**:\n");
+        for file in &group.files {
+            report_content.push_str(&format!("  - `{}`\n", file.display()));
         }
         report_content.push_str("\n");
     }

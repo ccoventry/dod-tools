@@ -882,9 +882,32 @@ pub struct PlayerDetailsCache {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SidebarTab {
-    Files,
+    Analyzer,
+    #[cfg(not(target_arch = "wasm32"))]
+    Auditor,
     BatchMode,
+    #[cfg(not(target_arch = "wasm32"))]
+    Hlcr,
     Settings,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub enum AuditorState {
+    Idle,
+    Scanning {
+        rx: std::sync::mpsc::Receiver<hl_demo_auditor::AuditProgress>,
+        cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        progress_text: String,
+        files_found: usize,
+        last_update: std::time::Instant,
+    },
+    Complete {
+        groups: Vec<hl_demo_auditor::DuplicateGroup>,
+        total: usize,
+        wasted: u64,
+        expanded: std::collections::HashSet<usize>,
+    },
+    Failed(String),
 }
 
 struct Gui {
@@ -962,6 +985,12 @@ struct Gui {
     export_queue: Vec<QueuedStreakExport>,
     #[cfg(not(target_arch = "wasm32"))]
     batch_export_picker: FileDialog,
+    #[cfg(not(target_arch = "wasm32"))]
+    hlcr_state: native::hlcr::HlcrState,
+    #[cfg(not(target_arch = "wasm32"))]
+    auditor_state: AuditorState,
+    #[cfg(not(target_arch = "wasm32"))]
+    target_folder: String,
 }
 
 #[allow(dead_code)]
@@ -1308,7 +1337,7 @@ impl Default for Gui {
             tx,
             settings,
             show_about_window: false,
-            active_sidebar_tab: SidebarTab::Files,
+            active_sidebar_tab: SidebarTab::Analyzer,
 
             filter_query: String::new(),
             filter_type: "All".to_string(),
@@ -1372,6 +1401,15 @@ impl Default for Gui {
             export_queue: Vec::new(),
             #[cfg(not(target_arch = "wasm32"))]
             batch_export_picker: FileDialog::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            hlcr_state: native::hlcr::HlcrState::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            auditor_state: AuditorState::Idle,
+            #[cfg(not(target_arch = "wasm32"))]
+            target_folder: std::env::current_dir()
+                .ok()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_default(),
         }
     }
 }
@@ -2037,6 +2075,17 @@ impl eframe::App for Gui {
             ctx.request_repaint();
         }
 
+        // Shared action hook variables for the event loop
+        #[cfg(not(target_arch = "wasm32"))]
+        let mut next_dir = None;
+        #[cfg(target_arch = "wasm32")]
+        let mut temp_web_folder = self.selected_web_folder.clone();
+        #[cfg(not(target_arch = "wasm32"))]
+        let mut analyze_target_file = None;
+        #[cfg(target_arch = "wasm32")]
+        let mut parse_file_target = None;
+
+        #[cfg(not(target_arch = "wasm32"))]
         // Left-most narrow Navigation Sidebar
         SidePanel::left("navigation_sidebar")
             .resizable(false)
@@ -2050,14 +2099,25 @@ impl eframe::App for Gui {
                 }
                 ui.vertical_centered(|ui| {
                     ui.add_space(8.0);
-                    
-                    let files_active = self.active_sidebar_tab == SidebarTab::Files;
-                    let files_btn = egui::Button::new(egui::RichText::new("📄").size(18.0))
-                        .selected(files_active);
-                    if ui.add(files_btn).on_hover_text("Demos File Explorer").clicked() {
-                        self.active_sidebar_tab = SidebarTab::Files;
+
+                    let analyzer_active = self.active_sidebar_tab == SidebarTab::Analyzer;
+                    let analyzer_btn = egui::Button::new(egui::RichText::new("🔍").size(18.0))
+                        .selected(analyzer_active);
+                    if ui.add(analyzer_btn).on_hover_text("Demo Analyzer").clicked() {
+                        self.active_sidebar_tab = SidebarTab::Analyzer;
                     }
-                    
+
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        ui.add_space(8.0);
+                        let auditor_active = self.active_sidebar_tab == SidebarTab::Auditor;
+                        let auditor_btn = egui::Button::new(egui::RichText::new("📋").size(18.0))
+                            .selected(auditor_active);
+                        if ui.add(auditor_btn).on_hover_text("Demo Auditor").clicked() {
+                            self.active_sidebar_tab = SidebarTab::Auditor;
+                        }
+                    }
+
                     ui.add_space(8.0);
 
                     let batch_active = self.active_sidebar_tab == SidebarTab::BatchMode;
@@ -2065,6 +2125,17 @@ impl eframe::App for Gui {
                         .selected(batch_active);
                     if ui.add(batch_btn).on_hover_text("Batch Export Mode").clicked() {
                         self.active_sidebar_tab = SidebarTab::BatchMode;
+                    }
+
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        ui.add_space(8.0);
+                        let hlcr_active = self.active_sidebar_tab == SidebarTab::Hlcr;
+                        let hlcr_btn = egui::Button::new(egui::RichText::new("🎬").size(18.0))
+                            .selected(hlcr_active);
+                        if ui.add(hlcr_btn).on_hover_text("HLCR Clip Renderer").clicked() {
+                            self.active_sidebar_tab = SidebarTab::Hlcr;
+                        }
                     }
 
                     ui.add_space(8.0);
@@ -2267,6 +2338,41 @@ impl eframe::App for Gui {
                 self.trigger_dir_scan(ctx);
                 if is_first_run {
                     self.trigger_demo_folders_scan(ctx);
+                }
+            }
+        }
+
+        // Poll AuditorState background scanning if active
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if let AuditorState::Scanning { ref rx, ref mut progress_text, ref mut files_found, .. } = self.auditor_state {
+                while let Ok(progress_msg) = rx.try_recv() {
+                    match progress_msg {
+                        hl_demo_auditor::AuditProgress::Scanning(path) => {
+                            *progress_text = format!("Scanning: {}", path);
+                        }
+                        hl_demo_auditor::AuditProgress::Hashing(path) => {
+                            *progress_text = format!("Hashing: {}", path);
+                        }
+                        hl_demo_auditor::AuditProgress::Found(count) => {
+                            *files_found = count;
+                        }
+                        hl_demo_auditor::AuditProgress::Failed(err_str) => {
+                            self.auditor_state = AuditorState::Failed(err_str);
+                            ctx.request_repaint();
+                            break;
+                        }
+                        hl_demo_auditor::AuditProgress::Done(groups, total_duplicates, wasted_space) => {
+                            self.auditor_state = AuditorState::Complete {
+                                groups,
+                                total: total_duplicates,
+                                wasted: wasted_space,
+                                expanded: std::collections::HashSet::new(),
+                            };
+                            ctx.request_repaint();
+                            break;
+                        }
+                    }
                 }
             }
         }
@@ -2490,6 +2596,8 @@ impl eframe::App for Gui {
                         }
                     });
 
+
+
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         egui::widgets::global_theme_preference_buttons(ui);
                     });
@@ -2518,18 +2626,24 @@ impl eframe::App for Gui {
             }
         }
 
-        // Shared action hook variables for the event loop
         #[cfg(not(target_arch = "wasm32"))]
-        let mut next_dir = None;
+        let is_auditor = self.active_sidebar_tab == SidebarTab::Auditor;
         #[cfg(target_arch = "wasm32")]
-        let mut temp_web_folder = self.selected_web_folder.clone();
-        #[cfg(not(target_arch = "wasm32"))]
-        let mut analyze_target_file = None;
-        #[cfg(target_arch = "wasm32")]
-        let mut parse_file_target = None;
+        let is_auditor = false;
 
-        // Sidebar Explorer panel (Folder Tree only)
-        if self.active_sidebar_tab == SidebarTab::Files {
+        if is_auditor {
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                CentralPanel::default().show(ctx, |ui| {
+                    if modal_open {
+                        ui.disable();
+                    }
+                    views::auditor::render(self, ui, ctx);
+                });
+            }
+        } else {
+            // Sidebar Explorer panel (Folder Tree only)
+        if self.active_sidebar_tab == SidebarTab::Analyzer {
             SidePanel::left("explorer_panel")
                 .default_width(260.)
                 .min_width(200.)
@@ -2855,7 +2969,7 @@ impl eframe::App for Gui {
         }
 
         // Demos List Top Panel
-        if self.active_sidebar_tab == SidebarTab::Files {
+        if self.active_sidebar_tab == SidebarTab::Analyzer {
             TopBottomPanel::top("demos_list_panel")
                 .resizable(true)
                 .default_height(220.)
@@ -3405,7 +3519,7 @@ impl eframe::App for Gui {
                 });
             } else {
                 match self.active_sidebar_tab {
-                    SidebarTab::Files => {
+                    SidebarTab::Analyzer => {
                         self.check_scoreboard_cache();
                         let show_blank = if let Some(path) = &self.selected_analysis_path {
                             !self.analyses.contains_key(path)
@@ -3458,7 +3572,15 @@ impl eframe::App for Gui {
                                     &mut self.settings,
                                     &mut self.player_details_cache,
                                     ui,
-                                );
+                                )
+                            });
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    SidebarTab::Hlcr => {
+                        ScrollArea::vertical()
+                            .id_salt("hlcr_scroll_area")
+                            .show(ui, |ui| {
+                                self.hlcr_state.draw_ui(ui, ctx);
                             });
                     }
                     SidebarTab::Settings => {
@@ -3468,9 +3590,12 @@ impl eframe::App for Gui {
                                 self.render_settings_ui(ui, ctx);
                             });
                     }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    SidebarTab::Auditor => {}
                 }
             }
         });
+        }
 
         // Keyboard navigation for the Demos List
         #[cfg(not(target_arch = "wasm32"))]
