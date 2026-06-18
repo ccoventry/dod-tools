@@ -14,6 +14,9 @@ use web_time::SystemTime;
 
 pub mod patch;
 
+#[cfg(not(target_arch = "wasm32"))]
+pub mod hlcr;
+
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct FileInfo {
     pub created_at: SystemTime,

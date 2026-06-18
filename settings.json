@@ -2,12 +2,11 @@
   "language": "auto",
   "scan_folders_for_demos": true,
   "demo_folder_history": [
-    "D:\\Downloads",
-    "D:\\Repos\\dod-tools\\demos"
+    "D:\\Repos\\dod-tools\\demos",
+    "D:\\Downloads"
   ],
   "pinned_folders": [
-    "D:\\Downloads",
-    "D:\\Repos\\dod-tools\\demos"
+    "D:\\Downloads"
   ],
   "capture_init_commands": "",
   "custom_commands": [

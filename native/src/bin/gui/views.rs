@@ -89,6 +89,9 @@ pub mod team_details;
 pub mod timeline;
 pub mod batch_queue;
 
+#[cfg(not(target_arch = "wasm32"))]
+pub mod auditor;
+
 pub use chat::chat_log_ui;
 pub use player_details::player_details_ui;
 #[allow(unused_imports)]

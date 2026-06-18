@@ -25,6 +25,10 @@ nom = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }
+walkdir = "2.5.0"
+hl-demo-auditor = { path = "../hl-demo-auditor" }
+rfd = "0.14"
+open = "5.1"
 
 [[bin]]
 name = "dod-tools-gui"
