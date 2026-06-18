@@ -8,6 +8,6 @@ scratch/
 .dod-tools-cache.json
 settings.json
 hlcr_config.json
-
+/ffmpeg/
 
 
