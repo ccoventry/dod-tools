@@ -107,7 +107,9 @@ pub fn player_details_ui(
     };
 
     // Lazy initialization or update of PlayerDetailsCache
-    let cache_invalid = cache.player_id.as_ref() != Some(&active_player.id);
+    let cache_invalid = cache.player_id.as_ref() != Some(&active_player.id)
+        || cache.filtered_streaks.iter().any(|(s_idx, _)| *s_idx >= active_player.kill_streaks.len())
+        || cache.sorted_weapon_breakdown.len() != active_player.weapon_breakdown.len();
     if cache_invalid {
         cache.player_id = Some(active_player.id.clone());
         cache.disabled_weapons.clear();
@@ -148,67 +150,67 @@ pub fn player_details_ui(
 
     // 3. Two-Column Details Area
     ui.columns(2, |cols| {
-        // Left Column: Weapon Breakdown
-        let ui_left = &mut cols[0];
-        ui_left.strong(t("#app_player_details_weapon_breakdown"));
-        ui_left.add_space(4.0);
-        let avail_h = ui_left.available_height() - 10.0;
-        ScrollArea::vertical()
-            .id_salt("player_details_weapons_scroll")
-            .auto_shrink(false)
-            .min_scrolled_height(avail_h)
-            .show(ui_left, |ui| {
-                render_weapon_breakdown(&cache.sorted_weapon_breakdown, ui);
-            });
+        cols[0].push_id("left_col_scope", |ui_left| {
+            ui_left.strong(t("#app_player_details_weapon_breakdown"));
+            ui_left.add_space(4.0);
+            let avail_h = ui_left.available_height() - 10.0;
+            ScrollArea::vertical()
+                .id_salt("player_details_weapons_scroll")
+                .auto_shrink(false)
+                .min_scrolled_height(avail_h)
+                .show(ui_left, |ui| {
+                    render_weapon_breakdown(&cache.sorted_weapon_breakdown, ui);
+                });
+        });
 
-        // Right Column: Kill Streaks
-        let ui_right = &mut cols[1];
-        ui_right.strong(t("#app_player_details_kill_streaks"));
-        ui_right.add_space(4.0);
-
-        if !cache.sorted_weapons.is_empty() {
-            ui_right.horizontal(|ui| {
-                ui.label(egui::RichText::new(t("#app_streaks_filter_weapons")).small().weak());
-                if ui.small_button(t("#app_chat_select_all")).clicked() {
-                    cache.disabled_weapons.clear();
-                    cache.filtered_streaks = rebuild_filtered_streaks(active_player, &cache.disabled_weapons);
-                }
-                if ui.small_button(t("#app_chat_clear_all")).clicked() {
-                    cache.disabled_weapons = cache.sorted_weapons.iter().cloned().collect();
-                    cache.filtered_streaks = rebuild_filtered_streaks(active_player, &cache.disabled_weapons);
-                }
-            });
-
-            // Grouped checkboxes
-            if render_streak_weapon_filters(&cache.sorted_weapons, &mut cache.disabled_weapons, ui_right) {
-                cache.filtered_streaks = rebuild_filtered_streaks(active_player, &cache.disabled_weapons);
-            }
+        cols[1].push_id("right_col_scope", |ui_right| {
+            ui_right.strong(t("#app_player_details_kill_streaks"));
             ui_right.add_space(4.0);
-        }
 
-        ui_right.separator();
-        ui_right.add_space(4.0);
+            if !cache.sorted_weapons.is_empty() {
+                ui_right.horizontal(|ui| {
+                    ui.label(egui::RichText::new(t("#app_streaks_filter_weapons")).small().weak());
+                    if ui.small_button(t("#app_chat_select_all")).clicked() {
+                        cache.disabled_weapons.clear();
+                        cache.filtered_streaks = rebuild_filtered_streaks(active_player, &cache.disabled_weapons);
+                    }
+                    if ui.small_button(t("#app_chat_clear_all")).clicked() {
+                        cache.disabled_weapons = cache.sorted_weapons.iter().cloned().collect();
+                        cache.filtered_streaks = rebuild_filtered_streaks(active_player, &cache.disabled_weapons);
+                    }
+                });
 
-        let avail_h = ui_right.available_height() - 10.0;
-        ScrollArea::vertical()
-            .id_salt("player_details_streaks_scroll")
-            .auto_shrink(false)
-            .min_scrolled_height(avail_h)
-            .show(ui_right, |ui| {
-                if active_player.kill_streaks.is_empty() {
-                    ui.label("No kill streaks found for this player.");
-                } else {
-                    let filtered = cache.filtered_streaks.clone();
-                    render_kill_streaks_table(
-                        active_player,
-                        &filtered,
-                        analysis,
-                        player_highlighting,
-                        cache,
-                        ui,
-                    );
+                // Grouped checkboxes
+                if render_streak_weapon_filters(&cache.sorted_weapons, &mut cache.disabled_weapons, ui_right) {
+                    cache.filtered_streaks = rebuild_filtered_streaks(active_player, &cache.disabled_weapons);
                 }
-            });
+                ui_right.add_space(4.0);
+            }
+
+            ui_right.separator();
+            ui_right.add_space(4.0);
+
+            let avail_h = ui_right.available_height() - 10.0;
+            ScrollArea::vertical()
+                .id_salt("player_details_streaks_scroll")
+                .auto_shrink(false)
+                .min_scrolled_height(avail_h)
+                .show(ui_right, |ui| {
+                    if active_player.kill_streaks.is_empty() {
+                        ui.label("No kill streaks found for this player.");
+                    } else {
+                        let filtered = cache.filtered_streaks.clone();
+                        render_kill_streaks_table(
+                            active_player,
+                            &filtered,
+                            analysis,
+                            player_highlighting,
+                            cache,
+                            ui,
+                        );
+                    }
+                });
+        });
     });
 }
 
@@ -380,6 +382,7 @@ fn render_weapon_breakdown(
     let total_kills = weapon_breakdown.iter().map(|(_, (k, _))| k).sum::<u32>();
 
     TableBuilder::new(ui)
+        .id_salt("weapon_breakdown_table")
         .striped(true)
         .cell_layout(Layout::left_to_right(Align::Center))
         .column(Column::remainder())
@@ -395,8 +398,10 @@ fn render_weapon_breakdown(
         .body(|mut body| {
             for (weapon, (kills, teamkills)) in weapon_breakdown {
                 let w_name = weapon_name(weapon);
+                let w_name_clone1 = w_name.clone();
+                let w_name_clone2 = w_name.clone();
                 body.row(TABLE_ROW_HEIGHT, |mut row| {
-                    row.col(|ui| { ui.label(w_name); });
+                    row.col(|ui| { ui.label(w_name_clone1); });
                     row.col(|ui| { ui.label(format!("{}", kills)); });
                     row.col(|ui| {
                         let pct = if total_kills > 0 {
@@ -404,9 +409,11 @@ fn render_weapon_breakdown(
                         } else {
                             0.0
                         };
-                        ui.horizontal(|ui| {
-                            ui.label(format!("{:.1}%", pct));
-                            ui.add(egui::ProgressBar::new(pct / 100.0).desired_width(40.0));
+                        ui.push_id(w_name_clone2, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(format!("{:.1}%", pct));
+                                ui.add(egui::ProgressBar::new(pct / 100.0).desired_width(40.0));
+                            });
                         });
                     });
                     row.col(|ui| { ui.label(format!("{}", teamkills)); });
@@ -558,7 +565,15 @@ fn render_kill_streaks_table(
     cache: &mut crate::PlayerDetailsCache,
     ui: &mut Ui,
 ) {
+    let is_hltv = analysis.demo_info.demo_type.to_uppercase().contains("HLTV");
+    let is_pov_recorder = match &p.connection {
+        analysis::Connection::Connected { client_id } => Some(*client_id) == analysis.state.pov_player_index,
+        _ => false,
+    };
+    let can_capture = is_hltv || is_pov_recorder;
+
     TableBuilder::new(ui)
+        .id_salt("kill_streaks_table")
         .striped(false)
         .cell_layout(Layout::left_to_right(Align::Center))
         .column(Column::initial(50.0).resizable(true)) // Wave
@@ -579,7 +594,13 @@ fn render_kill_streaks_table(
             let mut displayed_wave = 0usize;
 
             for &(streak_idx, ref kill_indices) in filtered_streaks {
+                if streak_idx >= p.kill_streaks.len() {
+                    continue;
+                }
                 let streak = &p.kill_streaks[streak_idx];
+                if kill_indices.is_empty() || kill_indices.iter().any(|&k_idx| k_idx >= streak.kills.len()) {
+                    continue;
+                }
                 displayed_wave += 1;
 
                 let first_kill = &streak.kills[kill_indices[0]];
@@ -617,25 +638,36 @@ fn render_kill_streaks_table(
                     row.col(|ui| {
                         #[cfg(not(target_arch = "wasm32"))]
                         {
-                            ui.horizontal(|ui| {
-                                if ui.button("🎥").on_hover_text("Export HLAE capture demo for this streak").clicked() {
-                                    let start_time = first_kill.0.real_offset.as_secs_f32();
-                                    let stop_time = last_kill.0.real_offset.as_secs_f32();
-                                    cache.export_request = Some(crate::ExportRequest {
-                                        start_time,
-                                        stop_time,
-                                    });
-                                }
-                                if ui.button("➕").on_hover_text("Add this streak to Batch Queue").clicked() {
-                                    let start_time = first_kill.0.real_offset.as_secs_f32();
-                                    let stop_time = last_kill.0.real_offset.as_secs_f32();
-                                    cache.add_to_queue_request = Some(crate::AddToQueueRequest {
-                                        start_time,
-                                        stop_time,
-                                        streak_idx,
-                                        kills_count: kill_indices.len(),
-                                    });
-                                }
+                            ui.push_id(streak_idx, |ui| {
+                                ui.horizontal(|ui| {
+                                    // Export Button
+                                    let btn_export = ui.add_enabled(can_capture, egui::Button::new("🎥"));
+                                    let btn_export = if can_capture { 
+                                        btn_export.on_hover_text("Export HLAE capture demo for this streak") 
+                                    } else { 
+                                        btn_export.on_hover_text("Only the POV recorder can be exported") 
+                                    };
+                                    if btn_export.clicked() && can_capture {
+                                        let start_time = first_kill.0.real_offset.as_secs_f32();
+                                        let stop_time = last_kill.0.real_offset.as_secs_f32();
+                                        cache.export_request = Some(crate::ExportRequest { start_time, stop_time });
+                                    }
+
+                                    // Queue Button
+                                    let btn_queue = ui.add_enabled(can_capture, egui::Button::new("➕"));
+                                    let btn_queue = if can_capture { 
+                                        btn_queue.on_hover_text("Add this streak to Batch Queue") 
+                                    } else { 
+                                        btn_queue.on_hover_text("Only the POV recorder can be added to the queue") 
+                                    };
+                                    if btn_queue.clicked() && can_capture {
+                                        let start_time = first_kill.0.real_offset.as_secs_f32();
+                                        let stop_time = last_kill.0.real_offset.as_secs_f32();
+                                        cache.add_to_queue_request = Some(crate::AddToQueueRequest { 
+                                            start_time, stop_time, streak_idx, kills_count: kill_indices.len() 
+                                        });
+                                    }
+                                });
                             });
                         }
                         #[cfg(target_arch = "wasm32")]
@@ -699,21 +731,23 @@ fn render_kill_streaks_table(
                                         .small()
                                         .strong();
                                     
-                                    let resp = ui.add(
-                                        egui::Label::new(label)
-                                            .sense(egui::Sense::click())
-                                    );
-                                    if resp.hovered() {
-                                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                                    }
-                                    if resp.clicked() {
-                                        if player_highlighting.highlighted.contains(&victim.id) {
-                                            player_highlighting.highlighted.remove(&victim.id);
-                                        } else {
-                                            player_highlighting.highlighted.clear();
-                                            player_highlighting.highlighted.insert(victim.id.clone());
+                                    ui.push_id(k_idx, |ui| {
+                                        let resp = ui.add(
+                                            egui::Label::new(label)
+                                                .sense(egui::Sense::click())
+                                        );
+                                        if resp.hovered() {
+                                            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                                         }
-                                    }
+                                        if resp.clicked() {
+                                            if player_highlighting.highlighted.contains(&victim.id) {
+                                                player_highlighting.highlighted.remove(&victim.id);
+                                            } else {
+                                                player_highlighting.highlighted.clear();
+                                                player_highlighting.highlighted.insert(victim.id.clone());
+                                            }
+                                        }
+                                    });
                                 } else {
                                     ui.label(
                                         egui::RichText::new(t("#app_team_unknown"))

@@ -24,7 +24,7 @@ web-time = { workspace = true }
 nom = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "process", "fs", "sync", "io-util", "time"] }
 walkdir = "2.5.0"
 hl-demo-auditor = { path = "../hl-demo-auditor" }
 rfd = "0.14"

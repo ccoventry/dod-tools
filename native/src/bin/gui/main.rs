@@ -834,6 +834,28 @@ pub struct AddToQueueRequest {
     pub kills_count: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum CapturePhase {
+    ReviewQueue,
+    Patching,
+    HlaeCapture,
+    HlcrRendering,
+    Complete,
+    Failed,
+}
+
+fn default_capture_phase() -> CapturePhase {
+    CapturePhase::ReviewQueue
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum CaptureStudioState {
+    ReviewingQueue,
+    Capturing,
+    Rendering,
+    Complete,
+}
+
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct QueuedStreakExport {
     pub id: String,
@@ -856,6 +878,16 @@ pub struct QueuedStreakExport {
     pub record_start_lead: f32,
     pub record_stop_trail: f32,
     pub post_record_buffer: f32,
+    #[serde(default = "default_capture_phase")]
+    pub status: CapturePhase,
+    #[serde(default)]
+    pub error_message: Option<String>,
+    #[serde(default)]
+    pub sub_status: Option<String>,
+    #[serde(default)]
+    pub debug_command: Option<String>,
+    #[serde(skip)]
+    pub started_at: Option<std::time::Instant>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -885,9 +917,7 @@ pub enum SidebarTab {
     Analyzer,
     #[cfg(not(target_arch = "wasm32"))]
     Auditor,
-    BatchMode,
-    #[cfg(not(target_arch = "wasm32"))]
-    Hlcr,
+    CaptureStudio,
     Settings,
 }
 
@@ -917,6 +947,7 @@ struct Gui {
     player_highlight: PlayerHighlighting,
     error_message: Option<String>,
     settings: AppSettings,
+    draft_settings: AppSettings,
     show_about_window: bool,
     active_sidebar_tab: SidebarTab,
 
@@ -983,6 +1014,7 @@ struct Gui {
     chat_cache: ChatCache,
     player_details_cache: PlayerDetailsCache,
     export_queue: Vec<QueuedStreakExport>,
+    capture_studio_state: CaptureStudioState,
     #[cfg(not(target_arch = "wasm32"))]
     batch_export_picker: FileDialog,
     #[cfg(not(target_arch = "wasm32"))]
@@ -1032,6 +1064,16 @@ enum GuiMessage {
         file_info: FileInfo,
         analysis: Box<Analysis>,
     },
+    #[cfg(not(target_arch = "wasm32"))]
+    CapturePipelineUpdate {
+        item_id: String,
+        phase: CapturePhase,
+        sub_status: Option<String>,
+        debug_command: Option<String>,
+        error: Option<String>,
+    },
+    #[cfg(not(target_arch = "wasm32"))]
+    CaptureStudioFinished,
 }
 
 impl Gui {
@@ -1335,6 +1377,7 @@ impl Default for Gui {
             error_message: None,
             rx,
             tx,
+            draft_settings: settings.clone(),
             settings,
             show_about_window: false,
             active_sidebar_tab: SidebarTab::Analyzer,
@@ -1399,6 +1442,7 @@ impl Default for Gui {
             chat_cache: ChatCache::default(),
             player_details_cache: PlayerDetailsCache::default(),
             export_queue: Vec::new(),
+            capture_studio_state: CaptureStudioState::ReviewingQueue,
             #[cfg(not(target_arch = "wasm32"))]
             batch_export_picker: FileDialog::default(),
             #[cfg(not(target_arch = "wasm32"))]
@@ -1857,13 +1901,42 @@ impl Gui {
 
 impl Gui {
     fn render_settings_ui(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        if let Some(error) = self.error_message.clone() {
+            let mut dismiss = false;
+            egui::Frame::NONE
+                .fill(ui.visuals().faint_bg_color)
+                .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(239, 68, 68)))
+                .corner_radius(6.0)
+                .inner_margin(12.0)
+                .show(ui, |ui| {
+                    ui.vertical(|ui| {
+                        ui.label(
+                            egui::RichText::new("Configuration Error")
+                                .heading()
+                                .color(egui::Color32::from_rgb(239, 68, 68)),
+                        );
+                        ui.add_space(8.0);
+                        ui.label(&error);
+                        ui.add_space(12.0);
+                        if ui.button("Dismiss").clicked() {
+                            dismiss = true;
+                        }
+                    });
+                });
+            if dismiss {
+                self.error_message = None;
+                ctx.request_repaint();
+            }
+            return;
+        }
+
         ui.vertical(|ui| {
             ui.heading(t("#app_prefs_general"));
             ui.add_space(8.0);
 
             ui.horizontal(|ui| {
                 ui.label(t("#app_prefs_language"));
-                let mut current_lang = self.settings.language.clone();
+                let mut current_lang = self.draft_settings.language.clone();
                 egui::ComboBox::from_id_salt("language_select")
                     .selected_text(match current_lang.as_str() {
                         "auto" => t("#app_prefs_lang_auto"),
@@ -1927,26 +2000,68 @@ impl Gui {
                         );
                     });
 
-                if current_lang != self.settings.language {
-                    self.settings.language = current_lang;
-                    apply_language_setting(&self.settings.language);
-                    save_settings(&self.settings);
+                if current_lang != self.draft_settings.language {
+                    self.draft_settings.language = current_lang;
                     ctx.request_repaint();
                 }
             });
 
             ui.add_space(8.0);
-            let mut scan_val = self.settings.scan_folders_for_demos;
+            let mut scan_val = self.draft_settings.scan_folders_for_demos;
             if ui.checkbox(&mut scan_val, t("#app_prefs_scan_folders")).changed() {
-                self.settings.scan_folders_for_demos = scan_val;
-                save_settings(&self.settings);
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                    self.subdir_cache.clear();
-                    self.explorer_demo_cache.clear();
-                }
+                self.draft_settings.scan_folders_for_demos = scan_val;
                 ctx.request_repaint();
             }
+
+            ui.add_space(8.0);
+            ui.separator();
+            ui.add_space(8.0);
+            ui.heading("Recording Engine Configurations");
+            ui.add_space(8.0);
+
+            // HLAE Path configuration
+            ui.label("HLAE Path (hlae.exe):");
+            ui.horizontal(|ui| {
+                ui.add(egui::TextEdit::singleline(&mut self.draft_settings.hlae_path).desired_width(ui.available_width() - 80.0));
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    if ui.button("Browse...").clicked() {
+                        if let Some(path) = rfd::FileDialog::new()
+                            .add_filter("Executables", &["exe"])
+                            .pick_file()
+                        {
+                            if path.file_name().and_then(|n| n.to_str()).map(|s| s.to_lowercase()) == Some("hlae.exe".to_string()) {
+                                self.draft_settings.hlae_path = path.to_string_lossy().to_string();
+                            } else {
+                                self.error_message = Some("Selected file must be hlae.exe".to_string());
+                            }
+                        }
+                    }
+                }
+            });
+
+            ui.add_space(8.0);
+
+            // DoD Game Path configuration
+            ui.label("DoD Game Path (hl.exe):");
+            ui.horizontal(|ui| {
+                ui.add(egui::TextEdit::singleline(&mut self.draft_settings.game_path).desired_width(ui.available_width() - 80.0));
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    if ui.button("Browse...").clicked() {
+                        if let Some(path) = rfd::FileDialog::new()
+                            .add_filter("Executables", &["exe"])
+                            .pick_file()
+                        {
+                            if path.file_name().and_then(|n| n.to_str()).map(|s| s.to_lowercase()) == Some("hl.exe".to_string()) {
+                                self.draft_settings.game_path = path.to_string_lossy().to_string();
+                            } else {
+                                self.error_message = Some("Selected file must be hl.exe".to_string());
+                            }
+                        }
+                    }
+                }
+            });
 
             ui.add_space(8.0);
             ui.separator();
@@ -1955,63 +2070,50 @@ impl Gui {
             ui.add_space(8.0);
 
             ui.label("Init Commands (startup):");
-            let mut val = self.settings.capture_init_commands.clone();
+            let mut val = self.draft_settings.capture_init_commands.clone();
             if ui.text_edit_multiline(&mut val).changed() {
-                self.settings.capture_init_commands = val;
-                save_settings(&self.settings);
+                self.draft_settings.capture_init_commands = val;
             }
             
             ui.add_space(8.0);
             ui.label("Default Custom Commands:");
             ui.add_space(4.0);
             ui.vertical(|ui| {
-                let mut changed = false;
                 let mut delete_idx = None;
                 
                 egui::ScrollArea::vertical()
                     .max_height(120.0)
                     .id_salt("default_commands_scroll")
                     .show(ui, |ui| {
-                        for (i, cmd) in self.settings.custom_commands.iter_mut().enumerate() {
+                        for (i, cmd) in self.draft_settings.custom_commands.iter_mut().enumerate() {
                             ui.horizontal(|ui| {
-                                if ui.add(egui::TextEdit::singleline(&mut cmd.command).desired_width(120.0)).changed() {
-                                    changed = true;
-                                }
+                                ui.add(egui::TextEdit::singleline(&mut cmd.command).desired_width(120.0));
                                 
                                 let is_after = cmd.relation == native::patch::CommandRelation::After;
                                 if ui.selectable_label(!is_after, "B").on_hover_text("Before Highlight").clicked() {
                                     cmd.relation = native::patch::CommandRelation::Before;
-                                    changed = true;
                                 }
                                 if ui.selectable_label(is_after, "A").on_hover_text("After Highlight").clicked() {
                                     cmd.relation = native::patch::CommandRelation::After;
-                                    changed = true;
                                 }
                                 
-                                if ui.add(egui::DragValue::new(&mut cmd.offset).speed(0.1).range(0.0..=60.0).suffix("s")).changed() {
-                                    changed = true;
-                                }
+                                ui.add(egui::DragValue::new(&mut cmd.offset).speed(0.1).range(0.0..=60.0).suffix("s"));
                                 if ui.button("❌").clicked() {
                                     delete_idx = Some(i);
-                                    changed = true;
                                 }
                             });
                         }
                     });
 
                 if let Some(i) = delete_idx {
-                    self.settings.custom_commands.remove(i);
+                    self.draft_settings.custom_commands.remove(i);
                 }
                 if ui.button("➕ Add Default").clicked() {
-                    self.settings.custom_commands.push(native::patch::CustomCommand {
+                    self.draft_settings.custom_commands.push(native::patch::CustomCommand {
                         command: "".to_string(),
                         offset: 2.0,
                         relation: native::patch::CommandRelation::Before,
                     });
-                    changed = true;
-                }
-                if changed {
-                    save_settings(&self.settings);
                 }
             });
 
@@ -2022,45 +2124,312 @@ impl Gui {
             ui.add_space(4.0);
 
             ui.label("Initial Load Delay:");
-            let mut val = self.settings.capture_initial_delay;
+            let mut val = self.draft_settings.capture_initial_delay;
             if ui.add(egui::Slider::new(&mut val, 0.0..=30.0).step_by(0.5).suffix("s")).changed() {
-                self.settings.capture_initial_delay = val;
-                save_settings(&self.settings);
+                self.draft_settings.capture_initial_delay = val;
             }
 
             ui.label("Fast-Forward Speed:");
-            let mut val = self.settings.capture_fast_forward_speed;
+            let mut val = self.draft_settings.capture_fast_forward_speed;
             if ui.add(egui::Slider::new(&mut val, 0.01..=5.0).step_by(0.05)).changed() {
-                self.settings.capture_fast_forward_speed = val;
-                save_settings(&self.settings);
+                self.draft_settings.capture_fast_forward_speed = val;
             }
 
             ui.label("Pre-Record Buffer:");
-            let mut val = self.settings.capture_pre_record_buffer;
+            let mut val = self.draft_settings.capture_pre_record_buffer;
             if ui.add(egui::Slider::new(&mut val, 0.0..=30.0).step_by(0.5).suffix("s")).changed() {
-                self.settings.capture_pre_record_buffer = val;
-                save_settings(&self.settings);
+                self.draft_settings.capture_pre_record_buffer = val;
             }
 
             ui.label("Record Start Lead:");
-            let mut val = self.settings.capture_record_start_lead;
+            let mut val = self.draft_settings.capture_record_start_lead;
             if ui.add(egui::Slider::new(&mut val, 0.0..=10.0).step_by(0.5).suffix("s")).changed() {
-                self.settings.capture_record_start_lead = val;
-                save_settings(&self.settings);
+                self.draft_settings.capture_record_start_lead = val;
             }
 
             ui.label("Record Stop Trail:");
-            let mut val = self.settings.capture_record_stop_trail;
+            let mut val = self.draft_settings.capture_record_stop_trail;
             if ui.add(egui::Slider::new(&mut val, 0.0..=10.0).step_by(0.5).suffix("s")).changed() {
-                self.settings.capture_record_stop_trail = val;
-                save_settings(&self.settings);
+                self.draft_settings.capture_record_stop_trail = val;
             }
 
             ui.label("Post-Record Buffer:");
-            let mut val = self.settings.capture_post_record_buffer;
+            let mut val = self.draft_settings.capture_post_record_buffer;
             if ui.add(egui::Slider::new(&mut val, 0.0..=30.0).step_by(0.5).suffix("s")).changed() {
-                self.settings.capture_post_record_buffer = val;
-                save_settings(&self.settings);
+                self.draft_settings.capture_post_record_buffer = val;
+            }
+
+            ui.add_space(16.0);
+            ui.separator();
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                if ui.button("💾 Save Settings").clicked() {
+                    let old_scan = self.settings.scan_folders_for_demos;
+                    self.settings = self.draft_settings.clone();
+                    apply_language_setting(&self.settings.language);
+                    save_settings(&self.settings);
+                    
+                    if old_scan != self.settings.scan_folders_for_demos {
+                        #[cfg(not(target_arch = "wasm32"))]
+                        {
+                            self.subdir_cache.clear();
+                            self.explorer_demo_cache.clear();
+                        }
+                    }
+                    ctx.request_repaint();
+                }
+                if ui.button("🔄 Revert Settings").clicked() {
+                    self.draft_settings = self.settings.clone();
+                    ctx.request_repaint();
+                }
+            });
+        });
+    }
+
+    pub fn capture_studio_ui(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        ui.vertical(|ui| {
+            ui.add_space(8.0);
+            
+            // Stepper UI
+            ui.horizontal(|ui| {
+                ui.heading("🎬 Capture Studio");
+                ui.separator();
+
+                let phase = self.capture_studio_state;
+                let is_wasm = cfg!(target_arch = "wasm32");
+
+                // Step 1: Queue Review
+                let step1_active = phase == CaptureStudioState::ReviewingQueue;
+                let step1_btn = ui.selectable_label(step1_active, "1. Queue Review");
+                if step1_btn.clicked() {
+                    self.capture_studio_state = CaptureStudioState::ReviewingQueue;
+                }
+
+                if !is_wasm {
+                    ui.label(" ➔ ");
+                    let step2_active = phase == CaptureStudioState::Capturing;
+                    let step2_btn = ui.selectable_label(step2_active, "2. HLAE Capture");
+                    if step2_btn.clicked() {
+                        self.capture_studio_state = CaptureStudioState::Capturing;
+                    }
+
+                    ui.label(" ➔ ");
+                    let step3_active = phase == CaptureStudioState::Rendering;
+                    let step3_btn = ui.selectable_label(step3_active, "3. HLCR Render");
+                    if step3_btn.clicked() {
+                        self.capture_studio_state = CaptureStudioState::Rendering;
+                    }
+
+                    ui.label(" ➔ ");
+                    let step4_active = phase == CaptureStudioState::Complete;
+                    let step4_btn = ui.selectable_label(step4_active, "4. Complete");
+                    if step4_btn.clicked() {
+                        self.capture_studio_state = CaptureStudioState::Complete;
+                    }
+                }
+            });
+
+            ui.separator();
+            ui.add_space(8.0);
+
+            // Sub-views based on CaptureStudioState
+            match self.capture_studio_state {
+                CaptureStudioState::ReviewingQueue => {
+                    views::batch_queue_ui(
+                        &mut self.export_queue,
+                        &mut self.settings,
+                        &mut self.player_details_cache,
+                        &self.analyses,
+                        ui,
+                    );
+                }
+                CaptureStudioState::Capturing => {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        ui.vertical(|ui| {
+                            ui.heading("🎬 HLAE Capture Queue Dashboard");
+                            ui.add_space(8.0);
+
+                            let enabled_items: Vec<&QueuedStreakExport> = self.export_queue.iter()
+                                .filter(|item| item.enabled)
+                                .collect();
+                            let total_count = enabled_items.len();
+                            let completed_count = enabled_items.iter()
+                                .filter(|item| matches!(item.status, CapturePhase::Complete | CapturePhase::Failed))
+                                .count();
+
+                            // 1. Overall Progress
+                            let progress_fraction = if total_count > 0 {
+                                completed_count as f32 / total_count as f32
+                            } else {
+                                0.0
+                            };
+                            ui.add(
+                                egui::ProgressBar::new(progress_fraction)
+                                    .text(format!("{} / {} completed", completed_count, total_count))
+                            );
+                            ui.add_space(12.0);
+
+                            // 2. Active Item Banner
+                            if let Some(active_item) = enabled_items.iter().find(|item| {
+                                matches!(item.status, CapturePhase::Patching | CapturePhase::HlaeCapture)
+                            }) {
+                                egui::Frame::group(ui.style())
+                                    .fill(ui.visuals().widgets.noninteractive.bg_fill)
+                                    .stroke(egui::Stroke::new(1.0, ui.visuals().widgets.active.bg_stroke.color))
+                                    .inner_margin(12.0)
+                                    .corner_radius(6.0)
+                                    .show(ui, |ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.spinner();
+                                            ui.vertical(|ui| {
+                                                ui.strong(format!(
+                                                    "Currently Processing: {} (Streak {})",
+                                                    active_item.player_name, active_item.streak_idx
+                                                ));
+                                                let sub_status = match active_item.status {
+                                                    CapturePhase::Patching => {
+                                                        if let Some(ref sub) = active_item.sub_status {
+                                                            format!("Writing patched demo to disk... ({})", sub)
+                                                        } else {
+                                                            "Writing patched demo to disk...".to_string()
+                                                        }
+                                                    }
+                                                    CapturePhase::HlaeCapture => {
+                                                        let mut msg = if let Some(started_at) = active_item.started_at {
+                                                            let elapsed = started_at.elapsed().as_secs();
+                                                            format!("HLAE Running... (Time elapsed: {} seconds)", elapsed)
+                                                        } else {
+                                                            "HLAE Running... (Starting...)".to_string()
+                                                        };
+                                                        if let Some(ref sub) = active_item.sub_status {
+                                                            msg = format!("{} [{}]", msg, sub);
+                                                        }
+                                                        msg
+                                                    }
+                                                    _ => "Preparing...".to_string(),
+                                                };
+                                                ui.weak(sub_status);
+                                            });
+                                        });
+                                    });
+                            } else if completed_count == total_count && total_count > 0 {
+                                egui::Frame::group(ui.style())
+                                    .fill(egui::Color32::from_rgba_unmultiplied(34, 197, 94, 30))
+                                    .stroke(egui::Stroke::new(1.0, egui::Color32::GREEN))
+                                    .inner_margin(12.0)
+                                    .corner_radius(6.0)
+                                    .show(ui, |ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.label("✅");
+                                            ui.vertical(|ui| {
+                                                ui.strong("HLAE Capture Sequence Finished!");
+                                                ui.weak("Transitioning to rendering phase...");
+                                            });
+                                        });
+                                    });
+                            } else {
+                                egui::Frame::group(ui.style())
+                                    .fill(ui.visuals().widgets.noninteractive.bg_fill)
+                                    .stroke(egui::Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color))
+                                    .inner_margin(12.0)
+                                    .corner_radius(6.0)
+                                    .show(ui, |ui| {
+                                        ui.weak("Waiting to begin capture sequence...");
+                                    });
+                            }
+                            ui.add_space(12.0);
+
+                            // 3. Queue History & Error Reporting
+                            ui.strong("Queue Status List");
+                            ui.add_space(4.0);
+
+                            if self.export_queue.is_empty() {
+                                ui.label("The queue is empty.");
+                            } else {
+                                egui::ScrollArea::vertical()
+                                    .id_salt("hlae_capture_dashboard_scroll")
+                                    .show(ui, |ui| {
+                                        for item in &self.export_queue {
+                                            if !item.enabled {
+                                                continue;
+                                            }
+                                            ui.group(|ui| {
+                                                ui.horizontal(|ui| {
+                                                    let (icon, color) = match item.status {
+                                                        CapturePhase::Complete => ("✅", egui::Color32::GREEN),
+                                                        CapturePhase::Failed => ("❌", egui::Color32::RED),
+                                                        CapturePhase::Patching | CapturePhase::HlaeCapture => ("⏳", egui::Color32::LIGHT_BLUE),
+                                                        _ => ("🕒", egui::Color32::GRAY),
+                                                    };
+                                                    ui.colored_label(color, icon);
+                                                    
+                                                    ui.strong(&item.player_name);
+                                                    ui.weak(format!("(Streak {}, Kills {})", item.streak_idx, item.kills_count));
+                                                    
+                                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                        ui.colored_label(color, format!("{:?}", item.status));
+                                                    });
+                                                });
+                                                if let Some(ref sub) = item.sub_status {
+                                                    ui.add_space(2.0);
+                                                    ui.weak(format!("Step: {}", sub));
+                                                }
+                                                if let Some(ref err) = item.error_message {
+                                                    ui.add_space(4.0);
+                                                    ui.horizontal(|ui| {
+                                                        ui.colored_label(egui::Color32::RED, "⚠ Error:");
+                                                        ui.add(egui::Label::new(egui::RichText::new(err).color(egui::Color32::RED)).wrap());
+                                                    });
+                                                }
+                                                if item.debug_command.is_some() {
+                                                    ui.add_space(4.0);
+                                                    let collapsing_id = ui.make_persistent_id(format!("debug_log_{}", item.id));
+                                                    egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), collapsing_id, false)
+                                                        .show_header(ui, |ui| {
+                                                            ui.label("🔧 Show Debug Logs");
+                                                        })
+                                                        .body(|ui| {
+                                                            if let Some(ref cmd_str) = item.debug_command {
+                                                                ui.horizontal(|ui| {
+                                                                    ui.strong("Launch Command:");
+                                                                    ui.text_edit_multiline(&mut cmd_str.clone());
+                                                                });
+                                                            }
+                                                        });
+                                                }
+                                            });
+                                            ui.add_space(4.0);
+                                        }
+                                    });
+                            }
+                        });
+                    }
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        ui.label("HLAE Capture is not supported in the WASM target.");
+                    }
+                }
+                CaptureStudioState::Rendering => {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        self.hlcr_state.draw_ui(ui, ctx);
+                    }
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        ui.label("HLCR rendering is not supported in the WASM target.");
+                    }
+                }
+                CaptureStudioState::Complete => {
+                    ui.vertical_centered(|ui| {
+                        ui.heading("Capture Studio Complete");
+                        ui.add_space(10.0);
+                        ui.label("All recording and rendering processes have finished.");
+                        if ui.button("Return to Queue").clicked() {
+                            self.capture_studio_state = CaptureStudioState::ReviewingQueue;
+                        }
+                    });
+                }
             }
         });
     }
@@ -2120,22 +2489,11 @@ impl eframe::App for Gui {
 
                     ui.add_space(8.0);
 
-                    let batch_active = self.active_sidebar_tab == SidebarTab::BatchMode;
-                    let batch_btn = egui::Button::new(egui::RichText::new("📦").size(18.0))
-                        .selected(batch_active);
-                    if ui.add(batch_btn).on_hover_text("Batch Export Mode").clicked() {
-                        self.active_sidebar_tab = SidebarTab::BatchMode;
-                    }
-
-                    #[cfg(not(target_arch = "wasm32"))]
-                    {
-                        ui.add_space(8.0);
-                        let hlcr_active = self.active_sidebar_tab == SidebarTab::Hlcr;
-                        let hlcr_btn = egui::Button::new(egui::RichText::new("🎬").size(18.0))
-                            .selected(hlcr_active);
-                        if ui.add(hlcr_btn).on_hover_text("HLCR Clip Renderer").clicked() {
-                            self.active_sidebar_tab = SidebarTab::Hlcr;
-                        }
+                    let capture_studio_active = self.active_sidebar_tab == SidebarTab::CaptureStudio;
+                    let capture_studio_btn = egui::Button::new(egui::RichText::new("🎬").size(18.0))
+                        .selected(capture_studio_active);
+                    if ui.add(capture_studio_btn).on_hover_text("Capture Studio").clicked() {
+                        self.active_sidebar_tab = SidebarTab::CaptureStudio;
                     }
 
                     ui.add_space(8.0);
@@ -2477,6 +2835,31 @@ impl eframe::App for Gui {
                     self.loading_eta = None;
                     self.selected_analysis_path = Some(path.clone());
                     self.analyses.insert(path, (file_info, *analysis));
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                GuiMessage::CapturePipelineUpdate { item_id, phase, sub_status, debug_command, error } => {
+                    if let Some(item) = self.export_queue.iter_mut().find(|i| i.id == item_id) {
+                        item.status = phase.clone();
+                        item.error_message = error;
+                        item.sub_status = sub_status;
+                        if debug_command.is_some() {
+                            item.debug_command = debug_command;
+                        }
+                        if phase == CapturePhase::HlaeCapture && item.started_at.is_none() {
+                            item.started_at = Some(std::time::Instant::now());
+                        }
+                    }
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                GuiMessage::CaptureStudioFinished => {
+                    self.capture_studio_state = CaptureStudioState::Rendering;
+                    if let Some(game_dir) = std::path::Path::new(&self.settings.game_path).parent() {
+                        let capt_dir = game_dir.join("dod").join("hlcr_captures");
+                        self.hlcr_state.config.source_folder = capt_dir.to_string_lossy().to_string();
+                        let _ = native::hlcr::config::save_config(&self.hlcr_state.config);
+                    }
+                    self.hlcr_state.auto_render = true;
+                    self.hlcr_state.start_scan();
                 }
             }
         }
@@ -3506,17 +3889,25 @@ impl eframe::App for Gui {
             }
 
             if let Some(error) = &self.error_message {
-                ui.centered_and_justified(|ui| {
-                    ui.vertical(|ui| {
-                        ui.label(
-                            egui::RichText::new(t("#app_error_heading"))
-                                .heading()
-                                .color(egui::Color32::from_rgb(239, 68, 68)),
-                        );
-                        ui.add_space(8.0);
-                        ui.label(error);
+                if self.active_sidebar_tab == SidebarTab::Settings {
+                    ScrollArea::vertical()
+                        .id_salt("settings_scroll_area")
+                        .show(ui, |ui| {
+                            self.render_settings_ui(ui, ctx);
+                        });
+                } else {
+                    ui.centered_and_justified(|ui| {
+                        ui.vertical(|ui| {
+                            ui.label(
+                                egui::RichText::new(t("#app_error_heading"))
+                                    .heading()
+                                    .color(egui::Color32::from_rgb(239, 68, 68)),
+                            );
+                            ui.add_space(8.0);
+                            ui.label(error);
+                        });
                     });
-                });
+                }
             } else {
                 match self.active_sidebar_tab {
                     SidebarTab::Analyzer => {
@@ -3563,25 +3954,8 @@ impl eframe::App for Gui {
                             }
                         }
                     }
-                    SidebarTab::BatchMode => {
-                        ScrollArea::vertical()
-                            .id_salt("batch_mode_scroll_area")
-                            .show(ui, |ui| {
-                                views::batch_queue_ui(
-                                    &mut self.export_queue,
-                                    &mut self.settings,
-                                    &mut self.player_details_cache,
-                                    ui,
-                                )
-                            });
-                    }
-                    #[cfg(not(target_arch = "wasm32"))]
-                    SidebarTab::Hlcr => {
-                        ScrollArea::vertical()
-                            .id_salt("hlcr_scroll_area")
-                            .show(ui, |ui| {
-                                self.hlcr_state.draw_ui(ui, ctx);
-                            });
+                    SidebarTab::CaptureStudio => {
+                        self.capture_studio_ui(ui, ctx);
                     }
                     SidebarTab::Settings => {
                         ScrollArea::vertical()
@@ -3721,7 +4095,41 @@ impl eframe::App for Gui {
         {
             if self.player_details_cache.batch_export_request {
                 self.player_details_cache.batch_export_request = false;
-                self.batch_export_picker.pick_directory();
+                
+                let enabled_items: Vec<QueuedStreakExport> = self.export_queue.iter()
+                    .filter(|item| item.enabled)
+                    .cloned()
+                    .collect();
+
+                if !enabled_items.is_empty() {
+                    self.capture_studio_state = CaptureStudioState::Capturing;
+
+                    let mut player_deaths_map = HashMap::new();
+                    for item in &enabled_items {
+                        let deaths = if let Some((_, analysis)) = self.analyses.get(&item.input_path.to_string_lossy().into_owned()) {
+                            if let Some(player) = analysis.state.players.iter().find(|p| p.id == item.player_id) {
+                                player.mortality.iter()
+                                    .filter(|change| matches!(change.mortality(), analysis::Mortality::Dead))
+                                    .map(|change| change.time().real_offset.as_secs_f32())
+                                    .collect::<Vec<f32>>()
+                            } else {
+                                vec![]
+                            }
+                        } else {
+                            vec![]
+                        };
+                        player_deaths_map.insert(item.id.clone(), deaths);
+                    }
+
+                    start_capture_pipeline(
+                        ctx.clone(),
+                        self.tx.clone(),
+                        enabled_items,
+                        player_deaths_map,
+                        self.settings.game_path.clone(),
+                        self.settings.hlae_path.clone(),
+                    );
+                }
             }
         }
 
@@ -3765,14 +4173,14 @@ impl eframe::App for Gui {
                         "player".to_string()
                     };
 
-                    let clean_player = player_name.chars()
-                        .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
+                    let clean_player = player_name.replace("-", "_").chars()
+                        .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
                         .collect::<String>();
                     let clean_player = if clean_player.is_empty() { "player".to_string() } else { clean_player };
 
                     let stem = input_path.file_stem().and_then(|s| s.to_str()).unwrap_or("patched");
-                    let clean_stem = stem.chars()
-                        .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
+                    let clean_stem = stem.replace("-", "_").chars()
+                        .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
                         .collect::<String>();
 
                     let default_name = format!("{}_ks_{}_{}.dem", clean_stem, clean_player, req.streak_idx);
@@ -3811,6 +4219,11 @@ impl eframe::App for Gui {
                             record_start_lead: self.settings.capture_record_start_lead,
                             record_stop_trail: self.settings.capture_record_stop_trail,
                             post_record_buffer: self.settings.capture_post_record_buffer,
+                            status: CapturePhase::ReviewQueue,
+                            error_message: None,
+                            sub_status: None,
+                            debug_command: None,
+                            started_at: None,
                         });
                     }
                 }
@@ -3945,15 +4358,24 @@ def main():
         demo_name_no_ext = os.path.splitext(demo_name)[0]
         
         # Launch HLAE
+        hook_dll = os.path.join(os.path.dirname(hlae), "AfxHookGoldSrc.dll")
+        cmd_line = f"-game dod -insecure -windowed -w 1280 -h 720 +playdemo {{demo_name_no_ext}}"
         cmd = [
             hlae,
             "-customLoader",
+            "-noGui",
+            "-autoStart",
+            "-hookDllPath", hook_dll,
             "-programPath", game,
-            "-args", f"-game dod -windowed -w 1280 -h 720 +playdemo {{demo_name_no_ext}}"
+            "-cmdLine", cmd_line
         ]
         
+        # Inject SteamAppId environment variable
+        run_env = os.environ.copy()
+        run_env["SteamAppId"] = "30"
+        
         print(f"  Running: {{' '.join(cmd)}}")
-        process = subprocess.Popen(cmd)
+        process = subprocess.Popen(cmd, env=run_env)
         
         print(f"  Waiting for recording to complete (the game will auto-close when done)...")
         process.wait()
@@ -3977,4 +4399,321 @@ if __name__ == '__main__':
         hlae_path = hlae_path,
         game_path = game_path
     )
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn start_capture_pipeline(
+    ctx: egui::Context,
+    tx: std::sync::mpsc::Sender<GuiMessage>,
+    enabled_items: Vec<QueuedStreakExport>,
+    player_deaths_map: HashMap<String, Vec<f32>>,
+    game_path: String,
+    hlae_path: String,
+) {
+    tokio::spawn(async move {
+        let game_dir = match std::path::Path::new(&game_path).parent() {
+            Some(p) => p.to_path_buf(),
+            None => return,
+        };
+        let dod_dir = game_dir.join("dod");
+
+        for item in enabled_items {
+            let item_id = item.id.clone();
+            let safe_output_name = item.output_name.replace("-", "_");
+            tx.send(GuiMessage::CapturePipelineUpdate {
+                item_id: item_id.clone(),
+                phase: CapturePhase::Patching,
+                sub_status: Some("Preparing folder structure...".to_string()),
+                debug_command: None,
+                error: None,
+            }).ok();
+            ctx.request_repaint();
+
+            // Prepare absolute destination folder for HLAE frames
+            let capture_dest = dod_dir.join("hlcr_captures").join(&safe_output_name);
+            if let Err(e) = tokio::fs::create_dir_all(&capture_dest).await {
+                tx.send(GuiMessage::CapturePipelineUpdate {
+                    item_id: item_id.clone(),
+                    phase: CapturePhase::Failed,
+                    sub_status: None,
+                    debug_command: None,
+                    error: Some(format!("Failed to create capture folder: {}", e)),
+                }).ok();
+                ctx.request_repaint();
+                continue;
+            }
+
+            // Get absolute path
+            let abs_path = match tokio::fs::canonicalize(&capture_dest).await {
+                Ok(p) => p.to_string_lossy().to_string(),
+                Err(_) => capture_dest.to_string_lossy().to_string(),
+            };
+            // Format for HLAE commands
+            let mut abs_path_clean = abs_path.replace("\\", "/");
+            if abs_path_clean.starts_with("//?/") {
+                abs_path_clean = abs_path_clean[4..].to_string();
+            }
+
+            // Prepended record command
+            let mirv_record_cmd = native::patch::CustomCommand {
+                command: format!("mirv_recordmovie_start \"{}\"", abs_path_clean),
+                offset: item.record_start_lead,
+                relation: native::patch::CommandRelation::Before,
+            };
+
+            // Prepend it to the custom commands list
+            let mut custom_commands = vec![mirv_record_cmd];
+            custom_commands.extend(item.custom_commands.clone());
+
+            // Prepare patch options
+            let player_deaths = player_deaths_map.get(&item.id).cloned().unwrap_or_default();
+            let options = native::patch::PatchOptions {
+                exit_on_finish: item.exit_on_finish,
+                init_commands: item.init_commands.lines().map(String::from).collect(),
+                custom_commands,
+                fast_forward_speed: Some(item.fast_forward_speed),
+                hltv_spec_player: item.hltv_spec_player.clone(),
+                initial_delay: Some(item.initial_delay),
+                pre_record_buffer: Some(item.pre_record_buffer),
+                record_start_lead: Some(item.record_start_lead),
+                record_stop_trail: Some(item.record_stop_trail),
+                post_record_buffer: Some(item.post_record_buffer),
+                player_deaths: Some(player_deaths),
+            };
+
+            // Read source demo bytes
+            tx.send(GuiMessage::CapturePipelineUpdate {
+                item_id: item_id.clone(),
+                phase: CapturePhase::Patching,
+                sub_status: Some("Reading source demo file...".to_string()),
+                debug_command: None,
+                error: None,
+            }).ok();
+            ctx.request_repaint();
+
+            let bytes_res = tokio::fs::read(&item.input_path).await;
+            let bytes = match bytes_res {
+                Ok(b) => b,
+                Err(e) => {
+                    tx.send(GuiMessage::CapturePipelineUpdate {
+                        item_id: item_id.clone(),
+                        phase: CapturePhase::Failed,
+                        sub_status: None,
+                        debug_command: None,
+                        error: Some(format!("Failed to read source demo: {}", e)),
+                    }).ok();
+                    ctx.request_repaint();
+                    continue;
+                }
+            };
+
+            // Call patcher inside spawn_blocking
+            tx.send(GuiMessage::CapturePipelineUpdate {
+                item_id: item_id.clone(),
+                phase: CapturePhase::Patching,
+                sub_status: Some("Patching game demo commands...".to_string()),
+                debug_command: None,
+                error: None,
+            }).ok();
+            ctx.request_repaint();
+
+            let intervals = vec![(item.start_time, item.stop_time)];
+            let patch_res = tokio::task::spawn_blocking(move || {
+                native::patch::patch_demo_highlights(&bytes, &intervals, &options)
+            }).await;
+
+            let patched_bytes = match patch_res {
+                Ok(Ok(b)) => b,
+                Ok(Err(e)) => {
+                    tx.send(GuiMessage::CapturePipelineUpdate {
+                        item_id: item_id.clone(),
+                        phase: CapturePhase::Failed,
+                        sub_status: None,
+                        debug_command: None,
+                        error: Some(format!("Patching failed: {}", e)),
+                    }).ok();
+                    ctx.request_repaint();
+                    continue;
+                }
+                Err(e) => {
+                    tx.send(GuiMessage::CapturePipelineUpdate {
+                        item_id: item_id.clone(),
+                        phase: CapturePhase::Failed,
+                        sub_status: None,
+                        debug_command: None,
+                        error: Some(format!("Blocking task panicked: {}", e)),
+                    }).ok();
+                    ctx.request_repaint();
+                    continue;
+                }
+            };
+
+            // Write patched demo to game's dod/ directory
+            tx.send(GuiMessage::CapturePipelineUpdate {
+                item_id: item_id.clone(),
+                phase: CapturePhase::Patching,
+                sub_status: Some("Copying demo to game folder...".to_string()),
+                debug_command: None,
+                error: None,
+            }).ok();
+            ctx.request_repaint();
+
+            let patched_demo_path = dod_dir.join(&safe_output_name);
+            if let Err(e) = tokio::fs::write(&patched_demo_path, patched_bytes).await {
+                tx.send(GuiMessage::CapturePipelineUpdate {
+                    item_id: item_id.clone(),
+                    phase: CapturePhase::Failed,
+                    sub_status: None,
+                    debug_command: None,
+                    error: Some(format!("Failed to write patched demo: {}", e)),
+                }).ok();
+                ctx.request_repaint();
+                continue;
+            }
+
+            // Diagnostic checks for HLAE and DoD executables existence
+            if !std::path::Path::new(&hlae_path).exists() {
+                tx.send(GuiMessage::CapturePipelineUpdate {
+                    item_id: item_id.clone(),
+                    phase: CapturePhase::Failed,
+                    sub_status: None,
+                    debug_command: None,
+                    error: Some(format!("HLAE executable not found at: {}", hlae_path)),
+                }).ok();
+                ctx.request_repaint();
+                continue;
+            }
+            if !std::path::Path::new(&game_path).exists() {
+                tx.send(GuiMessage::CapturePipelineUpdate {
+                    item_id: item_id.clone(),
+                    phase: CapturePhase::Failed,
+                    sub_status: None,
+                    debug_command: None,
+                    error: Some(format!("DoD executable (hl.exe) not found at: {}", game_path)),
+                }).ok();
+                ctx.request_repaint();
+                continue;
+            }
+
+            // Strip .dem extension for playdemo
+            let demo_name_no_ext = match std::path::Path::new(&safe_output_name).file_stem() {
+                Some(stem) => stem.to_string_lossy().to_string(),
+                None => safe_output_name.clone(),
+            };
+
+            let hlae_dir = std::path::Path::new(&hlae_path).parent().unwrap();
+            let hook_dll = hlae_dir.join("AfxHookGoldSrc.dll");
+            let hook_dll_str = hook_dll.to_string_lossy().to_string();
+
+            let args_str = format!("-game dod -insecure -windowed -w 1280 -h 720 +playdemo {}", demo_name_no_ext);
+            let mut cmd = tokio::process::Command::new(&hlae_path);
+            cmd.kill_on_drop(true);
+            cmd.env("SteamAppId", "30");
+            cmd.args(&[
+                "-customLoader",
+                "-noGui",
+                "-autoStart",
+                "-hookDllPath",
+                &hook_dll_str,
+                "-programPath",
+                &game_path,
+                "-cmdLine",
+                &args_str,
+            ]);
+
+            if let Some(parent_dir) = std::path::Path::new(&game_path).parent() {
+                cmd.current_dir(parent_dir);
+            }
+
+            let debug_command_str = format!(
+                "\"{}\" -customLoader -noGui -autoStart -hookDllPath \"{}\" -programPath \"{}\" -cmdLine \"{}\"",
+                hlae_path, hook_dll_str, game_path, args_str
+            );
+
+            // Launch HLAE sequential capture
+            tx.send(GuiMessage::CapturePipelineUpdate {
+                item_id: item_id.clone(),
+                phase: CapturePhase::HlaeCapture,
+                sub_status: Some("Launching HLAE...".to_string()),
+                debug_command: Some(debug_command_str),
+                error: None,
+            }).ok();
+            ctx.request_repaint();
+
+            match cmd.spawn() {
+                Ok(mut child) => {
+                    let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(1));
+                    let wait_res = loop {
+                        tokio::select! {
+                            res = child.wait() => {
+                                break res;
+                            }
+                            _ = interval.tick() => {
+                                tx.send(GuiMessage::CapturePipelineUpdate {
+                                    item_id: item_id.clone(),
+                                    phase: CapturePhase::HlaeCapture,
+                                    sub_status: Some("HLAE process active, waiting for completion...".to_string()),
+                                    debug_command: None,
+                                    error: None,
+                                }).ok();
+                                ctx.request_repaint();
+                            }
+                        }
+                    };
+
+                    match wait_res {
+                        Ok(status) => {
+                            if !status.success() {
+                                tx.send(GuiMessage::CapturePipelineUpdate {
+                                    item_id: item_id.clone(),
+                                    phase: CapturePhase::Failed,
+                                    sub_status: None,
+                                    debug_command: None,
+                                    error: Some(format!("HLAE exited with non-zero status: {}", status)),
+                                }).ok();
+                                ctx.request_repaint();
+                                continue;
+                            }
+                        }
+                        Err(e) => {
+                            tx.send(GuiMessage::CapturePipelineUpdate {
+                                item_id: item_id.clone(),
+                                phase: CapturePhase::Failed,
+                                sub_status: None,
+                                debug_command: None,
+                                error: Some(format!("Failed to wait for HLAE: {}", e)),
+                            }).ok();
+                            ctx.request_repaint();
+                            continue;
+                        }
+                    }
+                }
+                Err(e) => {
+                    tx.send(GuiMessage::CapturePipelineUpdate {
+                        item_id: item_id.clone(),
+                        phase: CapturePhase::Failed,
+                        sub_status: None,
+                        debug_command: None,
+                        error: Some(format!("Failed to spawn HLAE: {}", e)),
+                    }).ok();
+                    ctx.request_repaint();
+                    continue;
+                }
+            }
+
+            // Mark this item complete
+            tx.send(GuiMessage::CapturePipelineUpdate {
+                item_id: item_id.clone(),
+                phase: CapturePhase::Complete,
+                sub_status: Some("Capture complete!".to_string()),
+                debug_command: None,
+                error: None,
+            }).ok();
+            ctx.request_repaint();
+        }
+
+        // Notify that the entire queue has completed HLAE capture
+        tx.send(GuiMessage::CaptureStudioFinished).ok();
+        ctx.request_repaint();
+    });
 }
