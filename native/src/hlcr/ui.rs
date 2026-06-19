@@ -31,6 +31,7 @@ pub struct HlcrState {
     pub is_rendering: bool,
     pub status_message: String,
     pub active_modal_job_id: Option<String>,
+    pub auto_render: bool,
 
     // Scanner channels
     pub clip_rx: Option<mpsc::Receiver<ClipData>>,
@@ -58,6 +59,7 @@ impl Default for HlcrState {
             is_rendering: false,
             status_message: "Idle / Waiting for Scan".to_string(),
             active_modal_job_id: None,
+            auto_render: false,
             clip_rx: None,
             status_rx: None,
             scan_thread: None,
@@ -214,6 +216,10 @@ impl HlcrState {
                 self.clip_rx = None;
                 self.status_rx = None;
                 self.is_scanning = false;
+                if self.auto_render {
+                    self.auto_render = false;
+                    self.start_rendering();
+                }
                 ctx.request_repaint();
             }
         }

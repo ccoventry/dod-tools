@@ -1,46 +1,18 @@
 use egui::{Ui, Color32, Layout, Align, Grid, ScrollArea, Frame, Stroke};
 use crate::QueuedStreakExport;
+use std::collections::HashMap;
+use native::FileInfo;
+use analysis::Analysis;
 
 pub fn batch_queue_ui(
     export_queue: &mut Vec<QueuedStreakExport>,
     settings: &mut crate::AppSettings,
     cache: &mut crate::PlayerDetailsCache,
+    analyses: &HashMap<String, (FileInfo, Analysis)>,
     ui: &mut Ui,
 ) {
     ui.vertical(|ui| {
-        // 1. Paths configuration
-        Frame::NONE
-            .fill(ui.visuals().faint_bg_color)
-            .stroke(Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color))
-            .corner_radius(6.0)
-            .inner_margin(10.0)
-            .show(ui, |ui| {
-                ui.strong("Recording Engine Configurations");
-                ui.add_space(4.0);
 
-                Grid::new("paths_grid")
-                    .num_columns(2)
-                    .spacing([8.0, 8.0])
-                    .show(ui, |ui| {
-                        ui.label("HLAE Path (hlae.exe):");
-                        let mut hlae = settings.hlae_path.clone();
-                        if ui.text_edit_singleline(&mut hlae).changed() {
-                            settings.hlae_path = hlae;
-                            crate::save_settings(settings);
-                        }
-                        ui.end_row();
-
-                        ui.label("DoD Game Path (hl.exe):");
-                        let mut game = settings.game_path.clone();
-                        if ui.text_edit_singleline(&mut game).changed() {
-                            settings.game_path = game;
-                            crate::save_settings(settings);
-                        }
-                        ui.end_row();
-                    });
-            });
-
-        ui.add_space(8.0);
 
         // Path existence checks
         let hlae_exists = !settings.hlae_path.is_empty() && std::path::Path::new(&settings.hlae_path).exists();
@@ -256,19 +228,40 @@ pub fn batch_queue_ui(
                                         ui.end_row();
 
                                         ui.label("HLTV Spec Player:");
-                                        let mut spec_enabled = item.hltv_spec_player.is_some();
-                                        ui.horizontal(|ui| {
-                                            if ui.checkbox(&mut spec_enabled, "").changed() {
-                                                if spec_enabled {
-                                                    item.hltv_spec_player = Some(item.player_name.clone());
+                                        let path_str = item.input_path.to_string_lossy().to_string();
+                                        if let Some((_, analysis)) = analyses.get(&path_str) {
+                                            if analysis.demo_info.demo_type == "HLTV" {
+                                                let mut player_names: Vec<String> = analysis.state.players.iter().map(|p| p.name.clone()).collect();
+                                                player_names.sort();
+                                                if player_names.is_empty() {
+                                                    ui.label("No players found");
                                                 } else {
-                                                    item.hltv_spec_player = None;
+                                                    let mut current_selected = item.hltv_spec_player.clone().unwrap_or_else(|| item.player_name.clone());
+                                                    if !player_names.contains(&current_selected) {
+                                                        if player_names.contains(&item.player_name) {
+                                                            current_selected = item.player_name.clone();
+                                                        } else {
+                                                            current_selected = player_names[0].clone();
+                                                        }
+                                                    }
+                                                    let mut selected_name = current_selected.clone();
+                                                    egui::ComboBox::from_id_salt(format!("spec_combo_{}", item.id))
+                                                        .selected_text(&selected_name)
+                                                        .show_ui(ui, |ui| {
+                                                            for name in &player_names {
+                                                                ui.selectable_value(&mut selected_name, name.clone(), name);
+                                                            }
+                                                        });
+                                                    if selected_name != current_selected || item.hltv_spec_player.is_none() {
+                                                        item.hltv_spec_player = Some(selected_name);
+                                                    }
                                                 }
+                                            } else {
+                                                ui.label("POV: Auto-detect");
                                             }
-                                            if let Some(ref mut name) = item.hltv_spec_player {
-                                                ui.text_edit_singleline(name);
-                                            }
-                                        });
+                                        } else {
+                                            ui.weak("Demo analysis not loaded");
+                                        }
                                         ui.end_row();
 
                                         ui.label("Init Commands:");
