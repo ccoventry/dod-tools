@@ -319,58 +319,65 @@ fn render_hero_card(p: &Player, ui: &mut Ui) {
 }
 
 fn render_stat_cards(p: &Player, ui: &mut Ui) {
-    ui.horizontal(|ui| {
-        let card_width = 130.0;
-        let card_height = 60.0;
-
+    ui.columns(4, |cols| {
         // Score Card
-        render_card(ui, card_width, card_height, t("#app_player_details_card_score"), format!("{}", p.stats.0), None);
+        cols[0].vertical(|ui| {
+            render_card(ui, &t("#app_player_details_card_score"), &format!("{}", p.stats.0), None);
+        });
+
         // Kills Card
-        render_card(ui, card_width, card_height, t("#app_player_details_card_kills"), format!("{}", p.stats.1), None);
-        
+        cols[1].vertical(|ui| {
+            render_card(ui, &t("#app_player_details_card_kills"), &format!("{}", p.stats.1), None);
+        });
+
         // Deaths Card with K/D Ratio
-        let kd = if p.stats.2 > 0 {
-            p.stats.1 as f32 / p.stats.2 as f32
-        } else {
-            p.stats.1 as f32
-        };
-        let kd_badge = Some((
-            format!("{:.2} K/D", kd),
-            if kd >= 1.0 { Color32::from_rgb(34, 197, 94) } else { Color32::from_rgb(239, 68, 68) }
-        ));
-        render_card(ui, card_width, card_height, t("#app_player_details_card_deaths"), format!("{}", p.stats.2), kd_badge);
+        cols[2].vertical(|ui| {
+            let kd = if p.stats.2 > 0 {
+                p.stats.1 as f32 / p.stats.2 as f32
+            } else {
+                p.stats.1 as f32
+            };
+            let kd_badge = Some((
+                format!("{:.2} K/D", kd),
+                if kd >= 1.0 { Color32::from_rgb(34, 197, 94) } else { Color32::from_rgb(239, 68, 68) }
+            ));
+            render_card(ui, &t("#app_player_details_card_deaths"), &format!("{}", p.stats.2), kd_badge.as_ref().map(|(s, c)| (s.as_str(), *c)));
+        });
 
         // Lifespan Card
-        let avg_life = p.avg_lifespan().as_secs_f32();
-        let min_life = p.min_lifespan().as_secs_f32();
-        let max_life = p.max_lifespan().as_secs_f32();
-        let lifespan_badge = Some((
-            format!("Min: {:.1}s / Max: {:.1}s", min_life, max_life),
-            ui.visuals().weak_text_color()
-        ));
-        render_card(ui, card_width, card_height, t("#app_player_details_card_lifespan"), format!("{:.1}s", avg_life), lifespan_badge);
+        cols[3].vertical(|ui| {
+            let avg_life = p.avg_lifespan().as_secs_f32();
+            let min_life = p.min_lifespan().as_secs_f32();
+            let max_life = p.max_lifespan().as_secs_f32();
+            let lifespan_badge = Some((
+                format!("Min: {:.0}s / Max: {:.0}s", min_life, max_life),
+                ui.visuals().weak_text_color()
+            ));
+            render_card(ui, &t("#app_player_details_card_lifespan"), &format!("{:.1}s", avg_life), lifespan_badge.as_ref().map(|(s, c)| (s.as_str(), *c)));
+        });
     });
 }
 
-fn render_card(ui: &mut Ui, width: f32, height: f32, title: String, value: String, badge: Option<(String, Color32)>) {
-    let bg_color = ui.visuals().faint_bg_color;
+fn render_card(ui: &mut Ui, title: &str, value: &str, badge: Option<(&str, Color32)>) {
+    let bg_color = ui.visuals().widgets.noninteractive.bg_fill;
+    let stroke = ui.visuals().widgets.noninteractive.bg_stroke;
     egui::Frame::NONE
         .fill(bg_color)
         .corner_radius(4.0)
-        .inner_margin(8.0)
+        .stroke(stroke)
+        .inner_margin(12.0)
         .show(ui, |ui| {
-            ui.set_width(width);
-            ui.set_height(height);
             ui.vertical(|ui| {
-                ui.label(egui::RichText::new(title).small().weak());
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new(value).size(18.0).strong());
+                    ui.label(egui::RichText::new(title).small().color(ui.visuals().weak_text_color()));
                     if let Some((badge_text, color)) = badge {
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            ui.label(egui::RichText::new(badge_text).small().color(color));
+                            ui.label(egui::RichText::new(badge_text).small().strong().color(color));
                         });
                     }
                 });
+                ui.add_space(4.0);
+                ui.label(egui::RichText::new(value).size(20.0).strong());
             });
         });
 }

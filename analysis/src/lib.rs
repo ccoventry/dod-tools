@@ -187,10 +187,31 @@ impl From<Demo> for DemoInfo {
     }
 }
 
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub enum GameEvent {
+    Kill(String, String, String), // Killer, Victim, Weapon
+    ScoreUpdate(String, i32, i32), // Player, Kills, Deaths
+    ServerReset,
+    GameCommencing,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct TimelineEvent {
+    pub tick: u32,
+    pub event: GameEvent,
+}
+
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct PlayerStats {
+    pub kills: i32,
+    pub deaths: i32,
+}
+
 #[derive(Default, serde::Serialize, serde::Deserialize)]
 pub struct Analysis {
     pub demo_info: DemoInfo,
     pub state: AnalyzerState,
+    pub events: Vec<TimelineEvent>,
 }
 
 fn is_relevant_message(name_bytes: &[u8]) -> bool {
@@ -532,8 +553,39 @@ fn check_and_promote_british(state: &mut AnalyzerState) {
 }
 
 impl Analysis {
-    fn new(demo_info: DemoInfo, state: AnalyzerState) -> Self {
-        Self { demo_info, state }
+    fn new(demo_info: DemoInfo, state: AnalyzerState, events: Vec<TimelineEvent>) -> Self {
+        Self { demo_info, state, events }
+    }
+
+    pub fn build_scoreboard(&self) -> std::collections::HashMap<String, PlayerStats> {
+        let mut scoreboard = std::collections::HashMap::new();
+        for timeline_event in &self.events {
+            match &timeline_event.event {
+                GameEvent::ServerReset | GameEvent::GameCommencing => {
+                    scoreboard.clear();
+                }
+                GameEvent::Kill(killer, victim, _weapon) => {
+                    if !killer.is_empty() {
+                        let stats = scoreboard.entry(killer.clone()).or_insert(PlayerStats::default());
+                        stats.kills += 1;
+                    }
+                    if !victim.is_empty() {
+                        let stats = scoreboard.entry(victim.clone()).or_insert(PlayerStats::default());
+                        stats.deaths += 1;
+                    }
+                }
+                GameEvent::ScoreUpdate(player, kills, deaths) => {
+                    let stats = scoreboard.entry(player.clone()).or_insert(PlayerStats::default());
+                    if *kills > stats.kills {
+                        stats.kills = *kills;
+                    }
+                    if *deaths > stats.deaths {
+                        stats.deaths = *deaths;
+                    }
+                }
+            }
+        }
+        scoreboard
     }
 
     pub fn try_from_bytes(value: &[u8]) -> Result<Self, String> {
@@ -553,6 +605,8 @@ impl Analysis {
         };
 
         let mut state = AnalyzerState::default();
+        let mut events = Vec::new();
+        let mut client_id_to_name = std::collections::HashMap::new();
 
         let process_event = |state: &mut AnalyzerState, event: &AnalyzerEvent| {
             if state.map_changed && !matches!(event, AnalyzerEvent::Finalization) {
@@ -595,12 +649,88 @@ impl Analysis {
                                         &mut state,
                                         &AnalyzerEvent::EngineMessage(engine_msg),
                                     );
+
+                                    if let EngineMessage::SvcUpdateUserInfo(user_info) = &**engine_msg {
+                                        let fields = user_info.user_info.to_str()
+                                            .map(|s| s.trim_matches(['\0', '\\']).split('\\').collect::<Vec<_>>())
+                                            .unwrap_or_default()
+                                            .chunks_exact(2)
+                                            .fold(std::collections::HashMap::new(), |mut map, chunk| {
+                                                if let [key, value] = chunk {
+                                                    map.insert(*key, *value);
+                                                }
+                                                map
+                                            });
+                                        if let Some(name) = fields.get("name") {
+                                            client_id_to_name.insert(user_info.index, name.to_string());
+                                        }
+                                    }
                                 }
                                 NetMessage::UserMessage(user_msg) => {
                                     if is_relevant_message(user_msg.name.as_ref()) {
                                         if let Ok(msg) =
                                             UserMessage::new(&user_msg.name, &user_msg.data)
                                         {
+                                            match &msg {
+                                                UserMessage::DeathMsg(death_msg) => {
+                                                    let killer_name = if death_msg.killer_client_index > 0 {
+                                                        client_id_to_name.get(&(death_msg.killer_client_index - 1)).cloned().unwrap_or_default()
+                                                    } else {
+                                                        String::new()
+                                                    };
+                                                    let victim_name = client_id_to_name.get(&(death_msg.victim_client_index - 1)).cloned().unwrap_or_default();
+                                                    let weapon_name = format!("{:?}", death_msg.weapon);
+                                                    events.push(TimelineEvent {
+                                                        tick: processed_frames as u32,
+                                                        event: GameEvent::Kill(killer_name, victim_name, weapon_name),
+                                                    });
+                                                }
+                                                UserMessage::ScoreInfo(score_info) => {
+                                                    if let Some(player_name) = client_id_to_name.get(&(score_info.client_index - 1)).cloned() {
+                                                        events.push(TimelineEvent {
+                                                            tick: processed_frames as u32,
+                                                            event: GameEvent::ScoreUpdate(player_name, score_info.kills as i32, score_info.deaths as i32),
+                                                        });
+                                                    }
+                                                }
+                                                UserMessage::ScoreInfoLong(score_info_long) => {
+                                                    if let Some(player_name) = client_id_to_name.get(&(score_info_long.client_index - 1)).cloned() {
+                                                        events.push(TimelineEvent {
+                                                            tick: processed_frames as u32,
+                                                            event: GameEvent::ScoreUpdate(player_name, score_info_long.frags as i32, score_info_long.deaths as i32),
+                                                        });
+                                                    }
+                                                }
+                                                UserMessage::ScoreShort(score_short) => {
+                                                    if let Some(player_name) = client_id_to_name.get(&(score_short.client_index - 1)).cloned() {
+                                                        events.push(TimelineEvent {
+                                                            tick: processed_frames as u32,
+                                                            event: GameEvent::ScoreUpdate(player_name, score_short.kills as i32, score_short.deaths as i32),
+                                                        });
+                                                    }
+                                                }
+                                                UserMessage::RoundState(dod::RoundState::Reset) => {
+                                                    events.push(TimelineEvent {
+                                                        tick: processed_frames as u32,
+                                                        event: GameEvent::ServerReset,
+                                                    });
+                                                }
+                                                UserMessage::TextMsg(text_msg) => {
+                                                    let is_commencing = text_msg.text.contains("#Game_Commencing")
+                                                        || text_msg.arg1.as_ref().map_or(false, |s| s.contains("#Game_Commencing"))
+                                                        || text_msg.arg2.as_ref().map_or(false, |s| s.contains("#Game_Commencing"))
+                                                        || text_msg.arg3.as_ref().map_or(false, |s| s.contains("#Game_Commencing"))
+                                                        || text_msg.arg4.as_ref().map_or(false, |s| s.contains("#Game_Commencing"));
+                                                    if is_commencing {
+                                                        events.push(TimelineEvent {
+                                                            tick: processed_frames as u32,
+                                                            event: GameEvent::GameCommencing,
+                                                        });
+                                                    }
+                                                }
+                                                _ => {}
+                                            }
+
                                             process_event(
                                                 &mut state,
                                                 &AnalyzerEvent::UserMessage(msg),
@@ -622,7 +752,17 @@ impl Analysis {
 
         process_event(&mut state, &AnalyzerEvent::Finalization);
 
-        Ok(Analysis::new(demo.into(), state))
+        let analysis = Analysis::new(demo.into(), state, events);
+        let scoreboard = analysis.build_scoreboard();
+        let mut final_analysis = analysis;
+        for player in &mut final_analysis.state.players {
+            if let Some(stats) = scoreboard.get(&player.name) {
+                player.stats.1 = stats.kills;
+                player.stats.2 = stats.deaths;
+            }
+        }
+
+        Ok(final_analysis)
     }
 
     pub fn parse_with_diagnostics(value: &[u8]) -> Result<(Self, ParseDiagnostics), String> {
@@ -714,6 +854,9 @@ impl Analysis {
         let start_opt = std::time::Instant::now();
         let mut last_live_frame_opt = None;
         let mut state_opt = AnalyzerState::default();
+        let mut events = Vec::new();
+        let mut client_id_to_name = std::collections::HashMap::new();
+
         process_event(&mut state_opt, &AnalyzerEvent::Initialization);
         processed_frames = 0;
 
@@ -729,6 +872,22 @@ impl Analysis {
                                         &mut state_opt,
                                         &AnalyzerEvent::EngineMessage(engine_msg),
                                     );
+
+                                    if let EngineMessage::SvcUpdateUserInfo(user_info) = &**engine_msg {
+                                        let fields = user_info.user_info.to_str()
+                                            .map(|s| s.trim_matches(['\0', '\\']).split('\\').collect::<Vec<_>>())
+                                            .unwrap_or_default()
+                                            .chunks_exact(2)
+                                            .fold(std::collections::HashMap::new(), |mut map, chunk| {
+                                                if let [key, value] = chunk {
+                                                    map.insert(*key, *value);
+                                                }
+                                                map
+                                            });
+                                        if let Some(name) = fields.get("name") {
+                                            client_id_to_name.insert(user_info.index, name.to_string());
+                                        }
+                                    }
                                 }
                                 NetMessage::UserMessage(user_msg) => {
                                     if is_relevant_message(user_msg.name.as_ref()) {
@@ -739,6 +898,66 @@ impl Analysis {
                                                 state_opt.clan_match_detection,
                                                 ClanMatchDetection::MatchIsLive
                                             );
+                                            match &msg {
+                                                UserMessage::DeathMsg(death_msg) => {
+                                                    let killer_name = if death_msg.killer_client_index > 0 {
+                                                        client_id_to_name.get(&(death_msg.killer_client_index - 1)).cloned().unwrap_or_default()
+                                                    } else {
+                                                        String::new()
+                                                    };
+                                                    let victim_name = client_id_to_name.get(&(death_msg.victim_client_index - 1)).cloned().unwrap_or_default();
+                                                    let weapon_name = format!("{:?}", death_msg.weapon);
+                                                    events.push(TimelineEvent {
+                                                        tick: processed_frames as u32,
+                                                        event: GameEvent::Kill(killer_name, victim_name, weapon_name),
+                                                    });
+                                                }
+                                                UserMessage::ScoreInfo(score_info) => {
+                                                    if let Some(player_name) = client_id_to_name.get(&(score_info.client_index - 1)).cloned() {
+                                                        events.push(TimelineEvent {
+                                                            tick: processed_frames as u32,
+                                                            event: GameEvent::ScoreUpdate(player_name, score_info.kills as i32, score_info.deaths as i32),
+                                                        });
+                                                    }
+                                                }
+                                                UserMessage::ScoreInfoLong(score_info_long) => {
+                                                    if let Some(player_name) = client_id_to_name.get(&(score_info_long.client_index - 1)).cloned() {
+                                                        events.push(TimelineEvent {
+                                                            tick: processed_frames as u32,
+                                                            event: GameEvent::ScoreUpdate(player_name, score_info_long.frags as i32, score_info_long.deaths as i32),
+                                                        });
+                                                    }
+                                                }
+                                                UserMessage::ScoreShort(score_short) => {
+                                                    if let Some(player_name) = client_id_to_name.get(&(score_short.client_index - 1)).cloned() {
+                                                        events.push(TimelineEvent {
+                                                            tick: processed_frames as u32,
+                                                            event: GameEvent::ScoreUpdate(player_name, score_short.kills as i32, score_short.deaths as i32),
+                                                        });
+                                                    }
+                                                }
+                                                UserMessage::RoundState(dod::RoundState::Reset) => {
+                                                    events.push(TimelineEvent {
+                                                        tick: processed_frames as u32,
+                                                        event: GameEvent::ServerReset,
+                                                    });
+                                                }
+                                                UserMessage::TextMsg(text_msg) => {
+                                                    let is_commencing = text_msg.text.contains("#Game_Commencing")
+                                                        || text_msg.arg1.as_ref().map_or(false, |s| s.contains("#Game_Commencing"))
+                                                        || text_msg.arg2.as_ref().map_or(false, |s| s.contains("#Game_Commencing"))
+                                                        || text_msg.arg3.as_ref().map_or(false, |s| s.contains("#Game_Commencing"))
+                                                        || text_msg.arg4.as_ref().map_or(false, |s| s.contains("#Game_Commencing"));
+                                                    if is_commencing {
+                                                        events.push(TimelineEvent {
+                                                            tick: processed_frames as u32,
+                                                            event: GameEvent::GameCommencing,
+                                                        });
+                                                    }
+                                                }
+                                                _ => {}
+                                            }
+
                                             process_event(
                                                 &mut state_opt,
                                                 &AnalyzerEvent::UserMessage(msg),
@@ -779,8 +998,16 @@ impl Analysis {
             mismatch_reason,
         };
 
-        let analysis_opt = Analysis::new(demo.into(), state_opt);
-        Ok((analysis_opt, diagnostics))
+        let analysis = Analysis::new(demo.into(), state_opt, events);
+        let scoreboard = analysis.build_scoreboard();
+        let mut final_analysis = analysis;
+        for player in &mut final_analysis.state.players {
+            if let Some(stats) = scoreboard.get(&player.name) {
+                player.stats.1 = stats.kills;
+                player.stats.2 = stats.deaths;
+            }
+        }
+        Ok((final_analysis, diagnostics))
     }
 }
 
@@ -1024,7 +1251,6 @@ pub fn parse_fingerprint(bytes: &[u8]) -> Result<(String, String, u64, Vec<Strin
     let mut server_ip: Option<String> = None;
 
     let mut client_id_to_player_id: std::collections::HashMap<u8, String> = std::collections::HashMap::new();
-    let mut player_stats: std::collections::HashMap<u8, (i32, i32)> = std::collections::HashMap::new();
 
     let aux = dem::types::Aux::new2();
 
@@ -1113,32 +1339,9 @@ pub fn parse_fingerprint(bytes: &[u8]) -> Result<(String, String, u64, Vec<Strin
                                                         event_signature.clear();
                                                     }
                                                 }
-                                                dod::UserMessage::ScoreInfo(score) => {
-                                                    let had_stats = player_stats.values().any(|&(k, d)| k > 0 || d > 0);
-                                                    player_stats.insert(score.client_index, (score.kills as i32, score.deaths as i32));
-                                                    let all_zero = !player_stats.is_empty() && player_stats.values().all(|&(k, d)| k == 0 && d == 0);
-                                                    if had_stats && all_zero {
-                                                        match_started = true;
-                                                        event_signature.clear();
-                                                    }
-                                                }
-                                                dod::UserMessage::ScoreInfoLong(score) => {
-                                                    let had_stats = player_stats.values().any(|&(k, d)| k > 0 || d > 0);
-                                                    player_stats.insert(score.client_index, (score.frags as i32, score.deaths as i32));
-                                                    let all_zero = !player_stats.is_empty() && player_stats.values().all(|&(k, d)| k == 0 && d == 0);
-                                                    if had_stats && all_zero {
-                                                        match_started = true;
-                                                        event_signature.clear();
-                                                    }
-                                                }
-                                                dod::UserMessage::ScoreShort(score) => {
-                                                    let had_stats = player_stats.values().any(|&(k, d)| k > 0 || d > 0);
-                                                    player_stats.insert(score.client_index, (score.kills as i32, score.deaths as i32));
-                                                    let all_zero = !player_stats.is_empty() && player_stats.values().all(|&(k, d)| k == 0 && d == 0);
-                                                    if had_stats && all_zero {
-                                                        match_started = true;
-                                                        event_signature.clear();
-                                                    }
+                                                dod::UserMessage::RoundState(dod::RoundState::Reset) => {
+                                                    match_started = true;
+                                                    event_signature.clear();
                                                 }
                                                 dod::UserMessage::DeathMsg(death) => {
                                                     if match_started {
