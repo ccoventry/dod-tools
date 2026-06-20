@@ -28,7 +28,7 @@ pub fn player_details_ui(
     }
 
     let mut sorted_players: Vec<&Player> = players.iter().collect();
-    sorted_players.sort_by(|l, r| l.name.cmp(&r.name));
+    sorted_players.sort_by_cached_key(|p| (p.name.to_lowercase(), &p.name));
 
     // Persistent selected player ID
     let selected_player_id_key = egui::Id::new("player_details_selected_player_id");
