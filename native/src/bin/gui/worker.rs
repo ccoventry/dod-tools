@@ -5,7 +5,7 @@ use wasm_bindgen::JsCast;
 use egui::Context;
 use std::sync::mpsc;
 use crate::{Gui, GuiMessage, FileInfo};
-use crate::explorer::WebFile;
+use crate::tree::WebFile;
 use analysis::Analysis;
 
 #[wasm_bindgen]
@@ -32,7 +32,7 @@ pub fn pick_web_folder(ctx: Context, tx: mpsc::Sender<GuiMessage>) {
                         files.push(WebFile {
                             name,
                             path,
-                            js_file: crate::explorer::SendWrapper(file),
+                            js_file: crate::tree::SendWrapper(file),
                         });
                     }
                 }

@@ -79,6 +79,8 @@ pub struct CachedDemo {
     pub player_roster_hash: Option<u64>,
     #[serde(default)]
     pub event_signature: Option<Vec<String>>,
+    #[serde(default)]
+    pub recorder_id: Option<String>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Default, Debug)]
@@ -87,7 +89,7 @@ pub struct DemoCache {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DemoListItem {
     pub path: PathBuf,
     pub name: String,

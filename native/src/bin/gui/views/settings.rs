@@ -277,7 +277,7 @@ impl Gui {
                         #[cfg(not(target_arch = "wasm32"))]
                         {
                             self.subdir_cache.clear();
-                            self.explorer_demo_cache.clear();
+                            self.tree_demo_cache.clear();
                         }
                     }
                     ctx.request_repaint();
