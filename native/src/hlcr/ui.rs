@@ -46,10 +46,18 @@ pub struct HlcrState {
     pub ffmpeg_picker: egui_file_dialog::FileDialog,
     pub source_picker: egui_file_dialog::FileDialog,
     pub output_picker: egui_file_dialog::FileDialog,
+
+    pub cancel_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Default for HlcrState {
     fn default() -> Self {
+        Self::new(std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)))
+    }
+}
+
+impl HlcrState {
+    pub fn new(cancel_flag: std::sync::Arc<std::sync::atomic::AtomicBool>) -> Self {
         let (render_tx, render_rx) = mpsc::channel();
         Self {
             config: load_config(),
@@ -68,6 +76,7 @@ impl Default for HlcrState {
             ffmpeg_picker: egui_file_dialog::FileDialog::default().add_file_filter_extensions("Executables", vec!["exe"]),
             source_picker: egui_file_dialog::FileDialog::default(),
             output_picker: egui_file_dialog::FileDialog::default(),
+            cancel_flag,
         }
     }
 }
@@ -147,6 +156,11 @@ impl HlcrState {
     }
 
     pub fn update_channels(&mut self, ctx: &egui::Context) {
+        // Cascade global cancellation signal to all active render jobs
+        if self.cancel_flag.load(Ordering::Relaxed) && self.is_rendering {
+            self.cancel_all();
+        }
+
         // Update file pickers
         self.ffmpeg_picker.update(ctx);
         if let Some(path) = self.ffmpeg_picker.take_picked() {
@@ -283,8 +297,8 @@ impl HlcrState {
                         let config = self.config.clone();
                         let tx = self.render_tx.clone();
 
-                        std::thread::spawn(move || {
-                            run_render_job(job_id, clip, config, tx, cancel_flag);
+                        tokio::spawn(async move {
+                            run_render_job(job_id, clip, config, tx, cancel_flag).await;
                         });
 
                         started += 1;

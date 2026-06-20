@@ -1,11 +1,11 @@
 #![cfg(not(target_arch = "wasm32"))]
 
-use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
-use std::thread;
+use tokio::process::Command;
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 
 use super::config::{get_codec_preset, RenderConfig};
 use super::scanner::ClipData;
@@ -18,7 +18,7 @@ pub enum RenderUpdate {
     Finished(String, bool, Option<String>), // (job_id, success, error_log)
 }
 
-pub fn run_render_job(
+pub async fn run_render_job(
     job_id: String,
     clip: ClipData,
     config: RenderConfig,
@@ -120,6 +120,7 @@ pub fn run_render_job(
     ]);
 
     let mut cmd = Command::new(ffmpeg_path);
+    cmd.kill_on_drop(true);
     cmd.args(cmd_args);
     cmd.current_dir(&take_folder);
     cmd.stdout(Stdio::piped());
@@ -139,14 +140,14 @@ pub fn run_render_job(
         }
     };
 
-    // Spawn stderr reader thread to prevent deadlock
+    // Spawn stderr reader task to prevent deadlock
     let mut stderr_handle = child.stderr.take().unwrap();
     let stderr_log = Arc::new(Mutex::new(String::new()));
     let stderr_log_clone = Arc::clone(&stderr_log);
 
-    let stderr_thread = thread::spawn(move || {
+    tokio::spawn(async move {
         let mut buf = vec![0u8; 1024];
-        while let Ok(n) = stderr_handle.read(&mut buf) {
+        while let Ok(n) = stderr_handle.read(&mut buf).await {
             if n == 0 {
                 break;
             }
@@ -166,68 +167,90 @@ pub fn run_render_job(
     let mut current_fps = "0".to_string();
     let mut current_speed = "0x".to_string();
 
+    let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(200));
+
     loop {
-        // Check for process cancellation
-        if cancel_rx.load(Ordering::Relaxed) {
-            let _ = child.kill();
-            let _ = child.wait();
-            let _ = tx.send(RenderUpdate::Status(job_id.clone(), "Cancelled".to_string()));
-            let _ = tx.send(RenderUpdate::Finished(
-                job_id.clone(),
-                false,
-                Some("Cancelled by user".to_string()),
-            ));
-            let _ = stderr_thread.join();
-            return;
-        }
-
         line.clear();
-        match reader.read_line(&mut line) {
-            Ok(0) => break, // EOF
-            Ok(_) => {
-                let trimmed = line.trim();
-                if trimmed.is_empty() {
-                    continue;
-                }
-                if let Some(pos) = trimmed.find('=') {
-                    let key = trimmed[..pos].trim();
-                    let val = trimmed[pos + 1..].trim();
-
-                    match key {
-                        "frame" => {
-                            if let Ok(current_frame) = val.parse::<usize>() {
-                                let total_frames = clip.frame_count;
-                                if total_frames > 0 {
-                                    let percent = std::cmp::min(100, (current_frame * 100) / total_frames) as u32;
-                                    let _ = tx.send(RenderUpdate::Progress(job_id.clone(), percent));
-                                }
-                            }
-                        }
-                        "fps" => {
-                            current_fps = val.to_string();
-                            let _ = tx.send(RenderUpdate::Speed(
-                                job_id.clone(),
-                                format!("{} fps ({})", current_fps, current_speed),
-                            ));
-                        }
-                        "speed" => {
-                            current_speed = val.to_string();
-                            let _ = tx.send(RenderUpdate::Speed(
-                                job_id.clone(),
-                                format!("{} fps ({})", current_fps, current_speed),
-                            ));
-                        }
-                        _ => {}
-                    }
+        tokio::select! {
+            _ = interval.tick() => {
+                if cancel_rx.load(Ordering::Relaxed) {
+                    let _ = child.kill().await;
+                    let _ = child.wait().await;
+                    let _ = tx.send(RenderUpdate::Status(job_id.clone(), "Cancelled".to_string()));
+                    let _ = tx.send(RenderUpdate::Finished(
+                        job_id.clone(),
+                        false,
+                        Some("Cancelled by user".to_string()),
+                    ));
+                    return;
                 }
             }
-            Err(_) => break,
+            read_res = reader.read_line(&mut line) => {
+                match read_res {
+                    Ok(0) => break, // EOF
+                    Ok(_) => {
+                        let trimmed = line.trim();
+                        if trimmed.is_empty() {
+                            continue;
+                        }
+                        if let Some(pos) = trimmed.find('=') {
+                            let key = trimmed[..pos].trim();
+                            let val = trimmed[pos + 1..].trim();
+
+                            match key {
+                                "frame" => {
+                                    if let Ok(current_frame) = val.parse::<usize>() {
+                                        let total_frames = clip.frame_count;
+                                        if total_frames > 0 {
+                                            let percent = std::cmp::min(100, (current_frame * 100) / total_frames) as u32;
+                                            let _ = tx.send(RenderUpdate::Progress(job_id.clone(), percent));
+                                        }
+                                    }
+                                }
+                                "fps" => {
+                                    current_fps = val.to_string();
+                                    let _ = tx.send(RenderUpdate::Speed(
+                                        job_id.clone(),
+                                        format!("{} fps ({})", current_fps, current_speed),
+                                    ));
+                                }
+                                "speed" => {
+                                    current_speed = val.to_string();
+                                    let _ = tx.send(RenderUpdate::Speed(
+                                        job_id.clone(),
+                                        format!("{} fps ({})", current_fps, current_speed),
+                                    ));
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
         }
     }
 
-    // Wait for the process to exit
-    let exit_status = child.wait();
-    let _ = stderr_thread.join();
+    // Wait for the process to exit with cancellation check
+    let exit_status = loop {
+        tokio::select! {
+            res = child.wait() => {
+                break res;
+            }
+            _ = interval.tick() => {
+                if cancel_rx.load(Ordering::Relaxed) {
+                    let _ = child.kill().await;
+                    let _ = tx.send(RenderUpdate::Status(job_id.clone(), "Cancelled".to_string()));
+                    let _ = tx.send(RenderUpdate::Finished(
+                        job_id.clone(),
+                        false,
+                        Some("Cancelled by user".to_string()),
+                    ));
+                    return;
+                }
+            }
+        }
+    };
 
     let err_log = if let Ok(log) = stderr_log.lock() {
         if log.trim().is_empty() {

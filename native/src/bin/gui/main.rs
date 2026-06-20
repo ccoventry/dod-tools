@@ -1023,6 +1023,7 @@ struct Gui {
     auditor_state: AuditorState,
     #[cfg(not(target_arch = "wasm32"))]
     target_folder: String,
+    cancel_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 #[allow(dead_code)]
@@ -1338,6 +1339,7 @@ impl Gui {
 
 impl Default for Gui {
     fn default() -> Self {
+        let cancel_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let (tx, rx) = mpsc::channel();
         let settings = load_settings();
         apply_language_setting(&settings.language);
@@ -1446,7 +1448,7 @@ impl Default for Gui {
             #[cfg(not(target_arch = "wasm32"))]
             batch_export_picker: FileDialog::default(),
             #[cfg(not(target_arch = "wasm32"))]
-            hlcr_state: native::hlcr::HlcrState::default(),
+            hlcr_state: native::hlcr::HlcrState::new(cancel_flag.clone()),
             #[cfg(not(target_arch = "wasm32"))]
             auditor_state: AuditorState::Idle,
             #[cfg(not(target_arch = "wasm32"))]
@@ -1454,6 +1456,7 @@ impl Default for Gui {
                 .ok()
                 .map(|p| p.to_string_lossy().into_owned())
                 .unwrap_or_default(),
+            cancel_flag,
         }
     }
 }
@@ -1535,28 +1538,36 @@ pub fn handle_worker_message(data: wasm_bindgen::JsValue) {
         let path_clone = path.clone();
         let post_message_clone = post_message.clone();
         let start_time = web_time::SystemTime::now();
+        let last_update = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
         
         let progress_cb = move |processed: usize, total: usize| {
             if total > 0 {
-                let progress = processed as f32 / total as f32;
-                let elapsed_sec = start_time.elapsed().map(|d| d.as_secs_f32()).unwrap_or(0.0);
-                let eta_sec = if progress > 0.01 {
-                    let total_estimated_sec = elapsed_sec / progress;
-                    Some(total_estimated_sec - elapsed_sec)
-                } else {
-                    None
-                };
+                let elapsed_ms = start_time.elapsed().map(|d| d.as_millis() as u32).unwrap_or(0);
+                let last = last_update.load(std::sync::atomic::Ordering::Relaxed);
                 
-                let progress_obj = js_sys::Object::new();
-                js_sys::Reflect::set(&progress_obj, &"type".into(), &"progress".into()).unwrap();
-                js_sys::Reflect::set(&progress_obj, &"path".into(), &path_clone.clone().into()).unwrap();
-                js_sys::Reflect::set(&progress_obj, &"progress".into(), &progress.into()).unwrap();
-                js_sys::Reflect::set(&progress_obj, &"elapsedSec".into(), &elapsed_sec.into()).unwrap();
-                if let Some(eta) = eta_sec {
-                    js_sys::Reflect::set(&progress_obj, &"etaSec".into(), &eta.into()).unwrap();
+                // Force update at 100% completion or throttle to ~30fps (33ms)
+                if processed == total || elapsed_ms.saturating_sub(last) > 33 {
+                    last_update.store(elapsed_ms, std::sync::atomic::Ordering::Relaxed);
+                    let elapsed_sec = elapsed_ms as f32 / 1000.0;
+                    let progress = processed as f32 / total as f32;
+                    let eta_sec = if progress > 0.01 {
+                        let total_estimated_sec = elapsed_sec / progress;
+                        Some(total_estimated_sec - elapsed_sec)
+                    } else {
+                        None
+                    };
+                    
+                    let progress_obj = js_sys::Object::new();
+                    js_sys::Reflect::set(&progress_obj, &"type".into(), &"progress".into()).unwrap();
+                    js_sys::Reflect::set(&progress_obj, &"path".into(), &path_clone.clone().into()).unwrap();
+                    js_sys::Reflect::set(&progress_obj, &"progress".into(), &progress.into()).unwrap();
+                    js_sys::Reflect::set(&progress_obj, &"elapsedSec".into(), &elapsed_sec.into()).unwrap();
+                    if let Some(eta) = eta_sec {
+                        js_sys::Reflect::set(&progress_obj, &"etaSec".into(), &eta.into()).unwrap();
+                    }
+                    
+                    let _ = post_message_clone.call1(&js_sys::global(), &progress_obj);
                 }
-                
-                let _ = post_message_clone.call1(&js_sys::global(), &progress_obj);
             }
         };
         
@@ -2338,6 +2349,14 @@ impl Gui {
                                         ui.weak("Waiting to begin capture sequence...");
                                     });
                             }
+                            ui.add_space(12.0);
+
+                            ui.horizontal(|ui| {
+                                if ui.button(egui::RichText::new("🛑 Abort Capture Queue").color(egui::Color32::RED)).clicked() {
+                                    self.cancel_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                                    self.capture_studio_state = CaptureStudioState::ReviewingQueue;
+                                }
+                            });
                             ui.add_space(12.0);
 
                             // 3. Queue History & Error Reporting
@@ -4121,6 +4140,7 @@ impl eframe::App for Gui {
                         player_deaths_map.insert(item.id.clone(), deaths);
                     }
 
+                    self.cancel_flag.store(false, std::sync::atomic::Ordering::Relaxed);
                     start_capture_pipeline(
                         ctx.clone(),
                         self.tx.clone(),
@@ -4128,6 +4148,7 @@ impl eframe::App for Gui {
                         player_deaths_map,
                         self.settings.game_path.clone(),
                         self.settings.hlae_path.clone(),
+                        self.cancel_flag.clone(),
                     );
                 }
             }
@@ -4230,6 +4251,11 @@ impl eframe::App for Gui {
             }
         }
     }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.cancel_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -4245,25 +4271,33 @@ fn analyze_files_async(ctx: Context, tx: mpsc::Sender<GuiMessage>, paths: Vec<Pa
             let ctx_clone = ctx.clone();
             let path_str = demo_path.to_string_lossy().into_owned();
             let start_time = std::time::SystemTime::now();
+            let last_update = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
 
             let progress_cb = move |processed: usize, total: usize| {
                 if total > 0 {
-                    let progress = processed as f32 / total as f32;
-                    let elapsed_sec = start_time.elapsed().map(|d| d.as_secs_f32()).unwrap_or(0.0);
-                    let eta_sec = if progress > 0.01 {
-                        let total_estimated_sec = elapsed_sec / progress;
-                        Some(total_estimated_sec - elapsed_sec)
-                    } else {
-                        None
-                    };
+                    let elapsed_ms = start_time.elapsed().map(|d| d.as_millis() as u32).unwrap_or(0);
+                    let last = last_update.load(std::sync::atomic::Ordering::Relaxed);
+                    
+                    // Force update at 100% completion or throttle to ~30fps (33ms)
+                    if processed == total || elapsed_ms.saturating_sub(last) > 33 {
+                        last_update.store(elapsed_ms, std::sync::atomic::Ordering::Relaxed);
+                        let elapsed_sec = elapsed_ms as f32 / 1000.0;
+                        let progress = processed as f32 / total as f32;
+                        let eta_sec = if progress > 0.01 {
+                            let total_estimated_sec = elapsed_sec / progress;
+                            Some(total_estimated_sec - elapsed_sec)
+                        } else {
+                            None
+                        };
 
-                    let _ = tx_clone.send(GuiMessage::DemoParsingProgress {
-                        path: path_str.clone(),
-                        progress,
-                        elapsed_sec,
-                        eta_sec,
-                    });
-                    ctx_clone.request_repaint();
+                        let _ = tx_clone.send(GuiMessage::DemoParsingProgress {
+                            path: path_str.clone(),
+                            progress,
+                            elapsed_sec,
+                            eta_sec,
+                        });
+                        ctx_clone.request_repaint();
+                    }
                 }
             };
 
@@ -4409,6 +4443,7 @@ fn start_capture_pipeline(
     player_deaths_map: HashMap<String, Vec<f32>>,
     game_path: String,
     hlae_path: String,
+    cancel_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) {
     tokio::spawn(async move {
         let game_dir = match std::path::Path::new(&game_path).parent() {
@@ -4418,27 +4453,33 @@ fn start_capture_pipeline(
         let dod_dir = game_dir.join("dod");
 
         for item in enabled_items {
+            if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                return;
+            }
+
             let item_id = item.id.clone();
             let safe_output_name = item.output_name.replace("-", "_");
-            tx.send(GuiMessage::CapturePipelineUpdate {
+            if tx.send(GuiMessage::CapturePipelineUpdate {
                 item_id: item_id.clone(),
                 phase: CapturePhase::Patching,
                 sub_status: Some("Preparing folder structure...".to_string()),
                 debug_command: None,
                 error: None,
-            }).ok();
+            }).is_err() || cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                return;
+            }
             ctx.request_repaint();
 
             // Prepare absolute destination folder for HLAE frames
             let capture_dest = dod_dir.join("hlcr_captures").join(&safe_output_name);
             if let Err(e) = tokio::fs::create_dir_all(&capture_dest).await {
-                tx.send(GuiMessage::CapturePipelineUpdate {
+                let _ = tx.send(GuiMessage::CapturePipelineUpdate {
                     item_id: item_id.clone(),
                     phase: CapturePhase::Failed,
                     sub_status: None,
                     debug_command: None,
                     error: Some(format!("Failed to create capture folder: {}", e)),
-                }).ok();
+                });
                 ctx.request_repaint();
                 continue;
             }
@@ -4482,39 +4523,51 @@ fn start_capture_pipeline(
             };
 
             // Read source demo bytes
-            tx.send(GuiMessage::CapturePipelineUpdate {
+            if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                return;
+            }
+
+            if tx.send(GuiMessage::CapturePipelineUpdate {
                 item_id: item_id.clone(),
                 phase: CapturePhase::Patching,
                 sub_status: Some("Reading source demo file...".to_string()),
                 debug_command: None,
                 error: None,
-            }).ok();
+            }).is_err() || cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                return;
+            }
             ctx.request_repaint();
 
             let bytes_res = tokio::fs::read(&item.input_path).await;
             let bytes = match bytes_res {
                 Ok(b) => b,
                 Err(e) => {
-                    tx.send(GuiMessage::CapturePipelineUpdate {
+                    let _ = tx.send(GuiMessage::CapturePipelineUpdate {
                         item_id: item_id.clone(),
                         phase: CapturePhase::Failed,
                         sub_status: None,
                         debug_command: None,
                         error: Some(format!("Failed to read source demo: {}", e)),
-                    }).ok();
+                    });
                     ctx.request_repaint();
                     continue;
                 }
             };
 
             // Call patcher inside spawn_blocking
-            tx.send(GuiMessage::CapturePipelineUpdate {
+            if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                return;
+            }
+
+            if tx.send(GuiMessage::CapturePipelineUpdate {
                 item_id: item_id.clone(),
                 phase: CapturePhase::Patching,
                 sub_status: Some("Patching game demo commands...".to_string()),
                 debug_command: None,
                 error: None,
-            }).ok();
+            }).is_err() || cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                return;
+            }
             ctx.request_repaint();
 
             let intervals = vec![(item.start_time, item.stop_time)];
@@ -4525,72 +4578,78 @@ fn start_capture_pipeline(
             let patched_bytes = match patch_res {
                 Ok(Ok(b)) => b,
                 Ok(Err(e)) => {
-                    tx.send(GuiMessage::CapturePipelineUpdate {
+                    let _ = tx.send(GuiMessage::CapturePipelineUpdate {
                         item_id: item_id.clone(),
                         phase: CapturePhase::Failed,
                         sub_status: None,
                         debug_command: None,
                         error: Some(format!("Patching failed: {}", e)),
-                    }).ok();
+                    });
                     ctx.request_repaint();
                     continue;
                 }
                 Err(e) => {
-                    tx.send(GuiMessage::CapturePipelineUpdate {
+                    let _ = tx.send(GuiMessage::CapturePipelineUpdate {
                         item_id: item_id.clone(),
                         phase: CapturePhase::Failed,
                         sub_status: None,
                         debug_command: None,
                         error: Some(format!("Blocking task panicked: {}", e)),
-                    }).ok();
+                    });
                     ctx.request_repaint();
                     continue;
                 }
             };
 
             // Write patched demo to game's dod/ directory
-            tx.send(GuiMessage::CapturePipelineUpdate {
+            if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                return;
+            }
+
+            if tx.send(GuiMessage::CapturePipelineUpdate {
                 item_id: item_id.clone(),
                 phase: CapturePhase::Patching,
                 sub_status: Some("Copying demo to game folder...".to_string()),
                 debug_command: None,
                 error: None,
-            }).ok();
+            }).is_err() || cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                return;
+            }
             ctx.request_repaint();
 
             let patched_demo_path = dod_dir.join(&safe_output_name);
             if let Err(e) = tokio::fs::write(&patched_demo_path, patched_bytes).await {
-                tx.send(GuiMessage::CapturePipelineUpdate {
+                let _ = tx.send(GuiMessage::CapturePipelineUpdate {
                     item_id: item_id.clone(),
                     phase: CapturePhase::Failed,
                     sub_status: None,
                     debug_command: None,
                     error: Some(format!("Failed to write patched demo: {}", e)),
-                }).ok();
+                });
                 ctx.request_repaint();
                 continue;
             }
 
             // Diagnostic checks for HLAE and DoD executables existence
             if !std::path::Path::new(&hlae_path).exists() {
-                tx.send(GuiMessage::CapturePipelineUpdate {
+                let _ = tx.send(GuiMessage::CapturePipelineUpdate {
                     item_id: item_id.clone(),
                     phase: CapturePhase::Failed,
                     sub_status: None,
                     debug_command: None,
                     error: Some(format!("HLAE executable not found at: {}", hlae_path)),
-                }).ok();
+                });
                 ctx.request_repaint();
                 continue;
             }
             if !std::path::Path::new(&game_path).exists() {
-                tx.send(GuiMessage::CapturePipelineUpdate {
+                let _ = tx.send(GuiMessage::CapturePipelineUpdate {
                     item_id: item_id.clone(),
                     phase: CapturePhase::Failed,
                     sub_status: None,
                     debug_command: None,
                     error: Some(format!("DoD executable (hl.exe) not found at: {}", game_path)),
-                }).ok();
+                });
                 ctx.request_repaint();
                 continue;
             }
@@ -4631,13 +4690,19 @@ fn start_capture_pipeline(
             );
 
             // Launch HLAE sequential capture
-            tx.send(GuiMessage::CapturePipelineUpdate {
+            if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                return;
+            }
+
+            if tx.send(GuiMessage::CapturePipelineUpdate {
                 item_id: item_id.clone(),
                 phase: CapturePhase::HlaeCapture,
                 sub_status: Some("Launching HLAE...".to_string()),
                 debug_command: Some(debug_command_str),
                 error: None,
-            }).ok();
+            }).is_err() || cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                return;
+            }
             ctx.request_repaint();
 
             match cmd.spawn() {
@@ -4649,13 +4714,20 @@ fn start_capture_pipeline(
                                 break res;
                             }
                             _ = interval.tick() => {
-                                tx.send(GuiMessage::CapturePipelineUpdate {
+                                if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                                    let _ = child.kill().await;
+                                    return;
+                                }
+                                if tx.send(GuiMessage::CapturePipelineUpdate {
                                     item_id: item_id.clone(),
                                     phase: CapturePhase::HlaeCapture,
                                     sub_status: Some("HLAE process active, waiting for completion...".to_string()),
                                     debug_command: None,
                                     error: None,
-                                }).ok();
+                                }).is_err() {
+                                    let _ = child.kill().await;
+                                    return;
+                                }
                                 ctx.request_repaint();
                             }
                         }
@@ -4664,56 +4736,62 @@ fn start_capture_pipeline(
                     match wait_res {
                         Ok(status) => {
                             if !status.success() {
-                                tx.send(GuiMessage::CapturePipelineUpdate {
+                                let _ = tx.send(GuiMessage::CapturePipelineUpdate {
                                     item_id: item_id.clone(),
                                     phase: CapturePhase::Failed,
                                     sub_status: None,
                                     debug_command: None,
                                     error: Some(format!("HLAE exited with non-zero status: {}", status)),
-                                }).ok();
+                                });
                                 ctx.request_repaint();
                                 continue;
                             }
                         }
                         Err(e) => {
-                            tx.send(GuiMessage::CapturePipelineUpdate {
+                            let _ = tx.send(GuiMessage::CapturePipelineUpdate {
                                 item_id: item_id.clone(),
                                 phase: CapturePhase::Failed,
                                 sub_status: None,
-                                debug_command: None,
+                                    debug_command: None,
                                 error: Some(format!("Failed to wait for HLAE: {}", e)),
-                            }).ok();
+                            });
                             ctx.request_repaint();
                             continue;
                         }
                     }
                 }
                 Err(e) => {
-                    tx.send(GuiMessage::CapturePipelineUpdate {
+                    let _ = tx.send(GuiMessage::CapturePipelineUpdate {
                         item_id: item_id.clone(),
                         phase: CapturePhase::Failed,
                         sub_status: None,
                         debug_command: None,
                         error: Some(format!("Failed to spawn HLAE: {}", e)),
-                    }).ok();
+                    });
                     ctx.request_repaint();
                     continue;
                 }
             }
 
             // Mark this item complete
-            tx.send(GuiMessage::CapturePipelineUpdate {
+            if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                return;
+            }
+
+            if tx.send(GuiMessage::CapturePipelineUpdate {
                 item_id: item_id.clone(),
                 phase: CapturePhase::Complete,
                 sub_status: Some("Capture complete!".to_string()),
                 debug_command: None,
                 error: None,
-            }).ok();
+            }).is_err() || cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                return;
+            }
             ctx.request_repaint();
         }
 
         // Notify that the entire queue has completed HLAE capture
-        tx.send(GuiMessage::CaptureStudioFinished).ok();
+        let _ = tx.send(GuiMessage::CaptureStudioFinished);
         ctx.request_repaint();
     });
 }
