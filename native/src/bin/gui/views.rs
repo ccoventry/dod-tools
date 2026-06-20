@@ -124,33 +124,39 @@ pub fn report_ui(
     });
 
     ui.horizontal(|ui| {
-        ui.selectable_value(
-            &mut current_tab,
-            "Summary".to_string(),
-            t("#app_tab_summary"),
-        );
-        ui.selectable_value(
-            &mut current_tab,
-            "Scoreboard".to_string(),
-            t("#app_tab_scoreboard"),
-        );
-        ui.selectable_value(
-            &mut current_tab,
-            "Player Details".to_string(),
-            t("#app_tab_player_details"),
-        );
-        ui.selectable_value(
-            &mut current_tab,
-            "Team Details".to_string(),
-            t("#app_tab_team_details"),
-        );
-        ui.selectable_value(
-            &mut current_tab,
-            "Timeline".to_string(),
-            t("#app_tab_timeline"),
-        );
-        ui.selectable_value(&mut current_tab, "Rounds".to_string(), t("#app_tab_rounds"));
-        ui.selectable_value(&mut current_tab, "Chat Log".to_string(), t("#app_tab_chat"));
+        let tabs = [
+            ("Summary", t("#app_tab_summary")),
+            ("Scoreboard", t("#app_tab_scoreboard")),
+            ("Player Details", t("#app_tab_player_details")),
+            ("Team Details", t("#app_tab_team_details")),
+            ("Timeline", t("#app_tab_timeline")),
+            ("Rounds", t("#app_tab_rounds")),
+            ("Chat Log", t("#app_tab_chat")),
+        ];
+
+        for (val, label) in tabs {
+            let is_active = current_tab == val;
+            let text = egui::RichText::new(&label);
+            let text = if is_active {
+                text.color(ui.visuals().selection.bg_fill).strong()
+            } else {
+                text.color(ui.visuals().widgets.noninteractive.text_color())
+            };
+            
+            let response = ui.add(egui::Label::new(text).sense(egui::Sense::click()));
+            if response.hovered() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
+            if response.clicked() {
+                current_tab = val.to_string();
+            }
+            if is_active {
+                let rect = response.rect;
+                let stroke = egui::Stroke::new(2.0, ui.visuals().selection.bg_fill);
+                ui.painter().hline(rect.left()..=rect.right(), rect.bottom(), stroke);
+            }
+            ui.add_space(12.0);
+        }
     });
 
     ui.separator();
