@@ -31,3 +31,6 @@ hlcr_config.json
 Thumbs.db
 Desktop.ini
 
+# === Local / Personal Files ===
+/local/
+
