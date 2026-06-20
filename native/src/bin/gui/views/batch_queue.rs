@@ -317,7 +317,7 @@ pub fn batch_queue_ui(
                                     item.pre_record_buffer = settings.capture_pre_record_buffer;
                                     item.record_start_lead = settings.capture_record_start_lead;
                                     item.record_stop_trail = settings.capture_record_stop_trail;
-                                    item.post_record_buffer = settings.capture_post_record_buffer;
+                                    item.post_record_buffer = settings.post_record_buffer;
                                 }
                             });
                     });

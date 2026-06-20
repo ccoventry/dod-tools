@@ -22,6 +22,8 @@ Below are the remaining open tasks in the backlog, structured as a clean, scanna
 | **M23** | 🟡 **Medium** | **Premium UI Cards & Accent Tab Styling** | GUI / Layout | Restyle the GUI tabs and summary blocks to use modern metrics cards and colored underline active tab accents. | Redesign the tab headers and player overview cards using styled `egui::Frame` panels and draw active state underline strokes using egui painter. (See detailed spec below). |
 | **M25** | 🟡 **Medium** | **Graceful Demo Corruption & High-Bit Flags Recovery** | Parser / Core | Handle corrupted frames or non-standard `0x800000` bitflags in network `message_length` fields instead of failing the entire parse. | Re-enable/refactor graceful parser frame-skipping inside `dem-patch/src/demo_parser.rs` or implement a parser mask/repair option. (See detailed spec below). |
 | **M30** | 🟡 **Medium** | **Centralize Cache Path** | Core / OS | Replace the hardcoded relative `.dod-tools-cache.json` path with a centralized user profile directory (e.g., using the `dirs` crate for AppData/Local) to prevent duplicate caches when launching from different directories. | Update cached database loading and serializing to locate and create the config cache inside a central OS path structure. |
+| **M31** | 🟡 **Medium** | **Extract POV Stats Tracking** | Parser / Core | Extract POV analytics state management from the monolithic `analysis/src/lib.rs` into `analysis/src/pov.rs`. | Move `use_pov_stats_updates` and `PovStats` into `analysis/src/pov.rs` to simplify core analysis orchestration loop. |
+| **M32** | 🟡 **Medium** | **Deconstruct Player Details Tab Monolith** | GUI / Layout | Split the large `native/src/bin/gui/views/player_details.rs` into separate component files. | Move weapon grids rendering and killstreaks listing with filter checkboxes to `views/player_details/weapon_grid.rs` and `views/player_details/killstreaks.rs`. |
 | **H1** | 🔴 **Hard** | **Combine Weapon & POV Tabs** | GUI / Layout | Merge "Weapon Breakdowns" and "POV Analytics" into a player dropdown selector. Show extra POV stats with visual notes only when the POV player is chosen. | Merge `views/weapons.rs` and `views/pov.rs` into a unified player details view. Add dynamic checks to append the POV analytics grid when the POV player is active. |
 | **H2** | 🔴 **Hard** | **Objective Capture Timelines** | Parser / GUI | Track flags captured (`CapMsg`) and interruptions (`CancelProg`) to display objective capture timelines. | Track `CapMsg` and `CancelProg` network messages in `analysis/src/lib.rs` and build a horizontal time-based timeline widget in the GUI. |
 | **H3** | 🔴 **Hard** | **Objective Capture Timelines** | Parser / Core | Trace POV ammo box creation/pickup/decay timelines by decoding delta packet updates (`SvcDeltaPacketEntities`). | Parse `SvcPacketEntities` updates and `SvcDeltaPacketEntities` decoders in `analysis/src/lib.rs` to map `models/w_ammobox.mdl` lifetimes. |
@@ -84,7 +86,7 @@ Below is a history of all successfully implemented and verified tasks.
 | **[x] M29** | 🟡 **Medium** | **Categorized Weapon Filters** | GUI / Streaks | Grouped weapon filters by category (Grenades, Melee, Allied, Axis) and added Select All/Clear All functionality. | *Completed:* Grouped weapon selection checkbox elements inside logical UI panels and introduced master toggles. |
 | **[x] H11** | 🔴 **Hard** | **Process Manager Graceful Shutdown** | Core / Threading | Fix silent channel drop failures in `main.rs` to ensure spawned background processes (`hlae.exe`/`hl.exe`/`ffmpeg.exe`) are explicitly killed if the main GUI application is closed or the user aborts. | *Completed:* Secured HLAE and FFmpeg tokio tasks with a global `Arc<AtomicBool>` cancel flag, ensuring child processes are killed immediately on cancellation or when UI channels are dropped. |
 | **[x] H8** | 🔴 **Hard** | **Background Threaded Demo Loading** | GUI / Threading | Prevent the GUI main thread from freezing when loading large demos. Move demo parsing to a background thread and report progress steps/percentage to the UI spinner/bar. | *Completed:* Implemented asynchronous background parsing pipelines with 30fps MPSC channel debouncing to eliminate UI freezing. |
-
+| **[x] M33** | 🟡 **Medium** | **Modularize GUI Entrypoint (main.rs)** | GUI / Layout | Re-organize the monolithic 4,800+ line main.rs file into smaller self-contained modules without altering app behaviors. | *Completed:* Created types.rs, settings.rs, worker.rs, pipeline.rs, views/settings.rs, and views/capture_studio.rs. Cleaned up duplicate pipeline declarations, fixed settings.post_record_buffer field mismatch, and resolved unused target-specific imports. |
 
 ---
 
@@ -738,3 +740,52 @@ Abandon filesystem dates. Cluster demos by analyzing the immutable game data emb
    - Render the cluster parent node with a specific layout (e.g., `🎮 Match: dod_anzio — 192.168.1.100:27015`).
    - Clicking the parent node expands it to reveal the contained demos (`🎥 HLTV Perspective`, `🧑 kaboom POV`, etc.).
    - Add a context menu (Right-Click) to the virtual parent node: "Export all perspectives for this match to Batch Queue".
+
+---
+
+### 18. Extract POV Stats Tracking [M31 - 🟡 Medium]
+
+#### The Problem
+The analysis library's entrypoint [lib.rs](file:///d:/Repos/dod-tools/analysis/src/lib.rs) has grown extremely large (~58 KB, 1,300+ lines). It handles round parsing, connection events, mortality tracking, scoreboard sorting, and POV-specific statistics. The POV stats compilation is distinct and operates on separate structs: `WeaponPovStats`, `PovStats`, and the updates dispatcher `use_pov_stats_updates`. Moving this out of the root library module will improve developer cognitive load and simplify compilation tests.
+
+#### Refactoring Plan
+1. **Create Module File**: Create [analysis/src/pov.rs](file:///d:/Repos/dod-tools/analysis/src/pov.rs) to house the types and logic.
+2. **Move Data Structures**:
+   - Transfer `WeaponPovStats` and `PovStats` definitions.
+   - Relocate the `use_pov_stats_updates` processing function.
+3. **Manage Imports**:
+   - Ensure `pov.rs` imports necessary structures from the parent workspace (`Weapon`, `AnalyzerEvent`, `AnalyzerState`, etc.).
+4. **Declare Module**:
+   - In [lib.rs](file:///d:/Repos/dod-tools/analysis/src/lib.rs), declare the module:
+     ```rust
+     pub mod pov;
+     ```
+   - Change `AnalyzerState`'s inner field to reference `pov::PovStats` or re-export the structures to avoid breaking CLI/GUI usage:
+     ```rust
+     pub use pov::{PovStats, WeaponPovStats};
+     ```
+5. **Verify**:
+   - Ensure the library compiles without errors: `cargo check -p analysis`.
+
+---
+
+### 19. Deconstruct Player Details Tab Monolith [M32 - 🟡 Medium]
+
+#### The Problem
+The [player_details.rs](file:///d:/Repos/dod-tools/native/src/bin/gui/views/player_details.rs) view has grown to over 780 lines of nested UI tree rendering logic. It handles multiple disjoint widgets, including the dropdown switcher, Steam ID profile links, the main stats card layout, the weapon usage data tables, weapon filter controls, and the detail-dense killstreak timeline lists. This makes modifying any individual segment difficult without risking breaking layout coordinates in adjacent widgets.
+
+#### Refactoring Plan
+1. **Establish View Module Structure**:
+   - Create a subfolder structure [native/src/bin/gui/views/player_details/](file:///d:/Repos/dod-tools/native/src/bin/gui/views/player_details/) to hold individual components.
+   - Alternatively, add sub-modules within the `views` directory directly if preferred. The subfolder approach is recommended:
+     - `hero_card.rs`: Render player header metadata, Steam profile/Legit-Proof links, and connection status.
+     - `stat_cards.rs`: Render score, kills, deaths, K/D badge, and lifespan card.
+     - `weapon_breakdown.rs`: Render the weapon usage table and percentage progress bars.
+     - `kill_streaks.rs`: Render weapon checkboxes, streak timelines, tick intervals, and action buttons.
+2. **Decouple Main entrypoint**:
+   - Keep the primary `pub fn player_details_ui` within the root [player_details.rs](file:///d:/Repos/dod-tools/native/src/bin/gui/views/player_details.rs) file to manage state coordination (e.g., selected IDs, caching invalidation).
+   - delegate rendering tasks to the sub-modules.
+3. **WASM Compatibility**:
+   - Ensure that the conditional `#[cfg(not(target_arch = "wasm32"))]` blocks on the action buttons (HLAE sequence exporter and queue batching) are properly preserved inside the sub-module.
+4. **Verify**:
+   - Run compilation: `cargo check --bin dod-tools-gui` and `cargo check --target wasm32-unknown-unknown --bin dod-tools-gui`.
