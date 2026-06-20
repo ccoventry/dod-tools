@@ -995,6 +995,24 @@ impl AnalyzerState {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct DemoFingerprint {
+    pub map_name: String,
+    pub server_ip: String,
+    pub player_roster_hash: u64,
+    pub event_signature: Vec<String>,
+}
+
+pub fn extract_match_fingerprint(_bytes: &[u8]) -> Result<DemoFingerprint, String> {
+    // TODO:
+    // 1. Read header
+    // 2. Stream SvcServerInfo
+    // 3. Hash ScoreInfo
+    // 4. Capture 10 DeathMsgs
+    // 5. Early exit
+    Err("Not yet implemented: Partial parse early exit scaffolding".to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

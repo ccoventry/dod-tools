@@ -73,6 +73,12 @@ pub struct CachedDemo {
     pub demo_type: String,
     pub size_bytes: u64,
     pub modified_ms: u64,
+    #[serde(default)]
+    pub server_ip: Option<String>,
+    #[serde(default)]
+    pub player_roster_hash: Option<u64>,
+    #[serde(default)]
+    pub event_signature: Option<Vec<String>>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Default, Debug)]
