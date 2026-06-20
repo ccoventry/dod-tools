@@ -1,8 +1,0 @@
-{
-    "ffmpeg_path": "ffmpeg",
-    "source_folder": "G:/DICEWSOD25/02_Audio_Video",
-    "output_folder": "F:/DICEWSOD25/02_Audio_Video/01_Clips/03_Unsorted",
-    "fps": 300,
-    "codec": "prores",
-    "max_concurrent_renders": 3
-}
