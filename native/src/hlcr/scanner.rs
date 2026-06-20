@@ -13,6 +13,7 @@ pub struct ClipData {
     pub wav_file: String,
     pub base_name: String,
     pub frame_count: usize,
+    pub date: String,
 }
 
 pub fn scan_folder_background(
@@ -116,6 +117,7 @@ pub fn scan_folder_background(
         if folder_names.contains_key("all") && folder_names.contains_key("hudcolor") && folder_names.contains_key("hudalpha") {
             let all_folder = folder_names.get("all").unwrap();
             let frame_count = count_bmps(all_folder);
+            let date = get_clip_date(all_folder);
 
             let clip_all = ClipData {
                 take_folder: take_folder.to_string_lossy().into_owned(),
@@ -124,6 +126,7 @@ pub fn scan_folder_background(
                 wav_file: wav_to_use.clone(),
                 base_name: base_name.clone(),
                 frame_count,
+                date: date.clone(),
             };
             let _ = tx.send(clip_all);
             count += 1;
@@ -135,6 +138,7 @@ pub fn scan_folder_background(
                 wav_file: wav_to_use.clone(),
                 base_name: base_name.clone(),
                 frame_count,
+                date: date.clone(),
             };
             let _ = tx.send(clip_hud);
             count += 1;
@@ -150,6 +154,7 @@ pub fn scan_folder_background(
         for img_folder in image_folders {
             let frame_count = count_bmps(&img_folder);
             let folder_name = img_folder.file_name().unwrap_or_default().to_string_lossy().into_owned();
+            let date = get_clip_date(&img_folder);
             let clip = ClipData {
                 take_folder: take_folder.to_string_lossy().into_owned(),
                 clip_type: "single".to_string(),
@@ -157,6 +162,7 @@ pub fn scan_folder_background(
                 wav_file: wav_to_use.clone(),
                 base_name: base_name.clone(),
                 frame_count,
+                date,
             };
             let _ = tx.send(clip);
             count += 1;
@@ -183,4 +189,16 @@ fn count_bmps(folder: &Path) -> usize {
         }
     }
     count
+}
+
+fn get_clip_date(img_folder_path: &Path) -> String {
+    let bmp_path = img_folder_path.join("00000.bmp");
+    if let Ok(metadata) = std::fs::metadata(&bmp_path).or_else(|_| std::fs::metadata(img_folder_path)) {
+        if let Ok(created) = metadata.created().or_else(|_| metadata.modified()) {
+            return chrono::DateTime::<chrono::Local>::from(created)
+                .format("%Y-%m-%d %I:%M %p")
+                .to_string();
+        }
+    }
+    "-".to_string()
 }

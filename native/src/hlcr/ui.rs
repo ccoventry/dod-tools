@@ -16,6 +16,7 @@ pub struct RenderJobState {
     pub name: String,
     pub stream: String,
     pub frames: usize,
+    pub date: String,
     pub status: String,
     pub speed: String,
     pub progress: u32,
@@ -118,7 +119,7 @@ impl HlcrState {
 
         // Reset completed status values
         for job in &mut self.jobs {
-            if job.status == "Finished" || job.status == "Error" || job.status == "Cancelled" {
+            if job.status == "Finished" || job.status == "Error" {
                 job.status = "Queued".to_string();
                 job.progress = 0;
                 job.speed = "".to_string();
@@ -152,6 +153,16 @@ impl HlcrState {
             if job.status == "Queued" {
                 job.status = "Cancelled".to_string();
             }
+        }
+    }
+
+    pub fn reset_job(&mut self, job_id: &str) {
+        if let Some(job) = self.jobs.iter_mut().find(|j| j.id == job_id) {
+            job.status = "Queued".to_string();
+            job.progress = 0;
+            job.speed = "".to_string();
+            job.error_log = None;
+            job.cancel_flag = Arc::new(AtomicBool::new(false));
         }
     }
 
@@ -194,6 +205,7 @@ impl HlcrState {
                         clip.img_folder.clone()
                     },
                     frames: clip.frame_count,
+                    date: clip.date.clone(),
                     status: "Queued".to_string(),
                     speed: "".to_string(),
                     progress: 0,
@@ -418,6 +430,7 @@ impl HlcrState {
                 .column(Column::initial(300.0).resizable(true).clip(true)) // Clip Name
                 .column(Column::initial(80.0).resizable(true)) // Stream
                 .column(Column::initial(80.0).resizable(true)) // Frames
+                .column(Column::initial(140.0).resizable(true)) // Date
                 .column(Column::initial(80.0).resizable(true)) // Status
                 .column(Column::initial(80.0).resizable(true)) // Speed
                 .column(Column::initial(150.0).resizable(false)) // Progress
@@ -426,6 +439,7 @@ impl HlcrState {
                     header.col(|ui| { ui.strong("Clip Name"); });
                     header.col(|ui| { ui.strong("Stream"); });
                     header.col(|ui| { ui.strong("Frames"); });
+                    header.col(|ui| { ui.strong("Date"); });
                     header.col(|ui| { ui.strong("Status"); });
                     header.col(|ui| { ui.strong("Speed"); });
                     header.col(|ui| { ui.strong("Progress"); });
@@ -434,13 +448,14 @@ impl HlcrState {
                 .body(|body| {
                     body.rows(24.0, self.jobs.len(), |mut row| {
                         let idx = row.index();
-                        let (job_id, name, stream, frames, status, speed, progress, has_error) = {
+                        let (job_id, name, stream, frames, date, status, speed, progress, has_error) = {
                             let job = &self.jobs[idx];
                             (
                                 job.id.clone(),
                                 job.name.clone(),
                                 job.stream.clone(),
                                 job.frames,
+                                job.date.clone(),
                                 job.status.clone(),
                                 job.speed.clone(),
                                 job.progress,
@@ -451,6 +466,7 @@ impl HlcrState {
                         row.col(|ui| { ui.label(&name); });
                         row.col(|ui| { ui.label(&stream); });
                         row.col(|ui| { ui.label(frames.to_string()); });
+                        row.col(|ui| { ui.label(&date); });
 
                         row.col(|ui| {
                             let color = match status.as_str() {
@@ -474,6 +490,10 @@ impl HlcrState {
                                 if status == "Rendering" || status == "Queued" {
                                     if ui.button("✖").clicked() {
                                         self.cancel_job(&job_id);
+                                    }
+                                } else if status == "Cancelled" || status == "Finished" || status == "Error" {
+                                    if ui.button("🔄").on_hover_text("Reset to Queued").clicked() {
+                                        self.reset_job(&job_id);
                                     }
                                 }
 
