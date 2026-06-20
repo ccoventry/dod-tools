@@ -40,6 +40,7 @@ Maintain strict separation of concerns across workspace crates:
 ## 6. BATCH PROCESSING & QUEUE RULES (TOKEN PROTECTION)
 - **Dry-Run Default:** When building or modifying batch jobs (e.g., processing multiple `.dem` files), always implement and test a dry-run mode first (printing target files and calculated timestamps to the terminal) before enabling heavy HLAE execution commands.
 - **Fail-Safe Iteration:** Ensure batch loops include error bypassing (using `match` or `if let`). If a single `.dem` file fails to parse, log the error and continue to the next file. Do not allow a single file failure to crash the loop.
+- **Settings Buffer logic:** Any configuration UI edits (general preferences, game/HLAE executable directories) must be loaded into a temporary/draft buffer (`draft_settings`) in the GUI state and only persisted to disk (`settings.json`) upon explicit confirmation (e.g., a "Save Settings" click) to prevent excessive disk I/O.
 
 ## 7. TERMINAL & CONTEXT INTERACTION RULES
 1. I have an automated profile script that saves terminal error/success output to unique files inside the root `scratch/` folder.
@@ -48,6 +49,7 @@ Maintain strict separation of concerns across workspace crates:
 4. When a `tuf` command is used, instruct me: "Run the command. Once it finishes, type 'done' and I will automatically analyze the newest file generated in your scratch directory."
 5. **Strict File Ingestion:** On the turn immediately following a `tuf` execution confirmation, look inside the `scratch/` folder, sort by creation date, and pull the single newest `output_*.txt` file. **Crucial Limit:** Do NOT read the entire file if it is a compiler error. You must explicitly limit your read to the final 30 lines, or specifically grep/extract only the blocks containing the string `error[`.
 6. Always format terminal or PowerShell commands in a standard Markdown code block (e.g. using triple backticks) so they can be easily copied or run. For administrative/deployment actions that the user will execute via the paste/run button, always format them as a single-line command (using semicolons `;` to chain them if necessary).
+7. **Terminal Integration Single-Line Rule:** Multi-step sequences or task pipelines executed via terminal commands must be collapsed into a single, chained line (using semicolons `;` as separators in PowerShell) to ensure one-click execution capability for the user.
 
 ## 8. CONTEXT HANDOFF PROTOCOL
 If the user prompts with exactly `Initiate Context Handoff`, you must immediately stop all current tasks and generate a minified context payload designed to seed a new chat window. 
