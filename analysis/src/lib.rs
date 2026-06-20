@@ -1003,14 +1003,212 @@ pub struct DemoFingerprint {
     pub event_signature: Vec<String>,
 }
 
-pub fn extract_match_fingerprint(_bytes: &[u8]) -> Result<DemoFingerprint, String> {
-    // TODO:
-    // 1. Read header
-    // 2. Stream SvcServerInfo
-    // 3. Hash ScoreInfo
-    // 4. Capture 10 DeathMsgs
-    // 5. Early exit
-    Err("Not yet implemented: Partial parse early exit scaffolding".to_string())
+pub fn parse_fingerprint(bytes: &[u8]) -> Result<(String, String, u64, Vec<String>, Option<String>), std::io::Error> {
+    let (mut input, header) = dem::demo_parser::parse_header(bytes)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
+
+    let map_name = String::from_utf8_lossy(header.map_name.as_slice())
+        .trim_end_matches('\0')
+        .trim_start_matches("maps/")
+        .trim_end_matches(".bsp")
+        .to_string();
+
+    let mut match_started = false;
+    let mut frames_parsed: u32 = 0;
+    let patience_limit: u32 = 15_000;
+    let mut client_slot: Option<u8> = None;
+    let mut recorder_id: Option<String> = None;
+    let mut roster_accumulator: Vec<String> = Vec::new();
+    let mut event_signature: Vec<String> = Vec::with_capacity(10);
+    let mut server_ip: Option<String> = None;
+
+    let mut client_id_to_player_id: std::collections::HashMap<u8, String> = std::collections::HashMap::new();
+    let mut player_stats: std::collections::HashMap<u8, (i32, i32)> = std::collections::HashMap::new();
+
+    let aux = dem::types::Aux::new2();
+
+    while !input.is_empty() {
+        match dem::demo_parser::parse_frame(input, dem::types::MessageDataParseMode::Parse, aux.clone()) {
+            Ok((next_input, frame)) => {
+                input = next_input;
+                frames_parsed += 1;
+
+                if let dem::types::FrameData::NetworkMessage(box_type) = &frame.frame_data {
+                    if let dem::types::MessageData::Parsed(msgs) = &box_type.1.messages {
+                        for net_msg in msgs {
+                            match net_msg {
+                                dem::types::NetMessage::EngineMessage(engine_msg) => {
+                                    match &**engine_msg {
+                                        dem::types::EngineMessage::SvcServerInfo(info) => {
+                                            let hostname = String::from_utf8_lossy(&info.hostname)
+                                                .trim_end_matches('\0')
+                                                .to_string();
+                                            if let Some(addr) = extract_ip_port(&hostname) {
+                                                server_ip = Some(addr);
+                                            }
+                                            client_slot = Some(info.player_index);
+                                        }
+                                        dem::types::EngineMessage::SvcUpdateUserInfo(user_info) => {
+                                            let fields = user_info
+                                                .user_info
+                                                .to_str()
+                                                .map(|s| s.trim_matches(['\0', '\\']).split('\\').collect::<Vec<_>>())
+                                                .unwrap_or_default()
+                                                .chunks_exact(2)
+                                                .fold(std::collections::HashMap::new(), |mut map, chunk| {
+                                                    if let [key, value] = chunk {
+                                                        map.insert(*key, *value);
+                                                    }
+                                                    map
+                                                });
+
+                                            if fields.is_empty() {
+                                                client_id_to_player_id.remove(&user_info.index);
+                                                continue;
+                                            }
+
+                                            // Skip HLTV slots from roster
+                                            if let Some(&"1") = fields.get("*hltv") {
+                                                continue;
+                                            }
+
+                                            let id_opt = fields
+                                                .get("*sid")
+                                                .map(|s| s.to_string())
+                                                .or_else(|| fields.get("*fid").map(|fid| format!("PLAYER_{fid}")))
+                                                .or_else(|| fields.get("name").map(|n| n.to_string()));
+
+                                            if let Some(id) = id_opt {
+                                                if Some(user_info.index) == client_slot {
+                                                    recorder_id = Some(id.clone());
+                                                }
+                                                client_id_to_player_id.insert(user_info.index, id.clone());
+                                                if !roster_accumulator.contains(&id) {
+                                                    roster_accumulator.push(id);
+                                                }
+                                            }
+                                        }
+                                        dem::types::EngineMessage::SvcStuffText(stuff) => {
+                                            let cmd = String::from_utf8_lossy(stuff.command.as_slice());
+                                            if let Some(addr) = extract_ip_port(&cmd) {
+                                                server_ip = Some(addr);
+                                            }
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                                dem::types::NetMessage::UserMessage(user_msg) => {
+                                    if is_relevant_message(user_msg.name.as_ref()) {
+                                        if let Ok(msg) = dod::UserMessage::new(&user_msg.name, &user_msg.data) {
+                                            match msg {
+                                                dod::UserMessage::TextMsg(text_msg) => {
+                                                    let is_commencing = text_msg.text.contains("#Game_Commencing")
+                                                        || text_msg.arg1.as_ref().map_or(false, |s| s.contains("#Game_Commencing"))
+                                                        || text_msg.arg2.as_ref().map_or(false, |s| s.contains("#Game_Commencing"))
+                                                        || text_msg.arg3.as_ref().map_or(false, |s| s.contains("#Game_Commencing"))
+                                                        || text_msg.arg4.as_ref().map_or(false, |s| s.contains("#Game_Commencing"));
+                                                    if is_commencing {
+                                                        match_started = true;
+                                                        event_signature.clear();
+                                                    }
+                                                }
+                                                dod::UserMessage::ScoreInfo(score) => {
+                                                    let had_stats = player_stats.values().any(|&(k, d)| k > 0 || d > 0);
+                                                    player_stats.insert(score.client_index, (score.kills as i32, score.deaths as i32));
+                                                    let all_zero = !player_stats.is_empty() && player_stats.values().all(|&(k, d)| k == 0 && d == 0);
+                                                    if had_stats && all_zero {
+                                                        match_started = true;
+                                                        event_signature.clear();
+                                                    }
+                                                }
+                                                dod::UserMessage::ScoreInfoLong(score) => {
+                                                    let had_stats = player_stats.values().any(|&(k, d)| k > 0 || d > 0);
+                                                    player_stats.insert(score.client_index, (score.frags as i32, score.deaths as i32));
+                                                    let all_zero = !player_stats.is_empty() && player_stats.values().all(|&(k, d)| k == 0 && d == 0);
+                                                    if had_stats && all_zero {
+                                                        match_started = true;
+                                                        event_signature.clear();
+                                                    }
+                                                }
+                                                dod::UserMessage::ScoreShort(score) => {
+                                                    let had_stats = player_stats.values().any(|&(k, d)| k > 0 || d > 0);
+                                                    player_stats.insert(score.client_index, (score.kills as i32, score.deaths as i32));
+                                                    let all_zero = !player_stats.is_empty() && player_stats.values().all(|&(k, d)| k == 0 && d == 0);
+                                                    if had_stats && all_zero {
+                                                        match_started = true;
+                                                        event_signature.clear();
+                                                    }
+                                                }
+                                                dod::UserMessage::DeathMsg(death) => {
+                                                    if match_started {
+                                                        let killer_id = if death.killer_client_index == 0 {
+                                                            "world".to_string()
+                                                        } else {
+                                                            client_id_to_player_id.get(&(death.killer_client_index - 1))
+                                                                .cloned()
+                                                                .unwrap_or_else(|| format!("slot_{}", death.killer_client_index - 1))
+                                                        };
+                                                        let victim_id = client_id_to_player_id.get(&(death.victim_client_index - 1))
+                                                            .cloned()
+                                                            .unwrap_or_else(|| format!("slot_{}", death.victim_client_index - 1));
+
+                                                        let event_str = format!("{}>{}:{:?}", killer_id, victim_id, death.weapon);
+                                                        event_signature.push(event_str);
+                                                    }
+                                                }
+                                                _ => {}
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Check patience limit fail-safe
+                if frames_parsed > patience_limit && !match_started {
+                    match_started = true;
+                }
+
+                // Check early exit condition
+                if event_signature.len() == 10 {
+                    break;
+                }
+            }
+            Err(_) => {
+                break;
+            }
+        }
+    }
+
+    roster_accumulator.sort();
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    use std::hash::Hash;
+    roster_accumulator.hash(&mut hasher);
+    let roster_hash = std::hash::Hasher::finish(&hasher);
+
+    Ok((
+        map_name,
+        server_ip.unwrap_or_default(),
+        roster_hash,
+        event_signature,
+        recorder_id,
+    ))
+}
+
+pub fn extract_match_fingerprint(bytes: &[u8]) -> Result<DemoFingerprint, String> {
+    match parse_fingerprint(bytes) {
+        Ok((map_name, server_ip, player_roster_hash, event_signature, _recorder_id)) => {
+            Ok(DemoFingerprint {
+                map_name,
+                server_ip,
+                player_roster_hash,
+                event_signature,
+            })
+        }
+        Err(e) => Err(e.to_string()),
+    }
 }
 
 #[cfg(test)]
@@ -1475,6 +1673,22 @@ mod tests {
             assert!(!analysis.state.match_start_witnessed);
             assert!(analysis.state.started_late);
             assert!(analysis.state.ended_early);
+        }
+    }
+
+    #[test]
+    fn test_parse_fingerprint() {
+        let mut path = "demos/ktps8w8-stealth_ih_saints_h1_p2.dem";
+        if !std::path::Path::new(path).exists() {
+            path = "../demos/ktps8w8-stealth_ih_saints_h1_p2.dem";
+        }
+        if std::path::Path::new(path).exists() {
+            let file_bytes = fs::read(path).unwrap();
+            let res = parse_fingerprint(&file_bytes);
+            assert!(res.is_ok());
+            let (map_name, server_ip, roster_hash, event_signature, recorder_id) = res.unwrap();
+            assert!(!map_name.is_empty());
+            println!("Map: {}, Server: {}, Roster Hash: {}, Events: {}, Recorder: {:?}", map_name, server_ip, roster_hash, event_signature.len(), recorder_id);
         }
     }
 }

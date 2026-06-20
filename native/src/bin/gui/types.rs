@@ -189,7 +189,7 @@ pub enum GuiMessage {
     #[cfg(not(target_arch = "wasm32"))]
     DirScanComplete {
         dir: PathBuf,
-        files: Vec<crate::explorer::DemoListItem>,
+        files: Vec<crate::tree::DemoListItem>,
     },
     #[cfg(not(target_arch = "wasm32"))]
     DemoFoldersScanComplete {
@@ -197,7 +197,7 @@ pub enum GuiMessage {
         folders: Vec<(PathBuf, usize)>,
     },
     #[cfg(target_arch = "wasm32")]
-    WebFolderLoaded(Vec<crate::explorer::WebFile>),
+    WebFolderLoaded(Vec<crate::tree::WebFile>),
     #[cfg(target_arch = "wasm32")]
     WebFileParsed {
         path: String,
@@ -214,4 +214,11 @@ pub enum GuiMessage {
     },
     #[cfg(not(target_arch = "wasm32"))]
     CaptureStudioFinished,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BrowserView {
+    Flat,
+    GroupByMatch,
+    GroupByPlayer,
 }

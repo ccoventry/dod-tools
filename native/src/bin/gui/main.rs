@@ -2,7 +2,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod explorer;
+mod tree;
 mod views;
 pub mod types;
 pub mod settings;
@@ -14,7 +14,7 @@ pub mod pipeline;
 use analysis::Analysis;
 use clap::Parser;
 use egui::{Align, CentralPanel, Context, Frame, Layout, ScrollArea, SidePanel, TopBottomPanel};
-use egui_extras::{Column, TableBuilder};
+
 use native::FileInfo;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -25,7 +25,7 @@ use views::{PlayerHighlighting, report_ui, t};
 use types::{
     SortColumn, ScoreboardCache, ChatFilterState, ChatCache,
     CapturePhase, CaptureStudioState, QueuedStreakExport, PlayerDetailsCache, SidebarTab,
-    GuiMessage,
+    GuiMessage, BrowserView,
 };
 #[cfg(not(target_arch = "wasm32"))]
 use types::{AuditorState, PendingStreakExport, ExportRequest, AddToQueueRequest};
@@ -45,10 +45,10 @@ use egui_file_dialog::FileDialog;
 
 
 #[cfg(not(target_arch = "wasm32"))]
-use explorer::{DemoListItem, get_native_roots, render_native_dir_node, scan_dir_async, scan_demo_folders_async, count_demo_files};
+use tree::{DemoListItem, get_native_roots, render_native_dir_node, scan_dir_async, scan_demo_folders_async, count_demo_files};
 #[cfg(target_arch = "wasm32")]
-use explorer::{DirNode, WebFile, build_web_tree, render_web_dir_node};
-use explorer::{DemoCache, CachedDemo};
+use tree::{DirNode, WebFile, build_web_tree, render_web_dir_node};
+use tree::{DemoCache, CachedDemo};
 
 #[derive(Debug, Parser)]
 struct Args {
@@ -132,90 +132,96 @@ fn main() {}
 
 
 
-struct Gui {
-    analyses: HashMap<String, (FileInfo, Analysis)>,
-    selected_analysis_path: Option<String>,
-    cache: DemoCache,
-    player_highlight: PlayerHighlighting,
-    error_message: Option<String>,
-    settings: AppSettings,
-    draft_settings: AppSettings,
-    show_about_window: bool,
-    active_sidebar_tab: SidebarTab,
+pub use views::browser::VisibleNode;
 
-    filter_query: String,
-    filter_type: String,
-    filter_map: String,
-    filter_date_start: String,
-    filter_date_end: String,
+pub(crate) struct Gui {
+    pub(crate) analyses: HashMap<String, (FileInfo, Analysis)>,
+    pub(crate) selected_analysis_path: Option<String>,
+    pub(crate) cache: DemoCache,
+    pub(crate) player_highlight: PlayerHighlighting,
+    pub(crate) error_message: Option<String>,
+    pub(crate) settings: AppSettings,
+    pub(crate) draft_settings: AppSettings,
+    pub(crate) show_about_window: bool,
+    pub(crate) active_sidebar_tab: SidebarTab,
 
-    sort_column: Option<SortColumn>,
-    sort_ascending: bool,
+    pub(crate) filter_query: String,
+    pub(crate) filter_type: String,
+    pub(crate) filter_map: String,
+    pub(crate) filter_date_start: String,
+    pub(crate) filter_date_end: String,
 
-    rx: mpsc::Receiver<GuiMessage>,
-    tx: mpsc::Sender<GuiMessage>,
+    pub(crate) sort_column: Option<SortColumn>,
+    pub(crate) sort_ascending: bool,
 
-    #[cfg(not(target_arch = "wasm32"))]
-    file_picker: FileDialog,
-    #[cfg(not(target_arch = "wasm32"))]
-    capture_export_picker: FileDialog,
-    #[cfg(not(target_arch = "wasm32"))]
-    pending_streak_export: Option<PendingStreakExport>,
-    #[cfg(not(target_arch = "wasm32"))]
-    root_dir: Option<PathBuf>,
-    #[cfg(not(target_arch = "wasm32"))]
-    current_dir: Option<PathBuf>,
-    #[cfg(not(target_arch = "wasm32"))]
-    initial_files: Vec<PathBuf>,
-    #[cfg(not(target_arch = "wasm32"))]
-    subdir_cache: HashMap<PathBuf, Vec<PathBuf>>,
-    #[cfg(not(target_arch = "wasm32"))]
-    explorer_demo_cache: HashMap<PathBuf, usize>,
+    pub(crate) rx: mpsc::Receiver<GuiMessage>,
+    pub(crate) tx: mpsc::Sender<GuiMessage>,
 
     #[cfg(not(target_arch = "wasm32"))]
-    desktop_files: Vec<DemoListItem>,
+    pub(crate) file_picker: FileDialog,
     #[cfg(not(target_arch = "wasm32"))]
-    last_scanned_dir: Option<PathBuf>,
+    pub(crate) capture_export_picker: FileDialog,
     #[cfg(not(target_arch = "wasm32"))]
-    scanning_dir: bool,
+    pub(crate) pending_streak_export: Option<PendingStreakExport>,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) root_dir: Option<PathBuf>,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) current_dir: Option<PathBuf>,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) initial_files: Vec<PathBuf>,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) subdir_cache: HashMap<PathBuf, Vec<PathBuf>>,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) tree_demo_cache: HashMap<PathBuf, usize>,
 
     #[cfg(not(target_arch = "wasm32"))]
-    demo_folders: Vec<(PathBuf, usize)>,
+    pub(crate) desktop_files: Vec<DemoListItem>,
     #[cfg(not(target_arch = "wasm32"))]
-    scanning_demo_folders: bool,
+    pub(crate) last_scanned_dir: Option<PathBuf>,
     #[cfg(not(target_arch = "wasm32"))]
-    current_scan_id: usize,
+    pub(crate) scanning_dir: bool,
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) demo_folders: Vec<(PathBuf, usize)>,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) scanning_demo_folders: bool,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) current_scan_id: usize,
 
     #[cfg(target_arch = "wasm32")]
-    web_files: Vec<WebFile>,
+    pub(crate) web_files: Vec<WebFile>,
     #[cfg(target_arch = "wasm32")]
-    demo_folders: Vec<(String, usize)>,
+    pub(crate) demo_folders: Vec<(String, usize)>,
 
-    loading_path: Option<String>,
-    loading_progress: Option<f32>,
-    loading_elapsed: Option<f32>,
-    loading_eta: Option<f32>,
+    pub(crate) loading_path: Option<String>,
+    pub(crate) loading_progress: Option<f32>,
+    pub(crate) loading_elapsed: Option<f32>,
+    pub(crate) loading_eta: Option<f32>,
     #[cfg(target_arch = "wasm32")]
-    selected_web_folder: String,
+    pub(crate) selected_web_folder: String,
     #[cfg(target_arch = "wasm32")]
-    web_tree: Option<DirNode>,
+    pub(crate) web_tree: Option<DirNode>,
     #[cfg(target_arch = "wasm32")]
-    parser_worker: Option<web_sys::Worker>,
+    pub(crate) parser_worker: Option<web_sys::Worker>,
 
-    scoreboard_cache: ScoreboardCache,
-    chat_cache: ChatCache,
-    player_details_cache: PlayerDetailsCache,
-    export_queue: Vec<QueuedStreakExport>,
-    capture_studio_state: CaptureStudioState,
+    pub(crate) scoreboard_cache: ScoreboardCache,
+    pub(crate) chat_cache: ChatCache,
+    pub(crate) player_details_cache: PlayerDetailsCache,
+    pub(crate) export_queue: Vec<QueuedStreakExport>,
+    pub(crate) capture_studio_state: CaptureStudioState,
     #[cfg(not(target_arch = "wasm32"))]
-    batch_export_picker: FileDialog,
+    pub(crate) batch_export_picker: FileDialog,
     #[cfg(not(target_arch = "wasm32"))]
-    hlcr_state: native::hlcr::HlcrState,
+    pub(crate) hlcr_state: native::hlcr::HlcrState,
     #[cfg(not(target_arch = "wasm32"))]
-    auditor_state: AuditorState,
+    pub(crate) auditor_state: AuditorState,
     #[cfg(not(target_arch = "wasm32"))]
-    target_folder: String,
-    cancel_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    pub(crate) target_folder: String,
+    pub(crate) cancel_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    pub(crate) browser_view: BrowserView,
+    pub(crate) selection_changed_via_keyboard: bool,
+    pub(crate) selected_folder_id: Option<String>,
+    pub(crate) visible_nodes: Vec<VisibleNode>,
 }
 
 
@@ -388,6 +394,7 @@ impl Gui {
             server_ip: None,
             player_roster_hash: None,
             event_signature: None,
+            recorder_id: None,
         };
 
         self.cache.demos.insert(path, cached);
@@ -554,7 +561,7 @@ impl Default for Gui {
             #[cfg(not(target_arch = "wasm32"))]
             subdir_cache: HashMap::default(),
             #[cfg(not(target_arch = "wasm32"))]
-            explorer_demo_cache: HashMap::default(),
+            tree_demo_cache: HashMap::default(),
 
             #[cfg(not(target_arch = "wasm32"))]
             desktop_files: Vec::default(),
@@ -603,6 +610,10 @@ impl Default for Gui {
                 .map(|p| p.to_string_lossy().into_owned())
                 .unwrap_or_default(),
             cancel_flag,
+            browser_view: BrowserView::Flat,
+            selection_changed_via_keyboard: false,
+            selected_folder_id: None,
+            visible_nodes: Vec::new(),
         }
     }
 }
@@ -1120,7 +1131,7 @@ impl eframe::App for Gui {
                             #[cfg(not(target_arch = "wasm32"))]
                             {
                                 self.subdir_cache.clear();
-                                self.explorer_demo_cache.clear();
+                                self.tree_demo_cache.clear();
                                 self.demo_folders.clear();
                                 self.settings.demo_folder_history.clear();
                                 save_settings(&self.settings);
@@ -1232,7 +1243,7 @@ impl eframe::App for Gui {
                                 has_any_links = true;
                                 ui.label(egui::RichText::new("📌 Pinned").small().weak());
                                 for folder in self.settings.pinned_folders.clone() {
-                                    let count = *self.explorer_demo_cache.entry(folder.clone()).or_insert_with(|| {
+                                    let count = *self.tree_demo_cache.entry(folder.clone()).or_insert_with(|| {
                                         count_demo_files(&folder)
                                     });
 
@@ -1281,7 +1292,7 @@ impl eframe::App for Gui {
                                 has_any_links = true;
                                 ui.label(egui::RichText::new("🕒 Recent").small().weak());
                                 for folder in recent_folders {
-                                    let count = *self.explorer_demo_cache.entry(folder.clone()).or_insert_with(|| {
+                                    let count = *self.tree_demo_cache.entry(folder.clone()).or_insert_with(|| {
                                         count_demo_files(&folder)
                                     });
 
@@ -1449,7 +1460,7 @@ impl eframe::App for Gui {
                     ui.horizontal(|ui| {
                         if ui.small_button(t("#app_panel_refresh")).clicked() {
                             self.subdir_cache.clear();
-                            self.explorer_demo_cache.clear();
+                            self.tree_demo_cache.clear();
                             self.trigger_dir_scan(ctx);
                             self.trigger_demo_folders_scan(ctx);
                         }
@@ -1458,7 +1469,7 @@ impl eframe::App for Gui {
 
                     ScrollArea::both().show(ui, |ui| {
                         let mut cache = std::mem::take(&mut self.subdir_cache);
-                        let mut demo_cache = std::mem::take(&mut self.explorer_demo_cache);
+                        let mut demo_cache = std::mem::take(&mut self.tree_demo_cache);
 
                         let collapsing_id = ui.make_persistent_id("this_pc");
                         let mut state =
@@ -1497,7 +1508,7 @@ impl eframe::App for Gui {
                         }
 
                         self.subdir_cache = cache;
-                        self.explorer_demo_cache = demo_cache;
+                        self.tree_demo_cache = demo_cache;
                     });
                 }
 
@@ -1608,180 +1619,10 @@ impl eframe::App for Gui {
                                     ui.spinner();
                                     ui.weak(t("#app_updating_folder"));
                                 });
-                                ui.add_space(4.0);
                             }
 
-                            let selected_path = self.selected_analysis_path.clone();
 
-                            let mut display_files: Vec<DemoListItem> = self.desktop_files.iter()
-                                .filter(|item| {
-                                    let path_str = item.path.to_string_lossy();
-                                    self.filter_demo(&item.name, &item.map_name, &item.date, &path_str)
-                                })
-                                .cloned()
-                                .collect();
-
-                            if let Some(col) = self.sort_column {
-                                display_files.sort_by(|a, b| {
-                                    let path_a = a.path.to_string_lossy();
-                                    let path_b = b.path.to_string_lossy();
-                                    let type_a = if let Some((_, analysis)) = self.analyses.get(path_a.as_ref()) {
-                                        analysis.demo_info.demo_type.as_str()
-                                    } else if let Some(cached) = self.cache.demos.get(path_a.as_ref()) {
-                                        cached.demo_type.as_str()
-                                    } else if a.name.to_lowercase().contains("hltv") {
-                                        "HLTV"
-                                    } else {
-                                        "POV"
-                                    };
-                                    let type_b = if let Some((_, analysis)) = self.analyses.get(path_b.as_ref()) {
-                                        analysis.demo_info.demo_type.as_str()
-                                    } else if let Some(cached) = self.cache.demos.get(path_b.as_ref()) {
-                                        cached.demo_type.as_str()
-                                    } else if b.name.to_lowercase().contains("hltv") {
-                                        "HLTV"
-                                    } else {
-                                        "POV"
-                                    };
-
-                                    let cmp = match col {
-                                        SortColumn::Name => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-                                        SortColumn::Type => type_a.cmp(type_b),
-                                        SortColumn::Map => a.map_name.to_lowercase().cmp(&b.map_name.to_lowercase()),
-                                        SortColumn::Date => a.date.cmp(&b.date),
-                                    };
-
-                                    if self.sort_ascending {
-                                        cmp
-                                    } else {
-                                        cmp.reverse()
-                                    }
-                                });
-                            }
-
-                            ScrollArea::horizontal().show(ui, |ui| {
-                                TableBuilder::new(ui)
-                                    .striped(true)
-                                    .cell_layout(Layout::left_to_right(Align::Center))
-                                    .column(Column::initial(300.0).resizable(true).clip(true)) // Name
-                                    .column(Column::initial(80.0).resizable(true)) // Type
-                                    .column(Column::initial(150.0).resizable(true)) // Map
-                                    .column(Column::initial(150.0)) // Date
-                                    .header(20.0, |mut header| {
-                                        header.col(|ui| {
-                                            let label = match (self.sort_column, self.sort_ascending) {
-                                                (Some(SortColumn::Name), true) => format!("{} ⏶", t("#app_col_name")),
-                                                (Some(SortColumn::Name), false) => format!("{} ⏷", t("#app_col_name")),
-                                                _ => t("#app_col_name"),
-                                            };
-                                            if ui.add(egui::Button::new(label).frame(false)).clicked() {
-                                                self.toggle_sort(SortColumn::Name);
-                                            }
-                                        });
-                                        header.col(|ui| {
-                                            let label = match (self.sort_column, self.sort_ascending) {
-                                                (Some(SortColumn::Type), true) => format!("{} ⏶", t("#app_col_type")),
-                                                (Some(SortColumn::Type), false) => format!("{} ⏷", t("#app_col_type")),
-                                                _ => t("#app_col_type"),
-                                            };
-                                            if ui.add(egui::Button::new(label).frame(false)).clicked() {
-                                                self.toggle_sort(SortColumn::Type);
-                                            }
-                                        });
-                                        header.col(|ui| {
-                                            let label = match (self.sort_column, self.sort_ascending) {
-                                                (Some(SortColumn::Map), true) => format!("{} ⏶", t("#app_col_map")),
-                                                (Some(SortColumn::Map), false) => format!("{} ⏷", t("#app_col_map")),
-                                                _ => t("#app_col_map"),
-                                            };
-                                            if ui.add(egui::Button::new(label).frame(false)).clicked() {
-                                                self.toggle_sort(SortColumn::Map);
-                                            }
-                                        });
-                                        header.col(|ui| {
-                                            let label = match (self.sort_column, self.sort_ascending) {
-                                                (Some(SortColumn::Date), true) => format!("{} ⏶", t("#app_col_date")),
-                                                (Some(SortColumn::Date), false) => format!("{} ⏷", t("#app_col_date")),
-                                                _ => t("#app_col_date"),
-                                            };
-                                            if ui.add(egui::Button::new(label).frame(false)).clicked() {
-                                                self.toggle_sort(SortColumn::Date);
-                                            }
-                                        });
-                                    })
-                                    .body(|mut body| {
-                                        if self.desktop_files.is_empty() {
-                                            body.row(18.0, |mut row| {
-                                                row.col(|ui| {
-                                                    ui.weak(t("#app_no_demos_found"));
-                                                });
-                                                row.col(|_| {});
-                                                row.col(|_| {});
-                                                row.col(|_| {});
-                                            });
-                                        } else if display_files.is_empty() {
-                                            body.row(18.0, |mut row| {
-                                                row.col(|ui| {
-                                                    ui.weak(t("#app_no_matching_demos"));
-                                                });
-                                                row.col(|_| {});
-                                                row.col(|_| {});
-                                                row.col(|_| {});
-                                            });
-                                        } else {
-                                            for item in &display_files {
-                                                let path_str = item.path.to_string_lossy().into_owned();
-
-                                                let is_selected = selected_path.as_ref() == Some(&path_str);
-                                                let is_loading =
-                                                    self.loading_path.as_deref() == Some(path_str.as_str());
-
-                                                body.row(18.0, |mut row| {
-                                                    row.set_selected(is_selected);
-                                                    row.col(|ui| {
-                                                        ui.horizontal(|ui| {
-                                                            if is_loading {
-                                                                ui.spinner();
-                                                            }
-                                                            if ui
-                                                                .selectable_label(
-                                                                    is_selected,
-                                                                    format!("📄 {}", item.name),
-                                                                )
-                                                                .clicked()
-                                                            {
-                                                                if !is_selected {
-                                                                    analyze_target_file =
-                                                                        Some(item.path.clone());
-                                                                }
-                                                            }
-                                                        });
-                                                    });
-                                                    row.col(|ui| {
-                                                        let demo_type = if let Some((_, analysis)) =
-                                                            self.analyses.get(&path_str)
-                                                        {
-                                                            analysis.demo_info.demo_type.as_str()
-                                                        } else if let Some(cached) = self.cache.demos.get(&path_str) {
-                                                            cached.demo_type.as_str()
-                                                        } else if item.name.to_lowercase().contains("hltv") {
-                                                            "HLTV"
-                                                        } else {
-                                                            "POV"
-                                                        };
-                                                        ui.label(demo_type);
-                                                    });
-                                                    row.col(|ui| {
-                                                        ui.label(&item.map_name);
-                                                    });
-                                                    row.col(|ui| {
-                                                        ui.label(&item.date);
-                                                    });
-                                                });
-                                            }
-                                        }
-                                    });
-                            });
+                            views::browser::browser_ui(ctx, ui, self, &mut analyze_target_file);
                         }
                     }
                 }
@@ -2146,38 +1987,7 @@ impl eframe::App for Gui {
         }
 
         // Keyboard navigation for the Demos List
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let mut move_selection = 0;
-            if ctx.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
-                move_selection = 1;
-            } else if ctx.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
-                move_selection = -1;
-            }
 
-            if move_selection != 0 && !self.desktop_files.is_empty() {
-                let mut current_idx = None;
-                let selected_path_str = self.selected_analysis_path.as_deref();
-                for (i, f) in self.desktop_files.iter().enumerate() {
-                    if Some(f.path.to_string_lossy().as_ref()) == selected_path_str {
-                        current_idx = Some(i);
-                        break;
-                    }
-                }
-
-                let new_idx = if let Some(idx) = current_idx {
-                    (idx as isize + move_selection)
-                        .clamp(0, (self.desktop_files.len() - 1) as isize)
-                        as usize
-                } else {
-                    0
-                };
-
-                if current_idx != Some(new_idx) {
-                    analyze_target_file = Some(self.desktop_files[new_idx].path.clone());
-                }
-            }
-        }
 
         // Apply state updates at the end of the frame
         #[cfg(not(target_arch = "wasm32"))]
@@ -2405,6 +2215,7 @@ impl eframe::App for Gui {
                 }
             }
         }
+        self.selection_changed_via_keyboard = false;
     }
 
     #[cfg(not(target_arch = "wasm32"))]
