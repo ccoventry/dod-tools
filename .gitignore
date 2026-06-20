@@ -1,14 +1,33 @@
-/target
-.vs/
-/demos/
-/demo_deduplication_report.md
-/native/dist/
+# === Cargo / Rust ===
+/target/
+
+# === Temporary Debug / Scratch Files ===
 scratch/
-/README_detailed.md
+
+# === Project Configuration & Caches ===
 .dod-tools-cache.json
 settings.json
 hlcr_config.json
-/ffmpeg/
 /recent_commits.txt
+/demo_deduplication_report.md
+/README_detailed.md
 
+# === Dependencies & Local Binaries ===
+/demos/
+/ffmpeg/
+/native/dist/
+
+# === IDEs and Editors ===
+.vs/
+.vscode/
+.idea/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# === OS Temporary Files ===
+.DS_Store
+Thumbs.db
+Desktop.ini
 
