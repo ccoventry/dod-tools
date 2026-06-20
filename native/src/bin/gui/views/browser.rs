@@ -227,6 +227,72 @@ pub fn browser_ui(
         }
     }
 
+    // Keyboard navigation for the Demos List
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let mut move_selection = 0;
+        if ctx.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
+            move_selection = 1;
+        } else if ctx.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
+            move_selection = -1;
+        }
+
+        if move_selection != 0 && !state.visible_nodes.is_empty() {
+            let mut current_idx = None;
+            for (i, node) in state.visible_nodes.iter().enumerate() {
+                match node {
+                    VisibleNode::VirtualFolder { id, .. } => {
+                        if state.selected_folder_id.as_ref() == Some(id) {
+                            current_idx = Some(i);
+                            break;
+                        }
+                    }
+                    VisibleNode::DemoFile(item) => {
+                        let path_str = item.path.to_string_lossy();
+                        if state.selected_analysis_path.as_deref() == Some(path_str.as_ref()) {
+                            current_idx = Some(i);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            let new_idx = if let Some(idx) = current_idx {
+                (idx as isize + move_selection)
+                    .clamp(0, (state.visible_nodes.len() - 1) as isize)
+                    as usize
+            } else {
+                if move_selection > 0 {
+                    0
+                } else {
+                    state.visible_nodes.len() - 1
+                }
+            };
+
+            if current_idx != Some(new_idx) {
+                match &state.visible_nodes[new_idx] {
+                    VisibleNode::VirtualFolder { id, .. } => {
+                        state.selected_folder_id = Some(id.clone());
+                        state.selected_analysis_path = None;
+                        state.selection_changed_via_keyboard = true;
+                    }
+                    VisibleNode::DemoFile(item) => {
+                        state.selected_folder_id = None;
+                        state.selected_analysis_path = Some(item.path.to_string_lossy().into_owned());
+                        state.selection_changed_via_keyboard = true;
+                    }
+                }
+            }
+        }
+
+        // Trigger actual analysis when Enter is pressed on the selected file
+        if ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
+            if let Some(path_str) = &state.selected_analysis_path {
+                *analyze_target_file = Some(std::path::PathBuf::from(path_str));
+            }
+        }
+    }
+
     egui::ScrollArea::horizontal().show(ui, |ui| {
         TableBuilder::new(ui)
             .striped(true)
@@ -388,63 +454,5 @@ pub fn browser_ui(
                 }
             });
     });
-
-    // Keyboard navigation for the Demos List
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let mut move_selection = 0;
-        if ctx.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
-            move_selection = 1;
-        } else if ctx.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
-            move_selection = -1;
-        }
-
-        if move_selection != 0 && !state.visible_nodes.is_empty() {
-            let mut current_idx = None;
-            for (i, node) in state.visible_nodes.iter().enumerate() {
-                match node {
-                    VisibleNode::VirtualFolder { id, .. } => {
-                        if state.selected_folder_id.as_ref() == Some(id) {
-                            current_idx = Some(i);
-                            break;
-                        }
-                    }
-                    VisibleNode::DemoFile(item) => {
-                        let path_str = item.path.to_string_lossy();
-                        if state.selected_analysis_path.as_deref() == Some(path_str.as_ref()) {
-                            current_idx = Some(i);
-                            break;
-                        }
-                    }
-                }
-            }
-
-            let new_idx = if let Some(idx) = current_idx {
-                (idx as isize + move_selection)
-                    .clamp(0, (state.visible_nodes.len() - 1) as isize)
-                    as usize
-            } else {
-                if move_selection > 0 {
-                    0
-                } else {
-                    state.visible_nodes.len() - 1
-                }
-            };
-
-            if current_idx != Some(new_idx) {
-                match &state.visible_nodes[new_idx] {
-                    VisibleNode::VirtualFolder { id, .. } => {
-                        state.selected_folder_id = Some(id.clone());
-                        state.selected_analysis_path = None;
-                        state.selection_changed_via_keyboard = true;
-                    }
-                    VisibleNode::DemoFile(item) => {
-                        state.selected_folder_id = None;
-                        *analyze_target_file = Some(item.path.clone());
-                        state.selection_changed_via_keyboard = true;
-                    }
-                }
-            }
-        }
-    }
+    state.selection_changed_via_keyboard = false;
 }

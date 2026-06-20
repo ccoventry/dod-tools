@@ -130,7 +130,8 @@ fn process_demo_file(p: PathBuf, cache: &DemoCache) -> DemoListItem {
 
     // Try to retrieve from cache first
     if let Some(cached) = cache.demos.get(&path_str) {
-        if cached.size_bytes == size_bytes && cached.modified_ms == modified_ms {
+        let is_missing_fingerprint = cached.player_roster_hash.unwrap_or(0) == 0 || cached.server_ip.is_none();
+        if !is_missing_fingerprint && cached.size_bytes == size_bytes && cached.modified_ms == modified_ms {
             return DemoListItem {
                 path: p,
                 name: cached.name.clone(),

@@ -1011,7 +1011,8 @@ pub fn parse_fingerprint(bytes: &[u8]) -> Result<(String, String, u64, Vec<Strin
         .trim_end_matches('\0')
         .trim_start_matches("maps/")
         .trim_end_matches(".bsp")
-        .to_string();
+        .to_string()
+        .to_lowercase();
 
     let mut match_started = false;
     let mut frames_parsed: u32 = 0;
