@@ -235,7 +235,7 @@ fn write_console_cmd(writer: &mut std::io::BufWriter<std::fs::File>, time: f32, 
     writer.write_all(&[3_u8])?;
     writer.write_all(&time.to_le_bytes())?;
     writer.write_all(&tick.to_le_bytes())?;
-    let mut payload = [0_u8; 64];
+    let mut payload = vec![0_u8; 64];
     let cmd_bytes = cmd.as_bytes();
     let len = cmd_bytes.len().min(63);
     payload[..len].copy_from_slice(&cmd_bytes[..len]);
@@ -266,7 +266,7 @@ impl StreamPatcher {
         let mut writer = BufWriter::with_capacity(256 * 1024, output_file);
 
         // Step 2: Parse and Clone the Header
-        let mut header = [0u8; 544];
+        let mut header = vec![0u8; 544];
         reader.read_exact(&mut header)?;
 
         // Extract directory offset (i32 is at offset 540..544)
@@ -286,7 +286,7 @@ impl StreamPatcher {
                 return Err(std::io::Error::new(std::io::ErrorKind::Interrupted, "Cancelled by user"));
             }
 
-            let mut frame_hdr = [0u8; 9];
+            let mut frame_hdr = vec![0u8; 9];
             if let Err(e) = reader.read_exact(&mut frame_hdr) {
                 if e.kind() == std::io::ErrorKind::UnexpectedEof {
                     break;
@@ -351,7 +351,7 @@ impl StreamPatcher {
                 }
                 8 => {
                     // Sound (24 bytes + sample_length)
-                    let mut prefix = [0u8; 8];
+                    let mut prefix = vec![0u8; 8];
                     reader.read_exact(&mut prefix)?;
                     writer.write_all(&prefix)?;
                     let sample_length = u32::from_le_bytes(prefix[4..8].try_into().unwrap()) as usize;
@@ -362,7 +362,7 @@ impl StreamPatcher {
                 }
                 9 => {
                     // DemoBuffer (4 bytes + buffer_length)
-                    let mut prefix = [0u8; 4];
+                    let mut prefix = vec![0u8; 4];
                     reader.read_exact(&mut prefix)?;
                     writer.write_all(&prefix)?;
                     let buffer_length = u32::from_le_bytes(prefix[0..4].try_into().unwrap()) as usize;
@@ -374,14 +374,14 @@ impl StreamPatcher {
                 }
                 _ => {
                     // NetworkMessage (464 bytes + message_length)
-                    let mut info_buf = [0u8; 460];
+                    let mut info_buf = vec![0u8; 460];
                     reader.read_exact(&mut info_buf)?;
                     writer.write_all(&info_buf)?;
 
-                    let mut len_buf = [0u8; 4];
+                    let mut len_buf = vec![0u8; 4];
                     reader.read_exact(&mut len_buf)?;
                     writer.write_all(&len_buf)?;
-                    let msg_len = u32::from_le_bytes(len_buf) as usize;
+                    let msg_len = u32::from_le_bytes(len_buf.try_into().unwrap()) as usize;
 
                     payload_buf.resize(msg_len, 0);
                     reader.read_exact(&mut payload_buf)?;
@@ -646,57 +646,59 @@ fn calculate_demo_tickrate(bytes: &[u8]) -> Option<f32> {
     if bytes.len() < 544 {
         return None;
     }
-    let original_offset = i32::from_le_bytes(bytes[540..544].try_into().unwrap()) as usize;
+    let original_offset = i32::from_le_bytes(bytes.get(540..544)?.try_into().ok()?) as usize;
     if original_offset > bytes.len() {
         return None;
     }
 
     let mut first_hdr = None;
     let mut last_hdr = None;
-    let mut offset = 544;
+    let mut offset: usize = 544;
 
-    while offset + 9 <= original_offset {
-        let type_byte = bytes[offset];
-        let time = f32::from_le_bytes(bytes[offset+1..offset+5].try_into().unwrap());
-        let tick = i32::from_le_bytes(bytes[offset+5..offset+9].try_into().unwrap());
+    while offset.checked_add(9)? <= original_offset {
+        let type_byte = *bytes.get(offset)?;
+        let time = f32::from_le_bytes(bytes.get(offset + 1..offset + 5)?.try_into().ok()?);
+        let tick = i32::from_le_bytes(bytes.get(offset + 5..offset + 9)?.try_into().ok()?);
 
         if first_hdr.is_none() {
             first_hdr = Some((time, tick));
         }
         last_hdr = Some((time, tick));
 
-        offset += 9;
+        let next_offset = offset.checked_add(9)?;
         match type_byte {
-            2 => {}
+            2 => {
+                offset = next_offset;
+            }
             3 => {
-                offset += 64;
+                offset = next_offset.checked_add(64)?;
             }
             4 => {
-                offset += 32;
+                offset = next_offset.checked_add(32)?;
             }
             5 => {
                 break;
             }
             6 => {
-                offset += 84;
+                offset = next_offset.checked_add(84)?;
             }
             7 => {
-                offset += 8;
+                offset = next_offset.checked_add(8)?;
             }
             8 => {
-                if offset + 8 > original_offset { break; }
-                let sample_len = u32::from_le_bytes(bytes[offset+4..offset+8].try_into().unwrap()) as usize;
-                offset += 8 + sample_len + 16;
+                if next_offset.checked_add(8)? > original_offset { break; }
+                let sample_len = u32::from_le_bytes(bytes.get(next_offset + 4..next_offset + 8)?.try_into().ok()?) as usize;
+                offset = next_offset.checked_add(8)?.checked_add(sample_len)?.checked_add(16)?;
             }
             9 => {
-                if offset + 4 > original_offset { break; }
-                let buffer_len = u32::from_le_bytes(bytes[offset..offset+4].try_into().unwrap()) as usize;
-                offset += 4 + buffer_len;
+                if next_offset.checked_add(4)? > original_offset { break; }
+                let buffer_len = u32::from_le_bytes(bytes.get(next_offset..next_offset + 4)?.try_into().ok()?) as usize;
+                offset = next_offset.checked_add(4)?.checked_add(buffer_len)?;
             }
             _ => {
-                if offset + 464 > original_offset { break; }
-                let msg_len = u32::from_le_bytes(bytes[offset+460..offset+464].try_into().unwrap()) as usize;
-                offset += 464 + msg_len;
+                if next_offset.checked_add(464)? > original_offset { break; }
+                let msg_len = u32::from_le_bytes(bytes.get(next_offset + 460..next_offset + 464)?.try_into().ok()?) as usize;
+                offset = next_offset.checked_add(464)?.checked_add(msg_len)?;
             }
         }
     }
@@ -709,10 +711,26 @@ fn calculate_demo_tickrate(bytes: &[u8]) -> Option<f32> {
     None
 }
 
+pub fn is_hltv_demo(path: &std::path::Path) -> Result<bool, std::io::Error> {
+    use std::io::Read;
+    let mut file = std::fs::File::open(path)?;
+    let mut header = vec![0u8; 512];
+    file.read_exact(&mut header)?;
+    
+    let contains_hltv = header.windows(4).any(|window| window == b"HLTV");
+    Ok(contains_hltv)
+}
+
 pub fn scan_demo_for_highlights(
     path: &std::path::Path,
     rules: &HighlightRules,
 ) -> Result<(f32, Vec<CaptureStreak>), String> {
+    match is_hltv_demo(path) {
+        Ok(true) => return Err("Unsupported HLTV proxy demo format".to_string()),
+        Err(e) => return Err(format!("Failed to read demo header: {}", e)),
+        _ => {}
+    }
+
     let bytes = std::fs::read(path).map_err(|e| format!("Failed to read file: {}", e))?;
     let tickrate = calculate_demo_tickrate(&bytes).unwrap_or(100.0);
 
@@ -744,7 +762,7 @@ pub fn scan_demo_for_highlights(
             let kill_tick = ev.tick as i32;
 
             if let Some(entry) = active_streaks.get_mut(killer) {
-                let last_kill_tick = *entry.2.last().unwrap();
+                let last_kill_tick = *entry.2.last().ok_or_else(|| "Empty kill tick log in active streak".to_string())?;
                 let gap_seconds = (kill_tick - last_kill_tick) as f32 / tickrate;
                 if gap_seconds <= max_time_gap {
                     entry.1 = kill_tick;

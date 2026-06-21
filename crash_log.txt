@@ -1,0 +1,2 @@
+STARTING SCAN
+Attempting Demo 1: "hltv-2508021304-dod_solitude_b2.dem"
