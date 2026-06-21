@@ -569,15 +569,9 @@ fn render_kill_streaks_table(
     filtered_streaks: &[(usize, Vec<usize>)],
     analysis: &Analysis,
     player_highlighting: &mut PlayerHighlighting,
-    cache: &mut crate::PlayerDetailsCache,
+    _cache: &mut crate::PlayerDetailsCache,
     ui: &mut Ui,
 ) {
-    let is_hltv = analysis.demo_info.demo_type.to_uppercase().contains("HLTV");
-    let is_pov_recorder = match &p.connection {
-        analysis::Connection::Connected { client_id } => Some(*client_id) == analysis.state.pov_player_index,
-        _ => false,
-    };
-    let can_capture = is_hltv || is_pov_recorder;
 
     TableBuilder::new(ui)
         .id_salt("kill_streaks_table")
