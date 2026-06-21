@@ -7,14 +7,7 @@
 
 ## 🎯 ACTIVE PRIORITY: Capture Studio Overhaul
 
-These tasks must be executed next to finalize the movie production pipeline and ensure frame-perfect exports for Vegas Pro.
-
-| ID | Difficulty | Task | Area | Description | Dev Notes |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **C1** | 🔴 **Hard** | **Fast Streaming Byte-Copy Patcher** | Capture | Rewrite the patcher to bypass the deep parser. Read/write raw frame bytes to maximize file I/O speed while maintaining file integrity. | Turn a 10s parse into a 0.1s copy. **CRITICAL:** Must track `injected_byte_count` and rewrite the `.dem` header's `directory_offset` at EOF to prevent file corruption. |
-| **C2** | 🟡 **Medium** | **Tick-Based Timing Accuracy** | Capture | Abandon floating-point `time` matching to prevent timing drift and missed clips. | Target absolute `tick` values for console command injection. e.g., `start_record_tick = kill_tick - buffer_ticks`. |
-| **C3** | 🟡 **Medium** | **Multi-Streak Single-Demo Batching** | Capture | Group multiple killstreaks by their source `.dem` file, outputting one patched demo per match. | **CRITICAL:** Implement `merge_overlapping_streaks`. If the gap between streaks is smaller than the pre-buffer, merge them into one continuous recording block to prevent command crossover. |
-| **C4** | 🟢 **Easy** | **GoldSrc Decal Flush Trick** | Capture | Wipe the world clean of blood/bullets between streaks without reloading the map. | During the pre-record buffer, inject `host_framerate 0`, then `r_decals 0` (flushes engine memory), followed instantly by `r_decals 5555`. |
+*All core tasks for the Capture Studio Overhaul have been successfully completed!*
 
 ---
 
@@ -53,6 +46,11 @@ These tasks must be executed next to finalize the movie production pipeline and 
 
 | ID | Difficulty | Task | Description |
 | :--- | :--- | :--- | :--- |
+| **[x] C1** | 🔴 **Hard** | **Fast Streaming Byte-Copy Patcher** | Implemented high-performance stream copy with directory structure rewriting. |
+| **[x] C2** | 🟡 **Medium** | **Tick-Based Timing Accuracy** | Shifted to absolute tick-based event matching to eliminate timing drift. |
+| **[x] C3** | 🟡 **Medium** | **Multi-Streak Single-Demo Batching** | Built queue system with smart overlap merging to bundle streaks. |
+| **[x] C4** | 🟢 **Easy** | **GoldSrc Decal Flush Trick** | Integrated host_framerate decoupling and decal flushing. |
+| **[x] C5** | 🟡 **Medium** | **Cancellation, Cleanup & Thread Reaping** | Added atomic cancellation check, physical file cleanup, and thread handle joining. |
 | **[x] H10** | 🔴 **Hard** | **Match Clustering Engine** | Grouped files via SipHash content fingerprinting, ignoring OS dates. |
 | **[x] M20** | 🟡 **Medium** | **Score Reset Resiliency** | Executed Event Sourcing pivot. Parser is now stateless and survives `sv_restartround`. |
 | **[x] M23** | 🟡 **Medium** | **Premium UI Cards** | Upgraded UI with custom `egui::Frame` metric cards and active tab styling. |
