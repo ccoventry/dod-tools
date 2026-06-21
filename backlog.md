@@ -7,7 +7,11 @@
 
 ## 🎯 ACTIVE PRIORITY: Capture Studio Overhaul
 
-*All core tasks for the Capture Studio Overhaul have been successfully completed!*
+### ➔ UP NEXT (Phase 7: HLAE Capture Integration)
+* **[ ] Capture Queue State Machine:** Build a state machine that tracks the active index of the patched demo list and manages transition states.
+* **[ ] IPC Process Spawning:** Implement execution of `hl.exe` via HLAE using appropriate launch command-line arguments.
+* **[ ] Process Lifecycle Hooks:** Implement waiting for the engine to process the injected `quit` command, catching the exit code/signal, and automatically advancing to the next patched file.
+* **[ ] Artifact Verification:** Add a directory monitoring safety scan to verify that the expected frame folders/images were successfully written to disk before advancing the queue.
 
 ---
 
@@ -27,16 +31,6 @@
 | **M22** | 🟡 **Medium** | **Auto-Detect Localizations** | Core | Load Steam/HL translation catalogs. | Dynamic path traversal. |
 | **M25** | 🟡 **Medium** | **Graceful Demo Corruption** | Parser | Stop on `message_length` errors. | *Easier now due to Event Sourcing.* |
 | **M30** | 🟡 **Medium** | **Centralize Cache Path** | Core | Use OS AppData for caches. | Use `dirs` crate. |
-| **M31** | 🟡 **Medium** | **Extract POV Stats** | Parser | Move POV logic out of `lib.rs`. | *Prerequisite for H1.* |
-| **M32** | 🟡 **Medium** | **Deconstruct Player Tab** | GUI | Componentize `player_details.rs`. | *Prerequisite for H1.* |
-| **H1** | 🔴 **Hard** | **Combine Weapon/POV Tabs** | GUI | Merge layouts. | *Must complete M31/M32 first.* |
-| **H2** | 🔴 **Hard** | **Objective Capture Timelines**| Parser | Track flags captured (`CapMsg`). | Build timeline widget. |
-| **H3** | 🔴 **Hard** | **POV Ammo Box Tracking** | Parser | Track `w_ammobox.mdl` timelines. | *Renamed to fix H2 collision.* |
-| **H4** | 🔴 **Hard** | **Zero-Copy String Decoding** | Parser | Use `Cow<'a, str>` for speed. | *Conflicts with H5. Must choose one.* |
-| **H5** | 🔴 **Hard** | **Streaming Demo Parser** | Parser | Drop buffer for $O(1)$ memory. | *Conflicts with H4. Must choose one.* |
-| **H6** | 🔴 **Hard** | **Vec Capacity Pre-alloc** | Parser | Size heuristics for memory. | Use demo file size scale factors. |
-| **H7** | 🔴 **Hard** | **"Trim Demo" Tool** | CLI | Slice out warmup frames. | *Requires String Table Rebuilder.* |
-| **H9** | 🔴 **Hard** | **Interactive Minimap** | GUI | 2D player positions on map. | Requires 3D coordinate parsing. |
 
 ---
 
@@ -46,6 +40,7 @@
 
 | ID | Difficulty | Task | Description |
 | :--- | :--- | :--- | :--- |
+| **[x] C6** | 🔴 **Hard** | **Phase 6: Standalone Ingestion & Absolute Command Scheduling** | **Standalone Ingestion Engine:** Background thread parsing of `DeathMsg` frames using sliding window heuristics (`max_time_gap`, `min_kills`) to auto-discover highlights.<br>**Absolute Tick Command Scheduling:** UI offsets are mathematically converted to absolute ticks using first/last frame timings and dynamically injected via console commands.<br>**Tickrate Delta Math:** Calculated tickrate strictly via first/last 9-byte frame header timing delta.<br>**HLTV POV Separation:** Composite key grouping `(source_demo, target_player)` to build specialized names, injecting `spec_player` and `spec_mode 4`.<br>**High-Performance Caching:** `QueueGroupingMode` (By Demo, By Player, Flat List) using cached models to protect `egui` render performance.<br>**Chronological Flat Sort:** Sorts flat list alphabetically by demo name, then ascending by `start_tick`.<br>**Analytics Isolation:** Player Details tab converted to read-only layout (removed "+" queue buttons). |
 | **[x] C1** | 🔴 **Hard** | **Fast Streaming Byte-Copy Patcher** | Implemented high-performance stream copy with directory structure rewriting. |
 | **[x] C2** | 🟡 **Medium** | **Tick-Based Timing Accuracy** | Shifted to absolute tick-based event matching to eliminate timing drift. |
 | **[x] C3** | 🟡 **Medium** | **Multi-Streak Single-Demo Batching** | Built queue system with smart overlap merging to bundle streaks. |
