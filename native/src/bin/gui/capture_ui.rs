@@ -19,10 +19,17 @@ static ERROR_STATE: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 static MIN_KILLS_STR: OnceLock<Mutex<String>> = OnceLock::new();
 static MAX_TIME_GAP_STR: OnceLock<Mutex<String>> = OnceLock::new();
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CaptureState {
+    Idle,
+    Scanning(String),
+    Ready,
+}
+
 // Ingestion Wizard & Discovery State
 static HIGHLIGHT_RULES: OnceLock<Mutex<HighlightRules>> = OnceLock::new();
 static QUEUED_DEMOS: OnceLock<Mutex<Vec<QueuedDemo>>> = OnceLock::new();
-static IS_INGESTING: OnceLock<Mutex<bool>> = OnceLock::new();
+static CAPTURE_STATE: OnceLock<Mutex<CaptureState>> = OnceLock::new();
 static PATCHER_CONFIG: OnceLock<Mutex<PatcherConfig>> = OnceLock::new();
 
 // Caching variables to satisfy: "Do NOT perform grouping or sorting calculations inside the egui render loop."
@@ -32,8 +39,8 @@ static CACHED_FLAT_LIST: OnceLock<Mutex<Vec<FlatStreak>>> = OnceLock::new();
 
 // Background Ingestion Channel
 static INGESTION_CHANNEL: OnceLock<(
-    std::sync::mpsc::Sender<QueuedDemo>,
-    Mutex<std::sync::mpsc::Receiver<QueuedDemo>>
+    std::sync::mpsc::Sender<Vec<QueuedDemo>>,
+    Mutex<std::sync::mpsc::Receiver<Vec<QueuedDemo>>>
 )> = OnceLock::new();
 
 fn get_worker() -> &'static Mutex<Option<CaptureWorker>> {
@@ -76,8 +83,8 @@ fn get_queued_demos() -> &'static Mutex<Vec<QueuedDemo>> {
     QUEUED_DEMOS.get_or_init(|| Mutex::new(Vec::new()))
 }
 
-fn get_is_ingesting() -> &'static Mutex<bool> {
-    IS_INGESTING.get_or_init(|| Mutex::new(false))
+fn get_capture_state() -> &'static Mutex<CaptureState> {
+    CAPTURE_STATE.get_or_init(|| Mutex::new(CaptureState::Idle))
 }
 
 fn get_patcher_config() -> &'static Mutex<PatcherConfig> {
@@ -96,7 +103,7 @@ fn get_cached_flat_list() -> &'static Mutex<Vec<FlatStreak>> {
     CACHED_FLAT_LIST.get_or_init(|| Mutex::new(Vec::new()))
 }
 
-fn get_ingestion_channel() -> &'static (std::sync::mpsc::Sender<QueuedDemo>, Mutex<std::sync::mpsc::Receiver<QueuedDemo>>) {
+fn get_ingestion_channel() -> &'static (std::sync::mpsc::Sender<Vec<QueuedDemo>>, Mutex<std::sync::mpsc::Receiver<Vec<QueuedDemo>>>) {
     INGESTION_CHANNEL.get_or_init(|| {
         let (tx, rx) = std::sync::mpsc::channel();
         (tx, Mutex::new(rx))
@@ -164,6 +171,23 @@ pub fn render_patch_ui(
     current_state: CaptureStudioState,
     state_ptr: &mut CaptureStudioState,
 ) {
+    {
+        let state = get_capture_state().lock().unwrap().clone();
+        if let CaptureState::Scanning(msg) = state {
+            ui.group(|ui| {
+                ui.vertical(|ui| {
+                    ui.heading("📂 Step 1: Scan & Discover Highlights");
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label(format!("{}...", msg));
+                    });
+                });
+            });
+            return;
+        }
+    }
+
     let mut worker_lock = get_worker().lock().unwrap();
     let mut progress_msg = get_progress_msg().lock().unwrap();
     let mut progress_pct = get_progress_pct().lock().unwrap();
@@ -172,22 +196,23 @@ pub fn render_patch_ui(
 
     let mut rules = get_highlight_rules().lock().unwrap();
     let mut queued_demos = get_queued_demos().lock().unwrap();
-    let is_ingesting = get_is_ingesting().lock().unwrap();
     let mut patcher_config = get_patcher_config().lock().unwrap();
     let mut grouping_mode = get_grouping_mode().lock().unwrap();
 
     let mut min_kills_str = get_min_kills_str().lock().unwrap();
     let mut max_time_gap_str = get_max_time_gap_str().lock().unwrap();
 
-    // Check background ingestion channel
+    // Check background ingestion channel (draining exactly one batch per frame to avoid choking the main loop)
     let mut cache_dirty = false;
     let (_, rx_lock) = get_ingestion_channel();
     {
         let rx = rx_lock.lock().unwrap();
-        while let Ok(new_demo) = rx.try_recv() {
-            if !queued_demos.iter().any(|d| d.path == new_demo.path) {
-                queued_demos.push(new_demo);
-                cache_dirty = true;
+        if let Ok(new_demos) = rx.try_recv() {
+            for new_demo in new_demos {
+                if !queued_demos.iter().any(|d| d.path == new_demo.path) {
+                    queued_demos.push(new_demo);
+                    cache_dirty = true;
+                }
             }
         }
     }
@@ -302,34 +327,41 @@ pub fn render_patch_ui(
 
                     // Import Buttons (using RFD)
                     ui.horizontal(|ui| {
-                        let ingesting = *is_ingesting;
+                        let ingesting = matches!(*get_capture_state().lock().unwrap(), CaptureState::Scanning(_));
                         if ui.add_enabled(!ingesting, egui::Button::new("➕ Add Demo Files")).clicked() {
-                            if let Some(files) = rfd::FileDialog::new()
-                                .add_filter("Demo files", &["dem"])
-                                .pick_files()
-                            {
-                                spawn_ingestion_thread(files, rules.clone(), ctx.clone());
-                            }
+                            let ctx_clone = ctx.clone();
+                            let rules_clone = rules.clone();
+                            std::thread::Builder::new()
+                                .name("rfd_dialog".into())
+                                .stack_size(8 * 1024 * 1024)
+                                .spawn(move || {
+                                    if let Some(files) = rfd::FileDialog::new()
+                                        .add_filter("Demo files", &["dem"])
+                                        .pick_files()
+                                    {
+                                        spawn_ingestion_thread(IngestionInput::Files(files), rules_clone, ctx_clone);
+                                    }
+                                })
+                                .unwrap();
                         }
 
                         if ui.add_enabled(!ingesting, egui::Button::new("📂 Add Folder")).clicked() {
-                            if let Some(folder) = rfd::FileDialog::new().pick_folder() {
-                                if let Ok(entries) = std::fs::read_dir(folder) {
-                                    let files: Vec<PathBuf> = entries
-                                        .filter_map(|e| e.ok())
-                                        .map(|e| e.path())
-                                        .filter(|p| p.extension().map(|ext| ext == "dem").unwrap_or(false))
-                                        .collect();
-                                    if !files.is_empty() {
-                                        spawn_ingestion_thread(files, rules.clone(), ctx.clone());
+                            let ctx_clone = ctx.clone();
+                            let rules_clone = rules.clone();
+                            std::thread::Builder::new()
+                                .name("rfd_dialog".into())
+                                .stack_size(8 * 1024 * 1024)
+                                .spawn(move || {
+                                    if let Some(folder) = rfd::FileDialog::new().pick_folder() {
+                                        spawn_ingestion_thread(IngestionInput::Folder(folder), rules_clone, ctx_clone);
                                     }
-                                }
-                            }
+                                })
+                                .unwrap();
                         }
 
                         if ingesting {
                             ui.spinner();
-                            ui.weak("Scanning demos...");
+                            ui.weak("Scanning files... (App is responsive)");
                         }
                     });
 
@@ -624,42 +656,98 @@ pub fn render_patch_ui(
     }
 }
 
-fn spawn_ingestion_thread(files: Vec<PathBuf>, rules: HighlightRules, ctx: egui::Context) {
+pub enum IngestionInput {
+    Files(Vec<PathBuf>),
+    Folder(PathBuf),
+}
+
+fn spawn_ingestion_thread(input: IngestionInput, rules: HighlightRules, ctx: egui::Context) {
     let (tx, _) = get_ingestion_channel();
     let tx = tx.clone();
     
-    let ingesting_lock = get_is_ingesting();
     {
-        let mut ingesting = ingesting_lock.lock().unwrap();
-        *ingesting = true;
+        let mut state = get_capture_state().lock().unwrap();
+        *state = CaptureState::Scanning("Scanning files".to_string());
     }
 
-    std::thread::spawn(move || {
-        for file in files {
-            if let Ok((tickrate, streaks)) = scan_demo_for_highlights(&file, &rules) {
-                let selectable: Vec<SelectableStreak> = streaks
-                    .into_iter()
-                    .map(|s| SelectableStreak {
-                        start_tick: s.start_tick,
-                        end_tick: s.end_tick,
-                        kill_count: s.kill_count,
-                        target_player: s.target_player.unwrap_or_default(),
-                        is_selected: true,
-                    })
-                    .collect();
+    let log_path = std::env::current_dir().unwrap_or_default().join("crash_log.txt");
+    let _ = std::fs::write(&log_path, "STARTING SCAN\n");
 
-                if !selectable.is_empty() {
-                    let _ = tx.send(QueuedDemo {
-                        path: file,
-                        streaks: selectable,
-                        tickrate,
-                    });
+    std::thread::Builder::new()
+        .name("ingestion_worker".into())
+        .stack_size(16 * 1024 * 1024)
+        .spawn(move || {
+            let files = match input {
+                IngestionInput::Files(f) => f,
+                IngestionInput::Folder(folder) => {
+                    let mut list = Vec::new();
+                    if let Ok(entries) = std::fs::read_dir(folder) {
+                        for entry in entries.flatten() {
+                            let path = entry.path();
+                            if path.is_file() && path.extension().map(|ext| ext == "dem").unwrap_or(false) {
+                                list.push(path);
+                            }
+                        }
+                    }
+                    list
+                }
+            };
+
+            let total_files = files.len();
+            let mut results = Vec::new();
+            for (index, file) in files.into_iter().enumerate() {
+                {
+                    let mut state = get_capture_state().lock().unwrap();
+                    *state = CaptureState::Scanning(format!("demo {} of {}", index + 1, total_files));
+                }
+                ctx.request_repaint();
+
+                use std::io::Write;
+                if let Ok(mut f) = std::fs::OpenOptions::new().append(true).create(true).open(&log_path) {
+                    let _ = writeln!(f, "Attempting Demo {}: {:?}", index + 1, file.file_name().unwrap_or_default());
+                }
+
+                println!("-> Parsing: {:?}", file.file_name().unwrap_or_default());
+                match scan_demo_for_highlights(&file, &rules) {
+                    Ok((tickrate, streaks)) => {
+                        println!("<- Success: {:?}", file.file_name().unwrap_or_default());
+                        let selectable: Vec<SelectableStreak> = streaks
+                            .into_iter()
+                            .map(|s| SelectableStreak {
+                                start_tick: s.start_tick,
+                                end_tick: s.end_tick,
+                                kill_count: s.kill_count,
+                                target_player: s.target_player.unwrap_or_default(),
+                                is_selected: true,
+                            })
+                            .collect();
+
+                        if !selectable.is_empty() {
+                            results.push(QueuedDemo {
+                                path: file.to_path_buf(),
+                                streaks: selectable,
+                                tickrate,
+                            });
+                        }
+                    }
+                    Err(err) => {
+                        if err == "Unsupported HLTV proxy demo format" {
+                            eprintln!("ℹ Skipping HLTV proxy: {:?}", file.file_name().unwrap_or_default());
+                        } else {
+                            eprintln!("⚠ Skipped corrupted demo {:?}: {}", file.file_name().unwrap_or_default(), err);
+                        }
+                        continue;
+                    }
                 }
             }
-        }
 
-        let mut ingesting = get_is_ingesting().lock().unwrap();
-        *ingesting = false;
-        ctx.request_repaint();
-    });
+            let _ = tx.send(results);
+
+            {
+                let mut state = get_capture_state().lock().unwrap();
+                *state = CaptureState::Ready;
+            }
+            ctx.request_repaint();
+        })
+        .unwrap();
 }
