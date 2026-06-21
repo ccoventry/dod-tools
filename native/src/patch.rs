@@ -1,5 +1,6 @@
 use dem::open_demo_from_bytes;
 use dem::types::{Frame, FrameData, ConsoleCommand, ByteString};
+use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq)]
 pub struct CustomCommand {
@@ -262,7 +263,7 @@ impl StreamPatcher {
         }
     }
 
-    pub fn patch(&self, job: &PatchJob, config: &PatcherConfig) -> Result<(), std::io::Error> {
+    pub fn patch(&self, job: &PatchJob, config: &PatcherConfig, cancel_token: &Arc<AtomicBool>) -> Result<(), std::io::Error> {
         use std::io::{BufReader, BufWriter, Read, Write, Seek, SeekFrom};
 
         let input_file = std::fs::File::open(&job.source_demo)?;
@@ -289,6 +290,10 @@ impl StreamPatcher {
         let mut payload_buf = Vec::new();
 
         loop {
+            if cancel_token.load(Ordering::Relaxed) {
+                return Err(std::io::Error::new(std::io::ErrorKind::Interrupted, "Cancelled by user"));
+            }
+
             let mut frame_hdr = [0u8; 9];
             if let Err(e) = reader.read_exact(&mut frame_hdr) {
                 if e.kind() == std::io::ErrorKind::UnexpectedEof {
@@ -514,33 +519,48 @@ pub enum PatchEvent {
     Starting(usize),
     Progress(String, f32),
     Completed,
+    Cancelled,
     Error(String),
 }
 
 pub struct CaptureWorker {
     pub receiver: std::sync::mpsc::Receiver<PatchEvent>,
     pub is_running: bool,
+    pub cancel_token: Arc<AtomicBool>,
+    pub handle: Option<std::thread::JoinHandle<()>>,
 }
 
-pub fn spawn_patch_batch(jobs: Vec<PatchJob>, config: PatcherConfig) -> std::sync::mpsc::Receiver<PatchEvent> {
+pub fn spawn_patch_batch(
+    jobs: Vec<PatchJob>,
+    config: PatcherConfig,
+    cancel_token: Arc<AtomicBool>,
+) -> CaptureWorker {
     let (tx, rx) = std::sync::mpsc::channel();
+    let cancel_token_clone = cancel_token.clone();
     
-    std::thread::spawn(move || {
+    let handle = std::thread::spawn(move || {
         if tx.send(PatchEvent::Starting(jobs.len())).is_err() {
             return;
         }
 
+        let mut cancelled = false;
         for job in &jobs {
             if tx.send(PatchEvent::Progress(job.source_demo.clone(), 0.0)).is_err() {
                 return;
             }
 
             let patcher = StreamPatcher::new(&job.source_demo, &job.output_demo);
-            match patcher.patch(job, &config) {
+            match patcher.patch(job, &config, &cancel_token_clone) {
                 Ok(()) => {
                     if tx.send(PatchEvent::Progress(job.source_demo.clone(), 100.0)).is_err() {
                         return;
                     }
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {
+                    std::fs::remove_file(&job.output_demo).ok();
+                    let _ = tx.send(PatchEvent::Cancelled);
+                    cancelled = true;
+                    break;
                 }
                 Err(e) => {
                     if tx.send(PatchEvent::Error(format!("Failed to patch {}: {}", job.source_demo, e))).is_err() {
@@ -550,10 +570,17 @@ pub fn spawn_patch_batch(jobs: Vec<PatchJob>, config: PatcherConfig) -> std::syn
             }
         }
 
-        let _ = tx.send(PatchEvent::Completed);
+        if !cancelled {
+            let _ = tx.send(PatchEvent::Completed);
+        }
     });
 
-    rx
+    CaptureWorker {
+        receiver: rx,
+        is_running: true,
+        cancel_token,
+        handle: Some(handle),
+    }
 }
 
 #[cfg(test)]
@@ -674,7 +701,8 @@ mod tests {
         };
 
         let patcher = StreamPatcher::new(&input_path, &output_path);
-        patcher.patch(&job, &config).unwrap();
+        let cancel_token = Arc::new(AtomicBool::new(false));
+        patcher.patch(&job, &config, &cancel_token).unwrap();
 
         // Check if output file was created and is larger than original (due to injected command)
         assert!(output_path.exists());
@@ -684,6 +712,99 @@ mod tests {
         // Cleanup
         let _ = std::fs::remove_file(input_path);
         let _ = std::fs::remove_file(output_path);
+    }
+
+    #[test]
+    fn test_stream_patcher_cancellation_and_cleanup() {
+        let scratch_dir = std::path::Path::new("scratch");
+        if !scratch_dir.exists() {
+            let _ = std::fs::create_dir_all(scratch_dir);
+        }
+
+        let input_path = scratch_dir.join("test_cancel_input.dem");
+        let output_path = scratch_dir.join("test_cancel_output.dem");
+
+        // Synthesize valid minimal header
+        let mut header = [0u8; 544];
+        header[0..8].copy_from_slice(b"HLDEMO\0\0");
+        let directory_offset: i32 = 562;
+        header[540..544].copy_from_slice(&directory_offset.to_le_bytes());
+
+        let mut file_data = Vec::new();
+        file_data.extend_from_slice(&header);
+
+        // Frame 1: DemoStart (type 2), time = 0.0, tick = 0
+        file_data.push(2);
+        file_data.extend_from_slice(&0.0_f32.to_le_bytes());
+        file_data.extend_from_slice(&0_i32.to_le_bytes());
+
+        // Frame 2: NextSection (type 5), time = 0.0, tick = 0
+        file_data.push(5);
+        file_data.extend_from_slice(&0.0_f32.to_le_bytes());
+        file_data.extend_from_slice(&0_i32.to_le_bytes());
+
+        // Directory Block
+        file_data.extend_from_slice(&1_i32.to_le_bytes());
+        file_data.extend_from_slice(&1_i32.to_le_bytes());
+        let mut desc = [0u8; 64];
+        desc[..8].copy_from_slice(b"Playback");
+        file_data.extend_from_slice(&desc);
+        file_data.extend_from_slice(&0_i32.to_le_bytes());
+        file_data.extend_from_slice(&0_i32.to_le_bytes());
+        file_data.extend_from_slice(&0.0_f32.to_le_bytes());
+        file_data.extend_from_slice(&2_i32.to_le_bytes());
+        file_data.extend_from_slice(&544_i32.to_le_bytes());
+        file_data.extend_from_slice(&18_i32.to_le_bytes());
+
+        std::fs::write(&input_path, &file_data).unwrap();
+
+        let job = PatchJob {
+            source_demo: input_path.to_string_lossy().to_string(),
+            output_demo: output_path.clone(),
+            streaks: vec![
+                CaptureStreak {
+                    start_tick: 50,
+                    end_tick: 100,
+                    source_demo: input_path.to_string_lossy().to_string(),
+                }
+            ],
+        };
+
+        let config = PatcherConfig {
+            pre_roll_ticks: 10,
+            post_roll_ticks: 10,
+            capture_fps: 300,
+        };
+
+        // Create a token that starts out as cancelled (true)
+        let cancel_token = Arc::new(AtomicBool::new(true));
+
+        let patcher = StreamPatcher::new(&input_path, &output_path);
+        let res = patcher.patch(&job, &config, &cancel_token);
+
+        // Should return interrupted error
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err().kind(), std::io::ErrorKind::Interrupted);
+
+        // Check spawn_patch_batch clean-up
+        let cancel_token = Arc::new(AtomicBool::new(true));
+        let worker = spawn_patch_batch(vec![job], config, cancel_token);
+        let rx = worker.receiver;
+
+        // Wait for worker completion events
+        let mut got_cancelled = false;
+        while let Ok(event) = rx.recv() {
+            if let PatchEvent::Cancelled = event {
+                got_cancelled = true;
+            }
+        }
+
+        assert!(got_cancelled);
+        // The output file should have been cleaned up and not exist
+        assert!(!output_path.exists());
+
+        // Cleanup input file
+        let _ = std::fs::remove_file(input_path);
     }
 }
 

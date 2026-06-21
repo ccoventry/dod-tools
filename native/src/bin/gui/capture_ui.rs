@@ -1,5 +1,4 @@
-use std::sync::Mutex;
-use std::sync::OnceLock;
+use std::sync::{Arc, Mutex, OnceLock, atomic::{AtomicBool, Ordering}};
 use native::patch::{CaptureWorker, PatchEvent, PatcherConfig, CaptureStreak, build_batch_queue, spawn_patch_batch};
 use crate::types::QueuedStreakExport;
 
@@ -37,6 +36,7 @@ pub fn render_patch_ui(ui: &mut egui::Ui, ctx: &egui::Context, export_queue: &mu
     let mut error = get_error().lock().unwrap();
 
     // 3c: Poll the receiver using try_recv()
+    let mut should_drop_worker = false;
     if let Some(ref worker) = *worker_lock {
         while let Ok(event) = worker.receiver.try_recv() {
             match event {
@@ -62,20 +62,33 @@ pub fn render_patch_ui(ui: &mut egui::Ui, ctx: &egui::Context, export_queue: &mu
                     *progress_pct = 1.0;
                     *success = true;
                     *error = None;
+                    should_drop_worker = true;
+                    ctx.request_repaint();
+                }
+                PatchEvent::Cancelled => {
+                    *progress_msg = "Batch Cancelled".to_string();
+                    *progress_pct = 0.0;
+                    *success = false;
+                    *error = None;
+                    should_drop_worker = true;
                     ctx.request_repaint();
                 }
                 PatchEvent::Error(err_msg) => {
                     *progress_msg = format!("Error occurred: {}", err_msg);
                     *error = Some(err_msg);
+                    should_drop_worker = true;
                     ctx.request_repaint();
                 }
             }
         }
     }
 
-    // 3e: Drop worker when completed
-    if *success && worker_lock.is_some() {
-        *worker_lock = None;
+    if should_drop_worker {
+        if let Some(mut worker) = worker_lock.take() {
+            if let Some(handle) = worker.handle.take() {
+                let _ = handle.join();
+            }
+        }
     }
 
     ui.group(|ui| {
@@ -104,11 +117,9 @@ pub fn render_patch_ui(ui: &mut egui::Ui, ctx: &egui::Context, export_queue: &mu
 
                     let jobs = build_batch_queue(raw_streaks, &config);
                     if !jobs.is_empty() {
-                        let rx = spawn_patch_batch(jobs, config);
-                        *worker_lock = Some(CaptureWorker {
-                            receiver: rx,
-                            is_running: true,
-                        });
+                        let cancel_token = Arc::new(AtomicBool::new(false));
+                        let worker = spawn_patch_batch(jobs, config, cancel_token);
+                        *worker_lock = Some(worker);
                         *progress_msg = "Spawning worker...".to_string();
                         *progress_pct = 0.0;
                         *success = false;
@@ -127,6 +138,15 @@ pub fn render_patch_ui(ui: &mut egui::Ui, ctx: &egui::Context, export_queue: &mu
 
             // 4b: ProgressBar using tracked float state
             ui.add(egui::ProgressBar::new(*progress_pct).text(&*progress_msg));
+
+            if is_running {
+                ui.add_space(4.0);
+                if ui.button("⏹ Cancel Batch").clicked() {
+                    if let Some(ref worker) = *worker_lock {
+                        worker.cancel_token.store(true, Ordering::Relaxed);
+                    }
+                }
+            }
 
             if let Some(ref err_msg) = *error {
                 ui.colored_label(egui::Color32::RED, format!("⚠ {}", err_msg));
