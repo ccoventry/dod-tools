@@ -643,44 +643,7 @@ fn render_kill_streaks_table(
                     row.col(|ui| { ui.label(format_game_time(&start_dur)); });
                     row.col(|ui| { ui.label(format_duration_ms(&total_dur)); });
                     row.col(|ui| {
-                        #[cfg(not(target_arch = "wasm32"))]
-                        {
-                            ui.push_id(streak_idx, |ui| {
-                                ui.horizontal(|ui| {
-                                    // Export Button
-                                    let btn_export = ui.add_enabled(can_capture, egui::Button::new("🎥"));
-                                    let btn_export = if can_capture { 
-                                        btn_export.on_hover_text("Export HLAE capture demo for this streak") 
-                                    } else { 
-                                        btn_export.on_hover_text("Only the POV recorder can be exported") 
-                                    };
-                                    if btn_export.clicked() && can_capture {
-                                        let start_time = first_kill.0.real_offset.as_secs_f32();
-                                        let stop_time = last_kill.0.real_offset.as_secs_f32();
-                                        cache.export_request = Some(crate::ExportRequest { start_time, stop_time });
-                                    }
-
-                                    // Queue Button
-                                    let btn_queue = ui.add_enabled(can_capture, egui::Button::new("➕"));
-                                    let btn_queue = if can_capture { 
-                                        btn_queue.on_hover_text("Add this streak to Batch Queue") 
-                                    } else { 
-                                        btn_queue.on_hover_text("Only the POV recorder can be added to the queue") 
-                                    };
-                                    if btn_queue.clicked() && can_capture {
-                                        let start_time = first_kill.0.real_offset.as_secs_f32();
-                                        let stop_time = last_kill.0.real_offset.as_secs_f32();
-                                        cache.add_to_queue_request = Some(crate::AddToQueueRequest { 
-                                            start_time, stop_time, streak_idx, kills_count: kill_indices.len() 
-                                        });
-                                    }
-                                });
-                            });
-                        }
-                        #[cfg(target_arch = "wasm32")]
-                        {
-                            ui.weak("N/A");
-                        }
+                        ui.weak("—");
                     });
                     row.col(|ui| { ui.label(&weapons_summary); });
                 });
