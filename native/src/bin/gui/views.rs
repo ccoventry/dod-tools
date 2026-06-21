@@ -108,6 +108,7 @@ pub use scoreboard::scoreboard_ui;
 pub use summary::header_ui;
 pub use team_details::team_details_ui;
 pub use timeline::team_score_timeline_ui;
+#[allow(unused_imports)]
 pub use batch_queue::batch_queue_ui;
 
 pub fn report_ui(

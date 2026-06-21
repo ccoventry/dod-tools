@@ -10,6 +10,7 @@ pub mod settings;
 pub mod worker;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod pipeline;
+pub mod capture_engine;
 
 use analysis::Analysis;
 use clap::Parser;
@@ -222,6 +223,11 @@ pub(crate) struct Gui {
     pub(crate) selection_changed_via_keyboard: bool,
     pub(crate) selected_folder_id: Option<String>,
     pub(crate) visible_nodes: Vec<VisibleNode>,
+    pub(crate) capture_engine_running: bool,
+    pub(crate) capture_engine_msg: String,
+    pub(crate) capture_engine_progress: f32,
+    pub(crate) capture_engine_jobs_total: usize,
+    pub(crate) capture_engine_jobs_done: usize,
 }
 
 
@@ -614,6 +620,11 @@ impl Default for Gui {
             selection_changed_via_keyboard: false,
             selected_folder_id: None,
             visible_nodes: Vec::new(),
+            capture_engine_running: false,
+            capture_engine_msg: String::new(),
+            capture_engine_progress: 0.0,
+            capture_engine_jobs_total: 0,
+            capture_engine_jobs_done: 0,
         }
     }
 }
@@ -1045,6 +1056,39 @@ impl eframe::App for Gui {
                     }
                     self.hlcr_state.auto_render = true;
                     self.hlcr_state.start_scan();
+                }
+                GuiMessage::CaptureEngineEvent(event) => {
+                    use types::EngineEvent;
+                    match event {
+                        EngineEvent::Starting(total) => {
+                            self.capture_engine_running = true;
+                            self.capture_engine_msg = format!("Starting capture sequence of {} jobs...", total);
+                            self.capture_engine_progress = 0.0;
+                            self.capture_engine_jobs_total = total;
+                            self.capture_engine_jobs_done = 0;
+                        }
+                        EngineEvent::Launching(demo_name) => {
+                            self.capture_engine_msg = format!("Launching game to record: {}", demo_name);
+                        }
+                        EngineEvent::Finished(demo_name) => {
+                            self.capture_engine_jobs_done += 1;
+                            if self.capture_engine_jobs_total > 0 {
+                                self.capture_engine_progress = self.capture_engine_jobs_done as f32 / self.capture_engine_jobs_total as f32;
+                            }
+                            self.capture_engine_msg = format!("Finished recording: {}", demo_name);
+                        }
+                        EngineEvent::Verified(demo_name) => {
+                            self.capture_engine_msg = format!("Verified recording output for: {}", demo_name);
+                        }
+                        EngineEvent::Error(err_msg) => {
+                            self.capture_engine_msg = format!("Error: {}", err_msg);
+                        }
+                        EngineEvent::AllCompleted => {
+                            self.capture_engine_running = false;
+                            self.capture_engine_progress = 1.0;
+                            self.capture_engine_msg = "All captures completed successfully!".to_string();
+                        }
+                    }
                 }
             }
         }
