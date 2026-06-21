@@ -597,7 +597,7 @@ impl Default for Gui {
             chat_cache: ChatCache::default(),
             player_details_cache: PlayerDetailsCache::default(),
             export_queue: Vec::new(),
-            capture_studio_state: CaptureStudioState::ReviewingQueue,
+            capture_studio_state: CaptureStudioState::Scan,
             #[cfg(not(target_arch = "wasm32"))]
             batch_export_picker: FileDialog::default(),
             #[cfg(not(target_arch = "wasm32"))]
@@ -1037,7 +1037,7 @@ impl eframe::App for Gui {
                 }
                 #[cfg(not(target_arch = "wasm32"))]
                 GuiMessage::CaptureStudioFinished => {
-                    self.capture_studio_state = CaptureStudioState::Rendering;
+                    self.capture_studio_state = CaptureStudioState::Render;
                     if let Some(game_dir) = std::path::Path::new(&self.settings.game_path).parent() {
                         let capt_dir = game_dir.join("dod").join("hlcr_captures");
                         self.hlcr_state.config.source_folder = capt_dir.to_string_lossy().to_string();
@@ -2086,7 +2086,7 @@ impl eframe::App for Gui {
                     .collect();
 
                 if !enabled_items.is_empty() {
-                    self.capture_studio_state = CaptureStudioState::Capturing;
+                    self.capture_studio_state = CaptureStudioState::Capture;
 
                     let mut player_deaths_map = HashMap::new();
                     for item in &enabled_items {

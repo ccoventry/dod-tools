@@ -637,8 +637,8 @@ pub fn spawn_patch_batch(
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct HighlightRules {
-    pub min_kills: usize,
-    pub max_time_gap: f32,
+    pub min_kills: Option<usize>,
+    pub max_time_gap: Option<f32>,
     pub target_players: Vec<String>,
 }
 
@@ -719,16 +719,26 @@ pub fn scan_demo_for_highlights(
     let analysis = analysis::Analysis::try_from_bytes(&bytes)
         .map_err(|e| format!("Failed to parse demo: {}", e))?;
 
+    let min_kills = rules.min_kills.unwrap_or(1);
+    let max_time_gap = rules.max_time_gap.unwrap_or(f32::MAX);
+
     let mut streaks: Vec<CaptureStreak> = Vec::new();
     let mut active_streaks: std::collections::HashMap<String, (i32, i32, Vec<i32>)> = std::collections::HashMap::new();
+
+    let target_players_lower: Vec<String> = rules.target_players.iter()
+        .map(|s| s.to_lowercase())
+        .collect();
 
     for ev in &analysis.events {
         if let analysis::GameEvent::Kill(killer, _victim, _weapon) = &ev.event {
             if killer.is_empty() {
                 continue;
             }
-            if !rules.target_players.is_empty() && !rules.target_players.contains(killer) {
-                continue;
+            if !target_players_lower.is_empty() {
+                let killer_lower = killer.to_lowercase();
+                if !target_players_lower.iter().any(|t| killer_lower.contains(t)) {
+                    continue;
+                }
             }
 
             let kill_tick = ev.tick as i32;
@@ -736,11 +746,11 @@ pub fn scan_demo_for_highlights(
             if let Some(entry) = active_streaks.get_mut(killer) {
                 let last_kill_tick = *entry.2.last().unwrap();
                 let gap_seconds = (kill_tick - last_kill_tick) as f32 / tickrate;
-                if gap_seconds <= rules.max_time_gap {
+                if gap_seconds <= max_time_gap {
                     entry.1 = kill_tick;
                     entry.2.push(kill_tick);
                 } else {
-                    if entry.2.len() >= rules.min_kills {
+                    if entry.2.len() >= min_kills {
                         streaks.push(CaptureStreak {
                             start_tick: entry.0,
                             end_tick: entry.1,
@@ -758,7 +768,7 @@ pub fn scan_demo_for_highlights(
     }
 
     for (player_name, (start, end, kills)) in active_streaks {
-        if kills.len() >= rules.min_kills {
+        if kills.len() >= min_kills {
             streaks.push(CaptureStreak {
                 start_tick: start,
                 end_tick: end,

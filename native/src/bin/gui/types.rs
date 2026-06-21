@@ -75,10 +75,11 @@ pub fn default_capture_phase() -> CapturePhase {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum CaptureStudioState {
-    ReviewingQueue,
-    Capturing,
-    Rendering,
-    Complete,
+    Scan,
+    Select,
+    Capture,
+    Render,
+    Finish,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]

@@ -17,33 +17,39 @@ impl Gui {
                 let phase = self.capture_studio_state;
                 let is_wasm = cfg!(target_arch = "wasm32");
 
-                // Step 1: Queue Review
-                let step1_active = phase == CaptureStudioState::ReviewingQueue;
-                let step1_btn = ui.selectable_label(step1_active, "1. Queue Review");
+                let step1_active = phase == CaptureStudioState::Scan;
+                let step1_btn = ui.selectable_label(step1_active, "1. Scan");
                 if step1_btn.clicked() {
-                    self.capture_studio_state = CaptureStudioState::ReviewingQueue;
+                    self.capture_studio_state = CaptureStudioState::Scan;
                 }
 
                 if !is_wasm {
                     ui.label(" ➔ ");
-                    let step2_active = phase == CaptureStudioState::Capturing;
-                    let step2_btn = ui.selectable_label(step2_active, "2. HLAE Capture");
+                    let step2_active = phase == CaptureStudioState::Select;
+                    let step2_btn = ui.selectable_label(step2_active, "2. Select");
                     if step2_btn.clicked() {
-                        self.capture_studio_state = CaptureStudioState::Capturing;
+                        self.capture_studio_state = CaptureStudioState::Select;
                     }
 
                     ui.label(" ➔ ");
-                    let step3_active = phase == CaptureStudioState::Rendering;
-                    let step3_btn = ui.selectable_label(step3_active, "3. HLCR Render");
+                    let step3_active = phase == CaptureStudioState::Capture;
+                    let step3_btn = ui.selectable_label(step3_active, "3. Capture");
                     if step3_btn.clicked() {
-                        self.capture_studio_state = CaptureStudioState::Rendering;
+                        self.capture_studio_state = CaptureStudioState::Capture;
                     }
 
                     ui.label(" ➔ ");
-                    let step4_active = phase == CaptureStudioState::Complete;
-                    let step4_btn = ui.selectable_label(step4_active, "4. Complete");
+                    let step4_active = phase == CaptureStudioState::Render;
+                    let step4_btn = ui.selectable_label(step4_active, "4. Render");
                     if step4_btn.clicked() {
-                        self.capture_studio_state = CaptureStudioState::Complete;
+                        self.capture_studio_state = CaptureStudioState::Render;
+                    }
+
+                    ui.label(" ➔ ");
+                    let step5_active = phase == CaptureStudioState::Finish;
+                    let step5_btn = ui.selectable_label(step5_active, "5. Finish");
+                    if step5_btn.clicked() {
+                        self.capture_studio_state = CaptureStudioState::Finish;
                     }
                 }
             });
@@ -53,21 +59,18 @@ impl Gui {
 
             // Sub-views based on CaptureStudioState
             match self.capture_studio_state {
-                CaptureStudioState::ReviewingQueue => {
-                    crate::views::batch_queue_ui(
-                        &mut self.export_queue,
-                        &mut self.settings,
-                        &mut self.player_details_cache,
-                        &self.analyses,
-                        ui,
-                    );
+                CaptureStudioState::Scan | CaptureStudioState::Select => {
+                    // Both rendering are delegated to render_patch_ui where we check the state internally
                     #[cfg(not(target_arch = "wasm32"))]
                     {
-                        ui.add_space(16.0);
-                        crate::views::capture_ui::render_patch_ui(ui, ctx, &mut self.export_queue);
+                        crate::views::capture_ui::render_patch_ui(ui, ctx, &mut self.export_queue, self.capture_studio_state, &mut self.capture_studio_state);
+                    }
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        ui.label("Not supported in WASM");
                     }
                 }
-                CaptureStudioState::Capturing => {
+                CaptureStudioState::Capture => {
                     #[cfg(not(target_arch = "wasm32"))]
                     {
                         ui.vertical(|ui| {
@@ -167,7 +170,7 @@ impl Gui {
                             ui.horizontal(|ui| {
                                 if ui.button(egui::RichText::new("🛑 Abort Capture Queue").color(egui::Color32::RED)).clicked() {
                                     self.cancel_flag.store(true, std::sync::atomic::Ordering::Relaxed);
-                                    self.capture_studio_state = CaptureStudioState::ReviewingQueue;
+                                    self.capture_studio_state = CaptureStudioState::Select;
                                 }
                             });
                             ui.add_space(12.0);
@@ -223,7 +226,7 @@ impl Gui {
                                                         })
                                                         .body(|ui| {
                                                             if let Some(ref cmd_str) = item.debug_command {
-                                                                ui.horizontal(|ui| {
+                                                                 ui.horizontal(|ui| {
                                                                     ui.strong("Launch Command:");
                                                                     ui.text_edit_multiline(&mut cmd_str.clone());
                                                                 });
@@ -242,7 +245,7 @@ impl Gui {
                         ui.label("HLAE Capture is not supported in the WASM target.");
                     }
                 }
-                CaptureStudioState::Rendering => {
+                CaptureStudioState::Render => {
                     #[cfg(not(target_arch = "wasm32"))]
                     {
                         self.hlcr_state.draw_ui(ui, ctx);
@@ -252,13 +255,13 @@ impl Gui {
                         ui.label("HLCR rendering is not supported in the WASM target.");
                     }
                 }
-                CaptureStudioState::Complete => {
+                CaptureStudioState::Finish => {
                     ui.vertical_centered(|ui| {
                         ui.heading("Capture Studio Complete");
                         ui.add_space(10.0);
                         ui.label("All recording and rendering processes have finished.");
-                        if ui.button("Return to Queue").clicked() {
-                            self.capture_studio_state = CaptureStudioState::ReviewingQueue;
+                        if ui.button("Return to Scan").clicked() {
+                            self.capture_studio_state = CaptureStudioState::Scan;
                         }
                     });
                 }
