@@ -61,6 +61,11 @@ impl Gui {
                         &self.analyses,
                         ui,
                     );
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        ui.add_space(16.0);
+                        crate::views::capture_ui::render_patch_ui(ui, ctx, &mut self.export_queue);
+                    }
                 }
                 CaptureStudioState::Capturing => {
                     #[cfg(not(target_arch = "wasm32"))]
