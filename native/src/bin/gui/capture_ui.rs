@@ -1,5 +1,18 @@
 use std::sync::{Arc, Mutex, OnceLock, atomic::{AtomicBool, Ordering}};
 use std::path::PathBuf;
+
+macro_rules! acquire_lock {
+    ($mutex:expr) => {
+        match $mutex.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                log::error!("Mutex poisoned, attempting recovery...");
+                poisoned.into_inner()
+            }
+        }
+    };
+}
+
 use native::patch::{
     CaptureWorker, PatchEvent, PatcherConfig, CaptureStreak, build_batch_queue,
     spawn_patch_batch, HighlightRules, scan_demo_for_highlights,
@@ -28,20 +41,16 @@ pub enum CaptureState {
 
 // Ingestion Wizard & Discovery State
 static HIGHLIGHT_RULES: OnceLock<Mutex<HighlightRules>> = OnceLock::new();
-static QUEUED_DEMOS: OnceLock<Mutex<Vec<QueuedDemo>>> = OnceLock::new();
+static QUEUED_DEMOS: OnceLock<Arc<Mutex<Vec<QueuedDemo>>>> = OnceLock::new();
 static CAPTURE_STATE: OnceLock<Mutex<CaptureState>> = OnceLock::new();
 static PATCHER_CONFIG: OnceLock<Mutex<PatcherConfig>> = OnceLock::new();
 
 // Caching variables to satisfy: "Do NOT perform grouping or sorting calculations inside the egui render loop."
 static GROUPING_MODE: OnceLock<Mutex<QueueGroupingMode>> = OnceLock::new();
-static CACHED_PLAYER_GROUPS: OnceLock<Mutex<Vec<GroupedPlayer>>> = OnceLock::new();
-static CACHED_FLAT_LIST: OnceLock<Mutex<Vec<FlatStreak>>> = OnceLock::new();
+static CACHED_PLAYER_GROUPS: OnceLock<Arc<Mutex<Vec<GroupedPlayer>>>> = OnceLock::new();
+static CACHED_FLAT_LIST: OnceLock<Arc<Mutex<Vec<FlatStreak>>>> = OnceLock::new();
 
-// Background Ingestion Channel
-static INGESTION_CHANNEL: OnceLock<(
-    std::sync::mpsc::Sender<Vec<QueuedDemo>>,
-    Mutex<std::sync::mpsc::Receiver<Vec<QueuedDemo>>>
-)> = OnceLock::new();
+
 
 fn get_worker() -> &'static Mutex<Option<CaptureWorker>> {
     WORKER_STATE.get_or_init(|| Mutex::new(None))
@@ -79,15 +88,15 @@ fn get_highlight_rules() -> &'static Mutex<HighlightRules> {
     }))
 }
 
-fn get_queued_demos() -> &'static Mutex<Vec<QueuedDemo>> {
-    QUEUED_DEMOS.get_or_init(|| Mutex::new(Vec::new()))
+pub(crate) fn get_queued_demos() -> Arc<Mutex<Vec<QueuedDemo>>> {
+    QUEUED_DEMOS.get_or_init(|| Arc::new(Mutex::new(Vec::new()))).clone()
 }
 
 fn get_capture_state() -> &'static Mutex<CaptureState> {
     CAPTURE_STATE.get_or_init(|| Mutex::new(CaptureState::Idle))
 }
 
-fn get_patcher_config() -> &'static Mutex<PatcherConfig> {
+pub(crate) fn get_patcher_config() -> &'static Mutex<PatcherConfig> {
     PATCHER_CONFIG.get_or_init(|| Mutex::new(PatcherConfig::default()))
 }
 
@@ -95,20 +104,15 @@ fn get_grouping_mode() -> &'static Mutex<QueueGroupingMode> {
     GROUPING_MODE.get_or_init(|| Mutex::new(QueueGroupingMode::ByDemo))
 }
 
-fn get_cached_player_groups() -> &'static Mutex<Vec<GroupedPlayer>> {
-    CACHED_PLAYER_GROUPS.get_or_init(|| Mutex::new(Vec::new()))
+fn get_cached_player_groups() -> Arc<Mutex<Vec<GroupedPlayer>>> {
+    CACHED_PLAYER_GROUPS.get_or_init(|| Arc::new(Mutex::new(Vec::new()))).clone()
 }
 
-fn get_cached_flat_list() -> &'static Mutex<Vec<FlatStreak>> {
-    CACHED_FLAT_LIST.get_or_init(|| Mutex::new(Vec::new()))
+fn get_cached_flat_list() -> Arc<Mutex<Vec<FlatStreak>>> {
+    CACHED_FLAT_LIST.get_or_init(|| Arc::new(Mutex::new(Vec::new()))).clone()
 }
 
-fn get_ingestion_channel() -> &'static (std::sync::mpsc::Sender<Vec<QueuedDemo>>, Mutex<std::sync::mpsc::Receiver<Vec<QueuedDemo>>>) {
-    INGESTION_CHANNEL.get_or_init(|| {
-        let (tx, rx) = std::sync::mpsc::channel();
-        (tx, Mutex::new(rx))
-    })
-}
+
 
 // Function to update the caches when queued_demos is modified or grouping mode changes.
 fn update_grouping_cache(queued: &[QueuedDemo]) {
@@ -132,7 +136,8 @@ fn update_grouping_cache(queued: &[QueuedDemo]) {
         .collect();
     groups.sort_by(|a, b| a.name.cmp(&b.name));
     
-    let mut cache = get_cached_player_groups().lock().unwrap();
+    let player_groups_arc = get_cached_player_groups();
+    let mut cache = acquire_lock!(player_groups_arc);
     *cache = groups;
 
     // 2. Flat List Cache (Chronologically Sorted)
@@ -160,7 +165,8 @@ fn update_grouping_cache(queued: &[QueuedDemo]) {
             .then_with(|| a.start_tick.cmp(&b.start_tick))
     });
 
-    let mut flat_cache = get_cached_flat_list().lock().unwrap();
+    let flat_list_arc = get_cached_flat_list();
+    let mut flat_cache = acquire_lock!(flat_list_arc);
     *flat_cache = flat;
 }
 
@@ -172,7 +178,7 @@ pub fn render_patch_ui(
     state_ptr: &mut CaptureStudioState,
 ) {
     {
-        let state = get_capture_state().lock().unwrap().clone();
+        let state = acquire_lock!(get_capture_state()).clone();
         if let CaptureState::Scanning(msg) = state {
             ui.group(|ui| {
                 ui.vertical(|ui| {
@@ -188,37 +194,18 @@ pub fn render_patch_ui(
         }
     }
 
-    let mut worker_lock = get_worker().lock().unwrap();
-    let mut progress_msg = get_progress_msg().lock().unwrap();
-    let mut progress_pct = get_progress_pct().lock().unwrap();
-    let mut success = get_success().lock().unwrap();
-    let mut error = get_error().lock().unwrap();
+    let mut worker_lock = acquire_lock!(get_worker());
+    let mut progress_msg = acquire_lock!(get_progress_msg());
+    let mut progress_pct = acquire_lock!(get_progress_pct());
+    let mut success = acquire_lock!(get_success());
+    let mut error = acquire_lock!(get_error());
 
-    let mut rules = get_highlight_rules().lock().unwrap();
-    let mut queued_demos = get_queued_demos().lock().unwrap();
-    let mut patcher_config = get_patcher_config().lock().unwrap();
-    let mut grouping_mode = get_grouping_mode().lock().unwrap();
+    let mut rules = acquire_lock!(get_highlight_rules());
+    let mut patcher_config = acquire_lock!(get_patcher_config());
+    let mut grouping_mode = acquire_lock!(get_grouping_mode());
 
-    let mut min_kills_str = get_min_kills_str().lock().unwrap();
-    let mut max_time_gap_str = get_max_time_gap_str().lock().unwrap();
-
-    // Check background ingestion channel (draining exactly one batch per frame to avoid choking the main loop)
-    let mut cache_dirty = false;
-    let (_, rx_lock) = get_ingestion_channel();
-    {
-        let rx = rx_lock.lock().unwrap();
-        if let Ok(new_demos) = rx.try_recv() {
-            for new_demo in new_demos {
-                if !queued_demos.iter().any(|d| d.path == new_demo.path) {
-                    queued_demos.push(new_demo);
-                    cache_dirty = true;
-                }
-            }
-        }
-    }
-    if cache_dirty {
-        update_grouping_cache(&queued_demos);
-    }
+    let mut min_kills_str = acquire_lock!(get_min_kills_str());
+    let mut max_time_gap_str = acquire_lock!(get_max_time_gap_str());
 
     // Poll worker receiver
     let mut should_drop_worker = false;
@@ -375,6 +362,13 @@ pub fn render_patch_ui(
             });
         }
         CaptureStudioState::Select => {
+            // Clone queued_demos under a short-lived lock to avoid holding the lock during UI rendering
+            let mut queued_demos_clone = {
+                let queued_demos_arc = get_queued_demos();
+                let queued_demos_guard = acquire_lock!(queued_demos_arc);
+                queued_demos_guard.clone()
+            };
+
             // STEP 2: SELECT UI
             ui.group(|ui| {
                 ui.vertical(|ui| {
@@ -399,14 +393,16 @@ pub fn render_patch_ui(
                                 ui.selectable_value(&mut *grouping_mode, QueueGroupingMode::Flat, "Flat List");
                             });
                         if old_mode != *grouping_mode {
-                            update_grouping_cache(&queued_demos);
+                            let queued_arc = get_queued_demos();
+                            let queued = acquire_lock!(queued_arc);
+                            update_grouping_cache(&queued);
                         }
                     });
 
                     ui.add_space(8.0);
 
                     // Collapsing Queue of Discovered Streaks
-                    if !queued_demos.is_empty() {
+                    if !queued_demos_clone.is_empty() {
                         ui.strong("Discovered Highlight Streaks");
                         ui.add_space(4.0);
 
@@ -419,17 +415,23 @@ pub fn render_patch_ui(
                             .show(ui, |ui| {
                                 match *grouping_mode {
                                     QueueGroupingMode::ByDemo => {
-                                        for (d_idx, demo) in queued_demos.iter_mut().enumerate() {
+                                        for (d_idx, demo) in queued_demos_clone.iter_mut().enumerate() {
                                             let file_name = demo.path.file_name().unwrap_or_default().to_string_lossy();
                                             let total_streaks = demo.streaks.len();
                                             let selected_count = demo.streaks.iter().filter(|s| s.is_selected).count();
                                             let mut all_selected = selected_count == total_streaks;
 
                                             ui.horizontal(|ui| {
+                                                let demo_group_id = format!("demo_group_{}", file_name);
+                                                // TODO: Cleanup
+                                                log::info!("Toggling selection for: {:?}", demo_group_id);
                                                 if ui.checkbox(&mut all_selected, "").changed() {
-                                                    for streak in &mut demo.streaks {
+                                                    let queued_arc = get_queued_demos();
+                                                    let mut queued = acquire_lock!(queued_arc);
+                                                    for streak in &mut queued[d_idx].streaks {
                                                         streak.is_selected = all_selected;
                                                     }
+                                                    update_grouping_cache(&queued);
                                                     cache_dirty_local = true;
                                                 }
 
@@ -442,12 +444,19 @@ pub fn render_patch_ui(
                                                     ui.label(format!("{} ({} / {} selected) - {:.1} fps", file_name, selected_count, total_streaks, demo.tickrate));
                                                 })
                                                 .body(|ui| {
-                                                    for (_s_idx, streak) in demo.streaks.iter_mut().enumerate() {
+                                                    for (s_idx, streak) in demo.streaks.iter_mut().enumerate() {
                                                         let label = format!(
                                                             "Player: {} | Kills: {} | Ticks: {} to {}",
                                                             streak.target_player, streak.kill_count, streak.start_tick, streak.end_tick
                                                         );
+                                                        let streak_id = format!("{}_streak_{}", file_name, streak.start_tick);
+                                                        // TODO: Cleanup
+                                                        log::info!("Toggling selection for: {:?}", streak_id);
                                                         if ui.checkbox(&mut streak.is_selected, label).changed() {
+                                                            let queued_arc = get_queued_demos();
+                                                            let mut queued = acquire_lock!(queued_arc);
+                                                            queued[d_idx].streaks[s_idx].is_selected = streak.is_selected;
+                                                            update_grouping_cache(&queued);
                                                             cache_dirty_local = true;
                                                         }
                                                     }
@@ -463,18 +472,28 @@ pub fn render_patch_ui(
                                         }
                                     }
                                     QueueGroupingMode::ByPlayer => {
-                                        let mut player_groups = get_cached_player_groups().lock().unwrap();
-                                        for (p_idx, group) in player_groups.iter_mut().enumerate() {
+                                        let player_groups = {
+                                            let player_groups_arc = get_cached_player_groups();
+                                            let player_groups_guard = acquire_lock!(player_groups_arc);
+                                            player_groups_guard.clone()
+                                        };
+                                        for (p_idx, mut group) in player_groups.into_iter().enumerate() {
                                             let total_streaks = group.streaks.len();
                                             let selected_count = group.streaks.iter().filter(|s| s.is_selected).count();
                                             let mut all_selected = selected_count == total_streaks;
 
                                             ui.horizontal(|ui| {
+                                                let player_group_id = format!("player_group_{}", group.name);
+                                                // TODO: Cleanup
+                                                log::info!("Toggling selection for: {:?}", player_group_id);
                                                 if ui.checkbox(&mut all_selected, "").changed() {
+                                                    let queued_arc = get_queued_demos();
+                                                    let mut queued = acquire_lock!(queued_arc);
                                                     for streak in &mut group.streaks {
                                                         streak.is_selected = all_selected;
-                                                        queued_demos[streak.demo_index].streaks[streak.streak_index].is_selected = all_selected;
+                                                        queued[streak.demo_index].streaks[streak.streak_index].is_selected = all_selected;
                                                     }
+                                                    update_grouping_cache(&queued);
                                                     cache_dirty_local = true;
                                                 }
 
@@ -487,14 +506,20 @@ pub fn render_patch_ui(
                                                     ui.label(format!("Player: {} ({} / {} selected)", group.name, selected_count, total_streaks));
                                                 })
                                                 .body(|ui| {
-                                                    for streak in &mut group.streaks {
+                                                    for mut streak in group.streaks {
                                                         let file_name = streak.demo_path.file_name().unwrap_or_default().to_string_lossy();
                                                         let label = format!(
                                                             "{} | Kills: {} | Ticks: {} to {}",
                                                             file_name, streak.kill_count, streak.start_tick, streak.end_tick
                                                         );
+                                                        let streak_id = format!("{}_streak_{}", group.name, streak.start_tick);
+                                                        // TODO: Cleanup
+                                                        log::info!("Toggling selection for: {:?}", streak_id);
                                                         if ui.checkbox(&mut streak.is_selected, label).changed() {
-                                                            queued_demos[streak.demo_index].streaks[streak.streak_index].is_selected = streak.is_selected;
+                                                            let queued_arc = get_queued_demos();
+                                                            let mut queued = acquire_lock!(queued_arc);
+                                                            queued[streak.demo_index].streaks[streak.streak_index].is_selected = streak.is_selected;
+                                                            update_grouping_cache(&queued);
                                                             cache_dirty_local = true;
                                                         }
                                                     }
@@ -504,14 +529,24 @@ pub fn render_patch_ui(
                                         }
                                     }
                                     QueueGroupingMode::Flat => {
-                                        let mut flat_list = get_cached_flat_list().lock().unwrap();
-                                        for streak in flat_list.iter_mut() {
+                                        let flat_list = {
+                                            let flat_list_arc = get_cached_flat_list();
+                                            let flat_list_guard = acquire_lock!(flat_list_arc);
+                                            flat_list_guard.clone()
+                                        };
+                                        for mut streak in flat_list {
                                             let label = format!(
                                                 "[{}] Player: {} | Kills: {} | Ticks: {} to {}",
                                                 streak.file_name, streak.target_player, streak.kill_count, streak.start_tick, streak.end_tick
                                             );
+                                            let streak_id = format!("{}_streak_{}", streak.file_name, streak.start_tick);
+                                            // TODO: Cleanup
+                                            log::info!("Toggling selection for: {:?}", streak_id);
                                             if ui.checkbox(&mut streak.is_selected, label).changed() {
-                                                queued_demos[streak.demo_index].streaks[streak.streak_index].is_selected = streak.is_selected;
+                                                let queued_arc = get_queued_demos();
+                                                let mut queued = acquire_lock!(queued_arc);
+                                                queued[streak.demo_index].streaks[streak.streak_index].is_selected = streak.is_selected;
+                                                update_grouping_cache(&queued);
                                                 cache_dirty_local = true;
                                             }
                                         }
@@ -520,35 +555,39 @@ pub fn render_patch_ui(
                             });
 
                         if let Some(idx) = demo_to_remove {
-                            queued_demos.remove(idx);
-                            cache_dirty_local = true;
-                        }
-
-                        if cache_dirty_local {
-                            update_grouping_cache(&queued_demos);
+                            let queued_arc = get_queued_demos();
+                            let mut queued = acquire_lock!(queued_arc);
+                            queued.remove(idx);
+                            update_grouping_cache(&queued);
                         }
 
                         ui.add_space(6.0);
                         ui.horizontal(|ui| {
                             if ui.button("Clear All Discovered").clicked() {
-                                queued_demos.clear();
-                                update_grouping_cache(&queued_demos);
+                                let queued_arc = get_queued_demos();
+                                let mut queued = acquire_lock!(queued_arc);
+                                queued.clear();
+                                update_grouping_cache(&queued);
                             }
                             if ui.button("Select All").clicked() {
-                                for d in queued_demos.iter_mut() {
+                                let queued_arc = get_queued_demos();
+                                let mut queued = acquire_lock!(queued_arc);
+                                for d in queued.iter_mut() {
                                     for s in &mut d.streaks {
                                         s.is_selected = true;
                                     }
                                 }
-                                update_grouping_cache(&queued_demos);
+                                update_grouping_cache(&queued);
                             }
                             if ui.button("Deselect All").clicked() {
-                                for d in queued_demos.iter_mut() {
+                                let queued_arc = get_queued_demos();
+                                let mut queued = acquire_lock!(queued_arc);
+                                for d in queued.iter_mut() {
                                     for s in &mut d.streaks {
                                         s.is_selected = false;
                                     }
                                 }
-                                update_grouping_cache(&queued_demos);
+                                update_grouping_cache(&queued);
                             }
                         });
                     } else {
@@ -588,9 +627,9 @@ pub fn render_patch_ui(
                     // Start Batch Button
                     ui.horizontal(|ui| {
                         let btn = egui::Button::new("🎬 Start Direct Batch Patch");
-                        if ui.add_enabled(!is_running && !queued_demos.is_empty(), btn).clicked() {
+                        if ui.add_enabled(!is_running && !queued_demos_clone.is_empty(), btn).clicked() {
                             let mut raw_streaks = Vec::new();
-                            for demo in queued_demos.iter() {
+                            for demo in queued_demos_clone.iter() {
                                 let demo_path_str = demo.path.to_string_lossy().to_string();
                                 patcher_config.tickrate = demo.tickrate;
                                 patcher_config.pre_roll_ticks = (patcher_config.pre_roll_seconds * demo.tickrate) as i32;
@@ -662,11 +701,8 @@ pub enum IngestionInput {
 }
 
 fn spawn_ingestion_thread(input: IngestionInput, rules: HighlightRules, ctx: egui::Context) {
-    let (tx, _) = get_ingestion_channel();
-    let tx = tx.clone();
-    
     {
-        let mut state = get_capture_state().lock().unwrap();
+        let mut state = acquire_lock!(get_capture_state());
         *state = CaptureState::Scanning("Scanning files".to_string());
     }
 
@@ -677,6 +713,8 @@ fn spawn_ingestion_thread(input: IngestionInput, rules: HighlightRules, ctx: egu
         .name("ingestion_worker".into())
         .stack_size(16 * 1024 * 1024)
         .spawn(move || {
+            let mut last_repaint = std::time::Instant::now();
+            let mut batch_count = 0;
             let files = match input {
                 IngestionInput::Files(f) => f,
                 IngestionInput::Folder(folder) => {
@@ -697,7 +735,7 @@ fn spawn_ingestion_thread(input: IngestionInput, rules: HighlightRules, ctx: egu
             let mut results = Vec::new();
             for (index, file) in files.into_iter().enumerate() {
                 {
-                    let mut state = get_capture_state().lock().unwrap();
+                    let mut state = acquire_lock!(get_capture_state());
                     *state = CaptureState::Scanning(format!("demo {} of {}", index + 1, total_files));
                 }
                 ctx.request_repaint();
@@ -723,11 +761,22 @@ fn spawn_ingestion_thread(input: IngestionInput, rules: HighlightRules, ctx: egu
                             .collect();
 
                         if !selectable.is_empty() {
-                            results.push(QueuedDemo {
+                            let item = QueuedDemo {
                                 path: file.to_path_buf(),
                                 streaks: selectable,
                                 tickrate,
-                            });
+                            };
+                            results.push(item.clone());
+                            {
+                                let queued_arc = get_queued_demos();
+                                let mut queued = acquire_lock!(queued_arc);
+                                // TODO: Cleanup
+                                log::info!("Ingestion thread acquired lock to push: {:?}", item.path);
+                                if !queued.iter().any(|d| d.path == item.path) {
+                                    queued.push(item);
+                                    update_grouping_cache(&queued);
+                                }
+                            }
                         }
                     }
                     Err(err) => {
@@ -736,15 +785,20 @@ fn spawn_ingestion_thread(input: IngestionInput, rules: HighlightRules, ctx: egu
                         } else {
                             eprintln!("⚠ Skipped corrupted demo {:?}: {}", file.file_name().unwrap_or_default(), err);
                         }
-                        continue;
                     }
+                }
+
+                // Batch repaints gate
+                batch_count += 1;
+                if last_repaint.elapsed() > std::time::Duration::from_millis(16) || batch_count >= 5 {
+                    ctx.request_repaint();
+                    last_repaint = std::time::Instant::now();
+                    batch_count = 0;
                 }
             }
 
-            let _ = tx.send(results);
-
             {
-                let mut state = get_capture_state().lock().unwrap();
+                let mut state = acquire_lock!(get_capture_state());
                 *state = CaptureState::Ready;
             }
             ctx.request_repaint();

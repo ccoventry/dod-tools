@@ -215,6 +215,7 @@ pub enum GuiMessage {
     },
     #[cfg(not(target_arch = "wasm32"))]
     CaptureStudioFinished,
+    CaptureEngineEvent(EngineEvent),
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -277,5 +278,18 @@ pub struct FlatStreak {
     pub demo_index: usize,
     pub streak_index: usize,
 }
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct CaptureJob {
+    pub patched_demo_path: std::path::PathBuf,
+    pub expected_take_folder: std::path::PathBuf,
+}
 
-
+#[derive(Clone, Debug)]
+pub enum EngineEvent {
+    Starting(usize),
+    Launching(String),
+    Finished(String),
+    Verified(String),
+    Error(String),
+    AllCompleted,
+}

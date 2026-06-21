@@ -1,2 +1,3 @@
 STARTING SCAN
-Attempting Demo 1: "hltv-2508021304-dod_solitude_b2.dem"
+Attempting Demo 1: "week7-ricos-lennon-allies.dem"
+Attempting Demo 2: "week7-ricos-lennon-axis.dem"

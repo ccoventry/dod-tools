@@ -2133,6 +2133,7 @@ dependencies = [
  "hl-demo-auditor",
  "humantime",
  "js-sys",
+ "log",
  "nom 8.0.0",
  "open",
  "rfd",

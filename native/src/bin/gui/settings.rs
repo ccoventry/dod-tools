@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+pub type Settings = AppSettings;
+
 #[derive(Debug, Clone)]
 pub struct AppSettings {
     pub language: String,
