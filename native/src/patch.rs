@@ -282,9 +282,8 @@ impl StreamPatcher {
         writer.write_all(&header)?;
 
         let mut bytes_injected: i32 = 0;
-        let mut state = PatcherState::Seeking;
-        let mut streak_idx = 0;
         let mut is_first_frame = true;
+        let mut scheduled_queue: std::collections::VecDeque<(i32, String)> = job.scheduled_commands.iter().cloned().collect();
 
         // Step 3: Zero-Allocation Copy Loop
         let mut payload_buf = Vec::new();
@@ -307,34 +306,18 @@ impl StreamPatcher {
             let tick = i32::from_le_bytes(frame_hdr[5..9].try_into().unwrap());
 
             if is_first_frame {
-                bytes_injected += write_console_cmd(&mut writer, time, tick, "host_framerate 0")?;
+                for cmd in &job.init_commands {
+                    bytes_injected += write_console_cmd(&mut writer, time, tick, cmd)?;
+                }
                 is_first_frame = false;
             }
 
-            if let Some(current_streak) = job.streaks.get(streak_idx) {
-                match state {
-                    PatcherState::Seeking => {
-                        if tick >= current_streak.start_tick - config.pre_roll_ticks {
-                            bytes_injected += write_console_cmd(&mut writer, time, tick, &format!("host_framerate {}", config.capture_fps))?;
-                            bytes_injected += write_console_cmd(&mut writer, time, tick, "r_decals 0")?;
-                            bytes_injected += write_console_cmd(&mut writer, time, tick, "r_decals 5555")?;
-                            state = PatcherState::PreRoll;
-                        }
-                    }
-                    PatcherState::PreRoll => {
-                        if tick >= current_streak.start_tick {
-                            bytes_injected += write_console_cmd(&mut writer, time, tick, &format!("startmovie cap_ {}", config.capture_fps))?;
-                            state = PatcherState::Recording;
-                        }
-                    }
-                    PatcherState::Recording => {
-                        if tick >= current_streak.end_tick + config.post_roll_ticks {
-                            bytes_injected += write_console_cmd(&mut writer, time, tick, "endmovie")?;
-                            bytes_injected += write_console_cmd(&mut writer, time, tick, "host_framerate 0")?;
-                            state = PatcherState::Seeking;
-                            streak_idx += 1;
-                        }
-                    }
+            while let Some((target_tick, cmd)) = scheduled_queue.front() {
+                if tick >= *target_tick {
+                    let (_, cmd) = scheduled_queue.pop_front().unwrap();
+                    bytes_injected += write_console_cmd(&mut writer, time, tick, &cmd)?;
+                } else {
+                    break;
                 }
             }
 
@@ -342,12 +325,6 @@ impl StreamPatcher {
 
             // Determine payload size to read/write
             match type_byte {
-                1 => {
-                    // Demo End indicator (sometimes treated as type 1) or break the loop if required
-                    // But in GoldSrc, type 1 is NetworkMessage (Normal). Wait, let's follow user rules:
-                    // "When the loop hits Type 5 (Next Section) or Type 1 (Demo End), break the loop."
-                    break;
-                }
                 2 => {
                     // DemoStart (0 bytes)
                 }
@@ -441,11 +418,13 @@ impl StreamPatcher {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CaptureStreak {
     pub start_tick: i32,
     pub end_tick: i32,
     pub source_demo: String,
+    pub target_player: Option<String>,
+    pub kill_count: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -453,6 +432,9 @@ pub struct PatchJob {
     pub source_demo: String,
     pub output_demo: std::path::PathBuf,
     pub streaks: Vec<CaptureStreak>,
+    pub target_player: Option<String>,
+    pub init_commands: Vec<String>,
+    pub scheduled_commands: Vec<(i32, String)>,
 }
 
 #[derive(Debug, Clone)]
@@ -460,6 +442,14 @@ pub struct PatcherConfig {
     pub pre_roll_ticks: i32,
     pub post_roll_ticks: i32,
     pub capture_fps: i32,
+    pub exit_on_finish: bool,
+    pub init_commands: Vec<String>,
+    pub custom_commands: Vec<CustomCommand>,
+    pub pre_roll_seconds: f32,
+    pub post_roll_seconds: f32,
+    pub record_start_lead: f32,
+    pub record_stop_trail: f32,
+    pub tickrate: f32,
 }
 
 impl Default for PatcherConfig {
@@ -468,19 +458,27 @@ impl Default for PatcherConfig {
             pre_roll_ticks: 200,
             post_roll_ticks: 60,
             capture_fps: 300,
+            exit_on_finish: true,
+            init_commands: vec!["host_framerate 0".to_string()],
+            custom_commands: Vec::new(),
+            pre_roll_seconds: 2.0,
+            post_roll_seconds: 0.6,
+            record_start_lead: 0.0,
+            record_stop_trail: 0.0,
+            tickrate: 100.0,
         }
     }
 }
 
 pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig) -> Vec<PatchJob> {
-    let mut grouped: std::collections::HashMap<String, Vec<CaptureStreak>> = std::collections::HashMap::new();
+    let mut grouped: std::collections::HashMap<(String, Option<String>), Vec<CaptureStreak>> = std::collections::HashMap::new();
     for streak in raw_streaks {
-        grouped.entry(streak.source_demo.clone()).or_default().push(streak);
+        grouped.entry((streak.source_demo.clone(), streak.target_player.clone())).or_default().push(streak);
     }
 
     let mut jobs = Vec::new();
 
-    for (source_demo, mut streaks) in grouped {
+    for ((source_demo, target_player), mut streaks) in grouped {
         // Sort by start_tick in ascending order
         streaks.sort_by_key(|s| s.start_tick);
 
@@ -502,12 +500,73 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
 
         // Safe output path manipulation
         let path = std::path::Path::new(&source_demo);
-        let output_demo = path.with_extension("").with_extension("patched.dem");
+        let base_name = path.file_stem().unwrap().to_str().unwrap();
+        let output_name = if let Some(ref player_name) = target_player {
+            let sanitized: String = player_name.chars()
+                .map(|c| if c.is_alphanumeric() { c } else { '_' })
+                .collect();
+            format!("{}_{}_patched.dem", base_name, sanitized)
+        } else {
+            format!("{}_patched.dem", base_name)
+        };
+        let output_demo = path.with_file_name(output_name);
+
+        // Generate scheduled commands
+        let mut scheduled_commands = Vec::new();
+        for streak in &merged_streaks {
+            let pre_roll_tick = (streak.start_tick - (config.pre_roll_seconds * config.tickrate) as i32).max(0);
+            let record_start_tick = (streak.start_tick - (config.record_start_lead * config.tickrate) as i32).max(0);
+            let record_stop_tick = streak.end_tick + (config.record_stop_trail * config.tickrate) as i32;
+            let post_roll_tick = streak.end_tick + (config.post_roll_seconds * config.tickrate) as i32;
+
+            // Preroll commands
+            scheduled_commands.push((pre_roll_tick, format!("host_framerate {}", config.capture_fps)));
+            scheduled_commands.push((pre_roll_tick, "r_decals 0".to_string()));
+            scheduled_commands.push((pre_roll_tick, "r_decals 5555".to_string()));
+
+            // Amendment 1:
+            if let Some(ref player_name) = target_player {
+                scheduled_commands.push((pre_roll_tick, format!("spec_player \"{}\"", player_name)));
+                scheduled_commands.push((pre_roll_tick, "spec_mode 4".to_string()));
+            }
+
+            // Custom command overrides
+            for custom in &config.custom_commands {
+                let target_tick = match custom.relation {
+                    CommandRelation::Before => streak.start_tick - (custom.offset * config.tickrate) as i32,
+                    CommandRelation::After => streak.end_tick + (custom.offset * config.tickrate) as i32,
+                };
+                scheduled_commands.push((target_tick.max(0), custom.command.clone()));
+            }
+
+            // Record start
+            scheduled_commands.push((record_start_tick, format!("startmovie cap_ {}", config.capture_fps)));
+
+            // Record stop
+            scheduled_commands.push((record_stop_tick, "endmovie".to_string()));
+
+            // Post roll end
+            scheduled_commands.push((post_roll_tick, "host_framerate 0".to_string()));
+        }
+
+        // Exit on finish
+        if config.exit_on_finish {
+            if let Some(last_streak) = merged_streaks.last() {
+                let post_roll_tick = last_streak.end_tick + (config.post_roll_seconds * config.tickrate) as i32;
+                scheduled_commands.push((post_roll_tick + 50, "quit".to_string()));
+            }
+        }
+
+        // Sort scheduled_commands by tick
+        scheduled_commands.sort_by_key(|(tick, _)| *tick);
 
         jobs.push(PatchJob {
             source_demo,
             output_demo,
             streaks: merged_streaks,
+            target_player: target_player.clone(),
+            init_commands: config.init_commands.clone(),
+            scheduled_commands,
         });
     }
 
@@ -583,6 +642,143 @@ pub fn spawn_patch_batch(
     }
 }
 
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct HighlightRules {
+    pub min_kills: usize,
+    pub max_time_gap: f32,
+    pub target_players: Vec<String>,
+}
+
+fn calculate_demo_tickrate(bytes: &[u8]) -> Option<f32> {
+    if bytes.len() < 544 {
+        return None;
+    }
+    let original_offset = i32::from_le_bytes(bytes[540..544].try_into().unwrap()) as usize;
+    if original_offset > bytes.len() {
+        return None;
+    }
+
+    let mut first_hdr = None;
+    let mut last_hdr = None;
+    let mut offset = 544;
+
+    while offset + 9 <= original_offset {
+        let type_byte = bytes[offset];
+        let time = f32::from_le_bytes(bytes[offset+1..offset+5].try_into().unwrap());
+        let tick = i32::from_le_bytes(bytes[offset+5..offset+9].try_into().unwrap());
+
+        if first_hdr.is_none() {
+            first_hdr = Some((time, tick));
+        }
+        last_hdr = Some((time, tick));
+
+        offset += 9;
+        match type_byte {
+            2 => {}
+            3 => {
+                offset += 64;
+            }
+            4 => {
+                offset += 32;
+            }
+            5 => {
+                break;
+            }
+            6 => {
+                offset += 84;
+            }
+            7 => {
+                offset += 8;
+            }
+            8 => {
+                if offset + 8 > original_offset { break; }
+                let sample_len = u32::from_le_bytes(bytes[offset+4..offset+8].try_into().unwrap()) as usize;
+                offset += 8 + sample_len + 16;
+            }
+            9 => {
+                if offset + 4 > original_offset { break; }
+                let buffer_len = u32::from_le_bytes(bytes[offset..offset+4].try_into().unwrap()) as usize;
+                offset += 4 + buffer_len;
+            }
+            _ => {
+                if offset + 464 > original_offset { break; }
+                let msg_len = u32::from_le_bytes(bytes[offset+460..offset+464].try_into().unwrap()) as usize;
+                offset += 464 + msg_len;
+            }
+        }
+    }
+
+    if let (Some((t1, tk1)), Some((t2, tk2))) = (first_hdr, last_hdr) {
+        if t2 > t1 && tk2 > tk1 {
+            return Some((tk2 - tk1) as f32 / (t2 - t1));
+        }
+    }
+    None
+}
+
+pub fn scan_demo_for_highlights(
+    path: &std::path::Path,
+    rules: &HighlightRules,
+) -> Result<(f32, Vec<CaptureStreak>), String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("Failed to read file: {}", e))?;
+    let tickrate = calculate_demo_tickrate(&bytes).unwrap_or(100.0);
+
+    let analysis = analysis::Analysis::try_from_bytes(&bytes)
+        .map_err(|e| format!("Failed to parse demo: {}", e))?;
+
+    let mut streaks: Vec<CaptureStreak> = Vec::new();
+    let mut active_streaks: std::collections::HashMap<String, (i32, i32, Vec<i32>)> = std::collections::HashMap::new();
+
+    for ev in &analysis.events {
+        if let analysis::GameEvent::Kill(killer, _victim, _weapon) = &ev.event {
+            if killer.is_empty() {
+                continue;
+            }
+            if !rules.target_players.is_empty() && !rules.target_players.contains(killer) {
+                continue;
+            }
+
+            let kill_tick = ev.tick as i32;
+
+            if let Some(entry) = active_streaks.get_mut(killer) {
+                let last_kill_tick = *entry.2.last().unwrap();
+                let gap_seconds = (kill_tick - last_kill_tick) as f32 / tickrate;
+                if gap_seconds <= rules.max_time_gap {
+                    entry.1 = kill_tick;
+                    entry.2.push(kill_tick);
+                } else {
+                    if entry.2.len() >= rules.min_kills {
+                        streaks.push(CaptureStreak {
+                            start_tick: entry.0,
+                            end_tick: entry.1,
+                            source_demo: path.to_string_lossy().to_string(),
+                            target_player: Some(killer.clone()),
+                            kill_count: entry.2.len(),
+                        });
+                    }
+                    *entry = (kill_tick, kill_tick, vec![kill_tick]);
+                }
+            } else {
+                active_streaks.insert(killer.clone(), (kill_tick, kill_tick, vec![kill_tick]));
+            }
+        }
+    }
+
+    for (player_name, (start, end, kills)) in active_streaks {
+        if kills.len() >= rules.min_kills {
+            streaks.push(CaptureStreak {
+                start_tick: start,
+                end_tick: end,
+                source_demo: path.to_string_lossy().to_string(),
+                target_player: Some(player_name),
+                kill_count: kills.len(),
+            });
+        }
+    }
+
+    Ok((tickrate, streaks))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -595,17 +791,23 @@ mod tests {
                 start_tick: 1000,
                 end_tick: 1200,
                 source_demo: "demo1.dem".to_string(),
+                target_player: None,
+                kill_count: 3,
             },
             CaptureStreak {
                 start_tick: 1300, // starts at 1300. Pre-roll 200 makes adjusted_start = 1100.
                 // Since 1100 <= last.end_tick (1200) + 60 (1260), this overlaps!
                 end_tick: 1500,
                 source_demo: "demo1.dem".to_string(),
+                target_player: None,
+                kill_count: 3,
             },
             CaptureStreak {
                 start_tick: 2000, // adjusted_start = 1800. 1800 > 1560, so this does not overlap.
                 end_tick: 2200,
                 source_demo: "demo1.dem".to_string(),
+                target_player: None,
+                kill_count: 3,
             },
         ];
 
@@ -613,7 +815,7 @@ mod tests {
         assert_eq!(jobs.len(), 1);
         let job = &jobs[0];
         assert_eq!(job.source_demo, "demo1.dem");
-        assert_eq!(job.output_demo, std::path::PathBuf::from("demo1.patched.dem"));
+        assert_eq!(job.output_demo, std::path::PathBuf::from("demo1_patched.dem"));
         assert_eq!(job.streaks.len(), 2);
         assert_eq!(job.streaks[0].start_tick, 1000);
         assert_eq!(job.streaks[0].end_tick, 1500); // Merged 1000-1200 and 1300-1500
@@ -690,14 +892,27 @@ mod tests {
                     start_tick: 50,
                     end_tick: 100,
                     source_demo: input_path.to_string_lossy().to_string(),
+                    target_player: None,
+                    kill_count: 0,
                 }
             ],
+            target_player: None,
+            init_commands: vec!["host_framerate 0".to_string()],
+            scheduled_commands: vec![(10, "some_command".to_string())],
         };
 
         let config = PatcherConfig {
             pre_roll_ticks: 10,
             post_roll_ticks: 10,
             capture_fps: 300,
+            exit_on_finish: true,
+            init_commands: vec!["host_framerate 0".to_string()],
+            custom_commands: Vec::new(),
+            pre_roll_seconds: 2.0,
+            post_roll_seconds: 0.6,
+            record_start_lead: 0.0,
+            record_stop_trail: 0.0,
+            tickrate: 100.0,
         };
 
         let patcher = StreamPatcher::new(&input_path, &output_path);
@@ -766,14 +981,27 @@ mod tests {
                     start_tick: 50,
                     end_tick: 100,
                     source_demo: input_path.to_string_lossy().to_string(),
+                    target_player: None,
+                    kill_count: 0,
                 }
             ],
+            target_player: None,
+            init_commands: vec!["host_framerate 0".to_string()],
+            scheduled_commands: vec![(10, "some_command".to_string())],
         };
 
         let config = PatcherConfig {
             pre_roll_ticks: 10,
             post_roll_ticks: 10,
             capture_fps: 300,
+            exit_on_finish: true,
+            init_commands: vec!["host_framerate 0".to_string()],
+            custom_commands: Vec::new(),
+            pre_roll_seconds: 2.0,
+            post_roll_seconds: 0.6,
+            record_start_lead: 0.0,
+            record_stop_trail: 0.0,
+            tickrate: 100.0,
         };
 
         // Create a token that starts out as cancelled (true)

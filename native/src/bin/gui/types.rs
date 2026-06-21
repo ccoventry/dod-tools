@@ -222,3 +222,59 @@ pub enum BrowserView {
     GroupByMatch,
     GroupByPlayer,
 }
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct SelectableStreak {
+    pub start_tick: i32,
+    pub end_tick: i32,
+    pub kill_count: usize,
+    pub target_player: String,
+    pub is_selected: bool,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct QueuedDemo {
+    pub path: PathBuf,
+    pub streaks: Vec<SelectableStreak>,
+    pub tickrate: f32,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QueueGroupingMode {
+    ByDemo,
+    ByPlayer,
+    Flat,
+}
+
+#[derive(Clone, Debug)]
+pub struct GroupedPlayerStreak {
+    pub demo_path: PathBuf,
+    pub start_tick: i32,
+    pub end_tick: i32,
+    pub kill_count: usize,
+    pub is_selected: bool,
+    // Store indices to original struct for easy toggling
+    pub demo_index: usize,
+    pub streak_index: usize,
+}
+
+#[derive(Clone, Debug)]
+pub struct GroupedPlayer {
+    pub name: String,
+    pub streaks: Vec<GroupedPlayerStreak>,
+}
+
+#[derive(Clone, Debug)]
+pub struct FlatStreak {
+    pub demo_path: PathBuf,
+    pub file_name: String,
+    pub start_tick: i32,
+    pub end_tick: i32,
+    pub kill_count: usize,
+    pub target_player: String,
+    pub is_selected: bool,
+    pub demo_index: usize,
+    pub streak_index: usize,
+}
+
+
