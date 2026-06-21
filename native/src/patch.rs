@@ -230,13 +230,6 @@ pub fn patch_demo_highlights(
     Ok(demo.write_to_bytes())
 }
 
-#[derive(Debug, PartialEq)]
-enum PatcherState {
-    Seeking,
-    PreRoll,
-    Recording,
-}
-
 fn write_console_cmd(writer: &mut std::io::BufWriter<std::fs::File>, time: f32, tick: i32, cmd: &str) -> std::io::Result<i32> {
     use std::io::Write;
     writer.write_all(&[3_u8])?;
@@ -263,7 +256,7 @@ impl StreamPatcher {
         }
     }
 
-    pub fn patch(&self, job: &PatchJob, config: &PatcherConfig, cancel_token: &Arc<AtomicBool>) -> Result<(), std::io::Error> {
+    pub fn patch(&self, job: &PatchJob, _config: &PatcherConfig, cancel_token: &Arc<AtomicBool>) -> Result<(), std::io::Error> {
         use std::io::{BufReader, BufWriter, Read, Write, Seek, SeekFrom};
 
         let input_file = std::fs::File::open(&job.source_demo)?;
@@ -312,7 +305,7 @@ impl StreamPatcher {
                 is_first_frame = false;
             }
 
-            while let Some((target_tick, cmd)) = scheduled_queue.front() {
+            while let Some((target_tick, _cmd)) = scheduled_queue.front() {
                 if tick >= *target_tick {
                     let (_, cmd) = scheduled_queue.pop_front().unwrap();
                     bytes_injected += write_console_cmd(&mut writer, time, tick, &cmd)?;

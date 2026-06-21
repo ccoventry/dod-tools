@@ -28,7 +28,7 @@ use types::{
     GuiMessage, BrowserView,
 };
 #[cfg(not(target_arch = "wasm32"))]
-use types::{AuditorState, PendingStreakExport, ExportRequest, AddToQueueRequest};
+use types::{AuditorState, PendingStreakExport};
 
 use settings::{AppSettings, load_settings, apply_language_setting};
 #[cfg(not(target_arch = "wasm32"))]
