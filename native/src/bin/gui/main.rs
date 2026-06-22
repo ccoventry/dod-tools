@@ -228,6 +228,8 @@ pub(crate) struct Gui {
     pub(crate) capture_engine_progress: f32,
     pub(crate) capture_engine_jobs_total: usize,
     pub(crate) capture_engine_jobs_done: usize,
+    pub(crate) capture_studio_loading: bool,
+    pub(crate) last_capture_studio_state: Option<CaptureStudioState>,
 }
 
 
@@ -625,6 +627,8 @@ impl Default for Gui {
             capture_engine_progress: 0.0,
             capture_engine_jobs_total: 0,
             capture_engine_jobs_done: 0,
+            capture_studio_loading: false,
+            last_capture_studio_state: None,
         }
     }
 }
@@ -634,6 +638,18 @@ impl Default for Gui {
 
 impl eframe::App for Gui {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
+        let current_state = self.capture_studio_state;
+        if self.last_capture_studio_state != Some(current_state) {
+            let prev_str = match self.last_capture_studio_state {
+                Some(s) => format!("{:?}", s),
+                None => "None".to_string(),
+            };
+            let transition_msg = format!("State Transition: {} -> {:?}", prev_str, current_state);
+            log::info!("{}", transition_msg);
+            crate::views::capture_ui::log_markdown(&transition_msg);
+            self.last_capture_studio_state = Some(current_state);
+        }
+
         let modal_open = self.show_about_window;
 
         if self.loading_path.is_some() {
@@ -1089,6 +1105,9 @@ impl eframe::App for Gui {
                             self.capture_engine_msg = "All captures completed successfully!".to_string();
                         }
                     }
+                }
+                GuiMessage::IngestionFinished => {
+                    self.capture_studio_loading = false;
                 }
             }
         }

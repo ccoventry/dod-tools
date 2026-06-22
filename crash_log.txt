@@ -1,3 +1,0 @@
-STARTING SCAN
-Attempting Demo 1: "week7-ricos-lennon-allies.dem"
-Attempting Demo 2: "week7-ricos-lennon-axis.dem"

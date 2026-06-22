@@ -1,6 +1,40 @@
 use std::sync::{Arc, Mutex, OnceLock, atomic::{AtomicBool, Ordering}};
 use std::path::PathBuf;
 
+#[cfg(not(target_arch = "wasm32"))]
+static SESSION_INITIALIZED: AtomicBool = AtomicBool::new(false);
+
+pub fn log_markdown(msg: &str) {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        use chrono::Local;
+        use std::io::Write;
+        let local_dir = std::env::current_dir().unwrap_or_default().join("local");
+        let _ = std::fs::create_dir_all(&local_dir);
+        let log_path_md = local_dir.join("crash_log.md");
+
+        // Write to md
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(&log_path_md)
+        {
+            if !SESSION_INITIALIZED.load(Ordering::SeqCst) {
+                SESSION_INITIALIZED.store(true, Ordering::SeqCst);
+                let time_str = Local::now().format("%Y-%m-%d @ %H:%M %Z").to_string();
+                let _ = writeln!(f, "\n\n========== New Session: {} ====================\n", time_str);
+            }
+            let time_str = Local::now().format("%H:%M:%S").to_string();
+            let _ = writeln!(f, "* [{}] {}", time_str, msg);
+            let _ = f.sync_all();
+        }
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        log::info!("{}", msg);
+    }
+}
+
 macro_rules! acquire_lock {
     ($mutex:expr) => {
         match $mutex.lock() {
@@ -18,9 +52,9 @@ use native::patch::{
     spawn_patch_batch, HighlightRules, scan_demo_for_highlights,
 };
 use crate::types::{
-    QueuedStreakExport, QueuedDemo, SelectableStreak, QueueGroupingMode,
-    GroupedPlayer, GroupedPlayerStreak, FlatStreak, CaptureStudioState,
+    QueuedStreakExport, DemoData, HighlightStreak, CaptureStudioState,
 };
+use egui_extras::{TableBuilder, Column};
 
 static WORKER_STATE: OnceLock<Mutex<Option<CaptureWorker>>> = OnceLock::new();
 static PROGRESS_MSG: OnceLock<Mutex<String>> = OnceLock::new();
@@ -41,16 +75,9 @@ pub enum CaptureState {
 
 // Ingestion Wizard & Discovery State
 static HIGHLIGHT_RULES: OnceLock<Mutex<HighlightRules>> = OnceLock::new();
-static QUEUED_DEMOS: OnceLock<Arc<Mutex<Vec<QueuedDemo>>>> = OnceLock::new();
+static QUEUED_DEMOS: OnceLock<Arc<Mutex<Arc<Vec<DemoData>>>>> = OnceLock::new();
 static CAPTURE_STATE: OnceLock<Mutex<CaptureState>> = OnceLock::new();
 static PATCHER_CONFIG: OnceLock<Mutex<PatcherConfig>> = OnceLock::new();
-
-// Caching variables to satisfy: "Do NOT perform grouping or sorting calculations inside the egui render loop."
-static GROUPING_MODE: OnceLock<Mutex<QueueGroupingMode>> = OnceLock::new();
-static CACHED_PLAYER_GROUPS: OnceLock<Arc<Mutex<Vec<GroupedPlayer>>>> = OnceLock::new();
-static CACHED_FLAT_LIST: OnceLock<Arc<Mutex<Vec<FlatStreak>>>> = OnceLock::new();
-
-
 
 fn get_worker() -> &'static Mutex<Option<CaptureWorker>> {
     WORKER_STATE.get_or_init(|| Mutex::new(None))
@@ -88,8 +115,8 @@ fn get_highlight_rules() -> &'static Mutex<HighlightRules> {
     }))
 }
 
-pub(crate) fn get_queued_demos() -> Arc<Mutex<Vec<QueuedDemo>>> {
-    QUEUED_DEMOS.get_or_init(|| Arc::new(Mutex::new(Vec::new()))).clone()
+pub(crate) fn get_queued_demos() -> Arc<Mutex<Arc<Vec<DemoData>>>> {
+    QUEUED_DEMOS.get_or_init(|| Arc::new(Mutex::new(Arc::new(Vec::new())))).clone()
 }
 
 fn get_capture_state() -> &'static Mutex<CaptureState> {
@@ -100,75 +127,7 @@ pub(crate) fn get_patcher_config() -> &'static Mutex<PatcherConfig> {
     PATCHER_CONFIG.get_or_init(|| Mutex::new(PatcherConfig::default()))
 }
 
-fn get_grouping_mode() -> &'static Mutex<QueueGroupingMode> {
-    GROUPING_MODE.get_or_init(|| Mutex::new(QueueGroupingMode::ByDemo))
-}
-
-fn get_cached_player_groups() -> Arc<Mutex<Vec<GroupedPlayer>>> {
-    CACHED_PLAYER_GROUPS.get_or_init(|| Arc::new(Mutex::new(Vec::new()))).clone()
-}
-
-fn get_cached_flat_list() -> Arc<Mutex<Vec<FlatStreak>>> {
-    CACHED_FLAT_LIST.get_or_init(|| Arc::new(Mutex::new(Vec::new()))).clone()
-}
-
-
-
-// Function to update the caches when queued_demos is modified or grouping mode changes.
-fn update_grouping_cache(queued: &[QueuedDemo]) {
-    // 1. Group by Player Cache
-    let mut map: std::collections::HashMap<String, Vec<GroupedPlayerStreak>> = std::collections::HashMap::new();
-    for (d_idx, demo) in queued.iter().enumerate() {
-        for (s_idx, streak) in demo.streaks.iter().enumerate() {
-            map.entry(streak.target_player.clone()).or_default().push(GroupedPlayerStreak {
-                demo_path: demo.path.clone(),
-                start_tick: streak.start_tick,
-                end_tick: streak.end_tick,
-                kill_count: streak.kill_count,
-                is_selected: streak.is_selected,
-                demo_index: d_idx,
-                streak_index: s_idx,
-            });
-        }
-    }
-    let mut groups: Vec<GroupedPlayer> = map.into_iter()
-        .map(|(name, streaks)| GroupedPlayer { name, streaks })
-        .collect();
-    groups.sort_by(|a, b| a.name.cmp(&b.name));
-    
-    let player_groups_arc = get_cached_player_groups();
-    let mut cache = acquire_lock!(player_groups_arc);
-    *cache = groups;
-
-    // 2. Flat List Cache (Chronologically Sorted)
-    let mut flat = Vec::new();
-    for (d_idx, demo) in queued.iter().enumerate() {
-        let file_name = demo.path.file_name().unwrap_or_default().to_string_lossy().into_owned();
-        for (s_idx, streak) in demo.streaks.iter().enumerate() {
-            flat.push(FlatStreak {
-                demo_path: demo.path.clone(),
-                file_name: file_name.clone(),
-                start_tick: streak.start_tick,
-                end_tick: streak.end_tick,
-                kill_count: streak.kill_count,
-                target_player: streak.target_player.clone(),
-                is_selected: streak.is_selected,
-                demo_index: d_idx,
-                streak_index: s_idx,
-            });
-        }
-    }
-    
-    // Sort flat list first alphabetically by filename, then ascending by start_tick
-    flat.sort_by(|a, b| {
-        a.file_name.cmp(&b.file_name)
-            .then_with(|| a.start_tick.cmp(&b.start_tick))
-    });
-
-    let flat_list_arc = get_cached_flat_list();
-    let mut flat_cache = acquire_lock!(flat_list_arc);
-    *flat_cache = flat;
-}
+// Caching helper not needed as we use the raw flat structure directly now.
 
 pub fn render_patch_ui(
     ui: &mut egui::Ui,
@@ -176,6 +135,8 @@ pub fn render_patch_ui(
     _export_queue: &mut Vec<QueuedStreakExport>,
     current_state: CaptureStudioState,
     state_ptr: &mut CaptureStudioState,
+    tx: std::sync::mpsc::Sender<crate::types::GuiMessage>,
+    loading_ptr: &mut bool,
 ) {
     {
         let state = acquire_lock!(get_capture_state()).clone();
@@ -202,7 +163,6 @@ pub fn render_patch_ui(
 
     let mut rules = acquire_lock!(get_highlight_rules());
     let mut patcher_config = acquire_lock!(get_patcher_config());
-    let mut grouping_mode = acquire_lock!(get_grouping_mode());
 
     let mut min_kills_str = acquire_lock!(get_min_kills_str());
     let mut max_time_gap_str = acquire_lock!(get_max_time_gap_str());
@@ -316,8 +276,10 @@ pub fn render_patch_ui(
                     ui.horizontal(|ui| {
                         let ingesting = matches!(*get_capture_state().lock().unwrap(), CaptureState::Scanning(_));
                         if ui.add_enabled(!ingesting, egui::Button::new("➕ Add Demo Files")).clicked() {
+                            *loading_ptr = true;
                             let ctx_clone = ctx.clone();
                             let rules_clone = rules.clone();
+                            let tx_clone = tx.clone();
                             std::thread::Builder::new()
                                 .name("rfd_dialog".into())
                                 .stack_size(8 * 1024 * 1024)
@@ -326,21 +288,27 @@ pub fn render_patch_ui(
                                         .add_filter("Demo files", &["dem"])
                                         .pick_files()
                                     {
-                                        spawn_ingestion_thread(IngestionInput::Files(files), rules_clone, ctx_clone);
+                                        spawn_ingestion_thread(IngestionInput::Files(files), rules_clone, ctx_clone, tx_clone);
+                                    } else {
+                                        let _ = tx_clone.send(crate::types::GuiMessage::IngestionFinished);
                                     }
                                 })
                                 .unwrap();
                         }
 
                         if ui.add_enabled(!ingesting, egui::Button::new("📂 Add Folder")).clicked() {
+                            *loading_ptr = true;
                             let ctx_clone = ctx.clone();
                             let rules_clone = rules.clone();
+                            let tx_clone = tx.clone();
                             std::thread::Builder::new()
                                 .name("rfd_dialog".into())
                                 .stack_size(8 * 1024 * 1024)
                                 .spawn(move || {
                                     if let Some(folder) = rfd::FileDialog::new().pick_folder() {
-                                        spawn_ingestion_thread(IngestionInput::Folder(folder), rules_clone, ctx_clone);
+                                        spawn_ingestion_thread(IngestionInput::Folder(folder), rules_clone, ctx_clone, tx_clone);
+                                    } else {
+                                        let _ = tx_clone.send(crate::types::GuiMessage::IngestionFinished);
                                     }
                                 })
                                 .unwrap();
@@ -355,6 +323,13 @@ pub fn render_patch_ui(
                     ui.add_space(16.0);
                     ui.horizontal(|ui| {
                         if ui.button("Proceed to Selection ->").clicked() {
+                            log_markdown("UI Interaction: Clicked Proceed to Selection");
+                            let queued_arc = get_queued_demos();
+                            let queued_guard = acquire_lock!(queued_arc);
+                            // [STEP 3] Diagnostic Logging
+                            let msg = format!("Transitioning with {} items", queued_guard.len());
+                            log::info!("{}", msg);
+                            log_markdown(&msg);
                             *state_ptr = CaptureStudioState::Select;
                         }
                     });
@@ -362,232 +337,131 @@ pub fn render_patch_ui(
             });
         }
         CaptureStudioState::Select => {
-            // Clone queued_demos under a short-lived lock to avoid holding the lock during UI rendering
-            let mut queued_demos_clone = {
-                let queued_demos_arc = get_queued_demos();
+            // [STEP 1 & STEP 3] Diagnostic Check
+            if *loading_ptr {
+                log::info!("UI: State is in Loading");
+                ui.label("Loading...");
+                return;
+            } else {
+                let msg = "UI: State transition to DisplayList";
+                log::info!("{}", msg);
+            }
+
+            let queued_demos_arc = get_queued_demos();
+
+            // 1b. Ensure that no clone() or deep-copy operations are being performed on the collection being moved into the state.
+            // We clone the Arc pointer (O(1)) rather than deep copying the underlying vector data.
+            let queued_demos_shared = {
                 let queued_demos_guard = acquire_lock!(queued_demos_arc);
                 queued_demos_guard.clone()
             };
+            let data = &*queued_demos_shared;
 
             // STEP 2: SELECT UI
             ui.group(|ui| {
                 ui.vertical(|ui| {
                     ui.heading("📂 Step 2: Select Highlights & Patch");
                     ui.add_space(4.0);
-                    ui.label("Choose grouping mode, enable streaks, adjust patch parameters, and launch patcher.");
-                    ui.add_space(8.0);
-
-                    // Grouping Mode Combo Box
-                    ui.horizontal(|ui| {
-                        ui.label("Grouping Mode:");
-                        let old_mode = *grouping_mode;
-                        egui::ComboBox::from_id_salt("grouping_mode_combo")
-                            .selected_text(match *grouping_mode {
-                                QueueGroupingMode::ByDemo => "By Demo",
-                                QueueGroupingMode::ByPlayer => "By Player",
-                                QueueGroupingMode::Flat => "Flat List",
-                            })
-                            .show_ui(ui, |ui| {
-                                ui.selectable_value(&mut *grouping_mode, QueueGroupingMode::ByDemo, "By Demo");
-                                ui.selectable_value(&mut *grouping_mode, QueueGroupingMode::ByPlayer, "By Player");
-                                ui.selectable_value(&mut *grouping_mode, QueueGroupingMode::Flat, "Flat List");
-                            });
-                        if old_mode != *grouping_mode {
-                            let queued_arc = get_queued_demos();
-                            let queued = acquire_lock!(queued_arc);
-                            update_grouping_cache(&queued);
-                        }
-                    });
-
+                    ui.label("Enable streaks, adjust patch parameters, and launch patcher.");
                     ui.add_space(8.0);
 
                     // Collapsing Queue of Discovered Streaks
-                    if !queued_demos_clone.is_empty() {
+                    if !queued_demos_shared.is_empty() {
                         ui.strong("Discovered Highlight Streaks");
                         ui.add_space(4.0);
 
                         let mut demo_to_remove = None;
-                        let mut cache_dirty_local = false;
 
                         egui::ScrollArea::vertical()
-                            .max_height(200.0)
-                            .id_salt("discovered_streaks_scroll")
+                            .max_height(250.0)
+                            .id_salt("discovered_streaks_scroll_tables")
                             .show(ui, |ui| {
-                                match *grouping_mode {
-                                    QueueGroupingMode::ByDemo => {
-                                        for (d_idx, demo) in queued_demos_clone.iter_mut().enumerate() {
-                                            let file_name = demo.path.file_name().unwrap_or_default().to_string_lossy();
-                                            let total_streaks = demo.streaks.len();
-                                            let selected_count = demo.streaks.iter().filter(|s| s.is_selected).count();
-                                            let mut all_selected = selected_count == total_streaks;
-
-                                            ui.horizontal(|ui| {
-                                                let demo_group_id = format!("demo_group_{}", file_name);
-                                                // TODO: Cleanup
-                                                log::info!("Toggling selection for: {:?}", demo_group_id);
-                                                if ui.checkbox(&mut all_selected, "").changed() {
-                                                    let queued_arc = get_queued_demos();
-                                                    let mut queued = acquire_lock!(queued_arc);
-                                                    for streak in &mut queued[d_idx].streaks {
-                                                        streak.is_selected = all_selected;
-                                                    }
-                                                    update_grouping_cache(&queued);
-                                                    cache_dirty_local = true;
-                                                }
-
-                                                egui::collapsing_header::CollapsingState::load_with_default_open(
-                                                    ui.ctx(),
-                                                    ui.make_persistent_id(format!("demo_collapsible_{}", d_idx)),
-                                                    true,
-                                                )
-                                                .show_header(ui, |ui| {
-                                                    ui.label(format!("{} ({} / {} selected) - {:.1} fps", file_name, selected_count, total_streaks, demo.tickrate));
-                                                })
-                                                .body(|ui| {
-                                                    for (s_idx, streak) in demo.streaks.iter_mut().enumerate() {
-                                                        let label = format!(
-                                                            "Player: {} | Kills: {} | Ticks: {} to {}",
-                                                            streak.target_player, streak.kill_count, streak.start_tick, streak.end_tick
-                                                        );
-                                                        let streak_id = format!("{}_streak_{}", file_name, streak.start_tick);
-                                                        // TODO: Cleanup
-                                                        log::info!("Toggling selection for: {:?}", streak_id);
-                                                        if ui.checkbox(&mut streak.is_selected, label).changed() {
-                                                            let queued_arc = get_queued_demos();
-                                                            let mut queued = acquire_lock!(queued_arc);
-                                                            queued[d_idx].streaks[s_idx].is_selected = streak.is_selected;
-                                                            update_grouping_cache(&queued);
-                                                            cache_dirty_local = true;
-                                                        }
-                                                    }
-                                                });
-
-                                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                    if ui.button("🗑").on_hover_text("Remove this demo").clicked() {
-                                                        demo_to_remove = Some(d_idx);
-                                                    }
-                                                });
-                                            });
-                                            ui.separator();
-                                        }
+                                for (d_idx, demo) in data.iter().enumerate() {
+                                    if demo.streaks.is_empty() {
+                                        continue;
                                     }
-                                    QueueGroupingMode::ByPlayer => {
-                                        let player_groups = {
-                                            let player_groups_arc = get_cached_player_groups();
-                                            let player_groups_guard = acquire_lock!(player_groups_arc);
-                                            player_groups_guard.clone()
-                                        };
-                                        for (p_idx, mut group) in player_groups.into_iter().enumerate() {
-                                            let total_streaks = group.streaks.len();
-                                            let selected_count = group.streaks.iter().filter(|s| s.is_selected).count();
-                                            let mut all_selected = selected_count == total_streaks;
-
-                                            ui.horizontal(|ui| {
-                                                let player_group_id = format!("player_group_{}", group.name);
-                                                // TODO: Cleanup
-                                                log::info!("Toggling selection for: {:?}", player_group_id);
-                                                if ui.checkbox(&mut all_selected, "").changed() {
-                                                    let queued_arc = get_queued_demos();
-                                                    let mut queued = acquire_lock!(queued_arc);
-                                                    for streak in &mut group.streaks {
-                                                        streak.is_selected = all_selected;
-                                                        queued[streak.demo_index].streaks[streak.streak_index].is_selected = all_selected;
-                                                    }
-                                                    update_grouping_cache(&queued);
-                                                    cache_dirty_local = true;
-                                                }
-
-                                                egui::collapsing_header::CollapsingState::load_with_default_open(
-                                                    ui.ctx(),
-                                                    ui.make_persistent_id(format!("player_collapsible_{}", p_idx)),
-                                                    true,
-                                                )
-                                                .show_header(ui, |ui| {
-                                                    ui.label(format!("Player: {} ({} / {} selected)", group.name, selected_count, total_streaks));
-                                                })
-                                                .body(|ui| {
-                                                    for mut streak in group.streaks {
-                                                        let file_name = streak.demo_path.file_name().unwrap_or_default().to_string_lossy();
-                                                        let label = format!(
-                                                            "{} | Kills: {} | Ticks: {} to {}",
-                                                            file_name, streak.kill_count, streak.start_tick, streak.end_tick
-                                                        );
-                                                        let streak_id = format!("{}_streak_{}", group.name, streak.start_tick);
-                                                        // TODO: Cleanup
-                                                        log::info!("Toggling selection for: {:?}", streak_id);
-                                                        if ui.checkbox(&mut streak.is_selected, label).changed() {
-                                                            let queued_arc = get_queued_demos();
-                                                            let mut queued = acquire_lock!(queued_arc);
-                                                            queued[streak.demo_index].streaks[streak.streak_index].is_selected = streak.is_selected;
-                                                            update_grouping_cache(&queued);
-                                                            cache_dirty_local = true;
-                                                        }
-                                                    }
-                                                });
-                                            });
-                                            ui.separator();
-                                        }
-                                    }
-                                    QueueGroupingMode::Flat => {
-                                        let flat_list = {
-                                            let flat_list_arc = get_cached_flat_list();
-                                            let flat_list_guard = acquire_lock!(flat_list_arc);
-                                            flat_list_guard.clone()
-                                        };
-                                        for mut streak in flat_list {
-                                            let label = format!(
-                                                "[{}] Player: {} | Kills: {} | Ticks: {} to {}",
-                                                streak.file_name, streak.target_player, streak.kill_count, streak.start_tick, streak.end_tick
-                                            );
-                                            let streak_id = format!("{}_streak_{}", streak.file_name, streak.start_tick);
-                                            // TODO: Cleanup
-                                            log::info!("Toggling selection for: {:?}", streak_id);
-                                            if ui.checkbox(&mut streak.is_selected, label).changed() {
-                                                let queued_arc = get_queued_demos();
-                                                let mut queued = acquire_lock!(queued_arc);
-                                                queued[streak.demo_index].streaks[streak.streak_index].is_selected = streak.is_selected;
-                                                update_grouping_cache(&queued);
-                                                cache_dirty_local = true;
+                                    ui.horizontal(|ui| {
+                                        ui.heading(&demo.demo_name);
+                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                            if ui.button("🗑").on_hover_text("Remove this demo").clicked() {
+                                                demo_to_remove = Some(d_idx);
                                             }
-                                        }
-                                    }
+                                        });
+                                    });
+                                    ui.add_space(2.0);
+
+                                    TableBuilder::new(ui)
+                                        .striped(true)
+                                        .vscroll(false)
+                                        .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                                        .column(Column::auto()) // Checkbox
+                                        .column(Column::exact(50.0)) // Kills
+                                        .column(Column::remainder()) // Details
+                                        .header(20.0, |mut header| {
+                                            header.col(|ui| { ui.strong("Select"); });
+                                            header.col(|ui| { ui.strong("Kills"); });
+                                            header.col(|ui| { ui.strong("Details"); });
+                                        })
+                                        .body(|body| {
+                                            body.rows(20.0, demo.streaks.len(), |mut row| {
+                                                let streak_idx = row.index();
+                                                let streak = &demo.streaks[streak_idx];
+                                                
+                                                row.col(|ui| {
+                                                    let mut is_selected = streak.is_selected;
+                                                    if ui.checkbox(&mut is_selected, "").changed() {
+                                                        log_markdown(&format!("UI Interaction: Toggled streak selection for {}, new value: {}", streak.target_player, is_selected));
+                                                        let queued_arc = get_queued_demos();
+                                                        let mut queued_guard = acquire_lock!(queued_arc);
+                                                        let queued = Arc::make_mut(&mut *queued_guard);
+                                                        queued[d_idx].streaks[streak_idx].is_selected = is_selected;
+                                                    }
+                                                });
+                                                row.col(|ui| { ui.label(streak.kill_count.to_string()); });
+                                                row.col(|ui| { ui.label(&streak.display_text); });
+                                            });
+                                        });
+                                    
+                                    ui.add_space(8.0);
+                                    ui.separator();
+                                    ui.add_space(8.0);
                                 }
                             });
 
                         if let Some(idx) = demo_to_remove {
                             let queued_arc = get_queued_demos();
-                            let mut queued = acquire_lock!(queued_arc);
+                            let mut queued_guard = acquire_lock!(queued_arc);
+                            let queued = Arc::make_mut(&mut *queued_guard);
                             queued.remove(idx);
-                            update_grouping_cache(&queued);
                         }
 
                         ui.add_space(6.0);
                         ui.horizontal(|ui| {
                             if ui.button("Clear All Discovered").clicked() {
                                 let queued_arc = get_queued_demos();
-                                let mut queued = acquire_lock!(queued_arc);
-                                queued.clear();
-                                update_grouping_cache(&queued);
+                                  let mut queued_guard = acquire_lock!(queued_arc);
+                                  let queued = Arc::make_mut(&mut *queued_guard);
+                                  queued.clear();
                             }
                             if ui.button("Select All").clicked() {
-                                let queued_arc = get_queued_demos();
-                                let mut queued = acquire_lock!(queued_arc);
-                                for d in queued.iter_mut() {
-                                    for s in &mut d.streaks {
-                                        s.is_selected = true;
-                                    }
-                                }
-                                update_grouping_cache(&queued);
+                                  let queued_arc = get_queued_demos();
+                                  let mut queued_guard = acquire_lock!(queued_arc);
+                                  let queued = Arc::make_mut(&mut *queued_guard);
+                                  for d in queued.iter_mut() {
+                                      for s in &mut d.streaks {
+                                          s.is_selected = true;
+                                      }
+                                  }
                             }
                             if ui.button("Deselect All").clicked() {
-                                let queued_arc = get_queued_demos();
-                                let mut queued = acquire_lock!(queued_arc);
-                                for d in queued.iter_mut() {
-                                    for s in &mut d.streaks {
-                                        s.is_selected = false;
-                                    }
-                                }
-                                update_grouping_cache(&queued);
+                                  let queued_arc = get_queued_demos();
+                                  let mut queued_guard = acquire_lock!(queued_arc);
+                                  let queued = Arc::make_mut(&mut *queued_guard);
+                                  for d in queued.iter_mut() {
+                                      for s in &mut d.streaks {
+                                          s.is_selected = false;
+                                      }
+                                  }
                             }
                         });
                     } else {
@@ -627,9 +501,9 @@ pub fn render_patch_ui(
                     // Start Batch Button
                     ui.horizontal(|ui| {
                         let btn = egui::Button::new("🎬 Start Direct Batch Patch");
-                        if ui.add_enabled(!is_running && !queued_demos_clone.is_empty(), btn).clicked() {
+                        if ui.add_enabled(!is_running && !queued_demos_shared.is_empty(), btn).clicked() {
                             let mut raw_streaks = Vec::new();
-                            for demo in queued_demos_clone.iter() {
+                            for demo in queued_demos_shared.iter() {
                                 let demo_path_str = demo.path.to_string_lossy().to_string();
                                 patcher_config.tickrate = demo.tickrate;
                                 patcher_config.pre_roll_ticks = (patcher_config.pre_roll_seconds * demo.tickrate) as i32;
@@ -700,14 +574,18 @@ pub enum IngestionInput {
     Folder(PathBuf),
 }
 
-fn spawn_ingestion_thread(input: IngestionInput, rules: HighlightRules, ctx: egui::Context) {
+fn spawn_ingestion_thread(
+    input: IngestionInput,
+    rules: HighlightRules,
+    ctx: egui::Context,
+    tx: std::sync::mpsc::Sender<crate::types::GuiMessage>,
+) {
     {
         let mut state = acquire_lock!(get_capture_state());
         *state = CaptureState::Scanning("Scanning files".to_string());
     }
 
-    let log_path = std::env::current_dir().unwrap_or_default().join("crash_log.txt");
-    let _ = std::fs::write(&log_path, "STARTING SCAN\n");
+    log_markdown("STARTING SCAN");
 
     std::thread::Builder::new()
         .name("ingestion_worker".into())
@@ -732,7 +610,6 @@ fn spawn_ingestion_thread(input: IngestionInput, rules: HighlightRules, ctx: egu
             };
 
             let total_files = files.len();
-            let mut results = Vec::new();
             for (index, file) in files.into_iter().enumerate() {
                 {
                     let mut state = acquire_lock!(get_capture_state());
@@ -740,43 +617,54 @@ fn spawn_ingestion_thread(input: IngestionInput, rules: HighlightRules, ctx: egu
                 }
                 ctx.request_repaint();
 
-                use std::io::Write;
-                if let Ok(mut f) = std::fs::OpenOptions::new().append(true).create(true).open(&log_path) {
-                    let _ = writeln!(f, "Attempting Demo {}: {:?}", index + 1, file.file_name().unwrap_or_default());
-                }
+                log_markdown(&format!("Attempting Demo {}: {:?}", index + 1, file.file_name().unwrap_or_default()));
 
                 println!("-> Parsing: {:?}", file.file_name().unwrap_or_default());
                 match scan_demo_for_highlights(&file, &rules) {
                     Ok((tickrate, streaks)) => {
                         println!("<- Success: {:?}", file.file_name().unwrap_or_default());
-                        let selectable: Vec<SelectableStreak> = streaks
+                        let selectable: Vec<HighlightStreak> = streaks
                             .into_iter()
-                            .map(|s| SelectableStreak {
-                                start_tick: s.start_tick,
-                                end_tick: s.end_tick,
-                                kill_count: s.kill_count,
-                                target_player: s.target_player.unwrap_or_default(),
-                                is_selected: true,
+                            .map(|s| {
+                                let target_player = s.target_player.unwrap_or_default();
+                                let display_text = format!(
+                                    "Player: {} | Kills: {} | Ticks: {} to {}",
+                                    target_player, s.kill_count, s.start_tick, s.end_tick
+                                );
+                                HighlightStreak {
+                                    start_tick: s.start_tick,
+                                    end_tick: s.end_tick,
+                                    kill_count: s.kill_count,
+                                    target_player,
+                                    is_selected: true,
+                                    display_text,
+                                }
                             })
                             .collect();
 
                         if !selectable.is_empty() {
-                            let item = QueuedDemo {
+                            let demo_name = file.file_name().unwrap_or_default().to_string_lossy().into_owned();
+                            let item = DemoData {
+                                demo_name,
                                 path: file.to_path_buf(),
                                 streaks: selectable,
                                 tickrate,
                             };
-                            results.push(item.clone());
-                            {
+                            
+                            // [STEP 2] Prevent Deadlock - Lock is dropped immediately after modifying the collection.
+                            let _added = {
                                 let queued_arc = get_queued_demos();
-                                let mut queued = acquire_lock!(queued_arc);
+                                let mut queued_guard = acquire_lock!(queued_arc);
                                 // TODO: Cleanup
                                 log::info!("Ingestion thread acquired lock to push: {:?}", item.path);
-                                if !queued.iter().any(|d| d.path == item.path) {
+                                if !queued_guard.iter().any(|d| d.path == item.path) {
+                                    let queued = Arc::make_mut(&mut *queued_guard);
                                     queued.push(item);
-                                    update_grouping_cache(&queued);
+                                    true
+                                } else {
+                                    false
                                 }
-                            }
+                            };
                         }
                     }
                     Err(err) => {
@@ -801,6 +689,8 @@ fn spawn_ingestion_thread(input: IngestionInput, rules: HighlightRules, ctx: egu
                 let mut state = acquire_lock!(get_capture_state());
                 *state = CaptureState::Ready;
             }
+            // [STEP 1b] Send message to toggle loading state boolean
+            let _ = tx.send(crate::types::GuiMessage::IngestionFinished);
             ctx.request_repaint();
         })
         .unwrap();

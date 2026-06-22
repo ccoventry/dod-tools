@@ -216,6 +216,7 @@ pub enum GuiMessage {
     #[cfg(not(target_arch = "wasm32"))]
     CaptureStudioFinished,
     CaptureEngineEvent(EngineEvent),
+    IngestionFinished,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -226,57 +227,21 @@ pub enum BrowserView {
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub struct SelectableStreak {
+pub struct HighlightStreak {
     pub start_tick: i32,
     pub end_tick: i32,
     pub kill_count: usize,
     pub target_player: String,
     pub is_selected: bool,
+    pub display_text: String,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub struct QueuedDemo {
+pub struct DemoData {
+    pub demo_name: String,
     pub path: PathBuf,
-    pub streaks: Vec<SelectableStreak>,
+    pub streaks: Vec<HighlightStreak>,
     pub tickrate: f32,
-}
-
-#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
-pub enum QueueGroupingMode {
-    ByDemo,
-    ByPlayer,
-    Flat,
-}
-
-#[derive(Clone, Debug)]
-pub struct GroupedPlayerStreak {
-    pub demo_path: PathBuf,
-    pub start_tick: i32,
-    pub end_tick: i32,
-    pub kill_count: usize,
-    pub is_selected: bool,
-    // Store indices to original struct for easy toggling
-    pub demo_index: usize,
-    pub streak_index: usize,
-}
-
-#[derive(Clone, Debug)]
-pub struct GroupedPlayer {
-    pub name: String,
-    pub streaks: Vec<GroupedPlayerStreak>,
-}
-
-#[derive(Clone, Debug)]
-pub struct FlatStreak {
-    pub demo_path: PathBuf,
-    pub file_name: String,
-    pub start_tick: i32,
-    pub end_tick: i32,
-    pub kill_count: usize,
-    pub target_player: String,
-    pub is_selected: bool,
-    pub demo_index: usize,
-    pub streak_index: usize,
 }
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct CaptureJob {
