@@ -169,7 +169,11 @@ impl Gui {
                                                         target_player: Some(streak.target_player.clone()),
                                                         kill_count: streak.kill_count,
                                                         timeline_string: streak.timeline_string.clone(),
+                                                        duration_string: streak.duration_string.clone(),
                                                         player_index: streak.player_index,
+                                                        kills: streak.kills.clone(),
+                                                        start_index: streak.start_index,
+                                                        end_index: streak.end_index,
                                                     });
                                                 }
                                             }

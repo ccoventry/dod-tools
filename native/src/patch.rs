@@ -466,7 +466,46 @@ pub struct CaptureStreak {
     pub target_player: Option<String>,
     pub kill_count: usize,
     pub timeline_string: String,
+    pub duration_string: String,
     pub player_index: usize,
+    /// Raw kill events: (tick, abs_time_secs, weapon). Stored so update_visuals
+    /// can rebuild timeline_string from any sub-slice without needing frame_times.
+    pub kills: Vec<(i32, f32, String)>,
+    pub start_index: usize,
+    pub end_index: usize,
+}
+
+impl CaptureStreak {
+    /// Rebuilds `timeline_string`, `duration_string`, `kill_count`, `start_tick`,
+    /// and `end_tick` from `kills[start_index..=end_index]`. Must be called after
+    /// any mutation of `start_index` or `end_index`.
+    pub fn update_visuals(&mut self) {
+        if self.kills.is_empty() {
+            return;
+        }
+        let end = self.end_index.min(self.kills.len().saturating_sub(1));
+        let start = self.start_index.min(end);
+        let slice = &self.kills[start..=end];
+
+        self.start_tick = slice[0].0;
+        self.end_tick = slice[slice.len() - 1].0;
+        self.kill_count = slice.len();
+
+        let total_secs = (slice.last().unwrap().1 - slice[0].1).max(0.0).round() as i32;
+        self.duration_string = format!("{}:{:02}", total_secs / 60, total_secs % 60);
+
+        let mut parts: Vec<String> = Vec::with_capacity(slice.len());
+        for (i, (_, abs_time, weapon)) in slice.iter().enumerate() {
+            let weapon_clean = weapon.trim_start_matches("Weapon::").to_string();
+            if i == 0 {
+                parts.push(weapon_clean);
+            } else {
+                let gap_sec = (abs_time - slice[i - 1].1).max(0.0).round() as i32;
+                parts.push(format!("(+{}:{:02}) {}", gap_sec / 60, gap_sec % 60, weapon_clean));
+            }
+        }
+        self.timeline_string = parts.join(", ");
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -797,99 +836,130 @@ pub fn scan_demo_for_highlights(
         .map_err(|e| format!("Failed to parse demo: {}", e))?;
 
     let min_kills = rules.min_kills.unwrap_or(1);
-    let max_time_gap = rules.max_time_gap.unwrap_or(f32::MAX);
 
+    // current_streak: per-player buffer of kill events for the life currently being played.
+    // Key = player name (lowercase), Value = (start_tick, end_tick, kills)
+    // kills element: (tick: i32, abs_time_secs: f32, weapon: String)
+    let mut current_streak: std::collections::HashMap<String, (i32, i32, Vec<(i32, f32, String)>)> =
+        std::collections::HashMap::new();
     let mut streaks: Vec<CaptureStreak> = Vec::new();
-    let mut active_streaks: std::collections::HashMap<String, (i32, i32, Vec<(u32, String)>)> = std::collections::HashMap::new();
 
     let target_players_lower: Vec<String> = rules.target_players.iter()
         .map(|s| s.to_lowercase())
         .collect();
 
-    let get_streak_details = |player_name: &str, kills: &[(u32, String)], frame_times: &[f32]| -> (String, usize) {
-        // Find player_index (client_id)
-        let player_index = analysis.state.players.iter().find(|p| p.name == player_name)
+    // flush_current_streak: finalises a single player's buffered life and pushes it to `streaks`
+    // if it meets the minimum kill threshold. Called on DeathMsg (victim died), ServerReset,
+    // GameCommencing, and EOF — mirroring analysis/src/kill.rs segmentation logic exactly.
+    let flush_current_streak = |
+        player_name: &str,
+        entry: (i32, i32, Vec<(i32, f32, String)>),
+        streaks: &mut Vec<CaptureStreak>,
+        _frame_times: &[f32],
+        min_kills: usize,
+        path: &std::path::Path,
+    | {
+        let (_, _, kills) = entry;
+        if kills.len() < min_kills {
+            return;
+        }
+        // Resolve player_index from the analysis state.
+        let player_index = analysis.state.players.iter()
+            .find(|p| p.name.to_lowercase() == player_name)
             .and_then(|p| match p.connection {
                 analysis::Connection::Connected { client_id } => Some(client_id as usize),
                 _ => None,
             })
             .unwrap_or(0);
 
-        // Build timeline string
-        let mut timeline_parts = Vec::new();
-        for (i, &(tick, ref weapon)) in kills.iter().enumerate() {
-            let weapon_clean = weapon.trim_start_matches("Weapon::").to_string();
-            if i == 0 {
-                timeline_parts.push(weapon_clean);
-            } else {
-                let prev_tick = kills[i - 1].0;
-                let t_curr = frame_times.get(tick as usize).cloned().unwrap_or(0.0);
-                let t_prev = frame_times.get(prev_tick as usize).cloned().unwrap_or(0.0);
-                let gap = (t_curr - t_prev).max(0.0);
-                let gap_sec = gap.round() as i32;
-                let mins = gap_sec / 60;
-                let secs = gap_sec % 60;
-                timeline_parts.push(format!("(+{}:{:02}) {}", mins, secs, weapon_clean));
-            }
-        }
-        let timeline_string = timeline_parts.join(", ");
-        (timeline_string, player_index)
+        let end_index = kills.len().saturating_sub(1);
+        let mut streak = CaptureStreak {
+            start_tick: kills[0].0,
+            end_tick: kills[end_index].0,
+            source_demo: path.to_string_lossy().to_string(),
+            target_player: Some(player_name.to_string()),
+            kill_count: kills.len(),
+            timeline_string: String::new(),
+            duration_string: String::new(),
+            player_index,
+            kills,
+            start_index: 0,
+            end_index,
+        };
+        // Build timeline_string and duration_string via the canonical method.
+        streak.update_visuals();
+        streaks.push(streak);
     };
 
     for ev in &analysis.events {
-        if let analysis::GameEvent::Kill(killer, _victim, weapon) = &ev.event {
-            if killer.is_empty() {
-                continue;
-            }
-            if !target_players_lower.is_empty() {
-                let killer_lower = killer.to_lowercase();
-                if !target_players_lower.iter().any(|t| killer_lower.contains(t)) {
+        match &ev.event {
+            // ── Kill event: append to killer's current life; flush victim's life ──────────
+            analysis::GameEvent::Kill(killer, victim, weapon) => {
+                // Flush the victim's streak — their life just ended.
+                if !victim.is_empty() {
+                    let victim_key = victim.to_lowercase();
+                    if let Some(entry) = current_streak.remove(&victim_key) {
+                        flush_current_streak(
+                            &victim_key, entry, &mut streaks, &frame_times, min_kills, path,
+                        );
+                    }
+                }
+
+                if killer.is_empty() {
                     continue;
                 }
-            }
 
-            let kill_tick = ev.tick as i32;
-
-            if let Some(entry) = active_streaks.get_mut(killer) {
-                let last_kill_tick = entry.2.last().ok_or_else(|| "Empty kill tick log in active streak".to_string())?.0 as i32;
-                let gap_seconds = (kill_tick - last_kill_tick) as f32 / tickrate;
-                if gap_seconds <= max_time_gap {
-                    entry.1 = kill_tick;
-                    entry.2.push((kill_tick as u32, weapon.clone()));
-                } else {
-                    if entry.2.len() >= min_kills {
-                        let (timeline_string, player_index) = get_streak_details(killer, &entry.2, &frame_times);
-                        streaks.push(CaptureStreak {
-                            start_tick: entry.0,
-                            end_tick: entry.1,
-                            source_demo: path.to_string_lossy().to_string(),
-                            target_player: Some(killer.clone()),
-                            kill_count: entry.2.len(),
-                            timeline_string,
-                            player_index,
-                        });
+                // Skip killers not in the target list (when a filter is set).
+                if !target_players_lower.is_empty() {
+                    let killer_lower = killer.to_lowercase();
+                    if !target_players_lower.iter().any(|t| killer_lower.contains(t)) {
+                        continue;
                     }
-                    *entry = (kill_tick, kill_tick, vec![(kill_tick as u32, weapon.clone())]);
                 }
-            } else {
-                active_streaks.insert(killer.clone(), (kill_tick, kill_tick, vec![(kill_tick as u32, weapon.clone())]));
+
+                let kill_tick = ev.tick as i32;
+                let abs_time = frame_times.get(kill_tick as usize).cloned().unwrap_or(0.0);
+                let killer_key = killer.to_lowercase();
+
+                let entry = current_streak
+                    .entry(killer_key)
+                    .or_insert_with(|| (kill_tick, kill_tick, Vec::new()));
+                entry.1 = kill_tick;
+                entry.2.push((kill_tick, abs_time, weapon.clone()));
             }
+
+            // ── Round reset / game commencing: flush every active streak ─────────────────
+            analysis::GameEvent::ServerReset | analysis::GameEvent::GameCommencing => {
+                let drained: Vec<(String, (i32, i32, Vec<(i32, f32, String)>))> =
+                    current_streak.drain().collect();
+                for (player_key, entry) in drained {
+                    flush_current_streak(
+                        &player_key, entry, &mut streaks, &frame_times, min_kills, path,
+                    );
+                }
+            }
+
+            // ── Map change: streaks must not bleed across maps in continuous recordings ───
+            analysis::GameEvent::MapChange => {
+                let drained: Vec<(String, (i32, i32, Vec<(i32, f32, String)>))> =
+                    current_streak.drain().collect();
+                for (player_key, entry) in drained {
+                    flush_current_streak(
+                        &player_key, entry, &mut streaks, &frame_times, min_kills, path,
+                    );
+                }
+            }
+
+            _ => {}
         }
     }
 
-    for (player_name, (start, end, kills)) in active_streaks {
-        if kills.len() >= min_kills {
-            let (timeline_string, player_index) = get_streak_details(&player_name, &kills, &frame_times);
-            streaks.push(CaptureStreak {
-                start_tick: start,
-                end_tick: end,
-                source_demo: path.to_string_lossy().to_string(),
-                target_player: Some(player_name),
-                kill_count: kills.len(),
-                timeline_string,
-                player_index,
-            });
-        }
+    // ── EOF: flush any remaining open streaks ─────────────────────────────────────────────
+    let drained: Vec<(String, (i32, i32, Vec<(i32, f32, String)>))> = current_streak.drain().collect();
+    for (player_key, entry) in drained {
+        flush_current_streak(
+            &player_key, entry, &mut streaks, &frame_times, min_kills, path,
+        );
     }
 
     let is_pov = analysis.demo_info.demo_type == "POV";
@@ -913,26 +983,37 @@ mod tests {
                 target_player: None,
                 kill_count: 3,
                 timeline_string: String::new(),
+                duration_string: String::new(),
                 player_index: 0,
+                kills: Vec::new(),
+                start_index: 0,
+                end_index: 2,
             },
             CaptureStreak {
-                start_tick: 1300, // starts at 1300. Pre-roll 200 makes adjusted_start = 1100.
-                // Since 1100 <= last.end_tick (1200) + 60 (1260), this overlaps!
+                start_tick: 1300,
                 end_tick: 1500,
                 source_demo: "demo1.dem".to_string(),
                 target_player: None,
                 kill_count: 3,
                 timeline_string: String::new(),
+                duration_string: String::new(),
                 player_index: 0,
+                kills: Vec::new(),
+                start_index: 0,
+                end_index: 2,
             },
             CaptureStreak {
-                start_tick: 2000, // adjusted_start = 1800. 1800 > 1560, so this does not overlap.
+                start_tick: 2000,
                 end_tick: 2200,
                 source_demo: "demo1.dem".to_string(),
                 target_player: None,
                 kill_count: 3,
                 timeline_string: String::new(),
+                duration_string: String::new(),
                 player_index: 0,
+                kills: Vec::new(),
+                start_index: 0,
+                end_index: 2,
             },
         ];
 
@@ -1020,7 +1101,11 @@ mod tests {
                     target_player: None,
                     kill_count: 0,
                     timeline_string: String::new(),
+                    duration_string: String::new(),
                     player_index: 0,
+                    kills: Vec::new(),
+                    start_index: 0,
+                    end_index: 0,
                 }
             ],
             target_player: None,
@@ -1111,7 +1196,11 @@ mod tests {
                     target_player: None,
                     kill_count: 0,
                     timeline_string: String::new(),
+                    duration_string: String::new(),
                     player_index: 0,
+                    kills: Vec::new(),
+                    start_index: 0,
+                    end_index: 0,
                 }
             ],
             target_player: None,

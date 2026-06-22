@@ -193,6 +193,9 @@ pub enum GameEvent {
     ScoreUpdate(String, i32, i32), // Player, Kills, Deaths
     ServerReset,
     GameCommencing,
+    /// Emitted when SvcServerInfo carries a different map name than the current one,
+    /// signalling a level change within a continuous `playdemo` recording.
+    MapChange,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -561,7 +564,7 @@ impl Analysis {
         let mut scoreboard = std::collections::HashMap::new();
         for timeline_event in &self.events {
             match &timeline_event.event {
-                GameEvent::ServerReset | GameEvent::GameCommencing => {
+                GameEvent::ServerReset | GameEvent::GameCommencing | GameEvent::MapChange => {
                     scoreboard.clear();
                 }
                 GameEvent::Kill(killer, victim, _weapon) => {
@@ -649,6 +652,25 @@ impl Analysis {
                                         &mut state,
                                         &AnalyzerEvent::EngineMessage(engine_msg),
                                     );
+
+                                    // Emit MapChange when SvcServerInfo carries a new map name.
+                                    if let EngineMessage::SvcServerInfo(svc) = &**engine_msg {
+                                        let map_name = String::from_utf8_lossy(&svc.map_file_name)
+                                            .trim_end_matches('\0')
+                                            .trim_start_matches("maps/")
+                                            .trim_end_matches(".bsp")
+                                            .to_string();
+                                        let is_new_map = state
+                                            .initial_map_name
+                                            .as_ref()
+                                            .map_or(false, |m| m != &map_name);
+                                        if is_new_map {
+                                            events.push(TimelineEvent {
+                                                tick: processed_frames as u32,
+                                                event: GameEvent::MapChange,
+                                            });
+                                        }
+                                    }
 
                                     if let EngineMessage::SvcUpdateUserInfo(user_info) = &**engine_msg {
                                         let fields = user_info.user_info.to_str()
@@ -872,6 +894,25 @@ impl Analysis {
                                         &mut state_opt,
                                         &AnalyzerEvent::EngineMessage(engine_msg),
                                     );
+
+                                    // Emit MapChange when SvcServerInfo carries a new map name.
+                                    if let EngineMessage::SvcServerInfo(svc) = &**engine_msg {
+                                        let map_name = String::from_utf8_lossy(&svc.map_file_name)
+                                            .trim_end_matches('\0')
+                                            .trim_start_matches("maps/")
+                                            .trim_end_matches(".bsp")
+                                            .to_string();
+                                        let is_new_map = state_opt
+                                            .initial_map_name
+                                            .as_ref()
+                                            .map_or(false, |m| m != &map_name);
+                                        if is_new_map {
+                                            events.push(TimelineEvent {
+                                                tick: processed_frames as u32,
+                                                event: GameEvent::MapChange,
+                                            });
+                                        }
+                                    }
 
                                     if let EngineMessage::SvcUpdateUserInfo(user_info) = &**engine_msg {
                                         let fields = user_info.user_info.to_str()
