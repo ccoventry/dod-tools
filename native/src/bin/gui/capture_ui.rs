@@ -1,39 +1,7 @@
 use std::sync::{Arc, Mutex, OnceLock, atomic::{AtomicBool, Ordering}};
 use std::path::PathBuf;
 
-#[cfg(not(target_arch = "wasm32"))]
-static SESSION_INITIALIZED: AtomicBool = AtomicBool::new(false);
-
-pub fn log_markdown(msg: &str) {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        use chrono::Local;
-        use std::io::Write;
-        let local_dir = std::env::current_dir().unwrap_or_default().join("local");
-        let _ = std::fs::create_dir_all(&local_dir);
-        let log_path_md = local_dir.join("crash_log.md");
-
-        // Write to md
-        if let Ok(mut f) = std::fs::OpenOptions::new()
-            .append(true)
-            .create(true)
-            .open(&log_path_md)
-        {
-            if !SESSION_INITIALIZED.load(Ordering::SeqCst) {
-                SESSION_INITIALIZED.store(true, Ordering::SeqCst);
-                let time_str = Local::now().format("%Y-%m-%d @ %H:%M %Z").to_string();
-                let _ = writeln!(f, "\n\n========== New Session: {} ====================\n", time_str);
-            }
-            let time_str = Local::now().format("%H:%M:%S").to_string();
-            let _ = writeln!(f, "* [{}] {}", time_str, msg);
-            let _ = f.sync_all();
-        }
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        log::info!("{}", msg);
-    }
-}
+pub use native::log_markdown;
 
 macro_rules! acquire_lock {
     ($mutex:expr) => {
@@ -137,6 +105,7 @@ pub fn render_patch_ui(
     state_ptr: &mut CaptureStudioState,
     tx: std::sync::mpsc::Sender<crate::types::GuiMessage>,
     loading_ptr: &mut bool,
+    hide_non_pov: &mut bool,
 ) {
     {
         let state = acquire_lock!(get_capture_state()).clone();
@@ -170,6 +139,7 @@ pub fn render_patch_ui(
     // Poll worker receiver
     let mut should_drop_worker = false;
     if let Some(ref worker) = *worker_lock {
+        ctx.request_repaint();
         while let Ok(event) = worker.receiver.try_recv() {
             match event {
                 PatchEvent::Starting(total) => {
@@ -365,6 +335,9 @@ pub fn render_patch_ui(
                     ui.label("Enable streaks, adjust patch parameters, and launch patcher.");
                     ui.add_space(8.0);
 
+                    ui.checkbox(hide_non_pov, "Hide Non-Recording Players in POV Demos");
+                    ui.add_space(8.0);
+
                     // Collapsing Queue of Discovered Streaks
                     if !queued_demos_shared.is_empty() {
                         ui.strong("Discovered Highlight Streaks");
@@ -402,9 +375,21 @@ pub fn render_patch_ui(
                                             header.col(|ui| { ui.strong("Kills"); });
                                             header.col(|ui| { ui.strong("Details"); });
                                         })
-                                        .body(|body| {
-                                            body.rows(20.0, demo.streaks.len(), |mut row| {
-                                                let streak_idx = row.index();
+                                        .body(|mut body| {
+                                            let filtered_indices: Vec<usize> = (0..demo.streaks.len())
+                                                .filter(|&idx| {
+                                                    let streak = &demo.streaks[idx];
+                                                    if demo.is_pov && *hide_non_pov {
+                                                        Some(streak.player_index) == demo.local_player_index
+                                                    } else {
+                                                        true
+                                                    }
+                                                })
+                                                .collect();
+
+                                            body.rows(20.0, filtered_indices.len(), |mut row| {
+                                                let row_idx = row.index();
+                                                let streak_idx = filtered_indices[row_idx];
                                                 let streak = &demo.streaks[streak_idx];
                                                 
                                                 row.col(|ui| {
@@ -418,7 +403,7 @@ pub fn render_patch_ui(
                                                     }
                                                 });
                                                 row.col(|ui| { ui.label(streak.kill_count.to_string()); });
-                                                row.col(|ui| { ui.label(&streak.display_text); });
+                                                row.col(|ui| { ui.label(&streak.timeline_string); });
                                             });
                                         });
                                     
@@ -502,38 +487,52 @@ pub fn render_patch_ui(
                     ui.horizontal(|ui| {
                         let btn = egui::Button::new("🎬 Start Direct Batch Patch");
                         if ui.add_enabled(!is_running && !queued_demos_shared.is_empty(), btn).clicked() {
-                            let mut raw_streaks = Vec::new();
-                            for demo in queued_demos_shared.iter() {
-                                let demo_path_str = demo.path.to_string_lossy().to_string();
-                                patcher_config.tickrate = demo.tickrate;
-                                patcher_config.pre_roll_ticks = (patcher_config.pre_roll_seconds * demo.tickrate) as i32;
-                                patcher_config.post_roll_ticks = (patcher_config.post_roll_seconds * demo.tickrate) as i32;
+                            *progress_msg = "Initializing patcher...".to_string();
+                            *progress_pct = 0.0;
+                            *success = false;
+                            *error = None;
 
-                                for streak in &demo.streaks {
-                                    if streak.is_selected {
-                                        raw_streaks.push(CaptureStreak {
-                                            start_tick: streak.start_tick,
-                                            end_tick: streak.end_tick,
-                                            source_demo: demo_path_str.clone(),
-                                            target_player: Some(streak.target_player.clone()),
-                                            kill_count: streak.kill_count,
-                                        });
+                            let queued_demos_shared = queued_demos_shared.clone();
+                            let mut patcher_config = patcher_config.clone();
+                            let ctx_clone = ctx.clone();
+
+                            std::thread::spawn(move || {
+                                let mut raw_streaks = Vec::new();
+                                for demo in queued_demos_shared.iter() {
+                                    let demo_path_str = demo.path.to_string_lossy().to_string();
+                                    patcher_config.tickrate = demo.tickrate;
+                                    patcher_config.pre_roll_ticks = (patcher_config.pre_roll_seconds * demo.tickrate) as i32;
+                                    patcher_config.post_roll_ticks = (patcher_config.post_roll_seconds * demo.tickrate) as i32;
+
+                                    for streak in &demo.streaks {
+                                        if streak.is_selected {
+                                            raw_streaks.push(CaptureStreak {
+                                                start_tick: streak.start_tick,
+                                                end_tick: streak.end_tick,
+                                                source_demo: demo_path_str.clone(),
+                                                target_player: Some(streak.target_player.clone()),
+                                                kill_count: streak.kill_count,
+                                                timeline_string: streak.timeline_string.clone(),
+                                                player_index: streak.player_index,
+                                            });
+                                        }
                                     }
                                 }
-                            }
 
-                            let jobs = build_batch_queue(raw_streaks, &patcher_config);
-                            if !jobs.is_empty() {
-                                let cancel_token = Arc::new(AtomicBool::new(false));
-                                let worker = spawn_patch_batch(jobs, patcher_config.clone(), cancel_token);
-                                *worker_lock = Some(worker);
-                                *progress_msg = "Spawning worker...".to_string();
-                                *progress_pct = 0.0;
-                                *success = false;
-                                *error = None;
-                            } else {
-                                *progress_msg = "No selected streaks to patch.".to_string();
-                            }
+                                let jobs = build_batch_queue(raw_streaks, &patcher_config);
+                                if !jobs.is_empty() {
+                                    let cancel_token = Arc::new(AtomicBool::new(false));
+                                    let worker = spawn_patch_batch(jobs, patcher_config.clone(), cancel_token);
+                                    *acquire_lock!(get_worker()) = Some(worker);
+                                    *acquire_lock!(get_progress_msg()) = "Spawning worker...".to_string();
+                                    *acquire_lock!(get_progress_pct()) = 0.0;
+                                    *acquire_lock!(get_success()) = false;
+                                    *acquire_lock!(get_error()) = None;
+                                } else {
+                                    *acquire_lock!(get_progress_msg()) = "No selected streaks to patch.".to_string();
+                                }
+                                ctx_clone.request_repaint();
+                            });
                         }
 
                         if is_running {
@@ -621,7 +620,7 @@ fn spawn_ingestion_thread(
 
                 println!("-> Parsing: {:?}", file.file_name().unwrap_or_default());
                 match scan_demo_for_highlights(&file, &rules) {
-                    Ok((tickrate, streaks)) => {
+                    Ok((tickrate, streaks, is_pov, local_player_index)) => {
                         println!("<- Success: {:?}", file.file_name().unwrap_or_default());
                         let selectable: Vec<HighlightStreak> = streaks
                             .into_iter()
@@ -638,6 +637,8 @@ fn spawn_ingestion_thread(
                                     target_player,
                                     is_selected: true,
                                     display_text,
+                                    timeline_string: s.timeline_string,
+                                    player_index: s.player_index,
                                 }
                             })
                             .collect();
@@ -649,6 +650,8 @@ fn spawn_ingestion_thread(
                                 path: file.to_path_buf(),
                                 streaks: selectable,
                                 tickrate,
+                                is_pov,
+                                local_player_index,
                             };
                             
                             // [STEP 2] Prevent Deadlock - Lock is dropped immediately after modifying the collection.

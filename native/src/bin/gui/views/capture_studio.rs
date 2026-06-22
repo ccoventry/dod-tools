@@ -77,6 +77,7 @@ impl Gui {
                             &mut self.capture_studio_state,
                             self.tx.clone(),
                             &mut self.capture_studio_loading,
+                            &mut self.hide_non_pov,
                         );
                     }
                     #[cfg(target_arch = "wasm32")]
@@ -167,6 +168,8 @@ impl Gui {
                                                         source_demo: demo_path_str.clone(),
                                                         target_player: Some(streak.target_player.clone()),
                                                         kill_count: streak.kill_count,
+                                                        timeline_string: streak.timeline_string.clone(),
+                                                        player_index: streak.player_index,
                                                     });
                                                 }
                                             }
