@@ -296,6 +296,35 @@ pub fn render_patch_ui(
                         }
                     });
 
+                    let mut pending_demo_to_remove: Option<usize> = None;
+                    let queued_arc = get_queued_demos();
+                    {
+                        let queued_guard = acquire_lock!(queued_arc);
+                        if !queued_guard.is_empty() {
+                            ui.add_space(16.0);
+                            ui.strong(format!("Queued Demos ({})", queued_guard.len()));
+                            ui.add_space(4.0);
+                            egui::ScrollArea::vertical().max_height(400.0).show(ui, |ui| {
+                                for (index, demo) in queued_guard.iter().enumerate() {
+                                    ui.horizontal(|ui| {
+                                        if ui.button("🗑").clicked() {
+                                            pending_demo_to_remove = Some(index);
+                                        }
+                                        ui.label(&demo.demo_name);
+                                    });
+                                }
+                            });
+                        }
+                    }
+
+                    if let Some(idx) = pending_demo_to_remove {
+                        let mut queued_guard = acquire_lock!(queued_arc);
+                        let queued = Arc::make_mut(&mut *queued_guard);
+                        if idx < queued.len() {
+                            queued.remove(idx);
+                        }
+                    }
+
                     ui.add_space(16.0);
                     ui.horizontal(|ui| {
                         if ui.button("Proceed to Selection ->").clicked() {
@@ -393,7 +422,7 @@ pub fn render_patch_ui(
                                             .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
                                             .column(Column::auto())          // [Checkbox]
                                             .column(Column::auto())          // [Player Name]
-                                            .column(Column::exact(110.0))   // [Kill Range]
+                                            .column(Column::exact(140.0))   // [Kill Range]
                                             .column(Column::exact(50.0))    // [Duration]
                                             .column(Column::remainder())     // [Details]
                                             .header(20.0, |mut header| {
