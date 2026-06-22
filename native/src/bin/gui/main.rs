@@ -1134,6 +1134,35 @@ impl eframe::App for Gui {
                 if let Some(path) = &file.path {
                     let path_str = path.to_string_lossy().into_owned();
 
+                    // ── Capture Studio: queue drops without scanning immediately ──────
+                    // When the user is on the Capture Studio Scan step, route dropped
+                    // .dem files into the ingestion queue instead of the analyzer.
+                    let is_capture_scan = self.active_sidebar_tab == SidebarTab::CaptureStudio
+                        && self.capture_studio_state == CaptureStudioState::Scan;
+
+                    if is_capture_scan && path.extension().map(|e| e == "dem").unwrap_or(false) {
+                        // Defer to the same ingestion path as "Add Demo Files" — files sit
+                        // in the staging queue until the user clicks "Proceed to Selection".
+                        let rules = crate::views::capture_ui::get_highlight_rules_clone();
+                        let ctx_clone = ctx.clone();
+                        let tx_clone = self.tx.clone();
+                        let path_clone = path.clone();
+                        std::thread::Builder::new()
+                            .name("drop_ingestion".into())
+                            .stack_size(16 * 1024 * 1024)
+                            .spawn(move || {
+                                crate::views::capture_ui::spawn_ingestion_thread(
+                                    crate::views::capture_ui::IngestionInput::Files(vec![path_clone]),
+                                    rules,
+                                    ctx_clone,
+                                    tx_clone,
+                                );
+                            })
+                            .ok();
+                        continue;
+                    }
+
+                    // ── Analyzer: normal load flow ────────────────────────────────────
                     // Set current_dir to the file's parent folder
                     if let Some(parent) = path.parent() {
                         self.current_dir = Some(parent.to_path_buf());
@@ -1968,27 +1997,34 @@ impl eframe::App for Gui {
                 ui.add_space(10.0);
             }
 
-            if let Some(error) = &self.error_message {
-                if self.active_sidebar_tab == SidebarTab::Settings {
-                    ScrollArea::vertical()
-                        .id_salt("settings_scroll_area")
-                        .show(ui, |ui| {
-                            self.render_settings_ui(ui, ctx);
-                        });
-                } else {
-                    ui.centered_and_justified(|ui| {
-                        ui.vertical(|ui| {
+            // Error modal — floats above the UI so the user can dismiss it
+            // without losing access to any tab or current content.
+            if let Some(ref error_text) = self.error_message.clone() {
+                if self.active_sidebar_tab != SidebarTab::Settings {
+                    let mut open = true;
+                    egui::Window::new(t("#app_error_heading"))
+                        .collapsible(false)
+                        .resizable(false)
+                        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                        .open(&mut open)
+                        .show(ctx, |ui| {
                             ui.label(
                                 egui::RichText::new(t("#app_error_heading"))
-                                    .heading()
-                                    .color(egui::Color32::from_rgb(239, 68, 68)),
+                                    .color(egui::Color32::from_rgb(239, 68, 68))
+                                    .heading(),
                             );
                             ui.add_space(8.0);
-                            ui.label(error);
+                            ui.label(error_text);
+                            ui.add_space(12.0);
+                            if ui.button("Dismiss").clicked() {
+                                self.error_message = None;
+                            }
                         });
-                    });
+                    if !open {
+                        self.error_message = None;
+                    }
                 }
-            } else {
+            }
                 match self.active_sidebar_tab {
                     SidebarTab::Analyzer => {
                         self.check_scoreboard_cache();
@@ -2047,7 +2083,6 @@ impl eframe::App for Gui {
                     #[cfg(not(target_arch = "wasm32"))]
                     SidebarTab::Auditor => {}
                 }
-            }
         });
         }
 
