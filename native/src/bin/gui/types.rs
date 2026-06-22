@@ -235,8 +235,46 @@ pub struct HighlightStreak {
     pub is_selected: bool,
     pub display_text: String,
     pub timeline_string: String,
+    pub duration_string: String,
     pub player_index: usize,
+    /// Raw kill events mirrored from CaptureStreak: (tick, abs_time_secs, weapon).
+    pub kills: Vec<(i32, f32, String)>,
+    pub start_index: usize,
+    pub end_index: usize,
 }
+
+impl HighlightStreak {
+    /// Rebuilds `timeline_string`, `duration_string`, `kill_count`, `start_tick`,
+    /// and `end_tick` from `kills[start_index..=end_index]`.
+    pub fn update_visuals(&mut self) {
+        if self.kills.is_empty() {
+            return;
+        }
+        let end = self.end_index.min(self.kills.len().saturating_sub(1));
+        let start = self.start_index.min(end);
+        let slice = &self.kills[start..=end];
+
+        self.start_tick = slice[0].0;
+        self.end_tick = slice[slice.len() - 1].0;
+        self.kill_count = slice.len();
+
+        let total_secs = (slice.last().unwrap().1 - slice[0].1).max(0.0).round() as i32;
+        self.duration_string = format!("{}:{:02}", total_secs / 60, total_secs % 60);
+
+        let mut parts: Vec<String> = Vec::with_capacity(slice.len());
+        for (i, (_, abs_time, weapon)) in slice.iter().enumerate() {
+            let weapon_clean = weapon.trim_start_matches("Weapon::").to_string();
+            if i == 0 {
+                parts.push(weapon_clean);
+            } else {
+                let gap_sec = (abs_time - slice[i - 1].1).max(0.0).round() as i32;
+                parts.push(format!("(+{}:{:02}) {}", gap_sec / 60, gap_sec % 60, weapon_clean));
+            }
+        }
+        self.timeline_string = parts.join(", ");
+    }
+}
+
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct DemoData {

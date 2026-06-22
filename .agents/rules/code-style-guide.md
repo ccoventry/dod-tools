@@ -61,3 +61,10 @@ If the user prompts with exactly `Initiate Context Handoff`, you must immediatel
    - Any unresolved compiler errors or bugs currently being investigated.
    - The exact next step or terminal command to execute.
 3. Format this payload as concisely as possible (bullet points, zero conversational filler) to consume the absolute minimum amount of tokens in the next chat.
+
+
+## 9. EGUI & PERFORMANCE RULES (CRITICAL)
+1. **Zero-Allocation Render Loops:** `egui` is an immediate-mode GUI. Never use `format!()`, string concatenation, or heavy `.clone()` operations inside the `update` or rendering loops. Pre-calculate all complex strings (like timelines or durations) in background workers and pass them to the UI as static/reference structs.
+2. **Anti-Recursion / Layout Rules:** Do not nest dynamically expanding containers (like `CollapsingHeader`) inside virtualized row loops (`show_rows`). If rendering a list of structured data, strictly use `egui_extras::TableBuilder` to prevent 1MB Windows stack overflows (`0xc0000409`).
+3. **Data Retention over Parser Filtration:** Never drop or filter out parsed data during the background ingestion phase (e.g., trying to filter non-POV players at the parser level). Always retain all data in the state machine and handle filtration visually at the UI layer. This prevents blank screens if the parser encounters edge cases.
+4. **DRY Architecture (Don't Repeat Yourself):** Before implementing new data segmentation or UI tables in the Capture Studio, explicitly audit the `analysis` crate and existing views (like `player_details_ui.rs`) to re-use established logic.

@@ -343,7 +343,15 @@ pub fn render_patch_ui(
                         ui.strong("Discovered Highlight Streaks");
                         ui.add_space(4.0);
 
-                        let mut demo_to_remove = None;
+                        // Action intent enum — collected during the render loop and applied
+                        // strictly AFTER the loop completes to avoid simultaneous iteration
+                        // and mutation (anti-crash protocol).
+                        enum DemoAction {
+                            RemoveDemo(usize),
+                            SelectAll(usize),
+                            DeselectAll(usize),
+                        }
+                        let mut actions_to_apply: Vec<DemoAction> = Vec::new();
 
                         egui::ScrollArea::vertical()
                             .max_height(250.0)
@@ -353,71 +361,180 @@ pub fn render_patch_ui(
                                     if demo.streaks.is_empty() {
                                         continue;
                                     }
-                                    ui.horizontal(|ui| {
-                                        ui.heading(&demo.demo_name);
-                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            if ui.button("🗑").on_hover_text("Remove this demo").clicked() {
-                                                demo_to_remove = Some(d_idx);
-                                            }
-                                        });
-                                    });
-                                    ui.add_space(2.0);
 
-                                    TableBuilder::new(ui)
-                                        .striped(true)
-                                        .vscroll(false)
-                                        .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-                                        .column(Column::auto()) // Checkbox
-                                        .column(Column::exact(50.0)) // Kills
-                                        .column(Column::remainder()) // Details
-                                        .header(20.0, |mut header| {
-                                            header.col(|ui| { ui.strong("Select"); });
-                                            header.col(|ui| { ui.strong("Kills"); });
-                                            header.col(|ui| { ui.strong("Details"); });
-                                        })
-                                        .body(|mut body| {
-                                            let filtered_indices: Vec<usize> = (0..demo.streaks.len())
-                                                .filter(|&idx| {
-                                                    let streak = &demo.streaks[idx];
-                                                    if demo.is_pov && *hide_non_pov {
-                                                        Some(streak.player_index) == demo.local_player_index
-                                                    } else {
-                                                        true
-                                                    }
-                                                })
-                                                .collect();
-
-                                            body.rows(20.0, filtered_indices.len(), |mut row| {
-                                                let row_idx = row.index();
-                                                let streak_idx = filtered_indices[row_idx];
-                                                let streak = &demo.streaks[streak_idx];
-                                                
-                                                row.col(|ui| {
-                                                    let mut is_selected = streak.is_selected;
-                                                    if ui.checkbox(&mut is_selected, "").changed() {
-                                                        log_markdown(&format!("UI Interaction: Toggled streak selection for {}, new value: {}", streak.target_player, is_selected));
-                                                        let queued_arc = get_queued_demos();
-                                                        let mut queued_guard = acquire_lock!(queued_arc);
-                                                        let queued = Arc::make_mut(&mut *queued_guard);
-                                                        queued[d_idx].streaks[streak_idx].is_selected = is_selected;
-                                                    }
-                                                });
-                                                row.col(|ui| { ui.label(streak.kill_count.to_string()); });
-                                                row.col(|ui| { ui.label(&streak.timeline_string); });
+                                    egui::Frame::group(ui.style()).show(ui, |ui| {
+                                        // ── Per-demo header row with bulk controls ──────
+                                        ui.horizontal(|ui| {
+                                            ui.strong(&demo.demo_name);
+                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                if ui.button("🗑 Remove Demo").on_hover_text("Remove this demo from the queue").clicked() {
+                                                    actions_to_apply.push(DemoAction::RemoveDemo(d_idx));
+                                                }
+                                                ui.add_space(4.0);
+                                                if ui.button("Deselect All").clicked() {
+                                                    actions_to_apply.push(DemoAction::DeselectAll(d_idx));
+                                                }
+                                                if ui.button("Select All").clicked() {
+                                                    actions_to_apply.push(DemoAction::SelectAll(d_idx));
+                                                }
                                             });
                                         });
-                                    
-                                    ui.add_space(8.0);
-                                    ui.separator();
-                                    ui.add_space(8.0);
+                                        ui.add_space(2.0);
+
+                                        TableBuilder::new(ui)
+                                            .striped(true)
+                                            .vscroll(false)
+                                            .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                                            .column(Column::auto())          // [Checkbox]
+                                            .column(Column::auto())          // [Player Name]
+                                            .column(Column::exact(110.0))   // [Kill Range]
+                                            .column(Column::exact(50.0))    // [Duration]
+                                            .column(Column::remainder())     // [Details]
+                                            .header(20.0, |mut header| {
+                                                header.col(|ui| { ui.strong("Sel"); });
+                                                header.col(|ui| { ui.strong("Player"); });
+                                                header.col(|ui| { ui.strong("Kill Range"); });
+                                                header.col(|ui| { ui.strong("Dur."); });
+                                                header.col(|ui| { ui.strong("Details"); });
+                                            })
+                                            .body(|mut body| {
+                                                let filtered_indices: Vec<usize> = (0..demo.streaks.len())
+                                                    .filter(|&idx| {
+                                                        let streak = &demo.streaks[idx];
+                                                        if demo.is_pov && *hide_non_pov {
+                                                            Some(streak.player_index) == demo.local_player_index
+                                                        } else {
+                                                            true
+                                                        }
+                                                    })
+                                                    .collect();
+
+                                                body.rows(20.0, filtered_indices.len(), |mut row| {
+                                                    let row_idx = row.index();
+                                                    let streak_idx = filtered_indices[row_idx];
+                                                    let streak = &demo.streaks[streak_idx];
+
+                                                    // ── [Checkbox] ────────────────────────
+                                                    row.col(|ui| {
+                                                        let mut is_selected = streak.is_selected;
+                                                        if ui.checkbox(&mut is_selected, "").changed() {
+                                                            log_markdown(&format!("UI Interaction: Toggled streak selection for {}, new value: {}", streak.target_player, is_selected));
+                                                            let queued_arc = get_queued_demos();
+                                                            let mut queued_guard = acquire_lock!(queued_arc);
+                                                            let queued = Arc::make_mut(&mut *queued_guard);
+                                                            queued[d_idx].streaks[streak_idx].is_selected = is_selected;
+                                                        }
+                                                    });
+
+                                                    // ── [Player Name] ─────────────────────
+                                                    row.col(|ui| { ui.label(&streak.target_player); });
+
+                                                    // ── [Kill Range] ──────────────────────
+                                                    row.col(|ui| {
+                                                        let max_idx = streak.kills.len().saturating_sub(1);
+                                                        let is_modified = streak.start_index > 0
+                                                            || streak.end_index < max_idx;
+
+                                                        // Copy mutable locals from the read-only snapshot.
+                                                        let mut start_idx = streak.start_index;
+                                                        let mut end_idx   = streak.end_index;
+
+                                                        ui.horizontal(|ui| {
+                                                            // Colour the range values orange when the range is narrowed.
+                                                            ui.scope(|ui| {
+                                                                if is_modified {
+                                                                    ui.visuals_mut().override_text_color =
+                                                                        Some(egui::Color32::from_rgb(255, 165, 0));
+                                                                }
+                                                                let start_changed = ui.add(
+                                                                    egui::DragValue::new(&mut start_idx)
+                                                                        .range(0..=end_idx)
+                                                                        .custom_formatter(|n, _| format!("{}", n as usize + 1))
+                                                                        .custom_parser(|s| s.parse::<f64>().ok().map(|v| (v - 1.0).max(0.0)))
+                                                                        .speed(0.05),
+                                                                ).changed();
+                                                                ui.label("-");
+                                                                let end_changed = ui.add(
+                                                                    egui::DragValue::new(&mut end_idx)
+                                                                        .range(start_idx..=max_idx)
+                                                                        .custom_formatter(|n, _| format!("{}", n as usize + 1))
+                                                                        .custom_parser(|s| s.parse::<f64>().ok().map(|v| (v - 1.0).max(0.0)))
+                                                                        .speed(0.05),
+                                                                ).changed();
+
+                                                                if start_changed || end_changed {
+                                                                    let queued_arc = get_queued_demos();
+                                                                    let mut queued_guard = acquire_lock!(queued_arc);
+                                                                    let queued = Arc::make_mut(&mut *queued_guard);
+                                                                    let sm = &mut queued[d_idx].streaks[streak_idx];
+                                                                    sm.start_index = start_idx;
+                                                                    sm.end_index   = end_idx;
+                                                                    sm.update_visuals();
+                                                                }
+                                                            });
+
+                                                            // Reset button — only shown when range is narrowed.
+                                                            if is_modified && ui.button("↺").on_hover_text("Reset to full range").clicked() {
+                                                                let queued_arc = get_queued_demos();
+                                                                let mut queued_guard = acquire_lock!(queued_arc);
+                                                                let queued = Arc::make_mut(&mut *queued_guard);
+                                                                let sm = &mut queued[d_idx].streaks[streak_idx];
+                                                                sm.start_index = 0;
+                                                                sm.end_index   = sm.kills.len().saturating_sub(1);
+                                                                sm.update_visuals();
+                                                            }
+                                                        });
+                                                    });
+
+                                                    // ── [Duration] ────────────────────────
+                                                    row.col(|ui| { ui.label(&streak.duration_string); });
+
+                                                    // ── [Details / Timeline] ──────────────
+                                                    row.col(|ui| { ui.label(&streak.timeline_string); });
+                                                });
+                                            });
+                                    });
+
+                                    ui.add_space(4.0);
                                 }
                             });
 
-                        if let Some(idx) = demo_to_remove {
+                        // ── Execute all deferred actions post-loop ──────────────────────
+                        // Process removals last (in reverse index order) to avoid index shift.
+                        let mut removals: Vec<usize> = actions_to_apply
+                            .iter()
+                            .filter_map(|a| if let DemoAction::RemoveDemo(i) = a { Some(*i) } else { None })
+                            .collect();
+                        removals.sort_unstable_by(|a, b| b.cmp(a));
+
+                        for action in &actions_to_apply {
+                            match action {
+                                DemoAction::SelectAll(idx) => {
+                                    let queued_arc = get_queued_demos();
+                                    let mut queued_guard = acquire_lock!(queued_arc);
+                                    let queued = Arc::make_mut(&mut *queued_guard);
+                                    if let Some(demo) = queued.get_mut(*idx) {
+                                        for s in &mut demo.streaks { s.is_selected = true; }
+                                    }
+                                }
+                                DemoAction::DeselectAll(idx) => {
+                                    let queued_arc = get_queued_demos();
+                                    let mut queued_guard = acquire_lock!(queued_arc);
+                                    let queued = Arc::make_mut(&mut *queued_guard);
+                                    if let Some(demo) = queued.get_mut(*idx) {
+                                        for s in &mut demo.streaks { s.is_selected = false; }
+                                    }
+                                }
+                                DemoAction::RemoveDemo(_) => {} // handled below
+                            }
+                        }
+                        for idx in removals {
                             let queued_arc = get_queued_demos();
                             let mut queued_guard = acquire_lock!(queued_arc);
                             let queued = Arc::make_mut(&mut *queued_guard);
-                            queued.remove(idx);
+                            if idx < queued.len() {
+                                queued.remove(idx);
+                            }
                         }
 
                         ui.add_space(6.0);
@@ -513,7 +630,11 @@ pub fn render_patch_ui(
                                                 target_player: Some(streak.target_player.clone()),
                                                 kill_count: streak.kill_count,
                                                 timeline_string: streak.timeline_string.clone(),
+                                                duration_string: streak.duration_string.clone(),
                                                 player_index: streak.player_index,
+                                                kills: streak.kills.clone(),
+                                                start_index: streak.start_index,
+                                                end_index: streak.end_index,
                                             });
                                         }
                                     }
@@ -638,7 +759,11 @@ fn spawn_ingestion_thread(
                                     is_selected: true,
                                     display_text,
                                     timeline_string: s.timeline_string,
+                                    duration_string: s.duration_string,
                                     player_index: s.player_index,
+                                    kills: s.kills,
+                                    start_index: s.start_index,
+                                    end_index: s.end_index,
                                 }
                             })
                             .collect();
