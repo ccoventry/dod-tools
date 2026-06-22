@@ -230,6 +230,7 @@ pub(crate) struct Gui {
     pub(crate) capture_engine_jobs_done: usize,
     pub(crate) capture_studio_loading: bool,
     pub(crate) last_capture_studio_state: Option<CaptureStudioState>,
+    pub(crate) hide_non_pov: bool,
 }
 
 
@@ -629,6 +630,7 @@ impl Default for Gui {
             capture_engine_jobs_done: 0,
             capture_studio_loading: false,
             last_capture_studio_state: None,
+            hide_non_pov: true,
         }
     }
 }

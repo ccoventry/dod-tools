@@ -265,9 +265,26 @@ impl StreamPatcher {
         let mut reader = BufReader::with_capacity(256 * 1024, input_file);
         let mut writer = BufWriter::with_capacity(256 * 1024, output_file);
 
+        let read_exact = |reader: &mut BufReader<std::fs::File>, buf: &mut [u8], label: &str| -> Result<(), std::io::Error> {
+            let expected_size = buf.len();
+            let file_cursor_position = reader.stream_position().unwrap_or(0);
+            match reader.read_exact(buf) {
+                Ok(()) => Ok(()),
+                Err(e) => {
+                    if !(e.kind() == std::io::ErrorKind::UnexpectedEof && label == "Frame Header") {
+                        crate::log_markdown(&format!(
+                            "Buffer Error [{}]: Expected {} bytes at offset {}, but hit EOF.",
+                            label, expected_size, file_cursor_position
+                        ));
+                    }
+                    Err(e)
+                }
+            }
+        };
+
         // Step 2: Parse and Clone the Header
         let mut header = vec![0u8; 544];
-        reader.read_exact(&mut header)?;
+        read_exact(&mut reader, &mut header, "Header")?;
 
         // Extract directory offset (i32 is at offset 540..544)
         let original_offset = i32::from_le_bytes(header[540..544].try_into().unwrap());
@@ -286,8 +303,13 @@ impl StreamPatcher {
                 return Err(std::io::Error::new(std::io::ErrorKind::Interrupted, "Cancelled by user"));
             }
 
+            let pos = reader.stream_position().unwrap_or(0);
+            if original_offset > 0 && pos >= original_offset as u64 {
+                break;
+            }
+
             let mut frame_hdr = vec![0u8; 9];
-            if let Err(e) = reader.read_exact(&mut frame_hdr) {
+            if let Err(e) = read_exact(&mut reader, &mut frame_hdr, "Frame Header") {
                 if e.kind() == std::io::ErrorKind::UnexpectedEof {
                     break;
                 }
@@ -324,67 +346,92 @@ impl StreamPatcher {
                 3 => {
                     // ConsoleCommand (64 bytes)
                     payload_buf.resize(64, 0);
-                    reader.read_exact(&mut payload_buf)?;
+                    read_exact(&mut reader, &mut payload_buf, "ConsoleCommand")?;
                     writer.write_all(&payload_buf)?;
                 }
                 4 => {
                     // ClientData (32 bytes)
                     payload_buf.resize(32, 0);
-                    reader.read_exact(&mut payload_buf)?;
+                    read_exact(&mut reader, &mut payload_buf, "ClientData")?;
                     writer.write_all(&payload_buf)?;
                 }
                 5 => {
                     // NextSection (0 bytes)
-                    break;
                 }
                 6 => {
                     // Event (84 bytes)
                     payload_buf.resize(84, 0);
-                    reader.read_exact(&mut payload_buf)?;
+                    read_exact(&mut reader, &mut payload_buf, "Event")?;
                     writer.write_all(&payload_buf)?;
                 }
                 7 => {
                     // WeaponAnimation (8 bytes)
                     payload_buf.resize(8, 0);
-                    reader.read_exact(&mut payload_buf)?;
+                    read_exact(&mut reader, &mut payload_buf, "WeaponAnimation")?;
                     writer.write_all(&payload_buf)?;
                 }
                 8 => {
                     // Sound (24 bytes + sample_length)
                     let mut prefix = vec![0u8; 8];
-                    reader.read_exact(&mut prefix)?;
+                    read_exact(&mut reader, &mut prefix, "Sound Prefix")?;
                     writer.write_all(&prefix)?;
                     let sample_length = u32::from_le_bytes(prefix[4..8].try_into().unwrap()) as usize;
 
+                    if sample_length > 2_000_000 {
+                        crate::log_markdown(&format!(
+                            "Alignment lost! Read impossible size: {} at offset {}",
+                            sample_length,
+                            reader.stream_position().unwrap_or(0)
+                        ));
+                        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Parser alignment lost"));
+                    }
+
                     payload_buf.resize(sample_length + 16, 0);
-                    reader.read_exact(&mut payload_buf)?;
+                    read_exact(&mut reader, &mut payload_buf, "Sound Payload")?;
                     writer.write_all(&payload_buf)?;
                 }
                 9 => {
                     // DemoBuffer (4 bytes + buffer_length)
                     let mut prefix = vec![0u8; 4];
-                    reader.read_exact(&mut prefix)?;
+                    read_exact(&mut reader, &mut prefix, "DemoBuffer Prefix")?;
                     writer.write_all(&prefix)?;
                     let buffer_length = u32::from_le_bytes(prefix[0..4].try_into().unwrap()) as usize;
 
+                    if buffer_length > 2_000_000 {
+                        crate::log_markdown(&format!(
+                            "Alignment lost! Read impossible size: {} at offset {}",
+                            buffer_length,
+                            reader.stream_position().unwrap_or(0)
+                        ));
+                        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Parser alignment lost"));
+                    }
+
                     payload_buf.resize(buffer_length, 0);
-                    reader.read_exact(&mut payload_buf)?;
-                    writer.write_all(&buffer_length.to_le_bytes())?;
+                    read_exact(&mut reader, &mut payload_buf, "DemoBuffer Payload")?;
                     writer.write_all(&payload_buf)?;
                 }
                 _ => {
-                    // NetworkMessage (464 bytes + message_length)
-                    let mut info_buf = vec![0u8; 460];
-                    reader.read_exact(&mut info_buf)?;
+                    // NetworkMessage (468 bytes + message_length)
+                    let mut info_buf = vec![0u8; 464];
+                    read_exact(&mut reader, &mut info_buf, "NetworkMessage Info")?;
                     writer.write_all(&info_buf)?;
 
                     let mut len_buf = vec![0u8; 4];
-                    reader.read_exact(&mut len_buf)?;
+                    read_exact(&mut reader, &mut len_buf, "NetworkMessage Length")?;
                     writer.write_all(&len_buf)?;
                     let msg_len = u32::from_le_bytes(len_buf.try_into().unwrap()) as usize;
 
+                    if msg_len > 2_000_000 {
+                        crate::log_markdown(&format!(
+                            "Alignment lost! Read impossible size: {} at offset {}",
+                            msg_len,
+                            reader.stream_position().unwrap_or(0)
+                        ));
+                        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Parser alignment lost"));
+                    }
+
                     payload_buf.resize(msg_len, 0);
-                    reader.read_exact(&mut payload_buf)?;
+                    read_exact(&mut reader, &mut payload_buf, "NetworkMessage Payload")?;
                     writer.write_all(&payload_buf)?;
                 }
             }
@@ -418,6 +465,8 @@ pub struct CaptureStreak {
     pub source_demo: String,
     pub target_player: Option<String>,
     pub kill_count: usize,
+    pub timeline_string: String,
+    pub player_index: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -591,20 +640,23 @@ pub fn spawn_patch_batch(
     let cancel_token_clone = cancel_token.clone();
     
     let handle = std::thread::spawn(move || {
-        if tx.send(PatchEvent::Starting(jobs.len())).is_err() {
+        let total_jobs = jobs.len();
+        if tx.send(PatchEvent::Starting(total_jobs)).is_err() {
             return;
         }
 
         let mut cancelled = false;
-        for job in &jobs {
-            if tx.send(PatchEvent::Progress(job.source_demo.clone(), 0.0)).is_err() {
+        for (idx, job) in jobs.iter().enumerate() {
+            let start_pct = (idx as f32 / total_jobs as f32) * 100.0;
+            if tx.send(PatchEvent::Progress(job.source_demo.clone(), start_pct)).is_err() {
                 return;
             }
 
             let patcher = StreamPatcher::new(&job.source_demo, &job.output_demo);
             match patcher.patch(job, &config, &cancel_token_clone) {
                 Ok(()) => {
-                    if tx.send(PatchEvent::Progress(job.source_demo.clone(), 100.0)).is_err() {
+                    let end_pct = ((idx + 1) as f32 / total_jobs as f32) * 100.0;
+                    if tx.send(PatchEvent::Progress(job.source_demo.clone(), end_pct)).is_err() {
                         return;
                     }
                 }
@@ -696,9 +748,9 @@ fn calculate_demo_tickrate(bytes: &[u8]) -> Option<f32> {
                 offset = next_offset.checked_add(4)?.checked_add(buffer_len)?;
             }
             _ => {
-                if next_offset.checked_add(464)? > original_offset { break; }
-                let msg_len = u32::from_le_bytes(bytes.get(next_offset + 460..next_offset + 464)?.try_into().ok()?) as usize;
-                offset = next_offset.checked_add(464)?.checked_add(msg_len)?;
+                if next_offset.checked_add(468)? > original_offset { break; }
+                let msg_len = u32::from_le_bytes(bytes.get(next_offset + 464..next_offset + 468)?.try_into().ok()?) as usize;
+                offset = next_offset.checked_add(468)?.checked_add(msg_len)?;
             }
         }
     }
@@ -724,7 +776,7 @@ pub fn is_hltv_demo(path: &std::path::Path) -> Result<bool, std::io::Error> {
 pub fn scan_demo_for_highlights(
     path: &std::path::Path,
     rules: &HighlightRules,
-) -> Result<(f32, Vec<CaptureStreak>), String> {
+) -> Result<(f32, Vec<CaptureStreak>, bool, Option<usize>), String> {
     match is_hltv_demo(path) {
         Ok(true) => return Err("Unsupported HLTV proxy demo format".to_string()),
         Err(e) => return Err(format!("Failed to read demo header: {}", e)),
@@ -734,6 +786,13 @@ pub fn scan_demo_for_highlights(
     let bytes = std::fs::read(path).map_err(|e| format!("Failed to read file: {}", e))?;
     let tickrate = calculate_demo_tickrate(&bytes).unwrap_or(100.0);
 
+    let demo = open_demo_from_bytes(&bytes)
+        .map_err(|e| format!("Failed to parse demo structure: {}", e))?;
+
+    let frame_times: Vec<f32> = demo.directory.entries.iter()
+        .flat_map(|e| e.frames.iter().map(|f| f.time))
+        .collect();
+
     let analysis = analysis::Analysis::try_from_bytes(&bytes)
         .map_err(|e| format!("Failed to parse demo: {}", e))?;
 
@@ -741,14 +800,44 @@ pub fn scan_demo_for_highlights(
     let max_time_gap = rules.max_time_gap.unwrap_or(f32::MAX);
 
     let mut streaks: Vec<CaptureStreak> = Vec::new();
-    let mut active_streaks: std::collections::HashMap<String, (i32, i32, Vec<i32>)> = std::collections::HashMap::new();
+    let mut active_streaks: std::collections::HashMap<String, (i32, i32, Vec<(u32, String)>)> = std::collections::HashMap::new();
 
     let target_players_lower: Vec<String> = rules.target_players.iter()
         .map(|s| s.to_lowercase())
         .collect();
 
+    let get_streak_details = |player_name: &str, kills: &[(u32, String)], frame_times: &[f32]| -> (String, usize) {
+        // Find player_index (client_id)
+        let player_index = analysis.state.players.iter().find(|p| p.name == player_name)
+            .and_then(|p| match p.connection {
+                analysis::Connection::Connected { client_id } => Some(client_id as usize),
+                _ => None,
+            })
+            .unwrap_or(0);
+
+        // Build timeline string
+        let mut timeline_parts = Vec::new();
+        for (i, &(tick, ref weapon)) in kills.iter().enumerate() {
+            let weapon_clean = weapon.trim_start_matches("Weapon::").to_string();
+            if i == 0 {
+                timeline_parts.push(weapon_clean);
+            } else {
+                let prev_tick = kills[i - 1].0;
+                let t_curr = frame_times.get(tick as usize).cloned().unwrap_or(0.0);
+                let t_prev = frame_times.get(prev_tick as usize).cloned().unwrap_or(0.0);
+                let gap = (t_curr - t_prev).max(0.0);
+                let gap_sec = gap.round() as i32;
+                let mins = gap_sec / 60;
+                let secs = gap_sec % 60;
+                timeline_parts.push(format!("(+{}:{:02}) {}", mins, secs, weapon_clean));
+            }
+        }
+        let timeline_string = timeline_parts.join(", ");
+        (timeline_string, player_index)
+    };
+
     for ev in &analysis.events {
-        if let analysis::GameEvent::Kill(killer, _victim, _weapon) = &ev.event {
+        if let analysis::GameEvent::Kill(killer, _victim, weapon) = &ev.event {
             if killer.is_empty() {
                 continue;
             }
@@ -762,42 +851,51 @@ pub fn scan_demo_for_highlights(
             let kill_tick = ev.tick as i32;
 
             if let Some(entry) = active_streaks.get_mut(killer) {
-                let last_kill_tick = *entry.2.last().ok_or_else(|| "Empty kill tick log in active streak".to_string())?;
+                let last_kill_tick = entry.2.last().ok_or_else(|| "Empty kill tick log in active streak".to_string())?.0 as i32;
                 let gap_seconds = (kill_tick - last_kill_tick) as f32 / tickrate;
                 if gap_seconds <= max_time_gap {
                     entry.1 = kill_tick;
-                    entry.2.push(kill_tick);
+                    entry.2.push((kill_tick as u32, weapon.clone()));
                 } else {
                     if entry.2.len() >= min_kills {
+                        let (timeline_string, player_index) = get_streak_details(killer, &entry.2, &frame_times);
                         streaks.push(CaptureStreak {
                             start_tick: entry.0,
                             end_tick: entry.1,
                             source_demo: path.to_string_lossy().to_string(),
                             target_player: Some(killer.clone()),
                             kill_count: entry.2.len(),
+                            timeline_string,
+                            player_index,
                         });
                     }
-                    *entry = (kill_tick, kill_tick, vec![kill_tick]);
+                    *entry = (kill_tick, kill_tick, vec![(kill_tick as u32, weapon.clone())]);
                 }
             } else {
-                active_streaks.insert(killer.clone(), (kill_tick, kill_tick, vec![kill_tick]));
+                active_streaks.insert(killer.clone(), (kill_tick, kill_tick, vec![(kill_tick as u32, weapon.clone())]));
             }
         }
     }
 
     for (player_name, (start, end, kills)) in active_streaks {
         if kills.len() >= min_kills {
+            let (timeline_string, player_index) = get_streak_details(&player_name, &kills, &frame_times);
             streaks.push(CaptureStreak {
                 start_tick: start,
                 end_tick: end,
                 source_demo: path.to_string_lossy().to_string(),
                 target_player: Some(player_name),
                 kill_count: kills.len(),
+                timeline_string,
+                player_index,
             });
         }
     }
 
-    Ok((tickrate, streaks))
+    let is_pov = analysis.demo_info.demo_type == "POV";
+    let local_player_index = analysis.state.pov_player_index.map(|idx| idx as usize);
+
+    Ok((tickrate, streaks, is_pov, local_player_index))
 }
 
 #[cfg(test)]
@@ -814,6 +912,8 @@ mod tests {
                 source_demo: "demo1.dem".to_string(),
                 target_player: None,
                 kill_count: 3,
+                timeline_string: String::new(),
+                player_index: 0,
             },
             CaptureStreak {
                 start_tick: 1300, // starts at 1300. Pre-roll 200 makes adjusted_start = 1100.
@@ -822,6 +922,8 @@ mod tests {
                 source_demo: "demo1.dem".to_string(),
                 target_player: None,
                 kill_count: 3,
+                timeline_string: String::new(),
+                player_index: 0,
             },
             CaptureStreak {
                 start_tick: 2000, // adjusted_start = 1800. 1800 > 1560, so this does not overlap.
@@ -829,6 +931,8 @@ mod tests {
                 source_demo: "demo1.dem".to_string(),
                 target_player: None,
                 kill_count: 3,
+                timeline_string: String::new(),
+                player_index: 0,
             },
         ];
 
@@ -915,6 +1019,8 @@ mod tests {
                     source_demo: input_path.to_string_lossy().to_string(),
                     target_player: None,
                     kill_count: 0,
+                    timeline_string: String::new(),
+                    player_index: 0,
                 }
             ],
             target_player: None,
@@ -1004,6 +1110,8 @@ mod tests {
                     source_demo: input_path.to_string_lossy().to_string(),
                     target_player: None,
                     kill_count: 0,
+                    timeline_string: String::new(),
+                    player_index: 0,
                 }
             ],
             target_player: None,

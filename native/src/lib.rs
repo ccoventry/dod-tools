@@ -82,3 +82,37 @@ where
 
     Ok((file_info, analysis))
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+static SESSION_INITIALIZED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn log_markdown(msg: &str) {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        use chrono::Local;
+        use std::io::Write;
+        let local_dir = std::env::current_dir().unwrap_or_default().join("local");
+        let _ = std::fs::create_dir_all(&local_dir);
+        let log_path_md = local_dir.join("crash_log.md");
+
+        // Write to md
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(&log_path_md)
+        {
+            if !SESSION_INITIALIZED.load(std::sync::atomic::Ordering::SeqCst) {
+                SESSION_INITIALIZED.store(true, std::sync::atomic::Ordering::SeqCst);
+                let time_str = Local::now().format("%Y-%m-%d @ %H:%M %Z").to_string();
+                let _ = writeln!(f, "\n\n========== New Session: {} ====================\n", time_str);
+            }
+            let time_str = Local::now().format("%H:%M:%S").to_string();
+            let _ = writeln!(f, "* [{}] {}", time_str, msg);
+            let _ = f.sync_all();
+        }
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        log::info!("{}", msg);
+    }
+}

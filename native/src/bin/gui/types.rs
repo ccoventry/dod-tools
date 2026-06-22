@@ -234,6 +234,8 @@ pub struct HighlightStreak {
     pub target_player: String,
     pub is_selected: bool,
     pub display_text: String,
+    pub timeline_string: String,
+    pub player_index: usize,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -242,6 +244,8 @@ pub struct DemoData {
     pub path: PathBuf,
     pub streaks: Vec<HighlightStreak>,
     pub tickrate: f32,
+    pub is_pov: bool,
+    pub local_player_index: Option<usize>,
 }
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct CaptureJob {
