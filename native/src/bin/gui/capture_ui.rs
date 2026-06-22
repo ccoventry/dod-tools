@@ -83,6 +83,12 @@ fn get_highlight_rules() -> &'static Mutex<HighlightRules> {
     }))
 }
 
+/// Returns a snapshot clone of the current highlight rules.
+/// Used by main.rs drag-drop routing to pass rules to the ingestion thread.
+pub(crate) fn get_highlight_rules_clone() -> HighlightRules {
+    acquire_lock!(get_highlight_rules()).clone()
+}
+
 pub(crate) fn get_queued_demos() -> Arc<Mutex<Arc<Vec<DemoData>>>> {
     QUEUED_DEMOS.get_or_init(|| Arc::new(Mutex::new(Arc::new(Vec::new())))).clone()
 }
@@ -694,7 +700,7 @@ pub enum IngestionInput {
     Folder(PathBuf),
 }
 
-fn spawn_ingestion_thread(
+pub(crate) fn spawn_ingestion_thread(
     input: IngestionInput,
     rules: HighlightRules,
     ctx: egui::Context,
@@ -715,13 +721,21 @@ fn spawn_ingestion_thread(
             let mut batch_count = 0;
             let files = match input {
                 IngestionInput::Files(f) => f,
-                IngestionInput::Folder(folder) => {
+                IngestionInput::Folder(root_folder) => {
+                    // Iterative walk — explicit stack avoids OS stack pressure on deep trees.
                     let mut list = Vec::new();
-                    if let Ok(entries) = std::fs::read_dir(folder) {
-                        for entry in entries.flatten() {
-                            let path = entry.path();
-                            if path.is_file() && path.extension().map(|ext| ext == "dem").unwrap_or(false) {
-                                list.push(path);
+                    let mut dir_stack = vec![root_folder];
+                    while let Some(dir) = dir_stack.pop() {
+                        if let Ok(entries) = std::fs::read_dir(&dir) {
+                            for entry in entries.flatten() {
+                                let path = entry.path();
+                                if path.is_dir() {
+                                    dir_stack.push(path);
+                                } else if path.is_file()
+                                    && path.extension().map(|ext| ext == "dem").unwrap_or(false)
+                                {
+                                    list.push(path);
+                                }
                             }
                         }
                     }
