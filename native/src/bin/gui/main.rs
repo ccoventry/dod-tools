@@ -648,7 +648,7 @@ impl eframe::App for Gui {
             };
             let transition_msg = format!("State Transition: {} -> {:?}", prev_str, current_state);
             log::info!("{}", transition_msg);
-            crate::views::capture_ui::log_markdown(&transition_msg);
+            crate::views::capture::log_markdown(&transition_msg);
             self.last_capture_studio_state = Some(current_state);
         }
 
@@ -954,7 +954,7 @@ impl eframe::App for Gui {
             match msg {
                 GuiMessage::Idle => {}
                 GuiMessage::PatchingComplete => {
-                    crate::views::capture_ui::set_is_patching(false);
+                    crate::views::capture::set_is_patching(false);
                     self.capture_studio_state = CaptureStudioState::Capture;
                 }
                 GuiMessage::AnalyzerStart { .. } => {}
@@ -1153,15 +1153,15 @@ impl eframe::App for Gui {
             });
 
             if !capture_scan_paths.is_empty() {
-                let rules = crate::views::capture_ui::get_highlight_rules_clone();
+                let rules = crate::views::capture::get_highlight_rules_clone();
                 let ctx_clone = ctx.clone();
                 let tx_clone = self.tx.clone();
                 std::thread::Builder::new()
                     .name("drop_ingestion_batch".into())
                     .stack_size(16 * 1024 * 1024)
                     .spawn(move || {
-                        crate::views::capture_ui::spawn_ingestion_thread(
-                            crate::views::capture_ui::IngestionInput::Batch(capture_scan_paths),
+                        crate::views::capture::spawn_ingestion_thread(
+                            crate::views::capture::IngestionInput::Batch(capture_scan_paths),
                             rules,
                             ctx_clone,
                             tx_clone,

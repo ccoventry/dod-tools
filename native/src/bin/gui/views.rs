@@ -95,9 +95,8 @@ pub mod browser;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod auditor;
 
-#[path = "capture_ui.rs"]
 #[cfg(not(target_arch = "wasm32"))]
-pub mod capture_ui;
+pub mod capture;
 
 pub use chat::chat_log_ui;
 pub use player_details::player_details_ui;
