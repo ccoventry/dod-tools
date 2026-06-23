@@ -140,6 +140,13 @@ pub fn render_patch_ui(
     tx: std::sync::mpsc::Sender<crate::types::GuiMessage>,
     loading_ptr: &mut bool,
     hide_non_pov: &mut bool,
+    // Fields forwarded exclusively to the Capture step renderer:
+    settings: &mut crate::settings::AppSettings,
+    capture_engine_running: &mut bool,
+    engine_msg: &str,
+    engine_progress: f32,
+    engine_jobs_done: usize,
+    engine_jobs_total: usize,
 ) {
     // If the ingestion worker is actively scanning, show a blocking spinner and
     // return early — no other UI should be interactive during file I/O.
@@ -175,6 +182,21 @@ pub fn render_patch_ui(
                 ui, ctx, state_ptr, tx, loading_ptr, hide_non_pov,
                 get_queued_demos(),
                 get_patcher_config(),
+            );
+        }
+        CaptureStudioState::Capture => {
+            capture::render(
+                ui,
+                ctx,
+                settings,
+                capture_engine_running,
+                engine_msg,
+                engine_progress,
+                engine_jobs_done,
+                engine_jobs_total,
+                *hide_non_pov,
+                tx,
+                state_ptr,
             );
         }
         _ => {}
