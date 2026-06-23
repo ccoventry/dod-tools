@@ -187,6 +187,7 @@ pub enum GuiMessage {
         elapsed_sec: f32,
         eta_sec: Option<f32>,
     },
+    PatchingComplete,
     #[cfg(not(target_arch = "wasm32"))]
     DirScanComplete {
         dir: PathBuf,

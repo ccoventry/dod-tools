@@ -953,6 +953,10 @@ impl eframe::App for Gui {
         while let Ok(msg) = self.rx.try_recv() {
             match msg {
                 GuiMessage::Idle => {}
+                GuiMessage::PatchingComplete => {
+                    crate::views::capture_ui::set_is_patching(false);
+                    self.capture_studio_state = CaptureStudioState::Capture;
+                }
                 GuiMessage::AnalyzerStart { .. } => {}
                 GuiMessage::AnalyzerProgress {
                     file_info,
@@ -1128,61 +1132,68 @@ impl eframe::App for Gui {
         }
 
         // Drag & Drop event listener for files
-        ctx.input(|i| {
-            for file in &i.raw.dropped_files {
-                #[cfg(not(target_arch = "wasm32"))]
-                if let Some(path) = &file.path {
-                    let path_str = path.to_string_lossy().into_owned();
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let mut capture_scan_paths = Vec::new();
+            let mut analyzer_paths = Vec::new();
 
-                    // ── Capture Studio: queue drops without scanning immediately ──────
-                    // When the user is on the Capture Studio Scan step, route dropped
-                    // .dem files into the ingestion queue instead of the analyzer.
-                    let is_capture_scan = self.active_sidebar_tab == SidebarTab::CaptureStudio
-                        && self.capture_studio_state == CaptureStudioState::Scan;
+            ctx.input(|i| {
+                for file in &i.raw.dropped_files {
+                    if let Some(path) = &file.path {
+                        let is_capture_scan = self.active_sidebar_tab == SidebarTab::CaptureStudio
+                            && self.capture_studio_state == CaptureStudioState::Scan;
 
-                    if is_capture_scan && path.extension().map(|e| e == "dem").unwrap_or(false) {
-                        // Defer to the same ingestion path as "Add Demo Files" — files sit
-                        // in the staging queue until the user clicks "Proceed to Selection".
-                        let rules = crate::views::capture_ui::get_highlight_rules_clone();
-                        let ctx_clone = ctx.clone();
-                        let tx_clone = self.tx.clone();
-                        let path_clone = path.clone();
-                        std::thread::Builder::new()
-                            .name("drop_ingestion".into())
-                            .stack_size(16 * 1024 * 1024)
-                            .spawn(move || {
-                                crate::views::capture_ui::spawn_ingestion_thread(
-                                    crate::views::capture_ui::IngestionInput::Files(vec![path_clone]),
-                                    rules,
-                                    ctx_clone,
-                                    tx_clone,
-                                );
-                            })
-                            .ok();
-                        continue;
-                    }
-
-                    // ── Analyzer: normal load flow ────────────────────────────────────
-                    // Set current_dir to the file's parent folder
-                    if let Some(parent) = path.parent() {
-                        self.current_dir = Some(parent.to_path_buf());
-                    }
-
-                    if self.analyses.contains_key(&path_str) {
-                        self.selected_analysis_path = Some(path_str);
-                        self.error_message = None;
-                    } else {
-                        self.selected_analysis_path = None;
-                        self.error_message = None;
-                        self.loading_path = Some(path_str);
-                        self.loading_progress = Some(0.0);
-                        self.loading_elapsed = Some(0.0);
-                        self.loading_eta = None;
-                        analyze_files_async(ctx.clone(), self.tx.clone(), vec![path.clone()]);
+                        if is_capture_scan {
+                            capture_scan_paths.push(path.clone());
+                        } else {
+                            analyzer_paths.push(path.clone());
+                        }
                     }
                 }
+            });
 
-                #[cfg(target_arch = "wasm32")]
+            if !capture_scan_paths.is_empty() {
+                let rules = crate::views::capture_ui::get_highlight_rules_clone();
+                let ctx_clone = ctx.clone();
+                let tx_clone = self.tx.clone();
+                std::thread::Builder::new()
+                    .name("drop_ingestion_batch".into())
+                    .stack_size(16 * 1024 * 1024)
+                    .spawn(move || {
+                        crate::views::capture_ui::spawn_ingestion_thread(
+                            crate::views::capture_ui::IngestionInput::Batch(capture_scan_paths),
+                            rules,
+                            ctx_clone,
+                            tx_clone,
+                        );
+                    })
+                    .ok();
+            }
+
+            for path in analyzer_paths {
+                let path_str = path.to_string_lossy().into_owned();
+                if let Some(parent) = path.parent() {
+                    self.current_dir = Some(parent.to_path_buf());
+                }
+
+                if self.analyses.contains_key(&path_str) {
+                    self.selected_analysis_path = Some(path_str);
+                    self.error_message = None;
+                } else {
+                    self.selected_analysis_path = None;
+                    self.error_message = None;
+                    self.loading_path = Some(path_str);
+                    self.loading_progress = Some(0.0);
+                    self.loading_elapsed = Some(0.0);
+                    self.loading_eta = None;
+                    analyze_files_async(ctx.clone(), self.tx.clone(), vec![path.clone()]);
+                }
+            }
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        ctx.input(|i| {
+            for file in &i.raw.dropped_files {
                 if let Some(bytes) = &file.bytes {
                     let name = file.name.clone();
                     if self.analyses.contains_key(&name) {

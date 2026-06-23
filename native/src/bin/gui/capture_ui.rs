@@ -30,6 +30,16 @@ static PROGRESS_PCT: OnceLock<Mutex<f32>> = OnceLock::new();
 static SUCCESS_STATE: OnceLock<Mutex<bool>> = OnceLock::new();
 static ERROR_STATE: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 
+static IS_PATCHING: AtomicBool = AtomicBool::new(false);
+
+pub(crate) fn is_patching() -> bool {
+    IS_PATCHING.load(Ordering::SeqCst)
+}
+
+pub(crate) fn set_is_patching(val: bool) {
+    IS_PATCHING.store(val, Ordering::SeqCst);
+}
+
 // Wizard fields string states to allow parsing None on empty inputs
 static MIN_KILLS_STR: OnceLock<Mutex<String>> = OnceLock::new();
 static MAX_TIME_GAP_STR: OnceLock<Mutex<String>> = OnceLock::new();
@@ -46,26 +56,6 @@ static HIGHLIGHT_RULES: OnceLock<Mutex<HighlightRules>> = OnceLock::new();
 static QUEUED_DEMOS: OnceLock<Arc<Mutex<Arc<Vec<DemoData>>>>> = OnceLock::new();
 static CAPTURE_STATE: OnceLock<Mutex<CaptureState>> = OnceLock::new();
 static PATCHER_CONFIG: OnceLock<Mutex<PatcherConfig>> = OnceLock::new();
-
-fn get_worker() -> &'static Mutex<Option<CaptureWorker>> {
-    WORKER_STATE.get_or_init(|| Mutex::new(None))
-}
-
-fn get_progress_msg() -> &'static Mutex<String> {
-    PROGRESS_MSG.get_or_init(|| Mutex::new("Idle".to_string()))
-}
-
-fn get_progress_pct() -> &'static Mutex<f32> {
-    PROGRESS_PCT.get_or_init(|| Mutex::new(0.0))
-}
-
-fn get_success() -> &'static Mutex<bool> {
-    SUCCESS_STATE.get_or_init(|| Mutex::new(false))
-}
-
-fn get_error() -> &'static Mutex<Option<String>> {
-    ERROR_STATE.get_or_init(|| Mutex::new(None))
-}
 
 fn get_min_kills_str() -> &'static Mutex<String> {
     MIN_KILLS_STR.get_or_init(|| Mutex::new("3".to_string()))
@@ -98,7 +88,25 @@ fn get_capture_state() -> &'static Mutex<CaptureState> {
 }
 
 pub(crate) fn get_patcher_config() -> &'static Mutex<PatcherConfig> {
-    PATCHER_CONFIG.get_or_init(|| Mutex::new(PatcherConfig::default()))
+    PATCHER_CONFIG.get_or_init(|| {
+        let global = crate::settings::load_settings();
+        Mutex::new(PatcherConfig {
+            pre_roll_ticks: 200,
+            post_roll_ticks: 60,
+            capture_fps: 300,
+            exit_on_finish: true,
+            init_commands: vec!["host_framerate 0".to_string()],
+            custom_commands: global.custom_commands.clone(),
+            pre_roll_seconds: global.capture_pre_record_buffer,
+            post_roll_seconds: global.post_record_buffer,
+            record_start_lead: global.capture_record_start_lead,
+            record_stop_trail: global.capture_record_stop_trail,
+            initial_delay: global.capture_initial_delay,
+            fast_forward_speed: global.capture_fast_forward_speed,
+            tickrate: 100.0,
+            output_dir: std::path::Path::new(&global.game_path).parent().map(|p| p.join("dod")),
+        })
+    })
 }
 
 // Caching helper not needed as we use the raw flat structure directly now.
@@ -130,73 +138,11 @@ pub fn render_patch_ui(
         }
     }
 
-    let mut worker_lock = acquire_lock!(get_worker());
-    let mut progress_msg = acquire_lock!(get_progress_msg());
-    let mut progress_pct = acquire_lock!(get_progress_pct());
-    let mut success = acquire_lock!(get_success());
-    let mut error = acquire_lock!(get_error());
-
     let mut rules = acquire_lock!(get_highlight_rules());
     let mut patcher_config = acquire_lock!(get_patcher_config());
 
     let mut min_kills_str = acquire_lock!(get_min_kills_str());
     let mut max_time_gap_str = acquire_lock!(get_max_time_gap_str());
-
-    // Poll worker receiver
-    let mut should_drop_worker = false;
-    if let Some(ref worker) = *worker_lock {
-        ctx.request_repaint();
-        while let Ok(event) = worker.receiver.try_recv() {
-            match event {
-                PatchEvent::Starting(total) => {
-                    *progress_msg = format!("Starting batch patch of {} jobs...", total);
-                    *progress_pct = 0.0;
-                    *success = false;
-                    *error = None;
-                    ctx.request_repaint();
-                }
-                PatchEvent::Progress(file, pct) => {
-                    *progress_msg = format!("Processing: {} ({:.1}%)", file, pct);
-                    if pct >= 100.0 {
-                        *progress_pct = 1.0;
-                    } else {
-                        *progress_pct = pct / 100.0;
-                    }
-                    ctx.request_repaint();
-                }
-                PatchEvent::Completed => {
-                    *progress_msg = "Completed successfully!".to_string();
-                    *progress_pct = 1.0;
-                    *success = true;
-                    *error = None;
-                    should_drop_worker = true;
-                    ctx.request_repaint();
-                }
-                PatchEvent::Cancelled => {
-                    *progress_msg = "Batch Cancelled".to_string();
-                    *progress_pct = 0.0;
-                    *success = false;
-                    *error = None;
-                    should_drop_worker = true;
-                    ctx.request_repaint();
-                }
-                PatchEvent::Error(err_msg) => {
-                    *progress_msg = format!("Error occurred: {}", err_msg);
-                    *error = Some(err_msg);
-                    should_drop_worker = true;
-                    ctx.request_repaint();
-                }
-            }
-        }
-    }
-
-    if should_drop_worker {
-        if let Some(mut worker) = worker_lock.take() {
-            if let Some(handle) = worker.handle.take() {
-                let _ = handle.join();
-            }
-        }
-    }
 
     // Render Tab View
     match current_state {
@@ -264,7 +210,7 @@ pub fn render_patch_ui(
                                         .add_filter("Demo files", &["dem"])
                                         .pick_files()
                                     {
-                                        spawn_ingestion_thread(IngestionInput::Files(files), rules_clone, ctx_clone, tx_clone);
+                                        spawn_ingestion_thread(IngestionInput::Batch(files), rules_clone, ctx_clone, tx_clone);
                                     } else {
                                         let _ = tx_clone.send(crate::types::GuiMessage::IngestionFinished);
                                     }
@@ -282,7 +228,7 @@ pub fn render_patch_ui(
                                 .stack_size(8 * 1024 * 1024)
                                 .spawn(move || {
                                     if let Some(folder) = rfd::FileDialog::new().pick_folder() {
-                                        spawn_ingestion_thread(IngestionInput::Folder(folder), rules_clone, ctx_clone, tx_clone);
+                                        spawn_ingestion_thread(IngestionInput::Batch(vec![folder]), rules_clone, ctx_clone, tx_clone);
                                     } else {
                                         let _ = tx_clone.send(crate::types::GuiMessage::IngestionFinished);
                                     }
@@ -389,149 +335,150 @@ pub fn render_patch_ui(
                         let mut actions_to_apply: Vec<DemoAction> = Vec::new();
 
                         egui::ScrollArea::vertical()
-                            .max_height(250.0)
+                            .min_scrolled_height(ui.available_height() - 150.0)
                             .id_salt("discovered_streaks_scroll_tables")
                             .show(ui, |ui| {
-                                for (d_idx, demo) in data.iter().enumerate() {
-                                    if demo.streaks.is_empty() {
-                                        continue;
-                                    }
+                                ui.columns(2, |columns| {
+                                    for (d_idx, demo) in data.iter().enumerate() {
+                                        if demo.streaks.is_empty() {
+                                            continue;
+                                        }
 
-                                    egui::Frame::group(ui.style()).show(ui, |ui| {
-                                        // ── Per-demo header row with bulk controls ──────
-                                        ui.horizontal(|ui| {
-                                            ui.strong(&demo.demo_name);
-                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                if ui.button("🗑 Remove Demo").on_hover_text("Remove this demo from the queue").clicked() {
-                                                    actions_to_apply.push(DemoAction::RemoveDemo(d_idx));
-                                                }
-                                                ui.add_space(4.0);
-                                                if ui.button("Deselect All").clicked() {
-                                                    actions_to_apply.push(DemoAction::DeselectAll(d_idx));
-                                                }
-                                                if ui.button("Select All").clicked() {
-                                                    actions_to_apply.push(DemoAction::SelectAll(d_idx));
-                                                }
+                                        let col_ui = &mut columns[d_idx % 2];
+                                        egui::Frame::group(col_ui.style()).show(col_ui, |ui| {
+                                            // ── Per-demo header row with bulk controls ──────
+                                            ui.horizontal(|ui| {
+                                                ui.strong(&demo.demo_name);
+                                                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                                    if ui.button("Select All").clicked() {
+                                                        actions_to_apply.push(DemoAction::SelectAll(d_idx));
+                                                    }
+                                                    if ui.button("Deselect All").clicked() {
+                                                        actions_to_apply.push(DemoAction::DeselectAll(d_idx));
+                                                    }
+                                                    ui.add_space(4.0);
+                                                    if ui.button("🗑 Remove Demo").on_hover_text("Remove this demo from the queue").clicked() {
+                                                        actions_to_apply.push(DemoAction::RemoveDemo(d_idx));
+                                                    }
+                                                });
                                             });
-                                        });
-                                        ui.add_space(2.0);
+                                            ui.add_space(2.0);
 
-                                        TableBuilder::new(ui)
-                                            .striped(true)
-                                            .vscroll(false)
-                                            .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-                                            .column(Column::auto())          // [Checkbox]
-                                            .column(Column::auto())          // [Player Name]
-                                            .column(Column::exact(140.0))   // [Kill Range]
-                                            .column(Column::exact(50.0))    // [Duration]
-                                            .column(Column::remainder())     // [Details]
-                                            .header(20.0, |mut header| {
-                                                header.col(|ui| { ui.strong("Sel"); });
-                                                header.col(|ui| { ui.strong("Player"); });
-                                                header.col(|ui| { ui.strong("Kill Range"); });
-                                                header.col(|ui| { ui.strong("Dur."); });
-                                                header.col(|ui| { ui.strong("Details"); });
-                                            })
-                                            .body(|mut body| {
-                                                let filtered_indices: Vec<usize> = (0..demo.streaks.len())
-                                                    .filter(|&idx| {
-                                                        let streak = &demo.streaks[idx];
-                                                        if demo.is_pov && *hide_non_pov {
-                                                            Some(streak.player_index) == demo.local_player_index
-                                                        } else {
-                                                            true
-                                                        }
-                                                    })
-                                                    .collect();
+                                            TableBuilder::new(ui)
+                                                .striped(true)
+                                                .vscroll(false)
+                                                .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                                                .column(Column::auto())          // [Checkbox]
+                                                .column(Column::auto())          // [Player Name]
+                                                .column(Column::exact(140.0))    // [Kill Range]
+                                                .column(Column::exact(50.0))     // [Duration]
+                                                .column(Column::remainder())     // [Details]
+                                                .header(20.0, |mut header| {
+                                                    header.col(|ui| { ui.strong("Sel"); });
+                                                    header.col(|ui| { ui.strong("Player"); });
+                                                    header.col(|ui| { ui.strong("Kill Range"); });
+                                                    header.col(|ui| { ui.strong("Dur."); });
+                                                    header.col(|ui| { ui.strong("Details"); });
+                                                })
+                                                .body(|mut body| {
+                                                    let filtered_indices: Vec<usize> = (0..demo.streaks.len())
+                                                        .filter(|&idx| {
+                                                            let streak = &demo.streaks[idx];
+                                                            if demo.is_pov && *hide_non_pov {
+                                                                Some(streak.player_index) == demo.local_player_index
+                                                            } else {
+                                                                true
+                                                            }
+                                                        })
+                                                        .collect();
 
-                                                body.rows(20.0, filtered_indices.len(), |mut row| {
-                                                    let row_idx = row.index();
-                                                    let streak_idx = filtered_indices[row_idx];
-                                                    let streak = &demo.streaks[streak_idx];
+                                                    body.rows(20.0, filtered_indices.len(), |mut row| {
+                                                        let row_idx = row.index();
+                                                        let streak_idx = filtered_indices[row_idx];
+                                                        let streak = &demo.streaks[streak_idx];
 
-                                                    // ── [Checkbox] ────────────────────────
-                                                    row.col(|ui| {
-                                                        let mut is_selected = streak.is_selected;
-                                                        if ui.checkbox(&mut is_selected, "").changed() {
-                                                            log_markdown(&format!("UI Interaction: Toggled streak selection for {}, new value: {}", streak.target_player, is_selected));
-                                                            let queued_arc = get_queued_demos();
-                                                            let mut queued_guard = acquire_lock!(queued_arc);
-                                                            let queued = Arc::make_mut(&mut *queued_guard);
-                                                            queued[d_idx].streaks[streak_idx].is_selected = is_selected;
-                                                        }
-                                                    });
+                                                        // ── [Checkbox] ────────────────────────
+                                                        row.col(|ui| {
+                                                            let mut is_selected = streak.is_selected;
+                                                            if ui.checkbox(&mut is_selected, "").changed() {
+                                                                log_markdown(&format!("UI Interaction: Toggled streak selection for {}, new value: {}", streak.target_player, is_selected));
+                                                                let queued_arc = get_queued_demos();
+                                                                let mut queued_guard = acquire_lock!(queued_arc);
+                                                                let queued = Arc::make_mut(&mut *queued_guard);
+                                                                queued[d_idx].streaks[streak_idx].is_selected = is_selected;
+                                                            }
+                                                        });
 
-                                                    // ── [Player Name] ─────────────────────
-                                                    row.col(|ui| { ui.label(&streak.target_player); });
+                                                        // ── [Player Name] ─────────────────────
+                                                        row.col(|ui| { ui.label(&streak.target_player); });
 
-                                                    // ── [Kill Range] ──────────────────────
-                                                    row.col(|ui| {
-                                                        let max_idx = streak.kills.len().saturating_sub(1);
-                                                        let is_modified = streak.start_index > 0
-                                                            || streak.end_index < max_idx;
+                                                        // ── [Kill Range] ──────────────────────
+                                                        row.col(|ui| {
+                                                            let max_idx = streak.kills.len().saturating_sub(1);
+                                                            let is_modified = streak.start_index > 0
+                                                                || streak.end_index < max_idx;
 
-                                                        // Copy mutable locals from the read-only snapshot.
-                                                        let mut start_idx = streak.start_index;
-                                                        let mut end_idx   = streak.end_index;
+                                                            // Copy mutable locals from the read-only snapshot.
+                                                            let mut start_idx = streak.start_index;
+                                                            let mut end_idx   = streak.end_index;
 
-                                                        ui.horizontal(|ui| {
-                                                            // Colour the range values orange when the range is narrowed.
-                                                            ui.scope(|ui| {
-                                                                if is_modified {
-                                                                    ui.visuals_mut().override_text_color =
-                                                                        Some(egui::Color32::from_rgb(255, 165, 0));
-                                                                }
-                                                                let start_changed = ui.add(
-                                                                    egui::DragValue::new(&mut start_idx)
-                                                                        .range(0..=end_idx)
-                                                                        .custom_formatter(|n, _| format!("{}", n as usize + 1))
-                                                                        .custom_parser(|s| s.parse::<f64>().ok().map(|v| (v - 1.0).max(0.0)))
-                                                                        .speed(0.05),
-                                                                ).changed();
-                                                                ui.label("-");
-                                                                let end_changed = ui.add(
-                                                                    egui::DragValue::new(&mut end_idx)
-                                                                        .range(start_idx..=max_idx)
-                                                                        .custom_formatter(|n, _| format!("{}", n as usize + 1))
-                                                                        .custom_parser(|s| s.parse::<f64>().ok().map(|v| (v - 1.0).max(0.0)))
-                                                                        .speed(0.05),
-                                                                ).changed();
+                                                            ui.horizontal(|ui| {
+                                                                // Colour the range values orange when the range is narrowed.
+                                                                ui.scope(|ui| {
+                                                                    if is_modified {
+                                                                        ui.visuals_mut().override_text_color = Some(egui::Color32::from_rgb(255, 165, 0));
+                                                                    }
+                                                                    let start_changed = ui.add(
+                                                                        egui::DragValue::new(&mut start_idx)
+                                                                            .range(0..=end_idx)
+                                                                            .custom_formatter(|n, _| format!("{}", n as usize + 1))
+                                                                            .custom_parser(|s| s.parse::<f64>().ok().map(|v| (v - 1.0).max(0.0)))
+                                                                            .speed(0.05),
+                                                                    ).changed();
+                                                                    ui.label("-");
+                                                                    let end_changed = ui.add(
+                                                                        egui::DragValue::new(&mut end_idx)
+                                                                            .range(start_idx..=max_idx)
+                                                                            .custom_formatter(|n, _| format!("{}", n as usize + 1))
+                                                                            .custom_parser(|s| s.parse::<f64>().ok().map(|v| (v - 1.0).max(0.0)))
+                                                                            .speed(0.05),
+                                                                    ).changed();
 
-                                                                if start_changed || end_changed {
+                                                                    if start_changed || end_changed {
+                                                                        let queued_arc = get_queued_demos();
+                                                                        let mut queued_guard = acquire_lock!(queued_arc);
+                                                                        let queued = Arc::make_mut(&mut *queued_guard);
+                                                                        let sm = &mut queued[d_idx].streaks[streak_idx];
+                                                                        sm.start_index = start_idx;
+                                                                        sm.end_index   = end_idx;
+                                                                        sm.update_visuals();
+                                                                    }
+                                                                });
+
+                                                                // Provide a reset button when modifications exist.
+                                                                if is_modified && ui.button("↺").on_hover_text("Reset to full range").clicked() {
                                                                     let queued_arc = get_queued_demos();
                                                                     let mut queued_guard = acquire_lock!(queued_arc);
                                                                     let queued = Arc::make_mut(&mut *queued_guard);
                                                                     let sm = &mut queued[d_idx].streaks[streak_idx];
-                                                                    sm.start_index = start_idx;
-                                                                    sm.end_index   = end_idx;
+                                                                    sm.start_index = 0;
+                                                                    sm.end_index   = max_idx;
                                                                     sm.update_visuals();
                                                                 }
                                                             });
-
-                                                            // Reset button — only shown when range is narrowed.
-                                                            if is_modified && ui.button("↺").on_hover_text("Reset to full range").clicked() {
-                                                                let queued_arc = get_queued_demos();
-                                                                let mut queued_guard = acquire_lock!(queued_arc);
-                                                                let queued = Arc::make_mut(&mut *queued_guard);
-                                                                let sm = &mut queued[d_idx].streaks[streak_idx];
-                                                                sm.start_index = 0;
-                                                                sm.end_index   = sm.kills.len().saturating_sub(1);
-                                                                sm.update_visuals();
-                                                            }
                                                         });
+
+                                                        // ── [Duration] ────────────────────────
+                                                        row.col(|ui| { ui.label(&streak.duration_string); });
+
+                                                        // ── [Details] ─────────────────────────
+                                                        row.col(|ui| { ui.label(&streak.timeline_string); });
                                                     });
-
-                                                    // ── [Duration] ────────────────────────
-                                                    row.col(|ui| { ui.label(&streak.duration_string); });
-
-                                                    // ── [Details / Timeline] ──────────────
-                                                    row.col(|ui| { ui.label(&streak.timeline_string); });
                                                 });
-                                            });
-                                    });
-
-                                    ui.add_space(4.0);
-                                }
+                                        });
+                                        col_ui.add_space(4.0);
+                                    }
+                                });
                             });
 
                         // ── Execute all deferred actions post-loop ──────────────────────
@@ -609,10 +556,10 @@ pub fn render_patch_ui(
 
             ui.add_space(10.0);
 
-            // 2. Fast Streaming Patcher Section
+            // 2. Export Configuration Section
             ui.group(|ui| {
                 ui.vertical(|ui| {
-                    ui.heading("⚡ Fast Streaming Patcher Settings");
+                    ui.heading("⚡ Export Configuration");
                     ui.add_space(4.0);
 
                     // Patcher Config settings
@@ -630,93 +577,79 @@ pub fn render_patch_ui(
                         ui.label("Record Stop Trail (sec):");
                         ui.add(egui::DragValue::new(&mut patcher_config.record_stop_trail).range(0.0..=10.0).speed(0.1));
                     });
-
-                    ui.add_space(8.0);
-
-                    let is_running = worker_lock.as_ref().map(|w| w.is_running).unwrap_or(false);
-
-                    // Start Batch Button
                     ui.horizontal(|ui| {
-                        let btn = egui::Button::new("🎬 Start Direct Batch Patch");
-                        if ui.add_enabled(!is_running && !queued_demos_shared.is_empty(), btn).clicked() {
-                            *progress_msg = "Initializing patcher...".to_string();
-                            *progress_pct = 0.0;
-                            *success = false;
-                            *error = None;
-
-                            let queued_demos_shared = queued_demos_shared.clone();
-                            let mut patcher_config = patcher_config.clone();
-                            let ctx_clone = ctx.clone();
-
-                            std::thread::spawn(move || {
-                                let mut raw_streaks = Vec::new();
-                                for demo in queued_demos_shared.iter() {
-                                    let demo_path_str = demo.path.to_string_lossy().to_string();
-                                    patcher_config.tickrate = demo.tickrate;
-                                    patcher_config.pre_roll_ticks = (patcher_config.pre_roll_seconds * demo.tickrate) as i32;
-                                    patcher_config.post_roll_ticks = (patcher_config.post_roll_seconds * demo.tickrate) as i32;
-
-                                    for streak in &demo.streaks {
-                                        if streak.is_selected {
-                                            raw_streaks.push(CaptureStreak {
-                                                start_tick: streak.start_tick,
-                                                end_tick: streak.end_tick,
-                                                source_demo: demo_path_str.clone(),
-                                                target_player: Some(streak.target_player.clone()),
-                                                kill_count: streak.kill_count,
-                                                timeline_string: streak.timeline_string.clone(),
-                                                duration_string: streak.duration_string.clone(),
-                                                player_index: streak.player_index,
-                                                kills: streak.kills.clone(),
-                                                start_index: streak.start_index,
-                                                end_index: streak.end_index,
-                                            });
-                                        }
-                                    }
-                                }
-
-                                let jobs = build_batch_queue(raw_streaks, &patcher_config);
-                                if !jobs.is_empty() {
-                                    let cancel_token = Arc::new(AtomicBool::new(false));
-                                    let worker = spawn_patch_batch(jobs, patcher_config.clone(), cancel_token);
-                                    *acquire_lock!(get_worker()) = Some(worker);
-                                    *acquire_lock!(get_progress_msg()) = "Spawning worker...".to_string();
-                                    *acquire_lock!(get_progress_pct()) = 0.0;
-                                    *acquire_lock!(get_success()) = false;
-                                    *acquire_lock!(get_error()) = None;
-                                } else {
-                                    *acquire_lock!(get_progress_msg()) = "No selected streaks to patch.".to_string();
-                                }
-                                ctx_clone.request_repaint();
-                            });
-                        }
-
-                        if is_running {
-                            ui.spinner();
-                        }
+                        ui.label("Initial Load Delay (sec):");
+                        ui.add(egui::DragValue::new(&mut patcher_config.initial_delay).range(0.0..=10.0).speed(0.1));
+                        ui.add_space(10.0);
+                        ui.label("Fast Forward Speed:");
+                        ui.add(egui::DragValue::new(&mut patcher_config.fast_forward_speed).range(0.01..=10.0).speed(0.01));
                     });
 
                     ui.add_space(8.0);
 
-                    // ProgressBar using tracked float state
-                    ui.add(egui::ProgressBar::new(*progress_pct).text(&*progress_msg));
+                    let is_running = is_patching();
 
-                    if is_running {
-                        ui.add_space(4.0);
-                        if ui.button("⏹ Cancel Batch").clicked() {
-                            if let Some(ref worker) = *worker_lock {
-                                worker.cancel_token.store(true, Ordering::Relaxed);
+                    // Proceed Button
+                    ui.horizontal(|ui| {
+                        let btn = egui::Button::new("Proceed to Capture ->");
+                        if ui.add_enabled(!is_running && !queued_demos_shared.is_empty(), btn).clicked() {
+                            set_is_patching(true);
+                            let mut payload = Vec::new();
+                            for demo in queued_demos_shared.iter() {
+                                let demo_path_str = demo.path.to_string_lossy().to_string();
+                                for streak in &demo.streaks {
+                                    if !streak.is_selected {
+                                        continue;
+                                    }
+                                    if demo.is_pov && *hide_non_pov && Some(streak.player_index) != demo.local_player_index {
+                                        continue;
+                                    }
+                                    payload.push(CaptureStreak {
+                                        start_tick: streak.start_tick,
+                                        end_tick: streak.end_tick,
+                                        source_demo: demo_path_str.clone(),
+                                        target_player: Some(streak.target_player.clone()),
+                                        kill_count: streak.kill_count,
+                                        timeline_string: streak.timeline_string.clone(),
+                                        duration_string: streak.duration_string.clone(),
+                                        player_index: streak.player_index,
+                                        kills: streak.kills.clone(),
+                                        start_index: streak.start_index,
+                                        end_index: streak.end_index,
+                                    });
+                                }
+                            }
+
+                            if !payload.is_empty() {
+                                let cancel_token = Arc::new(AtomicBool::new(false));
+                                let jobs = build_batch_queue(payload, &patcher_config);
+                                let tx_clone = tx.clone();
+                                let ctx_clone = ctx.clone();
+                                let config_clone = patcher_config.clone();
+                                
+                                std::thread::Builder::new()
+                                    .name("patch_worker".into())
+                                    .spawn(move || {
+                                        for job in jobs {
+                                            let patcher = native::patch::StreamPatcher::new(&job.source_demo, &job.output_demo);
+                                            let _ = patcher.patch(&job, &config_clone, &cancel_token);
+                                        }
+                                        let _ = tx_clone.send(crate::types::GuiMessage::PatchingComplete);
+                                        ctx_clone.request_repaint();
+                                    })
+                                    .unwrap();
+                            } else {
+                                set_is_patching(false);
+                                *state_ptr = CaptureStudioState::Capture;
                             }
                         }
-                    }
-
-                    if let Some(ref err_msg) = *error {
-                        ui.colored_label(egui::Color32::RED, format!("⚠ {}", err_msg));
-                    }
-
-                    if *success {
-                        ui.colored_label(egui::Color32::GREEN, "✅ Batch patching finished successfully!");
-                    }
+                        
+                        if is_running {
+                            ui.add_space(10.0);
+                            ui.spinner();
+                            ui.label("Patching Demos... Please wait.");
+                        }
+                    });
                 });
             });
         }
@@ -725,8 +658,7 @@ pub fn render_patch_ui(
 }
 
 pub enum IngestionInput {
-    Files(Vec<PathBuf>),
-    Folder(PathBuf),
+    Batch(Vec<PathBuf>),
 }
 
 pub(crate) fn spawn_ingestion_thread(
@@ -749,11 +681,19 @@ pub(crate) fn spawn_ingestion_thread(
             let mut last_repaint = std::time::Instant::now();
             let mut batch_count = 0;
             let files = match input {
-                IngestionInput::Files(f) => f,
-                IngestionInput::Folder(root_folder) => {
-                    // Iterative walk — explicit stack avoids OS stack pressure on deep trees.
+                IngestionInput::Batch(paths) => {
                     let mut list = Vec::new();
-                    let mut dir_stack = vec![root_folder];
+                    let mut dir_stack = Vec::new();
+                    
+                    for path in paths {
+                        if path.is_dir() {
+                            dir_stack.push(path);
+                        } else if path.is_file() && path.extension().map(|ext| ext == "dem").unwrap_or(false) {
+                            list.push(path);
+                        }
+                    }
+
+                    // Iterative walk — explicit stack avoids OS stack pressure on deep trees.
                     while let Some(dir) = dir_stack.pop() {
                         if let Ok(entries) = std::fs::read_dir(&dir) {
                             for entry in entries.flatten() {
