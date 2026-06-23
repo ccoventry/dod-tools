@@ -300,4 +300,7 @@ pub enum EngineEvent {
     Verified(String),
     Error(String),
     AllCompleted,
+    /// Posted when the cancellation token is raised mid-batch.
+    /// Signals the GUI to reset the running flag and show a cancelled message.
+    Cancelled,
 }

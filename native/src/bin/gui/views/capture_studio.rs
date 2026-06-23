@@ -88,6 +88,7 @@ impl Gui {
                             self.capture_engine_progress,
                             self.capture_engine_jobs_done,
                             self.capture_engine_jobs_total,
+                            self.capture_cancel_token.clone(),
                         );
                     }
                     #[cfg(target_arch = "wasm32")]

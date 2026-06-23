@@ -29,6 +29,7 @@ pub fn render(
     hide_non_pov: bool,
     tx: std::sync::mpsc::Sender<crate::types::GuiMessage>,
     studio_state: &mut crate::types::CaptureStudioState,
+    cancel_token: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) {
     ui.vertical(|ui| {
         // CRITICAL: Engine relies on HLAE injection for mirv_streams. Do not rename to 'Native'.
@@ -157,6 +158,10 @@ pub fn render(
                 }
 
                 if !capture_jobs.is_empty() {
+                    // Reset the token from any prior run before spawning,
+                    // so a previous cancellation doesn't abort this new batch.
+                    cancel_token.store(false, std::sync::atomic::Ordering::Relaxed);
+
                     // Eagerly set the flag before thread spawn to close the
                     // one-frame window where a second click would be possible
                     // before EngineEvent::Starting arrives (Stage 1 fix #6).
@@ -178,6 +183,7 @@ pub fn render(
                         hlae_path,
                         hl_path,
                         engine_tx,
+                        cancel_token.clone(),
                     );
                 }
             }
@@ -189,6 +195,14 @@ pub fn render(
                 egui::Button::new("Proceed to Render ->"),
             ).clicked() {
                 *studio_state = crate::types::CaptureStudioState::Render;
+            }
+
+            // Cancel Capture — only enabled while the engine is running.
+            if ui.add_enabled(
+                *capture_engine_running,
+                egui::Button::new("⛔ Cancel Capture"),
+            ).clicked() {
+                cancel_token.store(true, std::sync::atomic::Ordering::Relaxed);
             }
         });
 
@@ -233,6 +247,7 @@ pub fn render(
     _hide_non_pov: bool,
     _tx: std::sync::mpsc::Sender<crate::types::GuiMessage>,
     _studio_state: &mut crate::types::CaptureStudioState,
+    _cancel_token: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) {
     ui.label("Game Capture is not supported in WASM.");
 }

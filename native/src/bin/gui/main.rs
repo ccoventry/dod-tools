@@ -228,6 +228,9 @@ pub(crate) struct Gui {
     pub(crate) capture_engine_progress: f32,
     pub(crate) capture_engine_jobs_total: usize,
     pub(crate) capture_engine_jobs_done: usize,
+    /// Shared cancellation token threaded into the capture engine thread.
+    /// Set to `true` by the Cancel button; reset to `false` on each new launch.
+    pub(crate) capture_cancel_token: std::sync::Arc<std::sync::atomic::AtomicBool>,
     pub(crate) capture_studio_loading: bool,
     pub(crate) last_capture_studio_state: Option<CaptureStudioState>,
     pub(crate) hide_non_pov: bool,
@@ -628,6 +631,7 @@ impl Default for Gui {
             capture_engine_progress: 0.0,
             capture_engine_jobs_total: 0,
             capture_engine_jobs_done: 0,
+            capture_cancel_token: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             capture_studio_loading: false,
             last_capture_studio_state: None,
             hide_non_pov: true,
@@ -1109,6 +1113,10 @@ impl eframe::App for Gui {
                             self.capture_engine_running = false;
                             self.capture_engine_progress = 1.0;
                             self.capture_engine_msg = "All captures completed successfully!".to_string();
+                        }
+                        EngineEvent::Cancelled => {
+                            self.capture_engine_running = false;
+                            self.capture_engine_msg = "⛔ Capture cancelled by user.".to_string();
                         }
                     }
                 }
