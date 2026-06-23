@@ -10,6 +10,11 @@ pub struct GameTime {
 
     /// Timestamp that represents the value shown in the `viewdemo` window.
     pub viewdemo_offset: Duration,
+
+    /// The 1-based frame index at which this timestamp was recorded.
+    /// Populated from `AnalyzerState::frame_index` each time a Frame event fires.
+    /// Used by the Capture Studio to resolve wall-clock positions into patcher ticks.
+    pub frame_index: usize,
 }
 
 impl Sub<GameTime> for GameTime {
@@ -39,6 +44,7 @@ pub fn use_timing_updates(state: &mut AnalyzerState, event: &AnalyzerEvent) {
         state.current_time.viewdemo_offset = offset;
     } else if let AnalyzerEvent::Frame(frame) = event {
         state.frame_index += 1;
+        state.current_time.frame_index = state.frame_index;
         if let Ok(offset) = Duration::try_from_secs_f32(frame.time) {
             state.current_time.real_offset = offset;
         }

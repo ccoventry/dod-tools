@@ -838,141 +838,70 @@ pub fn scan_demo_for_highlights(
     let bytes = std::fs::read(path).map_err(|e| format!("Failed to read file: {}", e))?;
     let tickrate = calculate_demo_tickrate(&bytes).unwrap_or(100.0);
 
-    let demo = open_demo_from_bytes(&bytes)
-        .map_err(|e| format!("Failed to parse demo structure: {}", e))?;
-
-    let frame_times: Vec<f32> = demo.directory.entries.iter()
-        .flat_map(|e| e.frames.iter().map(|f| f.time))
-        .collect();
-
     let analysis = analysis::Analysis::try_from_bytes(&bytes)
         .map_err(|e| format!("Failed to parse demo: {}", e))?;
 
     let min_kills = rules.min_kills.unwrap_or(1);
-
-    // current_streak: per-player buffer of kill events for the life currently being played.
-    // Key = player name (lowercase), Value = (start_tick, end_tick, kills)
-    // kills element: (tick: i32, abs_time_secs: f32, weapon: String)
-    let mut current_streak: std::collections::HashMap<String, (i32, i32, Vec<(i32, f32, String)>)> =
-        std::collections::HashMap::new();
     let mut streaks: Vec<CaptureStreak> = Vec::new();
-
     let target_players_lower: Vec<String> = rules.target_players.iter()
         .map(|s| s.to_lowercase())
         .collect();
 
-    // flush_current_streak: finalises a single player's buffered life and pushes it to `streaks`
-    // if it meets the minimum kill threshold. Called on DeathMsg (victim died), ServerReset,
-    // GameCommencing, and EOF — mirroring analysis/src/kill.rs segmentation logic exactly.
-    let flush_current_streak = |
-        player_name: &str,
-        entry: (i32, i32, Vec<(i32, f32, String)>),
-        streaks: &mut Vec<CaptureStreak>,
-        _frame_times: &[f32],
-        min_kills: usize,
-        path: &std::path::Path,
-    | {
-        let (_, _, kills) = entry;
-        if kills.len() < min_kills {
-            return;
+    // ── Per-player life-bounded streak iteration ─────────────────────────────────────────────
+    // Reads player.kill_streaks directly from the completed Analysis — the authoritative,
+    // already-segmented output of use_kill_streak_updates (analysis/src/kill.rs).
+    // Segmentation boundaries (death, round reset, map change) are handled by the analysis
+    // crate, including the grenade kill-after-death edge case, which the previous HashMap
+    // event loop did not model.
+    for player in &analysis.state.players {
+        // Phase D — target player filter applied at the player level, not per-kill.
+        if !target_players_lower.is_empty() {
+            let name_lower = player.name.to_lowercase();
+            if !target_players_lower.iter().any(|t| name_lower.contains(t)) {
+                continue;
+            }
         }
-        // Resolve player_index from the analysis state.
-        let player_index = analysis.state.players.iter()
-            .find(|p| p.name.to_lowercase() == player_name)
-            .and_then(|p| match p.connection {
-                analysis::Connection::Connected { client_id } => Some(client_id as usize),
-                _ => None,
-            })
-            .unwrap_or(0);
 
-        let end_index = kills.len().saturating_sub(1);
-        let mut streak = CaptureStreak {
-            start_tick: kills[0].0,
-            end_tick: kills[end_index].0,
-            source_demo: path.to_string_lossy().to_string(),
-            target_player: Some(player_name.to_string()),
-            kill_count: kills.len(),
-            timeline_string: String::new(),
-            duration_string: String::new(),
-            player_index,
-            kills,
-            start_index: 0,
-            end_index,
+        // Skip players that are not (or are no longer) in a connected slot.
+        // Disconnected entries have no valid client_id to anchor the patcher.
+        let player_index = match player.connection {
+            analysis::Connection::Connected { client_id } => client_id as usize,
+            _ => continue,
         };
-        // Build timeline_string and duration_string via the canonical method.
-        streak.update_visuals();
-        streaks.push(streak);
-    };
 
-    for ev in &analysis.events {
-        match &ev.event {
-            // ── Kill event: append to killer's current life; flush victim's life ──────────
-            analysis::GameEvent::Kill(killer, victim, weapon) => {
-                // Flush the victim's streak — their life just ended.
-                if !victim.is_empty() {
-                    let victim_key = victim.to_lowercase();
-                    if let Some(entry) = current_streak.remove(&victim_key) {
-                        flush_current_streak(
-                            &victim_key, entry, &mut streaks, &frame_times, min_kills, path,
-                        );
-                    }
-                }
-
-                if killer.is_empty() {
-                    continue;
-                }
-
-                // Skip killers not in the target list (when a filter is set).
-                if !target_players_lower.is_empty() {
-                    let killer_lower = killer.to_lowercase();
-                    if !target_players_lower.iter().any(|t| killer_lower.contains(t)) {
-                        continue;
-                    }
-                }
-
-                let kill_tick = ev.tick as i32;
-                let abs_time = frame_times.get(kill_tick as usize).cloned().unwrap_or(0.0);
-                let killer_key = killer.to_lowercase();
-
-                let entry = current_streak
-                    .entry(killer_key)
-                    .or_insert_with(|| (kill_tick, kill_tick, Vec::new()));
-                entry.1 = kill_tick;
-                entry.2.push((kill_tick, abs_time, weapon.clone()));
+        for kill_streak in &player.kill_streaks {
+            if kill_streak.kills.len() < min_kills {
+                continue;
             }
 
-            // ── Round reset / game commencing: flush every active streak ─────────────────
-            analysis::GameEvent::ServerReset | analysis::GameEvent::GameCommencing => {
-                let drained: Vec<(String, (i32, i32, Vec<(i32, f32, String)>))> =
-                    current_streak.drain().collect();
-                for (player_key, entry) in drained {
-                    flush_current_streak(
-                        &player_key, entry, &mut streaks, &frame_times, min_kills, path,
-                    );
-                }
-            }
+            // Phase B — resolve tick and abs_time directly from GameTime.
+            // frame_index: the 1-based frame counter captured during use_timing_updates.
+            // real_offset: wall-clock Duration used by update_visuals for timeline strings.
+            let kills_raw: Vec<(i32, f32, String)> = kill_streak.kills.iter()
+                .map(|(time, weapon, _victim)| {
+                    let tick = time.frame_index as i32;
+                    let abs_time = time.real_offset.as_secs_f32();
+                    (tick, abs_time, format!("{:?}", weapon))
+                })
+                .collect();
 
-            // ── Map change: streaks must not bleed across maps in continuous recordings ───
-            analysis::GameEvent::MapChange => {
-                let drained: Vec<(String, (i32, i32, Vec<(i32, f32, String)>))> =
-                    current_streak.drain().collect();
-                for (player_key, entry) in drained {
-                    flush_current_streak(
-                        &player_key, entry, &mut streaks, &frame_times, min_kills, path,
-                    );
-                }
-            }
-
-            _ => {}
+            let end_index = kills_raw.len().saturating_sub(1);
+            let mut streak = CaptureStreak {
+                start_tick: kills_raw[0].0,
+                end_tick: kills_raw[end_index].0,
+                source_demo: path.to_string_lossy().to_string(),
+                target_player: Some(player.name.clone()),
+                kill_count: kills_raw.len(),
+                timeline_string: String::new(),
+                duration_string: String::new(),
+                player_index,
+                kills: kills_raw,
+                start_index: 0,
+                end_index,
+            };
+            streak.update_visuals();
+            streaks.push(streak);
         }
-    }
-
-    // ── EOF: flush any remaining open streaks ─────────────────────────────────────────────
-    let drained: Vec<(String, (i32, i32, Vec<(i32, f32, String)>))> = current_streak.drain().collect();
-    for (player_key, entry) in drained {
-        flush_current_streak(
-            &player_key, entry, &mut streaks, &frame_times, min_kills, path,
-        );
     }
 
     let is_pov = analysis.demo_info.demo_type == "POV";
