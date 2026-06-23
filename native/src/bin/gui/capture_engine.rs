@@ -1,13 +1,16 @@
 use std::path::PathBuf;
-use std::sync::mpsc::Sender;
-use std::sync::Arc;
+use std::sync::{Arc, mpsc::Sender, atomic::{AtomicBool, Ordering}};
 use crate::types::{CaptureJob, EngineEvent};
+
+/// Poll interval for the child-process watch loop (16 ms ≈ 60 FPS cadence).
+const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(16);
 
 pub fn spawn_capture_engine(
     jobs: Vec<CaptureJob>,
     hlae_path: Arc<PathBuf>,
     hl_path: Arc<PathBuf>,
     tx: Sender<EngineEvent>,
+    cancel_token: Arc<AtomicBool>,
 ) {
     std::thread::Builder::new()
         .name("capture_engine".into())
@@ -34,6 +37,12 @@ pub fn spawn_capture_engine(
             };
 
             for job in jobs {
+                // ── Cancellation check before each new job ─────────────────────
+                if cancel_token.load(Ordering::Relaxed) {
+                    let _ = tx.send(EngineEvent::Cancelled);
+                    return;
+                }
+
                 let demo_filename = match job.patched_demo_path.file_name() {
                     Some(name) => name,
                     None => {
@@ -58,7 +67,10 @@ pub fn spawn_capture_engine(
                     return;
                 }
 
-                let cmd_line_str = format!("-game dod -insecure -windowed -w 1280 -h 720 +map dod_donner +playdemo {}", demo_name_no_ext);
+                let cmd_line_str = format!(
+                    "-game dod -insecure -windowed -w 1280 -h 720 +map dod_donner +playdemo {}",
+                    demo_name_no_ext
+                );
 
                 let mut cmd = std::process::Command::new(hlae_path.as_ref());
                 cmd.args(&[
@@ -83,7 +95,29 @@ pub fn spawn_capture_engine(
                     }
                 };
 
-                match child.wait() {
+                // ── Polling wait loop — checks cancel token every POLL_INTERVAL ──
+                let exit_status = loop {
+                    // Check cancellation first on every tick.
+                    if cancel_token.load(Ordering::Relaxed) {
+                        // Gracefully kill the child process before bailing.
+                        let _ = child.kill();
+                        let _ = child.wait(); // reap so we don't leak a zombie
+                        let _ = std::fs::remove_file(&dest_demo_path);
+                        let _ = tx.send(EngineEvent::Cancelled);
+                        return;
+                    }
+
+                    match child.try_wait() {
+                        Ok(Some(status)) => break Ok(status),
+                        Ok(None) => {
+                            // Child still running — sleep and poll again.
+                            std::thread::sleep(POLL_INTERVAL);
+                        }
+                        Err(e) => break Err(e),
+                    }
+                };
+
+                match exit_status {
                     Ok(_) => {
                         let _ = tx.send(EngineEvent::Finished(demo_name_no_ext.clone()));
                     }

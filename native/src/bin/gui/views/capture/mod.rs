@@ -147,6 +147,7 @@ pub fn render_patch_ui(
     engine_progress: f32,
     engine_jobs_done: usize,
     engine_jobs_total: usize,
+    cancel_token: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) {
     // If the ingestion worker is actively scanning, show a blocking spinner and
     // return early — no other UI should be interactive during file I/O.
@@ -197,6 +198,7 @@ pub fn render_patch_ui(
                 *hide_non_pov,
                 tx,
                 state_ptr,
+                cancel_token,
             );
         }
         _ => {}
