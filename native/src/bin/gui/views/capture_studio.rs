@@ -26,14 +26,14 @@ impl Gui {
                     let step2_active = phase == CaptureStudioState::Select;
                     let step2_btn = ui.selectable_label(step2_active, "2. Select");
                     if step2_btn.clicked() {
-                        let queued_arc = crate::views::capture_ui::get_queued_demos();
+                        let queued_arc = crate::views::capture::get_queued_demos();
                         let queued_guard = match queued_arc.lock() {
                             Ok(guard) => guard,
                             Err(poisoned) => poisoned.into_inner(),
                         };
                         let msg = format!("Transitioning with {} items", queued_guard.len());
                         log::info!("{}", msg);
-                        crate::views::capture_ui::log_markdown(&msg);
+                        crate::views::capture::log_markdown(&msg);
                         self.capture_studio_state = CaptureStudioState::Select;
                     }
 
@@ -69,7 +69,7 @@ impl Gui {
                     // Both rendering are delegated to render_patch_ui where we check the state internally
                     #[cfg(not(target_arch = "wasm32"))]
                     {
-                        crate::views::capture_ui::render_patch_ui(
+                        crate::views::capture::render_patch_ui(
                             ui,
                             ctx,
                             &mut self.export_queue,
@@ -150,7 +150,7 @@ impl Gui {
 
                                     let mut raw_streaks = Vec::new();
                                     {
-                                        let queued_demos_arc = crate::views::capture_ui::get_queued_demos();
+                                        let queued_demos_arc = crate::views::capture::get_queued_demos();
                                         let queued_demos = match queued_demos_arc.lock() {
                                             Ok(guard) => guard,
                                             Err(poisoned) => {
@@ -183,7 +183,7 @@ impl Gui {
                                         }
                                     }
 
-                                    let patcher_config_mutex = crate::views::capture_ui::get_patcher_config();
+                                    let patcher_config_mutex = crate::views::capture::get_patcher_config();
                                     let mut patcher_config = match patcher_config_mutex.lock() {
                                         Ok(guard) => guard.clone(),
                                         Err(poisoned) => {
