@@ -95,6 +95,9 @@ pub fn log_markdown(msg: &str) {
         let _ = std::fs::create_dir_all(&local_dir);
         let log_path_md = local_dir.join("crash_log.md");
 
+        static LOG_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = LOG_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+
         // Write to md
         if let Ok(mut f) = std::fs::OpenOptions::new()
             .append(true)

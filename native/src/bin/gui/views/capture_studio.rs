@@ -162,6 +162,9 @@ impl Gui {
                                             let demo_path_str = demo.path.to_string_lossy().to_string();
                                             for streak in &demo.streaks {
                                                 if streak.is_selected {
+                                                    if self.hide_non_pov && demo.is_pov && Some(streak.player_index) != demo.local_player_index {
+                                                        continue;
+                                                    }
                                                     raw_streaks.push(native::patch::CaptureStreak {
                                                         start_tick: streak.start_tick,
                                                         end_tick: streak.end_tick,
@@ -181,13 +184,16 @@ impl Gui {
                                     }
 
                                     let patcher_config_mutex = crate::views::capture_ui::get_patcher_config();
-                                    let patcher_config = match patcher_config_mutex.lock() {
-                                        Ok(guard) => guard,
+                                    let mut patcher_config = match patcher_config_mutex.lock() {
+                                        Ok(guard) => guard.clone(),
                                         Err(poisoned) => {
                                             log::error!("Mutex poisoned, attempting recovery...");
-                                            poisoned.into_inner()
+                                            poisoned.into_inner().clone()
                                         }
                                     };
+                                    // Map configured seconds to engine ticks (standard DoD demo tickrate is 100.0)
+                                    patcher_config.pre_roll_ticks = (patcher_config.pre_roll_seconds * 100.0) as i32;
+                                    patcher_config.post_roll_ticks = (patcher_config.post_roll_seconds * 100.0) as i32;
                                     let patch_jobs = native::patch::build_batch_queue(raw_streaks, &patcher_config);
 
                                     let mut capture_jobs = Vec::new();

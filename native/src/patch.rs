@@ -530,7 +530,10 @@ pub struct PatcherConfig {
     pub post_roll_seconds: f32,
     pub record_start_lead: f32,
     pub record_stop_trail: f32,
+    pub initial_delay: f32,
+    pub fast_forward_speed: f32,
     pub tickrate: f32,
+    pub output_dir: Option<std::path::PathBuf>,
 }
 
 impl Default for PatcherConfig {
@@ -546,7 +549,10 @@ impl Default for PatcherConfig {
             post_roll_seconds: 0.6,
             record_start_lead: 0.0,
             record_stop_trail: 0.0,
+            initial_delay: 3.0,
+            fast_forward_speed: 0.2,
             tickrate: 100.0,
+            output_dir: None,
         }
     }
 }
@@ -590,7 +596,14 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
         } else {
             format!("{}_patched.dem", base_name)
         };
-        let output_demo = path.with_file_name(output_name);
+        let mut output_demo = path.with_file_name(&output_name);
+        
+        if let Some(ref out_dir) = config.output_dir {
+            if !out_dir.exists() {
+                let _ = std::fs::create_dir_all(out_dir);
+            }
+            output_demo = out_dir.join(&output_name);
+        }
 
         // Generate scheduled commands
         let mut scheduled_commands = Vec::new();
