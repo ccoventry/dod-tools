@@ -16,6 +16,19 @@ pub fn spawn_capture_engine(
     std::thread::Builder::new()
         .name("capture_engine".into())
         .spawn(move || {
+            macro_rules! log_crash_abort {
+                ($tx:expr, $msg:expr) => {
+                    {
+                        log::error!("{}", $msg);
+                        use std::io::Write;
+                        if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open("local/crash_log.md") {
+                            let _ = writeln!(file, "{}", $msg);
+                        }
+                        let _ = $tx.send(EngineEvent::Error("Capture Engine Aborted - Check crash_log.md".to_string()));
+                    }
+                };
+            }
+
             let total = jobs.len();
             if tx.send(EngineEvent::Starting(total)).is_err() {
                 return;
@@ -24,7 +37,7 @@ pub fn spawn_capture_engine(
             let dod_dir = match hl_path.parent() {
                 Some(parent) => parent.join("dod"),
                 None => {
-                    let _ = tx.send(EngineEvent::Error("Invalid hl.exe path".to_string()));
+                    log_crash_abort!(tx, "Invalid hl.exe path: hl_path has no parent");
                     return;
                 }
             };
@@ -32,7 +45,7 @@ pub fn spawn_capture_engine(
             let dll_path = match hlae_path.parent() {
                 Some(parent) => parent.join("AfxHookGoldSrc.dll"),
                 None => {
-                    let _ = tx.send(EngineEvent::Error("Invalid hlae.exe path".to_string()));
+                    log_crash_abort!(tx, "Invalid hlae.exe path: hlae_path has no parent");
                     return;
                 }
             };
@@ -47,15 +60,44 @@ pub fn spawn_capture_engine(
                 let demo_filename = match job.patched_demo_path.file_name() {
                     Some(name) => name,
                     None => {
-                        let _ = tx.send(EngineEvent::Error(format!("Invalid demo path: {:?}", job.patched_demo_path)));
+                        log_crash_abort!(tx, format!("Invalid demo path: {:?}", job.patched_demo_path));
                         continue;
                     }
                 };
 
                 let dest_demo_path = dod_dir.join(demo_filename);
-                if let Err(e) = std::fs::copy(&job.patched_demo_path, &dest_demo_path) {
-                    let _ = tx.send(EngineEvent::Error(format!("Failed to copy demo to game folder: {}", e)));
-                    continue;
+                #[cfg(target_os = "windows")]
+                {
+                    use std::os::windows::fs::OpenOptionsExt;
+                    let mut src_file = match std::fs::OpenOptions::new()
+                        .read(true)
+                        .share_mode(1) // FILE_SHARE_READ
+                        .open(&job.patched_demo_path) {
+                            Ok(f) => f,
+                            Err(e) => {
+                                log_crash_abort!(tx, format!("Failed to open source demo for copy: {}", e));
+                                continue;
+                            }
+                        };
+                    let mut dest_file = match std::fs::File::create(&dest_demo_path) {
+                        Ok(f) => f,
+                        Err(e) => {
+                            log_crash_abort!(tx, format!("Failed to create dest demo file: {}", e));
+                            continue;
+                        }
+                    };
+                    if let Err(e) = std::io::copy(&mut src_file, &mut dest_file) {
+                        log_crash_abort!(tx, format!("Failed to copy demo to game folder: {}", e));
+                        continue;
+                    }
+                }
+
+                #[cfg(not(target_os = "windows"))]
+                {
+                    if let Err(e) = std::fs::copy(&job.patched_demo_path, &dest_demo_path) {
+                        log_crash_abort!(tx, format!("Failed to copy demo to game folder: {}", e));
+                        continue;
+                    }
                 }
 
                 let demo_name_no_ext = match std::path::Path::new(demo_filename).file_stem() {
@@ -64,6 +106,7 @@ pub fn spawn_capture_engine(
                 };
 
                 if tx.send(EngineEvent::Launching(demo_name_no_ext.clone())).is_err() {
+                    log_crash_abort!(tx, "Failed to send Launching event (channel disconnected)");
                     let _ = std::fs::remove_file(&dest_demo_path);
                     return;
                 }
@@ -93,7 +136,7 @@ pub fn spawn_capture_engine(
                 let active_export_dir = match valid_export_dir {
                     Some(dir) => dir,
                     None => {
-                        let _ = tx.send(EngineEvent::Error("Capture aborted: Directories not configured or out of space".to_string()));
+                        log_crash_abort!(tx, "Capture aborted: Directories not configured or out of space");
                         return;
                     }
                 };
@@ -127,10 +170,14 @@ pub fn spawn_capture_engine(
                 ]);
                 cmd.env("SteamAppId", "30");
 
+                if let Some(parent) = hlae_path.parent() {
+                    cmd.current_dir(parent);
+                }
+
                 let mut child = match cmd.spawn() {
                     Ok(c) => c,
                     Err(e) => {
-                        let _ = tx.send(EngineEvent::Error(format!("Failed to spawn HLAE: {}", e)));
+                        log_crash_abort!(tx, format!("Failed to spawn HLAE (OS Error): {}", e));
                         let _ = std::fs::remove_file(&dest_demo_path);
                         continue;
                     }
@@ -165,7 +212,7 @@ pub fn spawn_capture_engine(
                         let _ = tx.send(EngineEvent::Finished(demo_name_no_ext.clone()));
                     }
                     Err(e) => {
-                        let _ = tx.send(EngineEvent::Error(format!("Failed to wait for HLAE: {}", e)));
+                        log_crash_abort!(tx, format!("Failed to wait for HLAE: {}", e));
                         let _ = std::fs::remove_file(&dest_demo_path);
                         continue;
                     }
@@ -181,10 +228,7 @@ pub fn spawn_capture_engine(
                 if expected_wav.exists() && expected_wav.is_file() {
                     let _ = tx.send(EngineEvent::Verified(demo_name_no_ext.clone()));
                 } else {
-                    let _ = tx.send(EngineEvent::Error(format!(
-                        "Verification failed: sound.wav not found in {:?}",
-                        job.expected_take_folder
-                    )));
+                    log_crash_abort!(tx, format!("Verification failed: sound.wav not found in {:?}", job.expected_take_folder));
                 }
             }
 

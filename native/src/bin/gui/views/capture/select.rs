@@ -299,8 +299,43 @@ pub fn render(
     // ── Export Configuration ─────────────────────────────────────────────────────
     ui.group(|ui| {
         ui.vertical(|ui| {
-            ui.heading("⚡ Export Configuration");
+            ui.heading("⚡ Capture Configuration");
             ui.add_space(4.0);
+
+            static CAPTURE_PRIMARY_PICKER: std::sync::OnceLock<Mutex<egui_file_dialog::FileDialog>> = std::sync::OnceLock::new();
+            static CAPTURE_BACKUP_PICKER: std::sync::OnceLock<Mutex<egui_file_dialog::FileDialog>> = std::sync::OnceLock::new();
+            
+            let mut cap_primary_picker = acquire_lock!(CAPTURE_PRIMARY_PICKER.get_or_init(|| Mutex::new(egui_file_dialog::FileDialog::new())));
+            ui.horizontal(|ui| {
+                ui.label("Primary Capture Directory (Raw BMPs):");
+                if ui.button("📁 Select...").clicked() {
+                    cap_primary_picker.pick_directory();
+                }
+                if let Some(path) = &patcher_config.primary_media_dir {
+                    ui.label(path.to_string_lossy());
+                }
+            });
+            cap_primary_picker.update(ctx);
+            if let Some(path) = cap_primary_picker.take_picked() {
+                patcher_config.primary_media_dir = Some(path.to_path_buf());
+            }
+
+            let mut cap_backup_picker = acquire_lock!(CAPTURE_BACKUP_PICKER.get_or_init(|| Mutex::new(egui_file_dialog::FileDialog::new())));
+            ui.horizontal(|ui| {
+                ui.label("Backup Capture Directory:");
+                if ui.button("📁 Select...").clicked() {
+                    cap_backup_picker.pick_directory();
+                }
+                if let Some(path) = &patcher_config.backup_media_dir {
+                    ui.label(path.to_string_lossy());
+                }
+            });
+            cap_backup_picker.update(ctx);
+            if let Some(path) = cap_backup_picker.take_picked() {
+                patcher_config.backup_media_dir = Some(path.to_path_buf());
+            }
+
+            ui.add_space(8.0);
 
             // Row 1: Pre-roll / Post-roll
             ui.horizontal(|ui| {
@@ -350,6 +385,8 @@ pub fn render(
 
             ui.add_space(8.0);
 
+            ui.heading("⚡ Export Configuration");
+
             // Row 6: HLCR Routing & Codec
             let mut render_config = acquire_lock!(render_config_mutex);
             ui.horizontal(|ui| {
@@ -372,7 +409,7 @@ pub fn render(
             
             let mut primary_picker = acquire_lock!(PRIMARY_PICKER.get_or_init(|| Mutex::new(egui_file_dialog::FileDialog::new())));
             ui.horizontal(|ui| {
-                ui.label("Primary Export Dir (.mov):");
+                ui.label("Primary Export Directory (Final .mov):");
                 if ui.button("📁 Select...").clicked() {
                     primary_picker.pick_directory();
                 }
@@ -388,7 +425,7 @@ pub fn render(
 
             let mut backup_picker = acquire_lock!(BACKUP_PICKER.get_or_init(|| Mutex::new(egui_file_dialog::FileDialog::new())));
             ui.horizontal(|ui| {
-                ui.label("Backup Export Dir (.mov):");
+                ui.label("Backup Export Directory:");
                 if ui.button("📁 Select...").clicked() {
                     backup_picker.pick_directory();
                 }

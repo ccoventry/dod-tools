@@ -234,6 +234,10 @@ impl StreamPatcher {
         // 4f: Write the new_offset (as Little Endian bytes).
         out_file.write_all(&new_offset.to_le_bytes())?;
 
+        out_file.sync_all().unwrap_or_default();
+        drop(out_file);
+        drop(reader);
+
         Ok(())
     }
 }
