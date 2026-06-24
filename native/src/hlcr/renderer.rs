@@ -7,7 +7,7 @@ use std::sync::{mpsc, Arc, Mutex};
 use tokio::process::Command;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 
-use super::config::{get_codec_preset, RenderConfig};
+use super::config::RenderConfig;
 use super::scanner::ClipData;
 
 #[derive(Clone, Debug)]
@@ -59,10 +59,21 @@ pub async fn run_render_job(
         return;
     }
 
-    let preset = get_codec_preset(&config.codec);
     let clip_type = clip.clip_type.as_str();
+    let is_hud = clip_type == "hud_only";
 
-    let output_folder = PathBuf::from(&config.output_folder);
+    let mut selected_export_dir = None;
+    if let Some(primary) = &config.primary_export_dir {
+        if crate::sys::disk::get_available_bytes(primary) > 25 * 1024 * 1024 * 1024 {
+            selected_export_dir = Some(primary.clone());
+        } else if let Some(backup) = &config.backup_export_dir {
+            selected_export_dir = Some(backup.clone());
+        }
+    } else if let Some(backup) = &config.backup_export_dir {
+        selected_export_dir = Some(backup.clone());
+    }
+
+    let output_folder = selected_export_dir.unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
     if let Err(e) = std::fs::create_dir_all(&output_folder) {
         let _ = tx.send(RenderUpdate::Finished(
             job_id.clone(),
@@ -72,14 +83,34 @@ pub async fn run_render_job(
         return;
     }
 
-    let (codec_args, ext, base_out) = if clip_type == "hud_only" {
-        (preset.alpha, preset.ext_alpha, format!("{}-hud", clip.base_name))
+    let mut codec_args: Vec<&'static str> = Vec::new();
+    if is_hud {
+        codec_args.extend_from_slice(&["-c:v", "prores_ks", "-profile:v", "4444", "-pix_fmt", "yuva444p10le"]);
     } else {
-        (preset.standard, preset.ext_standard, format!("{}-{}", clip.base_name, clip.img_folder))
-    };
+        match config.target_codec {
+            super::config::RenderCodec::NvencH264 => codec_args.extend_from_slice(&["-c:v", "h264_nvenc", "-preset", "p6", "-tune", "hq", "-cq", "15", "-pix_fmt", "yuv420p"]),
+            super::config::RenderCodec::ProRes => codec_args.extend_from_slice(&["-c:v", "prores_ks", "-profile:v", "3", "-pix_fmt", "yuv422p10le"]),
+            super::config::RenderCodec::DnxHr => codec_args.extend_from_slice(&["-c:v", "dnxhd", "-profile:v", "dnxhr_hq", "-pix_fmt", "yuv422p"]),
+        }
+    }
 
-    let final_name = get_unique_filename(&output_folder, &base_out, ext);
-    let out_file = output_folder.join(final_name);
+    let stream_type = if is_hud { "hud" } else { "all" };
+    let wav_stem = std::path::Path::new(&clip.wav_file).file_stem().unwrap_or_default().to_string_lossy();
+    let wav_part = if wav_stem.to_lowercase() == "sound" {
+        "".to_string()
+    } else {
+        format!("_{}", wav_stem)
+    };
+    
+    let timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_micros();
+    let hash_str = format!("{:04x}", timestamp % 0x10000);
+
+    let take_path = PathBuf::from(&clip.take_folder);
+    let take_name = take_path.file_name().unwrap_or_default().to_string_lossy();
+    let demo_name = take_path.parent().and_then(|p| p.file_name()).unwrap_or_default().to_string_lossy();
+
+    let final_name = format!("{}_{}{}_{}_{}.mov", demo_name, take_name, wav_part, stream_type, hash_str);
+    let out_file = output_folder.join(&final_name);
 
     // Calculate thread scaling
     let max_concurrent = config.max_concurrent_renders;
@@ -282,6 +313,7 @@ pub async fn run_render_job(
     }
 }
 
+#[allow(dead_code)]
 fn get_unique_filename(output_dir: &Path, base_name: &str, ext: &str) -> String {
     let mut counter = 1;
     let mut final_name = format!("{}{}", base_name, ext);

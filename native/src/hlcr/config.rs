@@ -3,13 +3,21 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Debug)]
+pub enum RenderCodec {
+    NvencH264,
+    ProRes,
+    DnxHr,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct RenderConfig {
     pub ffmpeg_path: String,
     pub source_folder: String,
-    pub output_folder: String,
+    pub primary_export_dir: Option<PathBuf>,
+    pub backup_export_dir: Option<PathBuf>,
     pub fps: u32,
-    pub codec: String,
+    pub target_codec: RenderCodec,
     pub max_concurrent_renders: usize,
 }
 
@@ -18,9 +26,10 @@ impl Default for RenderConfig {
         Self {
             ffmpeg_path: "ffmpeg".to_string(),
             source_folder: "".to_string(),
-            output_folder: "".to_string(),
+            primary_export_dir: None,
+            backup_export_dir: None,
             fps: 300,
-            codec: "prores".to_string(),
+            target_codec: RenderCodec::ProRes,
             max_concurrent_renders: 2,
         }
     }
