@@ -11,6 +11,7 @@ pub fn spawn_capture_engine(
     hl_path: Arc<PathBuf>,
     tx: Sender<EngineEvent>,
     cancel_token: Arc<AtomicBool>,
+    config: native::patch::PatcherConfig,
 ) {
     std::thread::Builder::new()
         .name("capture_engine".into())
@@ -72,6 +73,26 @@ pub fn spawn_capture_engine(
                     demo_name_no_ext
                 );
 
+                let required_space = 10_000_000_000; // 10 GB safe estimate
+                let valid_export_dir = if let Some(primary) = &config.primary_media_dir {
+                    if native::sys::disk::get_available_bytes(primary) > required_space {
+                        primary.clone()
+                    } else if let Some(backup) = &config.backup_media_dir {
+                        backup.clone()
+                    } else {
+                        primary.clone()
+                    }
+                } else if let Some(out) = &config.output_dir {
+                    out.clone()
+                } else {
+                    dod_dir.clone()
+                };
+
+                let width_str = config.resolution_width.to_string();
+                let height_str = config.resolution_height.to_string();
+                let active_export_dir_str = valid_export_dir.to_string_lossy().to_string();
+                let separate_hud_str = if config.separate_hud { "1" } else { "0" };
+
                 let mut cmd = std::process::Command::new(hlae_path.as_ref());
                 cmd.args(&[
                     "-customLoader",
@@ -83,6 +104,16 @@ pub fn spawn_capture_engine(
                     &hl_path.to_string_lossy(),
                     "-cmdLine",
                     &cmd_line_str,
+                    "-w",
+                    &width_str,
+                    "-h",
+                    &height_str,
+                    "-forceAlpha",
+                    "true",
+                    "+mirv_movie_filename",
+                    &active_export_dir_str,
+                    "+mirv_movie_separate_hud",
+                    separate_hud_str,
                 ]);
                 cmd.env("SteamAppId", "30");
 
@@ -102,7 +133,9 @@ pub fn spawn_capture_engine(
                         // Gracefully kill the child process before bailing.
                         let _ = child.kill();
                         let _ = child.wait(); // reap so we don't leak a zombie
-                        let _ = std::fs::remove_file(&dest_demo_path);
+                        if let Err(e) = std::fs::remove_file(&dest_demo_path) {
+                            log::warn!("Failed to delete temporary demo upon cancellation: {}", e);
+                        }
                         let _ = tx.send(EngineEvent::Cancelled);
                         return;
                     }
@@ -129,7 +162,9 @@ pub fn spawn_capture_engine(
                 }
 
                 // TODO: Re-enable temporary demo cleanup once the Phase 7 capture pipeline is fully verified.
-                // let _ = std::fs::remove_file(&dest_demo_path);
+                if let Err(e) = std::fs::remove_file(&dest_demo_path) {
+                    log::warn!("Failed to delete temporary demo upon success: {}", e);
+                }
 
                 // Output Verification
                 let expected_wav = job.expected_take_folder.join("sound.wav");

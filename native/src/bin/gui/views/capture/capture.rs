@@ -184,6 +184,7 @@ pub fn render(
                         hl_path,
                         engine_tx,
                         cancel_token.clone(),
+                        patcher_config,
                     );
                 }
             }
