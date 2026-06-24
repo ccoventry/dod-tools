@@ -22,6 +22,20 @@ use super::{is_patching, set_is_patching, acquire_lock};
 use super::log_markdown;
 use egui_extras::{TableBuilder, Column};
 
+fn create_pinned_file_dialog() -> egui_file_dialog::FileDialog {
+    let mut fd = egui_file_dialog::FileDialog::new();
+    let global = crate::settings::load_settings();
+    if !global.pinned_folders.is_empty() {
+        fd = fd.add_quick_access("Bookmarks", |s| {
+            for path in &global.pinned_folders {
+                let name = path.file_name().unwrap_or_default().to_string_lossy();
+                s.add_path(&name, path.clone());
+            }
+        });
+    }
+    fd
+}
+
 pub fn render(
     ui: &mut egui::Ui,
     ctx: &egui::Context,
@@ -305,7 +319,7 @@ pub fn render(
             static CAPTURE_PRIMARY_PICKER: std::sync::OnceLock<Mutex<egui_file_dialog::FileDialog>> = std::sync::OnceLock::new();
             static CAPTURE_BACKUP_PICKER: std::sync::OnceLock<Mutex<egui_file_dialog::FileDialog>> = std::sync::OnceLock::new();
             
-            let mut cap_primary_picker = acquire_lock!(CAPTURE_PRIMARY_PICKER.get_or_init(|| Mutex::new(egui_file_dialog::FileDialog::new())));
+            let mut cap_primary_picker = acquire_lock!(CAPTURE_PRIMARY_PICKER.get_or_init(|| Mutex::new(create_pinned_file_dialog())));
             ui.horizontal(|ui| {
                 ui.label("Primary Capture Directory (Raw BMPs):");
                 if ui.button("📁 Select...").clicked() {
@@ -318,9 +332,12 @@ pub fn render(
             cap_primary_picker.update(ctx);
             if let Some(path) = cap_primary_picker.take_picked() {
                 patcher_config.primary_media_dir = Some(path.to_path_buf());
+                let mut global = crate::settings::load_settings();
+                global.primary_media_dir = Some(path.to_string_lossy().into_owned());
+                crate::settings::save_settings(&global);
             }
 
-            let mut cap_backup_picker = acquire_lock!(CAPTURE_BACKUP_PICKER.get_or_init(|| Mutex::new(egui_file_dialog::FileDialog::new())));
+            let mut cap_backup_picker = acquire_lock!(CAPTURE_BACKUP_PICKER.get_or_init(|| Mutex::new(create_pinned_file_dialog())));
             ui.horizontal(|ui| {
                 ui.label("Backup Capture Directory:");
                 if ui.button("📁 Select...").clicked() {
@@ -333,6 +350,9 @@ pub fn render(
             cap_backup_picker.update(ctx);
             if let Some(path) = cap_backup_picker.take_picked() {
                 patcher_config.backup_media_dir = Some(path.to_path_buf());
+                let mut global = crate::settings::load_settings();
+                global.backup_media_dir = Some(path.to_string_lossy().into_owned());
+                crate::settings::save_settings(&global);
             }
 
             ui.add_space(8.0);
@@ -407,7 +427,7 @@ pub fn render(
             static PRIMARY_PICKER: std::sync::OnceLock<Mutex<egui_file_dialog::FileDialog>> = std::sync::OnceLock::new();
             static BACKUP_PICKER: std::sync::OnceLock<Mutex<egui_file_dialog::FileDialog>> = std::sync::OnceLock::new();
             
-            let mut primary_picker = acquire_lock!(PRIMARY_PICKER.get_or_init(|| Mutex::new(egui_file_dialog::FileDialog::new())));
+            let mut primary_picker = acquire_lock!(PRIMARY_PICKER.get_or_init(|| Mutex::new(create_pinned_file_dialog())));
             ui.horizontal(|ui| {
                 ui.label("Primary Export Directory (Final .mov):");
                 if ui.button("📁 Select...").clicked() {
@@ -423,7 +443,7 @@ pub fn render(
                 let _ = native::hlcr::config::save_config(&render_config);
             }
 
-            let mut backup_picker = acquire_lock!(BACKUP_PICKER.get_or_init(|| Mutex::new(egui_file_dialog::FileDialog::new())));
+            let mut backup_picker = acquire_lock!(BACKUP_PICKER.get_or_init(|| Mutex::new(create_pinned_file_dialog())));
             ui.horizontal(|ui| {
                 ui.label("Backup Export Directory:");
                 if ui.button("📁 Select...").clicked() {

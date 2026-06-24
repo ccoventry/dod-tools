@@ -18,6 +18,8 @@ pub struct AppSettings {
     pub post_record_buffer: f32,
     pub hlae_path: String,
     pub game_path: String,
+    pub primary_media_dir: Option<String>,
+    pub backup_media_dir: Option<String>,
 }
 
 impl Default for AppSettings {
@@ -40,11 +42,6 @@ impl Default for AppSettings {
                     relation: native::patch::CommandRelation::Before,
                 },
                 native::patch::CustomCommand {
-                    command: "hud_draw 1".to_string(),
-                    offset: 2.0,
-                    relation: native::patch::CommandRelation::Before,
-                },
-                native::patch::CustomCommand {
                     command: "r_decals 0".to_string(),
                     offset: 2.0,
                     relation: native::patch::CommandRelation::After,
@@ -53,27 +50,7 @@ impl Default for AppSettings {
                     command: "hud_deathnotice_time 5".to_string(),
                     offset: 2.0,
                     relation: native::patch::CommandRelation::After,
-                },
-                native::patch::CustomCommand {
-                    command: "hud_draw 0".to_string(),
-                    offset: 2.0,
-                    relation: native::patch::CommandRelation::After,
-                },
-                native::patch::CustomCommand {
-                    command: "r_decals 0".to_string(),
-                    offset: 6.0,
-                    relation: native::patch::CommandRelation::Before,
-                },
-                native::patch::CustomCommand {
-                    command: "hud_deathnotice_time 5".to_string(),
-                    offset: 6.0,
-                    relation: native::patch::CommandRelation::Before,
-                },
-                native::patch::CustomCommand {
-                    command: "hud_draw 0".to_string(),
-                    offset: 6.0,
-                    relation: native::patch::CommandRelation::Before,
-                },
+                }
             ],
             capture_initial_delay: 3.0,
             capture_fast_forward_speed: 0.2,
@@ -83,6 +60,8 @@ impl Default for AppSettings {
             post_record_buffer: 4.0,
             hlae_path: "".to_string(),
             game_path: "".to_string(),
+            primary_media_dir: None,
+            backup_media_dir: None,
         }
     }
 }
@@ -155,6 +134,8 @@ pub fn load_settings() -> AppSettings {
                 let post_record_buffer = val.get("capture_post_record_buffer").and_then(|v| v.as_f64()).unwrap_or(4.0) as f32;
                 let hlae_path = val.get("hlae_path").and_then(|v| v.as_str()).unwrap_or("").to_string();
                 let game_path = val.get("game_path").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let primary_media_dir = val.get("primary_media_dir").and_then(|v| v.as_str()).map(|s| s.to_string());
+                let backup_media_dir = val.get("backup_media_dir").and_then(|v| v.as_str()).map(|s| s.to_string());
                 return AppSettings {
                     language,
                     scan_folders_for_demos,
@@ -170,6 +151,8 @@ pub fn load_settings() -> AppSettings {
                     post_record_buffer,
                     hlae_path,
                     game_path,
+                    primary_media_dir,
+                    backup_media_dir,
                 };
             }
         }
@@ -245,6 +228,8 @@ pub fn load_settings() -> AppSettings {
                     let post_record_buffer = val.get("capture_post_record_buffer").and_then(|v| v.as_f64()).unwrap_or(4.0) as f32;
                     let hlae_path = val.get("hlae_path").and_then(|v| v.as_str()).unwrap_or("").to_string();
                     let game_path = val.get("game_path").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let primary_media_dir = val.get("primary_media_dir").and_then(|v| v.as_str()).map(|s| s.to_string());
+                    let backup_media_dir = val.get("backup_media_dir").and_then(|v| v.as_str()).map(|s| s.to_string());
                     return AppSettings {
                         language,
                         scan_folders_for_demos,
@@ -260,6 +245,8 @@ pub fn load_settings() -> AppSettings {
                         post_record_buffer,
                         hlae_path,
                         game_path,
+                        primary_media_dir,
+                        backup_media_dir,
                     };
                 }
             }
@@ -348,6 +335,12 @@ pub fn save_settings(settings: &AppSettings) {
         "game_path".to_string(),
         serde_json::Value::String(settings.game_path.clone()),
     );
+    if let Some(p) = &settings.primary_media_dir {
+        map.insert("primary_media_dir".to_string(), serde_json::Value::String(p.clone()));
+    }
+    if let Some(b) = &settings.backup_media_dir {
+        map.insert("backup_media_dir".to_string(), serde_json::Value::String(b.clone()));
+    }
     let val = serde_json::Value::Object(map);
     if let Ok(content) = serde_json::to_string_pretty(&val) {
         let _ = std::fs::write("settings.json", content);
@@ -434,6 +427,12 @@ pub fn save_settings(settings: &AppSettings) {
         "game_path".to_string(),
         serde_json::Value::String(settings.game_path.clone()),
     );
+    if let Some(p) = &settings.primary_media_dir {
+        map.insert("primary_media_dir".to_string(), serde_json::Value::String(p.clone()));
+    }
+    if let Some(b) = &settings.backup_media_dir {
+        map.insert("backup_media_dir".to_string(), serde_json::Value::String(b.clone()));
+    }
     let val = serde_json::Value::Object(map);
     if let Ok(content) = serde_json::to_string_pretty(&val) {
         if let Some(window) = web_sys::window() {

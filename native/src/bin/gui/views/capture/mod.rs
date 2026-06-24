@@ -61,7 +61,7 @@ pub(crate) fn set_is_patching(val: bool) {
 static MIN_KILLS_STR: OnceLock<Mutex<String>> = OnceLock::new();
 
 fn get_min_kills_str() -> &'static Mutex<String> {
-    MIN_KILLS_STR.get_or_init(|| Mutex::new("3".to_string()))
+    MIN_KILLS_STR.get_or_init(|| Mutex::new(String::new()))
 }
 
 // ── Core ingestion and discovery state ──────────────────────────────────────────
@@ -80,7 +80,7 @@ static PATCHER_CONFIG: OnceLock<Mutex<PatcherConfig>> = OnceLock::new();
 
 fn get_highlight_rules() -> &'static Mutex<HighlightRules> {
     HIGHLIGHT_RULES.get_or_init(|| Mutex::new(HighlightRules {
-        min_kills: Some(3),
+        min_kills: None,
         // max_time_gap is kept on the struct for future use but not exposed in the UI.
         // The backend scanner uses strictly life-bounded segmentation (DeathMsg / ServerReset).
         max_time_gap: None,
@@ -123,8 +123,8 @@ pub(crate) fn get_patcher_config() -> &'static Mutex<PatcherConfig> {
             separate_hud: false,
             resolution_width: 1280,
             resolution_height: 720,
-            primary_media_dir: None,
-            backup_media_dir: None,
+            primary_media_dir: global.primary_media_dir.clone().map(PathBuf::from),
+            backup_media_dir: global.backup_media_dir.clone().map(PathBuf::from),
         })
     })
 }

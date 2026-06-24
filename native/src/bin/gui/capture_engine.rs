@@ -66,37 +66,61 @@ pub fn spawn_capture_engine(
                 };
 
                 let dest_demo_path = dod_dir.join(demo_filename);
-                #[cfg(target_os = "windows")]
-                {
-                    use std::os::windows::fs::OpenOptionsExt;
-                    let mut src_file = match std::fs::OpenOptions::new()
-                        .read(true)
-                        .share_mode(1) // FILE_SHARE_READ
-                        .open(&job.patched_demo_path) {
-                            Ok(f) => f,
-                            Err(e) => {
-                                log_crash_abort!(tx, format!("Failed to open source demo for copy: {}", e));
+                let source_path_str = job.patched_demo_path.to_string_lossy().to_lowercase();
+                let dest_path_str = dest_demo_path.to_string_lossy().to_lowercase();
+
+                if source_path_str != dest_path_str {
+                    #[cfg(target_os = "windows")]
+                    {
+                        use std::os::windows::fs::OpenOptionsExt;
+                        let mut src_file = match std::fs::OpenOptions::new()
+                            .read(true)
+                            .share_mode(1) // FILE_SHARE_READ
+                            .open(&job.patched_demo_path) {
+                                Ok(f) => f,
+                                Err(e) => {
+                                    log_crash_abort!(tx, format!("Failed to open source demo for copy: {}", e));
+                                    continue;
+                                }
+                            };
+
+                        let mut dest_file_opt = None;
+                        for i in 0..5 {
+                            match std::fs::File::create(&dest_demo_path) {
+                                Ok(f) => {
+                                    dest_file_opt = Some(f);
+                                    break;
+                                }
+                                Err(e) => {
+                                    if e.raw_os_error() == Some(32) && i < 4 {
+                                        std::thread::sleep(std::time::Duration::from_millis(150));
+                                        continue;
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+
+                        let mut dest_file = match dest_file_opt {
+                            Some(f) => f,
+                            None => {
+                                log_crash_abort!(tx, format!("Failed to create dest demo file after retries. Source: {:?}, Dest: {:?}", job.patched_demo_path, dest_demo_path));
                                 continue;
                             }
                         };
-                    let mut dest_file = match std::fs::File::create(&dest_demo_path) {
-                        Ok(f) => f,
-                        Err(e) => {
-                            log_crash_abort!(tx, format!("Failed to create dest demo file: {}", e));
+
+                        if let Err(e) = std::io::copy(&mut src_file, &mut dest_file) {
+                            log_crash_abort!(tx, format!("Failed to copy demo to game folder: {}", e));
                             continue;
                         }
-                    };
-                    if let Err(e) = std::io::copy(&mut src_file, &mut dest_file) {
-                        log_crash_abort!(tx, format!("Failed to copy demo to game folder: {}", e));
-                        continue;
                     }
-                }
 
-                #[cfg(not(target_os = "windows"))]
-                {
-                    if let Err(e) = std::fs::copy(&job.patched_demo_path, &dest_demo_path) {
-                        log_crash_abort!(tx, format!("Failed to copy demo to game folder: {}", e));
-                        continue;
+                    #[cfg(not(target_os = "windows"))]
+                    {
+                        if let Err(e) = std::fs::copy(&job.patched_demo_path, &dest_demo_path) {
+                            log_crash_abort!(tx, format!("Failed to copy demo to game folder: {}", e));
+                            continue;
+                        }
                     }
                 }
 
