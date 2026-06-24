@@ -76,21 +76,31 @@ pub fn spawn_capture_engine(
                 let required_space = 10_000_000_000; // 10 GB safe estimate
                 let valid_export_dir = if let Some(primary) = &config.primary_media_dir {
                     if native::sys::disk::get_available_bytes(primary) > required_space {
-                        primary.clone()
+                        Some(primary.clone())
                     } else if let Some(backup) = &config.backup_media_dir {
-                        backup.clone()
+                        if native::sys::disk::get_available_bytes(backup) > required_space {
+                            Some(backup.clone())
+                        } else {
+                            None
+                        }
                     } else {
-                        primary.clone()
+                        None
                     }
-                } else if let Some(out) = &config.output_dir {
-                    out.clone()
                 } else {
-                    dod_dir.clone()
+                    None
+                };
+
+                let active_export_dir = match valid_export_dir {
+                    Some(dir) => dir,
+                    None => {
+                        let _ = tx.send(EngineEvent::Error("Capture aborted: Directories not configured or out of space".to_string()));
+                        return;
+                    }
                 };
 
                 let width_str = config.resolution_width.to_string();
                 let height_str = config.resolution_height.to_string();
-                let active_export_dir_str = valid_export_dir.to_string_lossy().to_string();
+                let active_export_dir_str = active_export_dir.to_string_lossy().to_string();
                 let separate_hud_str = if config.separate_hud { "1" } else { "0" };
 
                 let mut cmd = std::process::Command::new(hlae_path.as_ref());
