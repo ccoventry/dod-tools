@@ -30,6 +30,7 @@ walkdir = "2.5.0"
 hl-demo-auditor = { path = "../hl-demo-auditor" }
 rfd = "0.14"
 open = "5.1"
+sysinfo = "0.29"
 
 [[bin]]
 name = "dod-tools-gui"

@@ -117,6 +117,11 @@ pub struct PatcherConfig {
     pub fast_forward_speed: f32,
     pub tickrate: f32,
     pub output_dir: Option<std::path::PathBuf>,
+    pub separate_hud: bool,
+    pub resolution_width: i32,
+    pub resolution_height: i32,
+    pub primary_media_dir: Option<std::path::PathBuf>,
+    pub backup_media_dir: Option<std::path::PathBuf>,
 }
 
 impl Default for PatcherConfig {
@@ -136,6 +141,11 @@ impl Default for PatcherConfig {
             fast_forward_speed: 0.2,
             tickrate: 100.0,
             output_dir: None,
+            separate_hud: false,
+            resolution_width: 1280,
+            resolution_height: 720,
+            primary_media_dir: None,
+            backup_media_dir: None,
         }
     }
 }

@@ -334,6 +334,56 @@ pub fn render(
                     .range(0.01..=10.0).speed(0.01));
             });
 
+            // Row 4: Capture FPS
+            ui.horizontal(|ui| {
+                ui.label("Capture FPS:");
+                ui.add(egui::DragValue::new(&mut patcher_config.capture_fps)
+                    .range(30..=1000).speed(1));
+            });
+
+            // Row 5: Separate HUD
+            ui.horizontal(|ui| {
+                ui.checkbox(&mut patcher_config.separate_hud, "Separate HUD (Alpha & Color)")
+                    .on_hover_text("This toggle acts as the absolute source of truth and will override any separate_hud settings in your movie.cfg.");
+            });
+
+            ui.add_space(8.0);
+
+            let selected_streaks_count = queued_demos_shared.iter()
+                .flat_map(|d| &d.streaks)
+                .filter(|s| s.is_selected)
+                .count() as f32;
+
+            let total_sequence_duration = selected_streaks_count * (patcher_config.pre_roll_seconds + patcher_config.post_roll_seconds + 10.0);
+            let w = patcher_config.resolution_width;
+            let h = patcher_config.resolution_height;
+            let fps = patcher_config.capture_fps;
+            let mut required_bytes = native::sys::disk::calculate_raw_sequence_bytes(w, h, fps, total_sequence_duration);
+            if patcher_config.separate_hud {
+                required_bytes *= 3;
+            }
+            let required_gb = required_bytes as f64 / 1_073_741_824.0;
+            
+            let check_path = patcher_config.primary_media_dir.clone().or_else(|| patcher_config.output_dir.clone()).unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+            let available_bytes = native::sys::disk::get_available_bytes(&check_path);
+            let available_gb = if available_bytes == u64::MAX { 999.9 } else { available_bytes as f64 / 1_073_741_824.0 };
+            
+            let exceeds_space = required_bytes > available_bytes && available_bytes != u64::MAX;
+
+            ui.horizontal(|ui| {
+                ui.strong("Disk Space Estimate:");
+                if available_bytes == u64::MAX {
+                    ui.label(format!("Required: {:.1} GB / Available: Unknown", required_gb));
+                } else {
+                    let color = if exceeds_space { egui::Color32::RED } else { ui.visuals().text_color() };
+                    ui.colored_label(color, format!("Required: {:.1} GB / Available: {:.1} GB", required_gb, available_gb));
+                }
+            });
+
+            if exceeds_space {
+                ui.colored_label(egui::Color32::RED, "⚠️ WARNING: Not enough free disk space on the target drive!");
+            }
+
             ui.add_space(8.0);
 
             // ── Proceed to Capture Button + async patch_worker ───────────────────
@@ -341,7 +391,7 @@ pub fn render(
 
             ui.horizontal(|ui| {
                 let btn = egui::Button::new("Proceed to Capture ->");
-                if ui.add_enabled(!is_running && !queued_demos_shared.is_empty(), btn).clicked() {
+                if ui.add_enabled(!is_running && !queued_demos_shared.is_empty() && !exceeds_space, btn).clicked() {
                     set_is_patching(true);
 
                     // Build the flat payload from all selected, filter-passing streaks.

@@ -120,6 +120,11 @@ pub(crate) fn get_patcher_config() -> &'static Mutex<PatcherConfig> {
             fast_forward_speed: global.capture_fast_forward_speed,
             tickrate: 100.0,
             output_dir: std::path::Path::new(&global.game_path).parent().map(|p| p.join("dod")),
+            separate_hud: false,
+            resolution_width: 1280,
+            resolution_height: 720,
+            primary_media_dir: None,
+            backup_media_dir: None,
         })
     })
 }
