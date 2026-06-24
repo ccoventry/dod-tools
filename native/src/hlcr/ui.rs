@@ -187,7 +187,7 @@ impl HlcrState {
 
         self.output_picker.update(ctx);
         if let Some(path) = self.output_picker.take_picked() {
-            self.config.output_folder = path.to_string_lossy().into_owned();
+            self.config.primary_export_dir = Some(path.to_path_buf());
             let _ = save_config(&self.config);
         }
 
@@ -358,8 +358,11 @@ impl HlcrState {
                         }
                         ui.end_row();
 
-                        ui.label("Output Folder:");
-                        ui.add(egui::TextEdit::singleline(&mut self.config.output_folder).desired_width(800.0));
+                        ui.label("Primary Export Dir:");
+                        let mut primary_str = self.config.primary_export_dir.as_ref().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+                        if ui.add(egui::TextEdit::singleline(&mut primary_str).desired_width(800.0)).changed() {
+                            self.config.primary_export_dir = if primary_str.is_empty() { None } else { Some(PathBuf::from(primary_str)) };
+                        }
                         if ui.button("Browse...").clicked() {
                             self.output_picker.pick_directory();
                         }
@@ -381,15 +384,11 @@ impl HlcrState {
 
                     ui.label("Codec Preset:");
                     egui::ComboBox::from_id_salt("hlcr_codec_preset")
-                        .selected_text(match self.config.codec.as_str() {
-                            "h264" => "H.264 / ProRes (Space-saving)",
-                            "dnxhr" => "DNxHR (Avid Edit-friendly)",
-                            _ => "ProRes (Edit-friendly)",
-                        })
+                        .selected_text(format!("{:?}", self.config.target_codec))
                         .show_ui(ui, |ui| {
-                            ui.selectable_value(&mut self.config.codec, "prores".to_string(), "ProRes (Edit-friendly)");
-                            ui.selectable_value(&mut self.config.codec, "h264".to_string(), "H.264 / ProRes (Space-saving)");
-                            ui.selectable_value(&mut self.config.codec, "dnxhr".to_string(), "DNxHR (Avid Edit-friendly)");
+                            ui.selectable_value(&mut self.config.target_codec, super::config::RenderCodec::ProRes, "ProRes (Edit-friendly)");
+                            ui.selectable_value(&mut self.config.target_codec, super::config::RenderCodec::NvencH264, "H.264 / ProRes (Space-saving)");
+                            ui.selectable_value(&mut self.config.target_codec, super::config::RenderCodec::DnxHr, "DNxHR (Avid Edit-friendly)");
                         });
 
                     ui.add_space(16.0);

@@ -31,6 +31,7 @@ pub fn render(
     hide_non_pov: &mut bool,
     queued_demos_arc: Arc<Mutex<Arc<Vec<DemoData>>>>,
     patcher_config_mutex: &'static Mutex<PatcherConfig>,
+    render_config_mutex: &'static Mutex<native::hlcr::config::RenderConfig>,
 ) {
     // Loading guard: ingestion thread may still be finishing its final write.
     if *loading_ptr {
@@ -346,6 +347,60 @@ pub fn render(
                 ui.checkbox(&mut patcher_config.separate_hud, "Separate HUD (Alpha & Color)")
                     .on_hover_text("This toggle acts as the absolute source of truth and will override any separate_hud settings in your movie.cfg.");
             });
+
+            ui.add_space(8.0);
+
+            // Row 6: HLCR Routing & Codec
+            let mut render_config = acquire_lock!(render_config_mutex);
+            ui.horizontal(|ui| {
+                ui.label("Render Codec:");
+                egui::ComboBox::from_id_salt("render_codec_combo")
+                    .selected_text(format!("{:?}", render_config.target_codec))
+                    .show_ui(ui, |ui| {
+                        let mut changed = false;
+                        changed |= ui.selectable_value(&mut render_config.target_codec, native::hlcr::config::RenderCodec::ProRes, "ProRes").changed();
+                        changed |= ui.selectable_value(&mut render_config.target_codec, native::hlcr::config::RenderCodec::NvencH264, "NvencH264").changed();
+                        changed |= ui.selectable_value(&mut render_config.target_codec, native::hlcr::config::RenderCodec::DnxHr, "DnxHr").changed();
+                        if changed {
+                            let _ = native::hlcr::config::save_config(&render_config);
+                        }
+                    });
+            });
+
+            static PRIMARY_PICKER: std::sync::OnceLock<Mutex<egui_file_dialog::FileDialog>> = std::sync::OnceLock::new();
+            static BACKUP_PICKER: std::sync::OnceLock<Mutex<egui_file_dialog::FileDialog>> = std::sync::OnceLock::new();
+            
+            let mut primary_picker = acquire_lock!(PRIMARY_PICKER.get_or_init(|| Mutex::new(egui_file_dialog::FileDialog::new())));
+            ui.horizontal(|ui| {
+                ui.label("Primary Export Dir (.mov):");
+                if ui.button("📁 Select...").clicked() {
+                    primary_picker.pick_directory();
+                }
+                if let Some(path) = &render_config.primary_export_dir {
+                    ui.label(path.to_string_lossy());
+                }
+            });
+            primary_picker.update(ctx);
+            if let Some(path) = primary_picker.take_picked() {
+                render_config.primary_export_dir = Some(path.to_path_buf());
+                let _ = native::hlcr::config::save_config(&render_config);
+            }
+
+            let mut backup_picker = acquire_lock!(BACKUP_PICKER.get_or_init(|| Mutex::new(egui_file_dialog::FileDialog::new())));
+            ui.horizontal(|ui| {
+                ui.label("Backup Export Dir (.mov):");
+                if ui.button("📁 Select...").clicked() {
+                    backup_picker.pick_directory();
+                }
+                if let Some(path) = &render_config.backup_export_dir {
+                    ui.label(path.to_string_lossy());
+                }
+            });
+            backup_picker.update(ctx);
+            if let Some(path) = backup_picker.take_picked() {
+                render_config.backup_export_dir = Some(path.to_path_buf());
+                let _ = native::hlcr::config::save_config(&render_config);
+            }
 
             ui.add_space(8.0);
 

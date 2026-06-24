@@ -129,6 +129,11 @@ pub(crate) fn get_patcher_config() -> &'static Mutex<PatcherConfig> {
     })
 }
 
+static RENDER_CONFIG: OnceLock<Mutex<native::hlcr::config::RenderConfig>> = OnceLock::new();
+pub(crate) fn get_render_config() -> &'static Mutex<native::hlcr::config::RenderConfig> {
+    RENDER_CONFIG.get_or_init(|| Mutex::new(native::hlcr::config::load_config()))
+}
+
 // ── Public dispatcher ────────────────────────────────────────────────────────────
 //
 // Called by capture_studio.rs. Delegates rendering to the appropriate sub-module
@@ -188,6 +193,7 @@ pub fn render_patch_ui(
                 ui, ctx, state_ptr, tx, loading_ptr, hide_non_pov,
                 get_queued_demos(),
                 get_patcher_config(),
+                get_render_config(),
             );
         }
         CaptureStudioState::Capture => {
