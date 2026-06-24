@@ -120,6 +120,43 @@ impl Gui {
             ui.add_space(8.0);
             ui.separator();
             ui.add_space(8.0);
+            ui.heading("File Picker Bookmarks");
+            ui.add_space(8.0);
+
+            ui.vertical(|ui| {
+                let mut index_to_remove = None;
+                for (i, folder) in self.draft_settings.pinned_folders.iter().enumerate() {
+                    ui.horizontal(|ui| {
+                        if ui.button("🗑").on_hover_text("Remove Pin").clicked() {
+                            index_to_remove = Some(i);
+                        }
+                        ui.label(folder.to_string_lossy());
+                    });
+                }
+
+                if let Some(i) = index_to_remove {
+                    self.draft_settings.pinned_folders.remove(i);
+                    self.settings = self.draft_settings.clone();
+                    save_settings(&self.settings);
+                    ctx.request_repaint();
+                }
+
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    if ui.button("➕ Add New Pin").clicked() {
+                        if let Some(folder) = rfd::FileDialog::new().pick_folder() {
+                            self.draft_settings.pinned_folders.push(folder);
+                            self.settings = self.draft_settings.clone();
+                            save_settings(&self.settings);
+                            ctx.request_repaint();
+                        }
+                    }
+                }
+            });
+
+            ui.add_space(8.0);
+            ui.separator();
+            ui.add_space(8.0);
             ui.heading("Recording Engine Configurations");
             ui.add_space(8.0);
 
