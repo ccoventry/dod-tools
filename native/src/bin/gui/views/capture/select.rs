@@ -419,15 +419,18 @@ pub fn render(
             }
             let required_gb = required_bytes as f64 / 1_073_741_824.0;
             
-            let check_path = patcher_config.primary_media_dir.clone().or_else(|| patcher_config.output_dir.clone()).unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
-            let available_bytes = native::sys::disk::get_available_bytes(&check_path);
+            let is_missing_primary_dir = patcher_config.primary_media_dir.is_none();
+            let check_path = patcher_config.primary_media_dir.clone().unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+            let available_bytes = if is_missing_primary_dir { 0 } else { native::sys::disk::get_available_bytes(&check_path) };
             let available_gb = if available_bytes == u64::MAX { 999.9 } else { available_bytes as f64 / 1_073_741_824.0 };
             
             let exceeds_space = required_bytes > available_bytes && available_bytes != u64::MAX;
 
             ui.horizontal(|ui| {
                 ui.strong("Disk Space Estimate:");
-                if available_bytes == u64::MAX {
+                if is_missing_primary_dir {
+                    ui.label(format!("Required: {:.1} GB / Available: N/A", required_gb));
+                } else if available_bytes == u64::MAX {
                     ui.label(format!("Required: {:.1} GB / Available: Unknown", required_gb));
                 } else {
                     let color = if exceeds_space { egui::Color32::RED } else { ui.visuals().text_color() };
@@ -435,7 +438,9 @@ pub fn render(
                 }
             });
 
-            if exceeds_space {
+            if is_missing_primary_dir {
+                ui.colored_label(egui::Color32::YELLOW, "⚠️ Please select a Primary Directory to enable capturing.");
+            } else if exceeds_space {
                 ui.colored_label(egui::Color32::RED, "⚠️ WARNING: Not enough free disk space on the target drive!");
             }
 
@@ -446,7 +451,7 @@ pub fn render(
 
             ui.horizontal(|ui| {
                 let btn = egui::Button::new("Proceed to Capture ->");
-                if ui.add_enabled(!is_running && !queued_demos_shared.is_empty() && !exceeds_space, btn).clicked() {
+                if ui.add_enabled(!is_running && !queued_demos_shared.is_empty() && !exceeds_space && !is_missing_primary_dir, btn).clicked() {
                     set_is_patching(true);
 
                     // Build the flat payload from all selected, filter-passing streaks.

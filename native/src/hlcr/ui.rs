@@ -358,15 +358,6 @@ impl HlcrState {
                         }
                         ui.end_row();
 
-                        ui.label("Primary Export Dir:");
-                        let mut primary_str = self.config.primary_export_dir.as_ref().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
-                        if ui.add(egui::TextEdit::singleline(&mut primary_str).desired_width(800.0)).changed() {
-                            self.config.primary_export_dir = if primary_str.is_empty() { None } else { Some(PathBuf::from(primary_str)) };
-                        }
-                        if ui.button("Browse...").clicked() {
-                            self.output_picker.pick_directory();
-                        }
-                        ui.end_row();
                     });
 
                 ui.add_space(8.0);
@@ -382,16 +373,6 @@ impl HlcrState {
 
                     ui.add_space(16.0);
 
-                    ui.label("Codec Preset:");
-                    egui::ComboBox::from_id_salt("hlcr_codec_preset")
-                        .selected_text(format!("{:?}", self.config.target_codec))
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(&mut self.config.target_codec, super::config::RenderCodec::ProRes, "ProRes (Edit-friendly)");
-                            ui.selectable_value(&mut self.config.target_codec, super::config::RenderCodec::NvencH264, "H.264 / ProRes (Space-saving)");
-                            ui.selectable_value(&mut self.config.target_codec, super::config::RenderCodec::DnxHr, "DNxHR (Avid Edit-friendly)");
-                        });
-
-                    ui.add_space(16.0);
 
                     ui.label("Max Concurrent Renders:");
                     ui.add(egui::DragValue::new(&mut self.config.max_concurrent_renders).range(1..=8));

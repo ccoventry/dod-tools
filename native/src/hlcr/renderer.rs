@@ -7,6 +7,9 @@ use std::sync::{mpsc, Arc, Mutex};
 use tokio::process::Command;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
 use super::config::RenderConfig;
 use super::scanner::ClipData;
 
@@ -151,6 +154,8 @@ pub async fn run_render_job(
     ]);
 
     let mut cmd = Command::new(ffmpeg_path);
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(0x08000000);
     cmd.kill_on_drop(true);
     cmd.args(cmd_args);
     cmd.current_dir(&take_folder);
