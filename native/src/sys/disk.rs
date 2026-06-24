@@ -15,13 +15,14 @@ pub fn get_available_bytes(path: &std::path::Path) -> u64 {
     });
 
     if let Ok(mut sys) = sys_mutex.lock() {
+        sys.refresh_disks_list();
         sys.refresh_disks();
-        let path_str = path.to_string_lossy().to_string().to_lowercase();
+        let path_str = path.to_string_lossy().to_string().to_lowercase().replace('\\', "/");
         let mut best_match = None;
         let mut best_len = 0;
         
         for disk in sys.disks() {
-            let mount = disk.mount_point().to_string_lossy().to_string().to_lowercase();
+            let mount = disk.mount_point().to_string_lossy().to_string().to_lowercase().replace('\\', "/");
             if path_str.starts_with(&mount) && mount.len() > best_len {
                 best_len = mount.len();
                 best_match = Some(disk);

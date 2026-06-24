@@ -87,6 +87,7 @@ pub fn is_hltv_demo(path: &std::path::Path) -> Result<bool, std::io::Error> {
     file.read_exact(&mut header)?;
 
     let contains_hltv = header.windows(4).any(|window| window == b"HLTV");
+    drop(file);
     Ok(contains_hltv)
 }
 

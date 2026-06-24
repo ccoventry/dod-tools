@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use native::FileInfo;
 use analysis::Analysis;
 
+#[allow(dead_code)]
 pub fn batch_queue_ui(
     export_queue: &mut Vec<QueuedStreakExport>,
     settings: &mut crate::AppSettings,

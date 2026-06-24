@@ -7,8 +7,6 @@ use std::sync::{mpsc, Arc, Mutex};
 use tokio::process::Command;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 
-#[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
 
 use super::config::RenderConfig;
 use super::scanner::ClipData;

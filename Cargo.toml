@@ -32,3 +32,11 @@ panic = "abort"
 [patch.crates-io]
 dem = { path = "./dem-patch" }
 
+# Optimize dependencies even in debug mode to speed up linking
+[profile.dev.package."*"]
+opt-level = 1
+
+# Reduce the amount of debug info generated to speed up compilation
+[profile.dev]
+debug = 0
+split-debuginfo = "unpacked"

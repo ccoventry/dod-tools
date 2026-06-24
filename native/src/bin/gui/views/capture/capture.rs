@@ -23,7 +23,7 @@ pub fn render(
     settings: &mut crate::settings::AppSettings,
     capture_engine_running: &mut bool,
     engine_msg: &str,
-    engine_progress: f32,
+    _engine_progress: f32,
     engine_jobs_done: usize,
     engine_jobs_total: usize,
     hide_non_pov: bool,
@@ -220,13 +220,27 @@ pub fn render(
                 });
 
                 ui.add_space(8.0);
+                let mut pct = if engine_jobs_total > 0 {
+                    (engine_jobs_done as f32 / engine_jobs_total as f32) * 100.0
+                } else {
+                    0.0
+                };
+                if engine_jobs_done < engine_jobs_total && pct >= 100.0 {
+                    pct = 99.9;
+                }
+                let bar_val = if engine_jobs_total > 0 {
+                    (engine_jobs_done as f32 / engine_jobs_total as f32).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
+
                 ui.add(
-                    egui::ProgressBar::new(engine_progress)
+                    egui::ProgressBar::new(bar_val)
                         .text(format!(
                             "{} / {} jobs processed ({:.1}%)",
                             engine_jobs_done,
                             engine_jobs_total,
-                            engine_progress * 100.0,
+                            pct,
                         ))
                 );
             });
