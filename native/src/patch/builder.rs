@@ -42,13 +42,15 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
         // Safe output path manipulation
         let path = std::path::Path::new(&source_demo);
         let base_name = path.file_stem().unwrap().to_str().unwrap();
+        let safe_base = if base_name.len() > 15 { &base_name[..15] } else { base_name };
         let output_name = if let Some(ref player_name) = target_player {
             let sanitized: String = player_name.chars()
                 .map(|c| if c.is_alphanumeric() { c } else { '_' })
+                .take(10)
                 .collect();
-            format!("{}_{}_patched.dem", base_name, sanitized)
+            format!("{}_{}_ptch.dem", safe_base, sanitized)
         } else {
-            format!("{}_patched.dem", base_name)
+            format!("{}_ptch.dem", safe_base)
         };
         let mut output_demo = path.with_file_name(&output_name);
 

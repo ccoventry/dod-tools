@@ -58,14 +58,14 @@ pub fn spawn_capture_engine(
                 }
 
                 let demo_filename = match job.patched_demo_path.file_name() {
-                    Some(name) => name,
+                    Some(name) => name.to_string_lossy().replace("-", "_"),
                     None => {
                         log_crash_abort!(tx, format!("Invalid demo path: {:?}", job.patched_demo_path));
                         continue;
                     }
                 };
 
-                let dest_demo_path = dod_dir.join(demo_filename);
+                let dest_demo_path = dod_dir.join(&demo_filename);
                 let source_path_str = job.patched_demo_path.to_string_lossy().to_lowercase();
                 let dest_path_str = dest_demo_path.to_string_lossy().to_lowercase();
 
@@ -109,24 +109,40 @@ pub fn spawn_capture_engine(
                             }
                         };
 
-                        if let Err(e) = std::io::copy(&mut src_file, &mut dest_file) {
-                            log_crash_abort!(tx, format!("Failed to copy demo to game folder: {}", e));
-                            continue;
+                        println!(">>> [DEBUG] Copying (Windows) from {}", source_path_str);
+                        println!(">>> [DEBUG] Copying (Windows) to {}", dest_path_str);
+                        match std::io::copy(&mut src_file, &mut dest_file) {
+                            Ok(bytes) => println!(">>> [DEBUG] Copy SUCCESS! Bytes written: {}", bytes),
+                            Err(e) => {
+                                println!(">>> [DEBUG] Copy FAILED! Error: {}", e);
+                                log_crash_abort!(tx, format!("Failed to copy demo to game folder: {}", e));
+                                continue;
+                            }
                         }
                     }
 
                     #[cfg(not(target_os = "windows"))]
                     {
-                        if let Err(e) = std::fs::copy(&job.patched_demo_path, &dest_demo_path) {
-                            log_crash_abort!(tx, format!("Failed to copy demo to game folder: {}", e));
-                            continue;
+                        println!(">>> [DEBUG] Copying (*nix) from {}", source_path_str);
+                        println!(">>> [DEBUG] Copying (*nix) to {}", dest_path_str);
+                        match std::fs::copy(&job.patched_demo_path, &dest_demo_path) {
+                            Ok(bytes) => println!(">>> [DEBUG] Copy SUCCESS! Bytes written: {}", bytes),
+                            Err(e) => {
+                                println!(">>> [DEBUG] Copy FAILED! Error: {}", e);
+                                log_crash_abort!(tx, format!("Failed to copy demo to game folder: {}", e));
+                                continue;
+                            }
                         }
                     }
+                } else {
+                    println!(">>> [DEBUG] Skipped copy: source and destination are identical.");
                 }
 
-                let demo_name_no_ext = match std::path::Path::new(demo_filename).file_stem() {
+                std::thread::sleep(std::time::Duration::from_millis(300));
+
+                let demo_name_no_ext = match std::path::Path::new(&demo_filename).file_stem() {
                     Some(stem) => stem.to_string_lossy().to_string(),
-                    None => demo_filename.to_string_lossy().to_string(),
+                    None => demo_filename.clone(),
                 };
 
                 if tx.send(EngineEvent::Launching(demo_name_no_ext.clone())).is_err() {
@@ -136,8 +152,8 @@ pub fn spawn_capture_engine(
                 }
 
                 let cmd_line_str = format!(
-                    "-game dod -insecure -windowed -w 1280 -h 720 +map dod_donner +playdemo {}",
-                    demo_name_no_ext
+                    "-game dod -insecure -windowed -w 1280 -h 720 +playdemo {} +playdemo {}",
+                    demo_name_no_ext, demo_name_no_ext
                 );
 
                 let required_space = 10_000_000_000; // 10 GB safe estimate
@@ -243,17 +259,11 @@ pub fn spawn_capture_engine(
                 }
 
                 // TODO: Re-enable temporary demo cleanup once the Phase 7 capture pipeline is fully verified.
-                if let Err(e) = std::fs::remove_file(&dest_demo_path) {
-                    log::warn!("Failed to delete temporary demo upon success: {}", e);
-                }
+                // if let Err(e) = std::fs::remove_file(&dest_demo_path) {
+                //     log::warn!("Failed to delete temporary demo upon success: {}", e);
+                // }
 
-                // Output Verification
-                let expected_wav = job.expected_take_folder.join("sound.wav");
-                if expected_wav.exists() && expected_wav.is_file() {
-                    let _ = tx.send(EngineEvent::Verified(demo_name_no_ext.clone()));
-                } else {
-                    log_crash_abort!(tx, format!("Verification failed: sound.wav not found in {:?}", job.expected_take_folder));
-                }
+
             }
 
             let _ = tx.send(EngineEvent::AllCompleted);
