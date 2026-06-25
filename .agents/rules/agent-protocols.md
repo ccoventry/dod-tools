@@ -2,7 +2,7 @@
 trigger: always_on
 ---
 
-# === dod-tools Project Cursor Rules & Guidelines ===
+# === dod-tools Agent Protocols ===
 
 This workspace is a Rust-based toolkit for parsing, analyzing, and visualizing Day of Defeat (DoD) demo files (`.dem`) and logs.
 
@@ -31,11 +31,10 @@ Maintain strict separation of concerns across workspace crates:
 - **Execution Hand-off**: Write the script code, then immediately stop tool execution and prompt the user to run it and report the isolated JSON findings back to you.
 
 ## 5. EXECUTION & OUTPUT PROTOCOLS
-- **File Editing:** Do not output manual diffs, `@@` syntax, or full file reprints in the chat. You must use the IDE's built-in file editing tool to apply changes directly.
+- **File Editing:** Do not output manual diffs, `@@` syntax, or full file reprints in the chat for standard project code. **EXCEPTION:** If you edit a file inside the `.agents\rules\` directory, you MUST output a markdown `diff` block in the chat showing exactly what lines you added/removed, because the IDE does not provide visual diffs for these configuration files.
 - **Edit Scope:** Restrict file edits strictly to the lines requiring changes. Do not reformat or overwrite untouched functions in the same tool call.
 - **Terminal Errors:** When running terminal commands, do not echo the raw compiler output back to the chat. Provide a one-sentence summary of the failure and immediately propose the fix.
 - **Internal Reasoning:** Keep internal CoT (Chain of Thought) focused exclusively on technical logic. Skip all conversational filler, apologies, and summary introductions.
-- **CRITICAL SCOPE HALT:** If my prompt asks you to edit a crate or feature outside the current workspace focus (e.g., switching abruptly from `dod` low-level parsing to `native` HLAE rendering), you MUST refuse to write code. Output exactly: "⚠️ **Scope Change:** Please accept pending changes and open a new chat to preserve context." Do not attempt to fulfill the prompt.
 
 ## 6. BATCH PROCESSING & QUEUE RULES (TOKEN PROTECTION)
 - **Dry-Run Default:** When building or modifying batch jobs (e.g., processing multiple `.dem` files), always implement and test a dry-run mode first (printing target files and calculated timestamps to the terminal) before enabling heavy HLAE execution commands.
@@ -51,16 +50,24 @@ Maintain strict separation of concerns across workspace crates:
 6. Always format terminal or PowerShell commands in a standard Markdown code block (e.g. using triple backticks) so they can be easily copied or run. For administrative/deployment actions that the user will execute via the paste/run button, always format them as a single-line command (using semicolons `;` to chain them if necessary).
 7. **Terminal Integration Single-Line Rule:** Multi-step sequences or task pipelines executed via terminal commands must be collapsed into a single, chained line (using semicolons `;` as separators in PowerShell) to ensure one-click execution capability for the user.
 
-## 8. CONTEXT HANDOFF PROTOCOL
-If the user prompts with exactly `Initiate Context Handoff`, you must immediately stop all current tasks and generate a minified context payload designed to seed a new chat window. 
-1. Output the payload inside a single markdown code block.
-2. The payload MUST include:
-   - **CRITICAL BOOTSTRAP INSTRUCTION:** A prominent instruction telling the new chat instance to immediately read and adhere to the project rules in `.agents\rules\code-style-guide.md` before processing any other context.
-   - The current overarching goal.
-   - The specific crate, file, and function last edited.
-   - Any unresolved compiler errors or bugs currently being investigated.
-   - The exact next step or terminal command to execute.
-3. Format this payload as concisely as possible (bullet points, zero conversational filler) to consume the absolute minimum amount of tokens in the next chat.
+## 8. CHAT CLOSURE & HANDOFF PROTOCOL
+Whenever the user types `Initiate Context Handoff`, `wrap up`, or `session over`, you must immediately halt execution and generate a dual-part exit package:
+
+**Part 1: 🧠 Session Lessons Learned (Knowledge Extraction)**
+You must act as a forensic knowledge extractor. Scan the entire conversation history of THIS chat:
+- Ignore standard syntax or UI changes that worked perfectly. Focus EXCLUSIVELY on "gotchas" (e.g., engine quirks, threading deadlocks, hallucinated commands).
+- If we encountered an error and fixed it, extract the underlying rule that prevents that error.
+- Capture any workflow friction points: if the AI read too many tokens, hallucinated a tool, or misunderstood a command, extract the protocol needed to prevent it in the future.
+Output the results as a raw, bulleted Markdown list grouped into `GoldSrc/HLAE Engine Quirks`, `Rust/Architecture Constraints`, and `Agent Protocols & Workflow Optimizations`. You must use your file editing tools to AUTOMATICALLY APPEND these harvested rules to `local/draft_rules.md`. Do not rely on the user to copy-paste them.
+
+**Part 2: 📦 Context Payload (State Transfer)**
+Output a minified markdown code block designed to seed the new chat window. It MUST include:
+- **CRITICAL BOOTSTRAP INSTRUCTION:** Read `.agents\rules\agent-protocols.md` before processing context.
+- The current overarching goal.
+- The specific crate, file, and function last edited.
+- Any unresolved compiler errors or bugs.
+- The exact next step or terminal command to execute.
+Keep this payload as concise as possible to consume minimum tokens.
 
 
 ## 9. EGUI & PERFORMANCE RULES (CRITICAL)
