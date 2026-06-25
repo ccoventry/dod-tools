@@ -100,11 +100,21 @@ impl StreamPatcher {
             let time = f32::from_le_bytes(frame_hdr[1..5].try_into().unwrap());
             let tick = i32::from_le_bytes(frame_hdr[5..9].try_into().unwrap());
 
-            if is_first_frame {
+            if type_byte == 2 && is_first_frame {
+                writer.write_all(&frame_hdr)?;
                 for cmd in &job.init_commands {
                     bytes_injected += write_console_cmd(&mut writer, time, tick, cmd)?;
                 }
+                while let Some((target_tick, _cmd)) = scheduled_queue.front() {
+                    if tick >= *target_tick {
+                        let (_, cmd) = scheduled_queue.pop_front().unwrap();
+                        bytes_injected += write_console_cmd(&mut writer, time, tick, &cmd)?;
+                    } else {
+                        break;
+                    }
+                }
                 is_first_frame = false;
+                continue;
             }
 
             while let Some((target_tick, _cmd)) = scheduled_queue.front() {
@@ -115,7 +125,6 @@ impl StreamPatcher {
                     break;
                 }
             }
-
             writer.write_all(&frame_hdr)?;
 
             // Determine payload size to read/write
@@ -219,7 +228,33 @@ impl StreamPatcher {
 
         // [STEP 4] Directory Offset Rewrite (EOF Handling)
         // 4b: Copy the remaining directory entries from the input to the output.
-        std::io::copy(&mut reader, &mut writer)?;
+        let frames_injected = (bytes_injected / 73) as i32;
+
+        let mut dir_count_buf = [0u8; 4];
+        if reader.read_exact(&mut dir_count_buf).is_ok() {
+            writer.write_all(&dir_count_buf)?;
+            let dir_count = i32::from_le_bytes(dir_count_buf);
+
+            for i in 0..dir_count {
+                let mut entry = [0u8; 92];
+                if reader.read_exact(&mut entry).is_ok() {
+                    if i == 0 {
+                        let mut frame_count = i32::from_le_bytes(entry[80..84].try_into().unwrap());
+                        frame_count += frames_injected;
+                        entry[80..84].copy_from_slice(&frame_count.to_le_bytes());
+                        let mut file_length = i32::from_le_bytes(entry[88..92].try_into().unwrap());
+                        file_length += bytes_injected;
+                        entry[88..92].copy_from_slice(&file_length.to_le_bytes());
+                    } else {
+                        let mut offset = i32::from_le_bytes(entry[84..88].try_into().unwrap());
+                        offset += bytes_injected;
+                        entry[84..88].copy_from_slice(&offset.to_le_bytes());
+                    }
+                    writer.write_all(&entry)?;
+                }
+            }
+        }
+        let _ = std::io::copy(&mut reader, &mut writer); // Catch any trailing garbage
 
         // 4c: Flush BufWriter.
         writer.flush()?;
