@@ -10,6 +10,7 @@ use crate::patch::types::{PatchJob, PatcherConfig};
 
 fn write_console_cmd(writer: &mut std::io::BufWriter<std::fs::File>, time: f32, tick: i32, cmd: &str) -> std::io::Result<i32> {
     use std::io::Write;
+    log::debug!("Injecting Command: {} at tick: {}", cmd, tick);
     writer.write_all(&[3_u8])?;
     writer.write_all(&time.to_le_bytes())?;
     writer.write_all(&tick.to_le_bytes())?;
@@ -75,6 +76,48 @@ impl StreamPatcher {
         let mut is_first_frame = true;
         let mut scheduled_queue: std::collections::VecDeque<(i32, String)> = job.scheduled_commands.iter().cloned().collect();
 
+        // Step 2.5: Pre-read the directory to map entry boundaries
+        let mut dir_entries: Vec<(i32, i32)> = Vec::new();
+        if original_offset > 0 {
+            reader.seek(SeekFrom::Start(original_offset as u64))?;
+            let mut dir_count_buf = [0u8; 4];
+            if reader.read_exact(&mut dir_count_buf).is_ok() {
+                let dir_count = i32::from_le_bytes(dir_count_buf);
+                for _ in 0..dir_count {
+                    let mut entry = [0u8; 92];
+                    if reader.read_exact(&mut entry).is_ok() {
+                        let offset = i32::from_le_bytes(entry[84..88].try_into().unwrap());
+                        let file_length = i32::from_le_bytes(entry[88..92].try_into().unwrap());
+                        dir_entries.push((offset, file_length));
+                    }
+                }
+            }
+            reader.seek(SeekFrom::Start(544))?;
+        }
+
+        let mut injected_per_entry = vec![0i32; dir_entries.len().max(1)];
+        let mut frames_per_entry = vec![0i32; dir_entries.len().max(1)];
+
+        let mut update_injection = |pos: u64, bytes: i32, frames: i32| {
+            let mut found = false;
+            for (i, &(offset, length)) in dir_entries.iter().enumerate() {
+                if pos >= offset as u64 && pos < (offset + length) as u64 {
+                    injected_per_entry[i] += bytes;
+                    frames_per_entry[i] += frames;
+                    found = true;
+                    break;
+                }
+            }
+            if !found && !dir_entries.is_empty() {
+                let last = dir_entries.len() - 1;
+                injected_per_entry[last] += bytes;
+                frames_per_entry[last] += frames;
+            } else if !found {
+                injected_per_entry[0] += bytes;
+                frames_per_entry[0] += frames;
+            }
+        };
+
         // Step 3: Zero-Allocation Copy Loop
         let mut payload_buf = Vec::new();
 
@@ -103,12 +146,16 @@ impl StreamPatcher {
             if type_byte == 2 && is_first_frame {
                 writer.write_all(&frame_hdr)?;
                 for cmd in &job.init_commands {
-                    bytes_injected += write_console_cmd(&mut writer, time, tick, cmd)?;
+                    let b = write_console_cmd(&mut writer, time, tick, cmd)?;
+                    update_injection(pos, b, 1);
+                    bytes_injected += b;
                 }
                 while let Some((target_tick, _cmd)) = scheduled_queue.front() {
                     if tick >= *target_tick {
                         let (_, cmd) = scheduled_queue.pop_front().unwrap();
-                        bytes_injected += write_console_cmd(&mut writer, time, tick, &cmd)?;
+                        let b = write_console_cmd(&mut writer, time, tick, &cmd)?;
+                        update_injection(pos, b, 1);
+                        bytes_injected += b;
                     } else {
                         break;
                     }
@@ -120,7 +167,9 @@ impl StreamPatcher {
             while let Some((target_tick, _cmd)) = scheduled_queue.front() {
                 if tick >= *target_tick {
                     let (_, cmd) = scheduled_queue.pop_front().unwrap();
-                    bytes_injected += write_console_cmd(&mut writer, time, tick, &cmd)?;
+                    let b = write_console_cmd(&mut writer, time, tick, &cmd)?;
+                    update_injection(pos, b, 1);
+                    bytes_injected += b;
                 } else {
                     break;
                 }
@@ -228,28 +277,34 @@ impl StreamPatcher {
 
         // [STEP 4] Directory Offset Rewrite (EOF Handling)
         // 4b: Copy the remaining directory entries from the input to the output.
-        let frames_injected = (bytes_injected / 73) as i32;
-
         let mut dir_count_buf = [0u8; 4];
         if reader.read_exact(&mut dir_count_buf).is_ok() {
             writer.write_all(&dir_count_buf)?;
             let dir_count = i32::from_le_bytes(dir_count_buf);
 
+            let mut accumulated_shift = 0i32;
+
             for i in 0..dir_count {
                 let mut entry = [0u8; 92];
                 if reader.read_exact(&mut entry).is_ok() {
-                    if i == 0 {
-                        let mut frame_count = i32::from_le_bytes(entry[80..84].try_into().unwrap());
-                        frame_count += frames_injected;
-                        entry[80..84].copy_from_slice(&frame_count.to_le_bytes());
-                        let mut file_length = i32::from_le_bytes(entry[88..92].try_into().unwrap());
-                        file_length += bytes_injected;
-                        entry[88..92].copy_from_slice(&file_length.to_le_bytes());
-                    } else {
-                        let mut offset = i32::from_le_bytes(entry[84..88].try_into().unwrap());
-                        offset += bytes_injected;
-                        entry[84..88].copy_from_slice(&offset.to_le_bytes());
-                    }
+                    let idx = i as usize;
+                    let inj_bytes = *injected_per_entry.get(idx).unwrap_or(&0);
+                    let inj_frames = *frames_per_entry.get(idx).unwrap_or(&0);
+
+                    let mut frame_count = i32::from_le_bytes(entry[80..84].try_into().unwrap());
+                    frame_count += inj_frames;
+                    entry[80..84].copy_from_slice(&frame_count.to_le_bytes());
+
+                    let mut offset = i32::from_le_bytes(entry[84..88].try_into().unwrap());
+                    offset += accumulated_shift;
+                    entry[84..88].copy_from_slice(&offset.to_le_bytes());
+
+                    let mut file_length = i32::from_le_bytes(entry[88..92].try_into().unwrap());
+                    file_length += inj_bytes;
+                    entry[88..92].copy_from_slice(&file_length.to_le_bytes());
+
+                    accumulated_shift += inj_bytes;
+
                     writer.write_all(&entry)?;
                 }
             }
