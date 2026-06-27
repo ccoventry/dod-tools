@@ -21,10 +21,17 @@ pub fn spawn_capture_engine(
                     {
                         log::error!("{}", $msg);
                         use std::io::Write;
-                        if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open("local/crash_log.md") {
-                            let _ = writeln!(file, "{}", $msg);
-                        }
-                        let _ = $tx.send(EngineEvent::Error("Capture Engine Aborted - Check crash_log.md".to_string()));
+                        let _ = (|| -> Result<(), Box<dyn std::error::Error>> {
+                            let exe_path = std::env::current_exe()?;
+                            let exe_dir = exe_path.parent().ok_or("Failed to get exe parent")?;
+                            let local_dir = exe_dir.join("local");
+                            std::fs::create_dir_all(&local_dir)?;
+                            let log_path = local_dir.join("crash_log.md");
+                            let mut file = std::fs::OpenOptions::new().create(true).append(true).open(&log_path)?;
+                            writeln!(file, "{}", $msg)?;
+                            Ok(())
+                        })();
+                        let _ = $tx.send(EngineEvent::Error("Capture Engine Aborted - Check local/crash_log.md".to_string()));
                     }
                 };
             }
@@ -147,6 +154,7 @@ pub fn spawn_capture_engine(
 
                 if tx.send(EngineEvent::Launching(demo_name_no_ext.clone())).is_err() {
                     log_crash_abort!(tx, "Failed to send Launching event (channel disconnected)");
+                    #[cfg(not(debug_assertions))]
                     let _ = std::fs::remove_file(&dest_demo_path);
                     return;
                 }
@@ -218,6 +226,7 @@ pub fn spawn_capture_engine(
                     Ok(c) => c,
                     Err(e) => {
                         log_crash_abort!(tx, format!("Failed to spawn HLAE (OS Error): {}", e));
+                        #[cfg(not(debug_assertions))]
                         let _ = std::fs::remove_file(&dest_demo_path);
                         continue;
                     }
@@ -230,6 +239,7 @@ pub fn spawn_capture_engine(
                         // Gracefully kill the child process before bailing.
                         let _ = child.kill();
                         let _ = child.wait(); // reap so we don't leak a zombie
+                        #[cfg(not(debug_assertions))]
                         if let Err(e) = std::fs::remove_file(&dest_demo_path) {
                             log::warn!("Failed to delete temporary demo upon cancellation: {}", e);
                         }
@@ -253,6 +263,7 @@ pub fn spawn_capture_engine(
                     }
                     Err(e) => {
                         log_crash_abort!(tx, format!("Failed to wait for HLAE: {}", e));
+                        #[cfg(not(debug_assertions))]
                         let _ = std::fs::remove_file(&dest_demo_path);
                         continue;
                     }
