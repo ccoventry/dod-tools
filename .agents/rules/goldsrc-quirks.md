@@ -12,6 +12,7 @@ description: Critical rules and constraints regarding the GoldSrc engine, HLAE, 
 * **Directory Offset Boundary Termination:** GoldSrc demo files append a frame directory at the end of the file. The frame parsing loop must check `stream_position >= directory_offset` (or the calculated `original_offset`) to terminate cleanly. Failure to check this boundary results in parsing directory bytes as frame headers, causing desync.
 * **NextSection (Type 5) Traversal:** A type 5 frame (`NextSection`) is written between the LOADING and PLAYBACK sections. The patcher must not exit parsing on the first `NextSection` frame, or it will skip patching highlights located in the PLAYBACK entry.
 * **DemoBuffer (Type 9) Integrity:** Do not write the `buffer_length` twice when reconstructing or patching type 9 frames, as this corrupts sequential frame offsets.
+* **The Uptime Tick Trap:** The `LOADING` directory frames (pre-`DemoStart`) contain massive tick values inherited from server uptime. Never inject `ConsoleCommand`s based purely on tick counts without first validating that the `DemoStart` frame has passed and the tick clock has reset.
 * **Filename Truncation:** `playdemo` filenames must be strictly < 40 characters to avoid silent truncation by the 1998 engine parser.
 
 ### Data & Logic
