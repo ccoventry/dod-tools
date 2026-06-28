@@ -74,6 +74,7 @@ impl StreamPatcher {
 
         let mut bytes_injected: i32 = 0;
         let mut is_first_frame = true;
+        let mut playback_started = false;
         let mut scheduled_queue: std::collections::VecDeque<(i32, String)> = job.scheduled_commands.iter().cloned().collect();
 
         // Step 2.5: Pre-read the directory to map entry boundaries
@@ -119,7 +120,7 @@ impl StreamPatcher {
         };
 
         // Step 3: Zero-Allocation Copy Loop
-        let mut payload_buf = Vec::new();
+        let mut scratch_buf = Vec::new();
 
         loop {
             if cancel_token.load(Ordering::Relaxed) {
@@ -131,7 +132,7 @@ impl StreamPatcher {
                 break;
             }
 
-            let mut frame_hdr = vec![0u8; 9];
+            let mut frame_hdr = [0u8; 9];
             if let Err(e) = read_exact(&mut reader, &mut frame_hdr, "Frame Header") {
                 if e.kind() == std::io::ErrorKind::UnexpectedEof {
                     break;
@@ -144,6 +145,7 @@ impl StreamPatcher {
             let tick = i32::from_le_bytes(frame_hdr[5..9].try_into().unwrap());
 
             if type_byte == 2 && is_first_frame {
+                playback_started = true;
                 writer.write_all(&frame_hdr)?;
                 for cmd in &job.init_commands {
                     let b = write_console_cmd(&mut writer, time, tick, cmd)?;
@@ -151,7 +153,7 @@ impl StreamPatcher {
                     bytes_injected += b;
                 }
                 while let Some((target_tick, _cmd)) = scheduled_queue.front() {
-                    if tick >= *target_tick {
+                    if playback_started && tick >= *target_tick {
                         let (_, cmd) = scheduled_queue.pop_front().unwrap();
                         let b = write_console_cmd(&mut writer, time, tick, &cmd)?;
                         update_injection(pos, b, 1);
@@ -165,7 +167,7 @@ impl StreamPatcher {
             }
 
             while let Some((target_tick, _cmd)) = scheduled_queue.front() {
-                if tick >= *target_tick {
+                if playback_started && tick >= *target_tick {
                     let (_, cmd) = scheduled_queue.pop_front().unwrap();
                     let b = write_console_cmd(&mut writer, time, tick, &cmd)?;
                     update_injection(pos, b, 1);
@@ -183,34 +185,34 @@ impl StreamPatcher {
                 }
                 3 => {
                     // ConsoleCommand (64 bytes)
-                    payload_buf.resize(64, 0);
-                    read_exact(&mut reader, &mut payload_buf, "ConsoleCommand")?;
-                    writer.write_all(&payload_buf)?;
+                    scratch_buf.resize(64, 0);
+                    read_exact(&mut reader, &mut scratch_buf, "ConsoleCommand")?;
+                    writer.write_all(&scratch_buf)?;
                 }
                 4 => {
                     // ClientData (32 bytes)
-                    payload_buf.resize(32, 0);
-                    read_exact(&mut reader, &mut payload_buf, "ClientData")?;
-                    writer.write_all(&payload_buf)?;
+                    scratch_buf.resize(32, 0);
+                    read_exact(&mut reader, &mut scratch_buf, "ClientData")?;
+                    writer.write_all(&scratch_buf)?;
                 }
                 5 => {
                     // NextSection (0 bytes)
                 }
                 6 => {
                     // Event (84 bytes)
-                    payload_buf.resize(84, 0);
-                    read_exact(&mut reader, &mut payload_buf, "Event")?;
-                    writer.write_all(&payload_buf)?;
+                    scratch_buf.resize(84, 0);
+                    read_exact(&mut reader, &mut scratch_buf, "Event")?;
+                    writer.write_all(&scratch_buf)?;
                 }
                 7 => {
                     // WeaponAnimation (8 bytes)
-                    payload_buf.resize(8, 0);
-                    read_exact(&mut reader, &mut payload_buf, "WeaponAnimation")?;
-                    writer.write_all(&payload_buf)?;
+                    scratch_buf.resize(8, 0);
+                    read_exact(&mut reader, &mut scratch_buf, "WeaponAnimation")?;
+                    writer.write_all(&scratch_buf)?;
                 }
                 8 => {
                     // Sound (24 bytes + sample_length)
-                    let mut prefix = vec![0u8; 8];
+                    let mut prefix = [0u8; 8];
                     read_exact(&mut reader, &mut prefix, "Sound Prefix")?;
                     writer.write_all(&prefix)?;
                     let sample_length = u32::from_le_bytes(prefix[4..8].try_into().unwrap()) as usize;
@@ -224,16 +226,14 @@ impl StreamPatcher {
                         return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Parser alignment lost"));
                     }
 
-                    payload_buf.resize(sample_length + 16, 0);
-                    read_exact(&mut reader, &mut payload_buf, "Sound Payload")?;
-                    writer.write_all(&payload_buf)?;
+                    std::io::copy(&mut reader.by_ref().take((sample_length + 16) as u64), &mut writer)?;
                 }
                 9 => {
                     // DemoBuffer (4 bytes + buffer_length)
-                    let mut prefix = vec![0u8; 4];
+                    let mut prefix = [0u8; 4];
                     read_exact(&mut reader, &mut prefix, "DemoBuffer Prefix")?;
                     writer.write_all(&prefix)?;
-                    let buffer_length = u32::from_le_bytes(prefix[0..4].try_into().unwrap()) as usize;
+                    let buffer_length = u32::from_le_bytes(prefix) as usize;
 
                     if buffer_length > 2_000_000 {
                         crate::log_markdown(&format!(
@@ -244,20 +244,18 @@ impl StreamPatcher {
                         return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Parser alignment lost"));
                     }
 
-                    payload_buf.resize(buffer_length, 0);
-                    read_exact(&mut reader, &mut payload_buf, "DemoBuffer Payload")?;
-                    writer.write_all(&payload_buf)?;
+                    std::io::copy(&mut reader.by_ref().take(buffer_length as u64), &mut writer)?;
                 }
                 _ => {
                     // NetworkMessage (468 bytes + message_length)
-                    let mut info_buf = vec![0u8; 464];
-                    read_exact(&mut reader, &mut info_buf, "NetworkMessage Info")?;
-                    writer.write_all(&info_buf)?;
+                    scratch_buf.resize(464, 0);
+                    read_exact(&mut reader, &mut scratch_buf, "NetworkMessage Info")?;
+                    writer.write_all(&scratch_buf)?;
 
-                    let mut len_buf = vec![0u8; 4];
+                    let mut len_buf = [0u8; 4];
                     read_exact(&mut reader, &mut len_buf, "NetworkMessage Length")?;
                     writer.write_all(&len_buf)?;
-                    let msg_len = u32::from_le_bytes(len_buf.try_into().unwrap()) as usize;
+                    let msg_len = u32::from_le_bytes(len_buf) as usize;
 
                     if msg_len > 2_000_000 {
                         crate::log_markdown(&format!(
@@ -268,9 +266,7 @@ impl StreamPatcher {
                         return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Parser alignment lost"));
                     }
 
-                    payload_buf.resize(msg_len, 0);
-                    read_exact(&mut reader, &mut payload_buf, "NetworkMessage Payload")?;
-                    writer.write_all(&payload_buf)?;
+                    std::io::copy(&mut reader.by_ref().take(msg_len as u64), &mut writer)?;
                 }
             }
         }
