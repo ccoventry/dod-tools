@@ -21,7 +21,8 @@ impl Gui {
                     self.capture_studio_state = CaptureStudioState::Scan;
                 }
 
-                if !is_wasm {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
                     ui.label(" ➔ ");
                     let step2_active = phase == CaptureStudioState::Select;
                     let step2_btn = ui.selectable_label(step2_active, "2. Select");

@@ -15,6 +15,8 @@ pub mod capture_engine;
 use analysis::Analysis;
 use clap::Parser;
 use egui::{Align, CentralPanel, Context, Frame, Layout, ScrollArea, SidePanel, TopBottomPanel};
+#[cfg(target_arch = "wasm32")]
+use egui_extras::{Column, TableBuilder};
 
 use native::FileInfo;
 use std::collections::HashMap;
@@ -26,10 +28,10 @@ use views::{PlayerHighlighting, report_ui, t};
 use types::{
     SortColumn, ScoreboardCache, ChatFilterState, ChatCache,
     CapturePhase, CaptureStudioState, QueuedStreakExport, PlayerDetailsCache, SidebarTab,
-    GuiMessage, BrowserView,
+    GuiMessage,
 };
 #[cfg(not(target_arch = "wasm32"))]
-use types::{AuditorState, PendingStreakExport};
+use types::{AuditorState, PendingStreakExport, BrowserView};
 
 use settings::{AppSettings, load_settings, apply_language_setting};
 #[cfg(not(target_arch = "wasm32"))]
@@ -133,6 +135,7 @@ fn main() {}
 
 
 
+#[cfg(not(target_arch = "wasm32"))]
 pub use views::browser::VisibleNode;
 
 pub(crate) struct Gui {
@@ -219,9 +222,13 @@ pub(crate) struct Gui {
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) target_folder: String,
     pub(crate) cancel_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) browser_view: BrowserView,
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) selection_changed_via_keyboard: bool,
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) selected_folder_id: Option<String>,
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) visible_nodes: Vec<VisibleNode>,
     pub(crate) capture_engine_running: bool,
     pub(crate) capture_engine_msg: String,
@@ -622,9 +629,13 @@ impl Default for Gui {
                 .map(|p| p.to_string_lossy().into_owned())
                 .unwrap_or_default(),
             cancel_flag,
+            #[cfg(not(target_arch = "wasm32"))]
             browser_view: BrowserView::Flat,
+            #[cfg(not(target_arch = "wasm32"))]
             selection_changed_via_keyboard: false,
+            #[cfg(not(target_arch = "wasm32"))]
             selected_folder_id: None,
+            #[cfg(not(target_arch = "wasm32"))]
             visible_nodes: Vec::new(),
             capture_engine_running: false,
             capture_engine_msg: String::new(),
@@ -652,6 +663,7 @@ impl eframe::App for Gui {
             };
             let transition_msg = format!("State Transition: {} -> {:?}", prev_str, current_state);
             log::info!("{}", transition_msg);
+            #[cfg(not(target_arch = "wasm32"))]
             crate::views::capture::log_markdown(&transition_msg);
             self.last_capture_studio_state = Some(current_state);
         }
@@ -958,6 +970,7 @@ impl eframe::App for Gui {
             match msg {
                 GuiMessage::Idle => {}
                 GuiMessage::PatchingComplete => {
+                    #[cfg(not(target_arch = "wasm32"))]
                     crate::views::capture::set_is_patching(false);
                     self.capture_studio_state = CaptureStudioState::Capture;
                 }
@@ -2334,7 +2347,10 @@ impl eframe::App for Gui {
                 }
             }
         }
-        self.selection_changed_via_keyboard = false;
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.selection_changed_via_keyboard = false;
+        }
     }
 
     #[cfg(not(target_arch = "wasm32"))]

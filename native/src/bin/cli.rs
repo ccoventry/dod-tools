@@ -1,16 +1,27 @@
 //! Demo analyzer that runs in a terminal and produces text output.
 
+#[cfg(not(target_arch = "wasm32"))]
 use analysis::{Analysis, MortalityState, Round, SteamId, Team, Mortality};
+#[cfg(not(target_arch = "wasm32"))]
 use clap::{Parser, Subcommand, ValueEnum};
+#[cfg(not(target_arch = "wasm32"))]
 use humantime::{format_duration, format_rfc3339_seconds};
+#[cfg(not(target_arch = "wasm32"))]
 use native::{FileInfo, run_analyzer};
+#[cfg(not(target_arch = "wasm32"))]
 use native::patch::{patch_demo_highlights, PatchOptions};
+#[cfg(not(target_arch = "wasm32"))]
 use serde_json::{Value, json};
+#[cfg(not(target_arch = "wasm32"))]
 use std::fmt::{Display, Formatter};
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::PathBuf;
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::{Duration, SystemTime};
+#[cfg(not(target_arch = "wasm32"))]
 use tabled::{builder::Builder, settings::Style};
 
+#[cfg(not(target_arch = "wasm32"))]
 fn main() {
     let args = Args::parse();
 
@@ -61,6 +72,7 @@ fn main() {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn run_analyze_subcommand(demo_paths: Vec<PathBuf>, output_format: OutputFormat) {
     let mut analyses = vec![];
     for p in &demo_paths {
@@ -81,6 +93,7 @@ fn run_analyze_subcommand(demo_paths: Vec<PathBuf>, output_format: OutputFormat)
     };
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn run_patch_streak_subcommand(
     input: PathBuf,
     output: PathBuf,
@@ -195,6 +208,7 @@ fn run_patch_streak_subcommand(
     Ok(())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Parser)]
 #[command(version)]
 struct Args {
@@ -210,6 +224,7 @@ struct Args {
     output_format: OutputFormat,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Subcommand)]
 enum Commands {
     /// Analyze one or more demos
@@ -273,6 +288,7 @@ enum Commands {
     },
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Debug, ValueEnum)]
 enum OutputFormat {
     /// Markdown document best used in combination with a Markdown renderer
@@ -282,10 +298,13 @@ enum OutputFormat {
     Json,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 type AnalyzerOutput = (FileInfo, Analysis);
 
+#[cfg(not(target_arch = "wasm32"))]
 struct Json(Value);
 
+#[cfg(not(target_arch = "wasm32"))]
 impl FromIterator<AnalyzerOutput> for Json {
     fn from_iter<T: IntoIterator<Item = AnalyzerOutput>>(iter: T) -> Self {
         let analyses = iter.into_iter();
@@ -339,12 +358,14 @@ impl FromIterator<AnalyzerOutput> for Json {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl From<Value> for Json {
     fn from(value: Value) -> Self {
         Self(value)
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Display for Json {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let str = serde_json::to_string_pretty(&self.0).map_err(|_| std::fmt::Error)?;
@@ -353,14 +374,17 @@ impl Display for Json {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 struct Markdown(FileInfo, Analysis);
 
+#[cfg(not(target_arch = "wasm32"))]
 impl From<AnalyzerOutput> for Markdown {
     fn from(value: AnalyzerOutput) -> Self {
         Self(value.0, value.1)
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Markdown {
     fn md_escape(str: &str) -> String {
         str.replace("|", r"\|")
@@ -371,6 +395,7 @@ impl Markdown {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Display for Markdown {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         // Header section
@@ -665,3 +690,6 @@ impl Display for Markdown {
         Ok(())
     }
 }
+
+#[cfg(target_arch = "wasm32")]
+fn main() {}

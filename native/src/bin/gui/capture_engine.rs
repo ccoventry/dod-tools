@@ -164,30 +164,29 @@ pub fn spawn_capture_engine(
                     demo_name_no_ext, demo_name_no_ext
                 );
 
-                let required_space = 10_000_000_000; // 10 GB safe estimate
-                let valid_export_dir = if let Some(primary) = &config.primary_media_dir {
-                    if native::sys::disk::get_available_bytes(primary) > required_space {
-                        Some(primary.clone())
-                    } else if let Some(backup) = &config.backup_media_dir {
-                        if native::sys::disk::get_available_bytes(backup) > required_space {
-                            Some(backup.clone())
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                };
+                let active_export_dir = config.primary_media_dir.clone().unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
 
-                let active_export_dir = match valid_export_dir {
-                    Some(dir) => dir,
-                    None => {
-                        log_crash_abort!(tx, "Capture aborted: Directories not configured or out of space");
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    use sysinfo::{System, SystemExt, DiskExt};
+                    let mut sys = System::new_all();
+                    sys.refresh_disks_list();
+                    
+                    let mut available_space = u64::MAX;
+                    let mut disk_found = false;
+                    for disk in sys.disks() {
+                        if active_export_dir.starts_with(disk.mount_point()) {
+                            available_space = disk.available_space();
+                            disk_found = true;
+                            break;
+                        }
+                    }
+
+                    if disk_found && available_space < 15_u64 * 1024 * 1024 * 1024 {
+                        log_crash_abort!(tx, "Capture aborted: Target drive has less than 15GB free space.");
                         return;
                     }
-                };
+                }
 
                 let width_str = config.resolution_width.to_string();
                 let height_str = config.resolution_height.to_string();
@@ -215,6 +214,8 @@ pub fn spawn_capture_engine(
                     &active_export_dir_str,
                     "+mirv_movie_separate_hud",
                     separate_hud_str,
+                    "+exec",
+                    "movie.cfg",
                 ]);
                 cmd.env("SteamAppId", "30");
 
