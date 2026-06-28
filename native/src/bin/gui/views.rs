@@ -90,6 +90,7 @@ pub mod timeline;
 pub mod batch_queue;
 pub mod settings;
 pub mod capture_studio;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod browser;
 
 #[cfg(not(target_arch = "wasm32"))]

@@ -316,43 +316,48 @@ pub fn render(
             ui.heading("⚡ Capture Configuration");
             ui.add_space(4.0);
 
-            static CAPTURE_PRIMARY_PICKER: std::sync::OnceLock<Mutex<egui_file_dialog::FileDialog>> = std::sync::OnceLock::new();
-            static CAPTURE_BACKUP_PICKER: std::sync::OnceLock<Mutex<egui_file_dialog::FileDialog>> = std::sync::OnceLock::new();
-            
-            let mut cap_primary_picker = acquire_lock!(CAPTURE_PRIMARY_PICKER.get_or_init(|| Mutex::new(create_pinned_file_dialog())));
-            ui.horizontal(|ui| {
-                ui.label("Primary Capture Directory (Raw BMPs):");
-                if ui.button("📁 Select...").clicked() {
-                    cap_primary_picker.pick_directory();
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                static CAPTURE_PRIMARY_PICKER: std::sync::OnceLock<Mutex<egui_file_dialog::FileDialog>> = std::sync::OnceLock::new();
+                static CAPTURE_BACKUP_PICKER: std::sync::OnceLock<Mutex<egui_file_dialog::FileDialog>> = std::sync::OnceLock::new();
+                
+                let mut cap_primary_picker = acquire_lock!(CAPTURE_PRIMARY_PICKER.get_or_init(|| Mutex::new(create_pinned_file_dialog())));
+                ui.horizontal(|ui| {
+                    ui.label("Primary Capture Directory (Raw BMPs):");
+                    if ui.button("📁 Select...").clicked() {
+                        cap_primary_picker.pick_directory();
+                    }
+                    if let Some(path) = &patcher_config.primary_media_dir {
+                        ui.label(path.to_string_lossy());
+                    } else {
+                        ui.colored_label(egui::Color32::YELLOW, "Warning: Defaulting to OS Drive");
+                    }
+                });
+                cap_primary_picker.update(ctx);
+                if let Some(path) = cap_primary_picker.take_picked() {
+                    patcher_config.primary_media_dir = Some(path.to_path_buf());
+                    let mut global = crate::settings::load_settings();
+                    global.primary_media_dir = Some(path.to_string_lossy().into_owned());
+                    crate::settings::save_settings(&global);
                 }
-                if let Some(path) = &patcher_config.primary_media_dir {
-                    ui.label(path.to_string_lossy());
-                }
-            });
-            cap_primary_picker.update(ctx);
-            if let Some(path) = cap_primary_picker.take_picked() {
-                patcher_config.primary_media_dir = Some(path.to_path_buf());
-                let mut global = crate::settings::load_settings();
-                global.primary_media_dir = Some(path.to_string_lossy().into_owned());
-                crate::settings::save_settings(&global);
-            }
 
-            let mut cap_backup_picker = acquire_lock!(CAPTURE_BACKUP_PICKER.get_or_init(|| Mutex::new(create_pinned_file_dialog())));
-            ui.horizontal(|ui| {
-                ui.label("Backup Capture Directory:");
-                if ui.button("📁 Select...").clicked() {
-                    cap_backup_picker.pick_directory();
+                let mut cap_backup_picker = acquire_lock!(CAPTURE_BACKUP_PICKER.get_or_init(|| Mutex::new(create_pinned_file_dialog())));
+                ui.horizontal(|ui| {
+                    ui.label("Backup Capture Directory:");
+                    if ui.button("📁 Select...").clicked() {
+                        cap_backup_picker.pick_directory();
+                    }
+                    if let Some(path) = &patcher_config.backup_media_dir {
+                        ui.label(path.to_string_lossy());
+                    }
+                });
+                cap_backup_picker.update(ctx);
+                if let Some(path) = cap_backup_picker.take_picked() {
+                    patcher_config.backup_media_dir = Some(path.to_path_buf());
+                    let mut global = crate::settings::load_settings();
+                    global.backup_media_dir = Some(path.to_string_lossy().into_owned());
+                    crate::settings::save_settings(&global);
                 }
-                if let Some(path) = &patcher_config.backup_media_dir {
-                    ui.label(path.to_string_lossy());
-                }
-            });
-            cap_backup_picker.update(ctx);
-            if let Some(path) = cap_backup_picker.take_picked() {
-                patcher_config.backup_media_dir = Some(path.to_path_buf());
-                let mut global = crate::settings::load_settings();
-                global.backup_media_dir = Some(path.to_string_lossy().into_owned());
-                crate::settings::save_settings(&global);
             }
 
             ui.add_space(8.0);
@@ -509,6 +514,29 @@ pub fn render(
             ui.horizontal(|ui| {
                 let btn = egui::Button::new("Proceed to Capture ->");
                 if ui.add_enabled(!is_running && !queued_demos_shared.is_empty() && !exceeds_space && !is_missing_primary_dir, btn).clicked() {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        use sysinfo::{System, SystemExt, DiskExt};
+                        let mut sys = System::new_all();
+                        sys.refresh_disks_list();
+                        
+                        let active_export_dir = patcher_config.primary_media_dir.clone().unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+                        let mut available_space = u64::MAX;
+                        let mut disk_found = false;
+                        for disk in sys.disks() {
+                            if active_export_dir.starts_with(disk.mount_point()) {
+                                available_space = disk.available_space();
+                                disk_found = true;
+                                break;
+                            }
+                        }
+
+                        if disk_found && available_space < 15_u64 * 1024 * 1024 * 1024 {
+                            log::warn!("Capture aborted: Target drive has less than 15GB free space.");
+                            return;
+                        }
+                    }
+
                     set_is_patching(true);
 
                     // Build the flat payload from all selected, filter-passing streaks.
