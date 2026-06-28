@@ -42,13 +42,14 @@ Maintain strict separation of concerns across workspace crates:
 - **Settings Buffer logic:** Any configuration UI edits (general preferences, game/HLAE executable directories) must be loaded into a temporary/draft buffer (`draft_settings`) in the GUI state and only persisted to disk (`settings.json`) upon explicit confirmation (e.g., a "Save Settings" click) to prevent excessive disk I/O.
 
 ## 7. TERMINAL & CONTEXT INTERACTION RULES
-1. I have an automated profile script that saves terminal error/success output to unique files inside the root `scratch/` folder.
-2. ONLY when a command is meant to capture complex logs, compiler errors, or diagnostics for you to analyze, format it as: `Your-Command 2>&1 | tuf`.
-3. For simple administrative or deployment actions that do not require your review (e.g., git push, git commit, cd, mkdir), provide the plain standard command directly without piping to `tuf`.
-4. When a `tuf` command is used, instruct me: "Run the command. Once it finishes, type 'done' and I will automatically analyze the newest file generated in your scratch directory."
-5. **Strict File Ingestion:** On the turn immediately following a `tuf` execution confirmation, look inside the `scratch/` folder, sort by creation date, and pull the single newest `output_*.txt` file. **Crucial Limit:** Do NOT read the entire file if it is a compiler error. You must explicitly limit your read to the final 30 lines, or specifically grep/extract only the blocks containing the string `error[`.
-6. Always format terminal or PowerShell commands in a standard Markdown code block (e.g. using triple backticks) so they can be easily copied or run. For administrative/deployment actions that the user will execute via the paste/run button, always format them as a single-line command (using semicolons `;` to chain them if necessary).
-7. **Terminal Integration Single-Line Rule:** Multi-step sequences or task pipelines executed via terminal commands must be collapsed into a single, chained line (using semicolons `;` as separators in PowerShell) to ensure one-click execution capability for the user.
+1. **Strict Execution Ban:** DO NOT use your internal terminal tools to run `cargo check`, `cargo build`, or any compilation commands. You must output the exact command in a markdown block, append ` 2>&1 | tuf` to it, and instruct the user to run it manually.
+2. I have an automated profile script that saves terminal error/success output to unique files inside the root `scratch/` folder.
+3. ONLY when a command is meant to capture complex logs, compiler errors, or diagnostics for you to analyze, format it as: `Your-Command 2>&1 | tuf`.
+4. For simple administrative or deployment actions that do not require your review (e.g., git push, git commit, cd, mkdir), provide the plain standard command directly without piping to `tuf`.
+5. When a `tuf` command is used, instruct me: "Run the command. Once it finishes, type 'done' and I will automatically analyze the newest file generated in your scratch directory."
+6. **Strict File Ingestion:** On the turn immediately following a `tuf` execution confirmation, look inside the `scratch/` folder, sort by creation date, and pull the single newest `output_*.txt` file. **Crucial Limit:** Do NOT read the entire file if it is a compiler error. You must explicitly limit your read to the final 30 lines, or specifically grep/extract only the blocks containing the string `error[`.
+7. Always format terminal or PowerShell commands in a standard Markdown code block (e.g. using triple backticks) so they can be easily copied or run. For administrative/deployment actions that the user will execute via the paste/run button, always format them as a single-line command (using semicolons `;` to chain them if necessary).
+8. **Terminal Integration Single-Line Rule:** Multi-step sequences or task pipelines executed via terminal commands must be collapsed into a single, chained line (using semicolons `;` as separators in PowerShell) to ensure one-click execution capability for the user.
 
 ## 8. CHAT CLOSURE & HANDOFF PROTOCOL
 Whenever the user types `Initiate Context Handoff`, `wrap up`, or `session over`, you must immediately halt execution and generate a dual-part exit package:
