@@ -54,6 +54,7 @@ pub struct CaptureStreak {
     pub kills: Vec<(i32, f32, String)>,
     pub start_index: usize,
     pub end_index: usize,
+    pub total_demo_frames: i32,
 }
 
 impl CaptureStreak {
@@ -122,6 +123,8 @@ pub struct PatcherConfig {
     pub resolution_height: i32,
     pub primary_media_dir: Option<std::path::PathBuf>,
     pub backup_media_dir: Option<std::path::PathBuf>,
+    pub movie_config: String,
+    pub save_local_patched_copy: bool,
 }
 
 impl Default for PatcherConfig {
@@ -146,6 +149,8 @@ impl Default for PatcherConfig {
             resolution_height: 720,
             primary_media_dir: None,
             backup_media_dir: None,
+            movie_config: String::new(),
+            save_local_patched_copy: false,
         }
     }
 }

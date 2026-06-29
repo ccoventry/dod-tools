@@ -130,12 +130,16 @@ pub fn render(
                                         .column(Column::auto())          // [Checkbox]
                                         .column(Column::auto())          // [Player Name]
                                         .column(Column::exact(140.0))    // [Kill Range]
+                                        .column(Column::exact(40.0))     // [Kills]
+                                        .column(Column::exact(70.0))     // [Start Time]
                                         .column(Column::exact(50.0))     // [Duration]
                                         .column(Column::remainder())     // [Details]
                                         .header(20.0, |mut header| {
                                             header.col(|ui| { ui.strong("Sel"); });
                                             header.col(|ui| { ui.strong("Player"); });
                                             header.col(|ui| { ui.strong("Kill Range"); });
+                                            header.col(|ui| { ui.strong("Kills"); });
+                                            header.col(|ui| { ui.strong("Start Time"); });
                                             header.col(|ui| { ui.strong("Dur."); });
                                             header.col(|ui| { ui.strong("Details"); });
                                         })
@@ -229,6 +233,16 @@ pub fn render(
                                                             sm.update_visuals();
                                                         }
                                                     });
+                                                });
+
+                                                // ── [Kills] ───────────────────────────
+                                                row.col(|ui| { ui.label(streak.kill_count.to_string()); });
+
+                                                // ── [Start Time] ──────────────────────
+                                                row.col(|ui| {
+                                                    let start_secs = streak.kills.get(streak.start_index).map(|k| k.1).unwrap_or(0.0).round() as i32;
+                                                    let time_str = format!("{}:{:02}", start_secs / 60, start_secs % 60);
+                                                    ui.label(time_str);
                                                 });
 
                                                 // ── [Duration] ────────────────────────
@@ -408,6 +422,33 @@ pub fn render(
                     .on_hover_text("This toggle acts as the absolute source of truth and will override any separate_hud settings in your movie.cfg.");
             });
 
+            // Row 5.5: Exit on Finish
+            ui.horizontal(|ui| {
+                ui.checkbox(&mut patcher_config.exit_on_finish, "Auto-Quit Game on Completion")
+                    .on_hover_text("If enabled, the game will automatically inject the 'quit' command after the final clip to close the game.");
+            });
+
+            // Row 5.6: Save Local Patched Copy
+            ui.horizontal(|ui| {
+                ui.checkbox(&mut patcher_config.save_local_patched_copy, "Save a copy of patched demo to ./demos/")
+                    .on_hover_text("If enabled, a copy of the patched .dem file will be saved to the workspace's demos/ folder for debugging.");
+            });
+
+            ui.add_space(8.0);
+
+            // Row 5.75: Movie Config
+            ui.horizontal(|ui| {
+                ui.label("Movie Config (Optional):");
+                if ui.add(egui::TextEdit::singleline(&mut patcher_config.movie_config)
+                    .hint_text("e.g., movie.cfg")).changed() {
+                    
+                    // Aggressive sanitization
+                    patcher_config.movie_config.retain(|c| !c.is_whitespace());
+                    let sanitized = patcher_config.movie_config.trim_start_matches(|c| c == '-' || c == '+').to_string();
+                    patcher_config.movie_config = sanitized;
+                }
+            });
+
             ui.add_space(8.0);
 
             ui.heading("⚡ Export Configuration");
@@ -513,6 +554,7 @@ pub fn render(
 
             ui.horizontal(|ui| {
                 let btn = egui::Button::new("Proceed to Capture ->");
+                println!("Button State -> is_running: {}, has_demos: {}, exceeds_space: {}, missing_dir: {}", is_running, !queued_demos_shared.is_empty(), exceeds_space, is_missing_primary_dir);
                 if ui.add_enabled(!is_running && !queued_demos_shared.is_empty() && !exceeds_space && !is_missing_primary_dir, btn).clicked() {
                     #[cfg(not(target_arch = "wasm32"))]
                     {
@@ -564,12 +606,25 @@ pub fn render(
                                 kills: streak.kills.clone(),
                                 start_index: streak.start_index,
                                 end_index: streak.end_index,
+                                total_demo_frames: demo.playback_frames,
                             });
                         }
                     }
+                    
+                    println!("Payload Size: {}", payload.len());
 
                     if !payload.is_empty() {
                         let cancel_token = Arc::new(AtomicBool::new(false));
+                        
+                        log_markdown(&format!("[CAPTURE CONFIG PAYLOAD] Pre: {}, Lead: {}, Trail: {}, Post: {}, FPS: {}, Auto-Quit: {}",
+                            patcher_config.pre_roll_seconds,
+                            patcher_config.record_start_lead,
+                            patcher_config.record_stop_trail,
+                            patcher_config.post_roll_seconds,
+                            patcher_config.capture_fps,
+                            patcher_config.exit_on_finish
+                        ));
+                        
                         let jobs = build_batch_queue(payload, &patcher_config);
                         let tx_clone = tx.clone();
                         let ctx_clone = ctx.clone();

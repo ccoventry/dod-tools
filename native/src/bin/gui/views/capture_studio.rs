@@ -13,7 +13,7 @@ impl Gui {
                 ui.separator();
 
                 let phase = self.capture_studio_state;
-                let is_wasm = cfg!(target_arch = "wasm32");
+                let _is_wasm = cfg!(target_arch = "wasm32");
 
                 let step1_active = phase == CaptureStudioState::Scan;
                 let step1_btn = ui.selectable_label(step1_active, "1. Scan");

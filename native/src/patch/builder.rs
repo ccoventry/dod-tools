@@ -12,6 +12,7 @@ use crate::patch::engine::StreamPatcher;
 // ── Batch queue builder ───────────────────────────────────────────────────────
 
 pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig) -> Vec<PatchJob> {
+    let safe_tickrate = if config.tickrate > 0.0 { config.tickrate } else { 30.0 };
     let mut grouped: std::collections::HashMap<(String, Option<String>), Vec<CaptureStreak>> = std::collections::HashMap::new();
     for streak in raw_streaks {
         grouped.entry((streak.source_demo.clone(), streak.target_player.clone())).or_default().push(streak);
@@ -29,9 +30,12 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
             if merged_streaks.is_empty() {
                 merged_streaks.push(current);
             } else {
-                let adjusted_start = (current.start_tick - config.pre_roll_ticks).max(0);
+                let dynamic_pre_roll_ticks = (config.pre_roll_seconds * safe_tickrate) as i32;
+                let dynamic_post_roll_ticks = (config.post_roll_seconds * safe_tickrate) as i32;
+                
+                let adjusted_start = (current.start_tick - dynamic_pre_roll_ticks).max(0);
                 let last = merged_streaks.last_mut().unwrap();
-                if adjusted_start <= last.end_tick + config.post_roll_ticks {
+                if adjusted_start <= last.end_tick + dynamic_post_roll_ticks {
                     last.end_tick = last.end_tick.max(current.end_tick);
                 } else {
                     merged_streaks.push(current);
@@ -63,59 +67,77 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
 
         // Generate scheduled commands
         let mut scheduled_commands = Vec::new();
-        for streak in &merged_streaks {
-            let pre_roll_tick = (streak.start_tick - (config.pre_roll_seconds * config.tickrate) as i32).max(0);
-            let record_start_tick = (streak.start_tick - (config.record_start_lead * config.tickrate) as i32).max(0);
-            let record_stop_tick = streak.end_tick + (config.record_stop_trail * config.tickrate) as i32;
-            let post_roll_tick = streak.end_tick + (config.post_roll_seconds * config.tickrate) as i32;
+        
+        // Initialize Engine Speed at Tick 0
+        scheduled_commands.push((0, format!("host_framerate {}", config.fast_forward_speed)));
+
+        for (i, streak) in merged_streaks.iter().enumerate() {
+            let pre_roll_ticks = (config.pre_roll_seconds * safe_tickrate) as i32;
+            let record_lead_ticks = (config.record_start_lead * safe_tickrate) as i32;
+            let record_trail_ticks = (config.record_stop_trail * safe_tickrate) as i32;
+            let post_roll_ticks = (config.post_roll_seconds * safe_tickrate) as i32;
+
+            let stabilize_start_tick = (streak.start_tick - record_lead_ticks - pre_roll_ticks).max(0);
+            let record_start_tick = (streak.start_tick - record_lead_ticks).max(0);
+            let record_stop_tick = streak.end_tick + record_trail_ticks;
+            let post_roll_end_tick = record_stop_tick + post_roll_ticks;
 
             // Preroll commands
-            scheduled_commands.push((pre_roll_tick, format!("host_framerate {}", config.capture_fps)));
-            scheduled_commands.push((pre_roll_tick, "r_decals 0".to_string()));
-            scheduled_commands.push((pre_roll_tick, "r_decals 5555".to_string()));
+            scheduled_commands.push((stabilize_start_tick, "host_framerate 0".to_string()));
+            scheduled_commands.push((stabilize_start_tick, "echo \"[dod-tools] host_framerate 0\"".to_string()));
 
-            // Amendment 1:
-            if let Some(ref player_name) = target_player {
-                scheduled_commands.push((pre_roll_tick, format!("spec_player \"{}\"", player_name)));
-                scheduled_commands.push((pre_roll_tick, "spec_mode 4".to_string()));
-            }
+            scheduled_commands.push((stabilize_start_tick + 5, "stopsound".to_string()));
+            scheduled_commands.push((stabilize_start_tick + 5, "echo \"[dod-tools] stopsound\"".to_string()));
 
             // Custom command overrides
             for custom in &config.custom_commands {
                 let target_tick = match custom.relation {
-                    CommandRelation::Before => streak.start_tick - (custom.offset * config.tickrate) as i32,
-                    CommandRelation::After => streak.end_tick + (custom.offset * config.tickrate) as i32,
+                    CommandRelation::Before => streak.start_tick - (custom.offset * safe_tickrate) as i32,
+                    CommandRelation::After => streak.end_tick + (custom.offset * safe_tickrate) as i32,
                 };
                 scheduled_commands.push((target_tick.max(0), custom.command.clone()));
             }
 
-            // Record start
-            scheduled_commands.push((record_start_tick, format!("startmovie cap_ {}", config.capture_fps)));
+            // Record start (Atomic execution to prevent delta frame rendering)
+            let fps_cmd = format!("mirv_movie_fps {}; mirv_recordmovie_start", config.capture_fps);
+            scheduled_commands.push((record_start_tick, fps_cmd.clone()));
+            scheduled_commands.push((record_start_tick, format!("echo \"[dod-tools] Start Frame {}\"", record_start_tick)));
 
-            // Record stop
-            scheduled_commands.push((record_stop_tick, "endmovie".to_string()));
-
-            // Post roll end
-            scheduled_commands.push((post_roll_tick, "host_framerate 0".to_string()));
-        }
-
-        // Exit on finish
-        if config.exit_on_finish {
-            if let Some(last_streak) = merged_streaks.last() {
-                let post_roll_tick = last_streak.end_tick + (config.post_roll_seconds * config.tickrate) as i32;
-                scheduled_commands.push((post_roll_tick + 50, "quit".to_string()));
+            // Record stop & post roll
+            if i < merged_streaks.len() - 1 {
+                // Not the last streak, resume fast forward
+                scheduled_commands.push((record_stop_tick, "mirv_recordmovie_stop".to_string()));
+                scheduled_commands.push((record_stop_tick, format!("echo \"[dod-tools] Stop Frame {}\"", record_stop_tick)));
+                scheduled_commands.push((post_roll_end_tick, format!("host_framerate {}", config.fast_forward_speed)));
+            } else if config.exit_on_finish {
+                // Last streak, schedule atomic stop & quit alias to prevent EOF boundary drop
+                scheduled_commands.push((record_stop_tick, "mirv_recordmovie_stop; dodtools_exit".to_string()));
+                scheduled_commands.push((record_stop_tick, format!("echo \"[dod-tools] Stop Frame {}\"", record_stop_tick)));
+            } else {
+                // Last streak, but keep engine alive
+                scheduled_commands.push((record_stop_tick, "mirv_recordmovie_stop".to_string()));
+                scheduled_commands.push((record_stop_tick, format!("echo \"[dod-tools] Stop Frame {}\"", record_stop_tick)));
             }
         }
 
         // Sort scheduled_commands by tick
         scheduled_commands.sort_by_key(|(tick, _)| *tick);
 
+        let mut final_init_commands = config.init_commands.clone();
+
+        let active_export_dir = config.primary_media_dir.clone().unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+        let active_export_dir_str = active_export_dir.to_string_lossy().to_string();
+        final_init_commands.push(format!("mirv_movie_filename \"{}\"", active_export_dir_str));
+        
+        let separate_hud_str = if config.separate_hud { "1" } else { "0" };
+        final_init_commands.push(format!("mirv_movie_separate_hud {}", separate_hud_str));
+
         jobs.push(PatchJob {
             source_demo,
             output_demo,
             streaks: merged_streaks,
             target_player: target_player.clone(),
-            init_commands: config.init_commands.clone(),
+            init_commands: final_init_commands,
             scheduled_commands,
         });
     }

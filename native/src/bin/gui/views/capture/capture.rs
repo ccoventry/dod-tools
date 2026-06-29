@@ -122,6 +122,7 @@ pub fn render(
                                     kills: streak.kills.clone(),
                                     start_index: streak.start_index,
                                     end_index: streak.end_index,
+                                    total_demo_frames: demo.playback_frames,
                                 });
                             }
                         }

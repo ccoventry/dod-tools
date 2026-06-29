@@ -121,6 +121,8 @@ impl StreamPatcher {
 
         // Step 3: Zero-Allocation Copy Loop
         let mut scratch_buf = Vec::new();
+        let mut baseline_tick: Option<i32> = None;
+        let mut frame_counter = 0i32;
 
         loop {
             if cancel_token.load(Ordering::Relaxed) {
@@ -140,22 +142,26 @@ impl StreamPatcher {
                 return Err(e);
             }
 
+            frame_counter += 1;
+
             let type_byte = frame_hdr[0];
             let time = f32::from_le_bytes(frame_hdr[1..5].try_into().unwrap());
-            let tick = i32::from_le_bytes(frame_hdr[5..9].try_into().unwrap());
+            let file_tick = i32::from_le_bytes(frame_hdr[5..9].try_into().unwrap());
 
             if type_byte == 2 && is_first_frame {
                 playback_started = true;
+                baseline_tick = Some(file_tick);
                 writer.write_all(&frame_hdr)?;
                 for cmd in &job.init_commands {
-                    let b = write_console_cmd(&mut writer, time, tick, cmd)?;
+                    let b = write_console_cmd(&mut writer, time, file_tick, cmd)?;
                     update_injection(pos, b, 1);
                     bytes_injected += b;
                 }
+                
                 while let Some((target_tick, _cmd)) = scheduled_queue.front() {
-                    if playback_started && tick >= *target_tick {
+                    if playback_started && frame_counter >= *target_tick {
                         let (_, cmd) = scheduled_queue.pop_front().unwrap();
-                        let b = write_console_cmd(&mut writer, time, tick, &cmd)?;
+                        let b = write_console_cmd(&mut writer, time, file_tick, &cmd)?;
                         update_injection(pos, b, 1);
                         bytes_injected += b;
                     } else {
@@ -167,9 +173,9 @@ impl StreamPatcher {
             }
 
             while let Some((target_tick, _cmd)) = scheduled_queue.front() {
-                if playback_started && tick >= *target_tick {
+                if playback_started && frame_counter >= *target_tick {
                     let (_, cmd) = scheduled_queue.pop_front().unwrap();
-                    let b = write_console_cmd(&mut writer, time, tick, &cmd)?;
+                    let b = write_console_cmd(&mut writer, time, file_tick, &cmd)?;
                     update_injection(pos, b, 1);
                     bytes_injected += b;
                 } else {
@@ -270,6 +276,7 @@ impl StreamPatcher {
                 }
             }
         }
+
 
         // [STEP 4] Directory Offset Rewrite (EOF Handling)
         // 4b: Copy the remaining directory entries from the input to the output.
