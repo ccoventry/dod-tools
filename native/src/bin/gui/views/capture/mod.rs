@@ -125,6 +125,8 @@ pub(crate) fn get_patcher_config() -> &'static Mutex<PatcherConfig> {
             resolution_height: 720,
             primary_media_dir: global.primary_media_dir.clone().map(PathBuf::from),
             backup_media_dir: global.backup_media_dir.clone().map(PathBuf::from),
+            movie_config: String::new(),
+            save_local_patched_copy: false,
         })
     })
 }
@@ -283,10 +285,8 @@ pub(crate) fn spawn_ingestion_thread(
 
                 log_markdown(&format!("Attempting Demo {}: {:?}", index + 1, file.file_name().unwrap_or_default()));
 
-                println!("-> Parsing: {:?}", file.file_name().unwrap_or_default());
                 match scan_demo_for_highlights(&file, &rules) {
-                    Ok((tickrate, streaks, is_pov, local_player_index)) => {
-                        println!("<- Success: {:?}", file.file_name().unwrap_or_default());
+                    Ok((tickrate, streaks, is_pov, local_player_index, playback_frames)) => {
                         let selectable: Vec<HighlightStreak> = streaks
                             .into_iter()
                             .map(|s| {
@@ -321,6 +321,7 @@ pub(crate) fn spawn_ingestion_thread(
                                 tickrate,
                                 is_pov,
                                 local_player_index,
+                                playback_frames,
                             };
 
                             // Lock is dropped immediately after modifying the collection.
@@ -340,9 +341,9 @@ pub(crate) fn spawn_ingestion_thread(
                     }
                     Err(err) => {
                         if err == "Unsupported HLTV proxy demo format" {
-                            eprintln!("ℹ Skipping HLTV proxy: {:?}", file.file_name().unwrap_or_default());
+                            log_markdown(&format!("- **[WARNING]** Skipped HLTV proxy demo: {:?}", file.file_name().unwrap_or_default()));
                         } else {
-                            eprintln!("⚠ Skipped corrupted demo {:?}: {}", file.file_name().unwrap_or_default(), err);
+                            log_markdown(&format!("- **[WARNING]** Skipped corrupted demo {:?}: {}", file.file_name().unwrap_or_default(), err));
                         }
                     }
                 }

@@ -285,6 +285,7 @@ pub struct DemoData {
     pub tickrate: f32,
     pub is_pov: bool,
     pub local_player_index: Option<usize>,
+    pub playback_frames: i32,
 }
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct CaptureJob {

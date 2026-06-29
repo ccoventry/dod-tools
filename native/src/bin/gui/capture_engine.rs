@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 use std::sync::{Arc, mpsc::Sender, atomic::{AtomicBool, Ordering}};
 use crate::types::{CaptureJob, EngineEvent};
+use native::log_markdown;
 
 /// Poll interval for the child-process watch loop (16 ms ≈ 60 FPS cadence).
 const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(16);
@@ -116,12 +117,12 @@ pub fn spawn_capture_engine(
                             }
                         };
 
-                        println!(">>> [DEBUG] Copying (Windows) from {}", source_path_str);
-                        println!(">>> [DEBUG] Copying (Windows) to {}", dest_path_str);
+                        log_markdown(&format!("- [IO] Copying (Windows) from {}", source_path_str));
+                        log_markdown(&format!("- [IO] Copying (Windows) to {}", dest_path_str));
                         match std::io::copy(&mut src_file, &mut dest_file) {
-                            Ok(bytes) => println!(">>> [DEBUG] Copy SUCCESS! Bytes written: {}", bytes),
+                            Ok(bytes) => log_markdown(&format!("- [IO] Copy SUCCESS! Bytes written: {}", bytes)),
                             Err(e) => {
-                                println!(">>> [DEBUG] Copy FAILED! Error: {}", e);
+                                log_markdown(&format!("- [IO] Copy FAILED! Error: {}", e));
                                 log_crash_abort!(tx, format!("Failed to copy demo to game folder: {}", e));
                                 continue;
                             }
@@ -130,19 +131,31 @@ pub fn spawn_capture_engine(
 
                     #[cfg(not(target_os = "windows"))]
                     {
-                        println!(">>> [DEBUG] Copying (*nix) from {}", source_path_str);
-                        println!(">>> [DEBUG] Copying (*nix) to {}", dest_path_str);
+                        log_markdown(&format!("- [IO] Copying (*nix) from {}", source_path_str));
+                        log_markdown(&format!("- [IO] Copying (*nix) to {}", dest_path_str));
                         match std::fs::copy(&job.patched_demo_path, &dest_demo_path) {
-                            Ok(bytes) => println!(">>> [DEBUG] Copy SUCCESS! Bytes written: {}", bytes),
+                            Ok(bytes) => log_markdown(&format!("- [IO] Copy SUCCESS! Bytes written: {}", bytes)),
                             Err(e) => {
-                                println!(">>> [DEBUG] Copy FAILED! Error: {}", e);
+                                log_markdown(&format!("- [IO] Copy FAILED! Error: {}", e));
                                 log_crash_abort!(tx, format!("Failed to copy demo to game folder: {}", e));
                                 continue;
                             }
                         }
                     }
                 } else {
-                    println!(">>> [DEBUG] Skipped copy: source and destination are identical.");
+                    log_markdown("- [IO] Skipped copy: source and destination are identical.");
+                }
+
+                if config.save_local_patched_copy {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        let _ = std::fs::create_dir_all("demos");
+                        let local_dest = std::path::Path::new("demos").join(&demo_filename);
+                        match std::fs::copy(&job.patched_demo_path, &local_dest) {
+                            Ok(_) => log_markdown(&format!("- [IO] Saved local copy to demos/{}", demo_filename)),
+                            Err(e) => log::warn!("Failed to save local patched copy to {:?}: {}", local_dest, e),
+                        }
+                    }
                 }
 
                 std::thread::sleep(std::time::Duration::from_millis(300));
@@ -159,9 +172,12 @@ pub fn spawn_capture_engine(
                     return;
                 }
 
+                let width_str = config.resolution_width.to_string();
+                let height_str = config.resolution_height.to_string();
+
                 let cmd_line_str = format!(
-                    "-game dod -insecure -windowed -w 1280 -h 720 +playdemo {} +playdemo {}",
-                    demo_name_no_ext, demo_name_no_ext
+                    "-game dod -insecure -windowed -w {} -h {} +alias dodtools_exit quit +playdemo {} +playdemo {}",
+                    width_str, height_str, demo_name_no_ext, demo_name_no_ext
                 );
 
                 let active_export_dir = config.primary_media_dir.clone().unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
@@ -190,8 +206,6 @@ pub fn spawn_capture_engine(
 
                 let width_str = config.resolution_width.to_string();
                 let height_str = config.resolution_height.to_string();
-                let active_export_dir_str = active_export_dir.to_string_lossy().to_string();
-                let separate_hud_str = if config.separate_hud { "1" } else { "0" };
 
                 let mut cmd = std::process::Command::new(hlae_path.as_ref());
                 cmd.args(&[
@@ -210,13 +224,16 @@ pub fn spawn_capture_engine(
                     &height_str,
                     "-forceAlpha",
                     "true",
-                    "+mirv_movie_filename",
-                    &active_export_dir_str,
-                    "+mirv_movie_separate_hud",
-                    separate_hud_str,
-                    "+exec",
-                    "movie.cfg",
                 ]);
+
+                if !config.movie_config.trim().is_empty() {
+                    let mut cfg_name = config.movie_config.trim().to_string();
+                    if cfg_name.ends_with(".cfg") {
+                        cfg_name.truncate(cfg_name.len() - 4);
+                    }
+                    cmd.arg("+exec");
+                    cmd.arg(format!("{}.cfg", cfg_name));
+                }
                 cmd.env("SteamAppId", "30");
 
                 if let Some(parent) = hlae_path.parent() {
