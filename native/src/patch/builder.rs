@@ -37,21 +37,24 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
         let separate_hud_str = if config.separate_hud { "1" } else { "0" };
         primer_init.push(format!("mirv_movie_separate_hud {}", separate_hud_str));
 
-        primer_init.push("playdemo chain_01".to_string());
-
         let primer_out = if let Some(ref out_dir) = config.output_dir {
             out_dir.join("primer.dem")
         } else {
             std::path::PathBuf::from("primer.dem")
         };
 
+        // Delay playdemo chain_01 to tick 500 (~5 seconds) to allow the engine to fully finish the 
+        // 2-second GoldSrc server handshake without buffer overflows before jumping to the first real chain.
+        let mut primer_scheduled = Vec::new();
+        primer_scheduled.push((500, "playdemo chain_01".to_string()));
+
         jobs.push(PatchJob {
-            source_demo: first_source,
+            source_demo: first_source.clone(),
             output_demo: primer_out,
             streaks: Vec::new(),
             target_player: None,
             init_commands: primer_init,
-            scheduled_commands: Vec::new(),
+            scheduled_commands: primer_scheduled,
         });
     }
 
@@ -95,8 +98,9 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
         // Generate scheduled commands
         let mut scheduled_commands = Vec::new();
         
-        // Initialize Engine Speed at Tick 0
-        scheduled_commands.push((0, format!("host_framerate {}", config.fast_forward_speed)));
+        // Initialize Engine Speed after Initial Load Delay
+        let initial_delay_ticks = (config.initial_delay * demo_fps) as i32;
+        scheduled_commands.push((initial_delay_ticks, format!("host_framerate {}", config.fast_forward_speed)));
 
         for (i, streak) in merged_streaks.iter().enumerate() {
             let pre_roll_ticks = (config.pre_roll_seconds * demo_fps) as i32;
@@ -139,8 +143,9 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
             } else if job_idx < total_jobs - 1 {
                 // Last streak, but NOT the last demo in the batch
                 let next_chain = format!("chain_{:02}", job_idx + 2);
-                scheduled_commands.push((record_stop_tick, format!("mirv_recordmovie_stop; playdemo {}", next_chain)));
+                scheduled_commands.push((record_stop_tick, "mirv_recordmovie_stop".to_string()));
                 scheduled_commands.push((record_stop_tick, format!("echo \"[dod-tools] Stop Frame {}\"", record_stop_tick)));
+                scheduled_commands.push((record_stop_tick + 2, format!("playdemo {}", next_chain)));
             } else {
                 // Last streak of the final demo
                 scheduled_commands.push((record_stop_tick, "mirv_recordmovie_stop".to_string()));

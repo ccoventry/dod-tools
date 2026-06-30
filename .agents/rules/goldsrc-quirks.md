@@ -29,3 +29,9 @@ description: Critical rules and constraints regarding the GoldSrc engine, HLAE, 
 * **HLAE Output Commands (Hallucination Warning):** GoldSrc HLAE does *not* support modern CS:GO commands (e.g., `mirv_streams`). Frame exports must be driven strictly via `+mirv_movie_filename <dir>` and `+mirv_movie_separate_hud <0|1>`. Use `playdemo <name>` instead of `demo_gototick` (GoldSrc cannot scrub backwards or jump arbitrarily). Use `cam_track 1` instead of `spec_player`.
 * **HLAE Initialization Context:** `hlae.exe` will silently fail to inject `AfxHookGoldSrc.dll` if it cannot resolve its internal dependencies. You must explicitly chain `.current_dir(hlae_folder_path)` to the `std::process::Command` builder before invoking `.spawn()`.
 * **Semantic Engine Terminology:** The execution engine relies entirely on HLAE injection for features like `mirv_movie_filename`. Do not rename capture architecture to "Native", as this breaks the execution context and abandons necessary hook parameters like `-hookDllPath` and `-programPath`.
+* **Engine Timing & `host_framerate`:** In GoldSrc, `host_framerate` defines **frame time** (virtual demo time advanced per physical frame rendered), not frames-per-second.
+  * `host_framerate 0` (Dynamic / Real-time): Disables fixed frame pacing. The engine uses the system clock to advance the demo, resulting in exactly **1.0x normal speed** (though it may uncap rendering FPS).
+  * `host_framerate 0.01` (Fixed Normal Speed): Forces exactly 0.01 seconds per frame. At 100 FPS, this equals **1.0x normal speed**.
+  * `host_framerate 0.2` (Fast Forward): Forces 0.2 seconds per frame. At 100 FPS, this is **20x speed**.
+  * `host_framerate 1.0` (Insane Fast Forward): Forces 1 second per frame. At 100 FPS, this is **100x speed**.
+  * *(Reference: [GoldSrc Engine Physics & Frame Rate](https://www.jwchong.com/hl/game.html#frame-rate))*

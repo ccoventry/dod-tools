@@ -56,6 +56,8 @@ pub struct CaptureStreak {
     pub end_index: usize,
     pub total_demo_frames: i32,
     pub demo_fps: f32,
+    #[serde(skip, default)]
+    pub frame_times: Arc<Vec<f32>>,
 }
 
 impl CaptureStreak {
@@ -126,6 +128,7 @@ pub struct PatcherConfig {
     pub backup_media_dir: Option<std::path::PathBuf>,
     pub movie_config: String,
     pub save_local_patched_copy: bool,
+    pub add_condebug: bool,
 }
 
 impl Default for PatcherConfig {
@@ -135,7 +138,7 @@ impl Default for PatcherConfig {
             post_roll_ticks: 60,
             capture_fps: 300,
             exit_on_finish: true,
-            init_commands: vec!["host_framerate 0".to_string()],
+            init_commands: Vec::new(),
             custom_commands: Vec::new(),
             pre_roll_seconds: 2.0,
             post_roll_seconds: 0.6,
@@ -152,6 +155,7 @@ impl Default for PatcherConfig {
             backup_media_dir: None,
             movie_config: String::new(),
             save_local_patched_copy: false,
+            add_condebug: false,
         }
     }
 }

@@ -242,6 +242,8 @@ pub struct HighlightStreak {
     pub kills: Vec<(i32, f32, String)>,
     pub start_index: usize,
     pub end_index: usize,
+    #[serde(skip, default)]
+    pub frame_times: std::sync::Arc<Vec<f32>>,
 }
 
 impl HighlightStreak {

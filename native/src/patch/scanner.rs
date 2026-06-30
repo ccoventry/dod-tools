@@ -42,6 +42,48 @@ pub fn scan_demo_for_highlights(
     let analysis = analysis::Analysis::try_from_bytes(&bytes)
         .map_err(|e| format!("Failed to parse demo: {}", e))?;
 
+    let mut frame_times: Vec<f32> = Vec::with_capacity(analysis.demo_info.playback_frames as usize);
+    if bytes.len() >= 544 {
+        let directory_offset = i32::from_le_bytes(bytes[540..544].try_into().unwrap()) as usize;
+        let mut pos = 544;
+        let end = if directory_offset > 0 && directory_offset <= bytes.len() { directory_offset } else { bytes.len() };
+        while pos + 9 <= end {
+            let type_byte = bytes[pos];
+            if type_byte > 9 && type_byte != 255 {
+                break;
+            }
+            if type_byte != 5 && type_byte != 255 {
+                let time = f32::from_le_bytes(bytes[pos+1..pos+5].try_into().unwrap());
+                frame_times.push(time);
+            }
+            pos += 9;
+            match type_byte {
+                0 | 1 => {
+                    if pos + 468 > end { break; }
+                    let len = i32::from_le_bytes(bytes[pos+464..pos+468].try_into().unwrap()) as usize;
+                    pos += 468 + len;
+                },
+                2 | 5 | 255 => {},
+                3 => pos += 64,
+                4 => pos += 32,
+                6 => pos += 84,
+                7 => pos += 8,
+                8 => {
+                    if pos + 8 > end { break; }
+                    let len = u32::from_le_bytes(bytes[pos+4..pos+8].try_into().unwrap()) as usize;
+                    pos += 24 + len;
+                },
+                9 => {
+                    if pos + 4 > end { break; }
+                    let len = u32::from_le_bytes(bytes[pos..pos+4].try_into().unwrap()) as usize;
+                    pos += 4 + len;
+                },
+                _ => break,
+            }
+        }
+    }
+    let frame_times_arc = std::sync::Arc::new(frame_times);
+
     let mut tickrate = if analysis.demo_info.playback_time > 0.0 {
         analysis.demo_info.playback_frames as f32 / analysis.demo_info.playback_time
     } else {
@@ -107,6 +149,7 @@ pub fn scan_demo_for_highlights(
                 end_index,
                 total_demo_frames: analysis.demo_info.playback_frames,
                 demo_fps: tickrate,
+                frame_times: frame_times_arc.clone(),
             };
             streak.update_visuals();
             streaks.push(streak);
