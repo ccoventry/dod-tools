@@ -55,6 +55,7 @@ pub struct CaptureStreak {
     pub start_index: usize,
     pub end_index: usize,
     pub total_demo_frames: i32,
+    pub demo_fps: f32,
 }
 
 impl CaptureStreak {

@@ -1,5 +1,5 @@
 use native::patch::scanner::scan_demo_for_highlights;
-use native::patch::types::{HighlightRules, PatcherConfig};
+use native::patch::types::HighlightRules;
 
 fn main() {
     let path = std::path::Path::new("demos/ktps8w3_gorilla_dicE_____G.dem");

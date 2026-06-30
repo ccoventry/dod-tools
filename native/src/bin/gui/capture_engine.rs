@@ -42,13 +42,14 @@ pub fn spawn_capture_engine(
                 return;
             }
 
-            let dod_dir = match hl_path.parent() {
-                Some(parent) => parent.join("dod"),
+            let hl_exe_parent = match hl_path.parent() {
+                Some(parent) => parent,
                 None => {
                     log_crash_abort!(tx, "Invalid hl.exe path: hl_path has no parent");
                     return;
                 }
             };
+            let dod_dir = hl_exe_parent.join("dod");
 
             let dll_path = match hlae_path.parent() {
                 Some(parent) => parent.join("AfxHookGoldSrc.dll"),
@@ -58,8 +59,11 @@ pub fn spawn_capture_engine(
                 }
             };
 
+            let mut active_dest_paths = Vec::new();
+            let dummy_path = hl_exe_parent.join("DOD_BATCH_DONE");
+            std::fs::remove_dir_all(&dummy_path).ok();
+
             for job in jobs {
-                // ── Cancellation check before each new job ─────────────────────
                 if cancel_token.load(Ordering::Relaxed) {
                     let _ = tx.send(EngineEvent::Cancelled);
                     return;
@@ -142,8 +146,6 @@ pub fn spawn_capture_engine(
                             }
                         }
                     }
-                } else {
-                    log_markdown("- [IO] Skipped copy: source and destination are identical.");
                 }
 
                 if config.save_local_patched_copy {
@@ -158,142 +160,155 @@ pub fn spawn_capture_engine(
                     }
                 }
 
-                std::thread::sleep(std::time::Duration::from_millis(300));
+                active_dest_paths.push(dest_demo_path);
+            }
 
-                let demo_name_no_ext = match std::path::Path::new(&demo_filename).file_stem() {
-                    Some(stem) => stem.to_string_lossy().to_string(),
-                    None => demo_filename.clone(),
-                };
+            if active_dest_paths.is_empty() {
+                let _ = tx.send(EngineEvent::AllCompleted);
+                return;
+            }
 
-                if tx.send(EngineEvent::Launching(demo_name_no_ext.clone())).is_err() {
-                    log_crash_abort!(tx, "Failed to send Launching event (channel disconnected)");
-                    #[cfg(not(debug_assertions))]
-                    let _ = std::fs::remove_file(&dest_demo_path);
+            if tx.send(EngineEvent::Launching("Batch Queue".into())).is_err() {
+                log_crash_abort!(tx, "Failed to send Launching event (channel disconnected)");
+                #[cfg(not(debug_assertions))]
+                for path in &active_dest_paths {
+                    let _ = std::fs::remove_file(path);
+                }
+                return;
+            }
+
+            let active_export_dir = config.primary_media_dir.clone().unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                use sysinfo::{System, SystemExt, DiskExt};
+                let mut sys = System::new_all();
+                sys.refresh_disks_list();
+                
+                let mut available_space = u64::MAX;
+                let mut disk_found = false;
+                for disk in sys.disks() {
+                    if active_export_dir.starts_with(disk.mount_point()) {
+                        available_space = disk.available_space();
+                        disk_found = true;
+                        break;
+                    }
+                }
+
+                if disk_found && available_space < 15_u64 * 1024 * 1024 * 1024 {
+                    log_crash_abort!(tx, "Capture aborted: Target drive has less than 15GB free space.");
                     return;
                 }
-
-                let width_str = config.resolution_width.to_string();
-                let height_str = config.resolution_height.to_string();
-
-                let cmd_line_str = format!(
-                    "-game dod -insecure -windowed -w {} -h {} +alias dodtools_exit quit +playdemo {} +playdemo {}",
-                    width_str, height_str, demo_name_no_ext, demo_name_no_ext
-                );
-
-                let active_export_dir = config.primary_media_dir.clone().unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
-
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                    use sysinfo::{System, SystemExt, DiskExt};
-                    let mut sys = System::new_all();
-                    sys.refresh_disks_list();
-                    
-                    let mut available_space = u64::MAX;
-                    let mut disk_found = false;
-                    for disk in sys.disks() {
-                        if active_export_dir.starts_with(disk.mount_point()) {
-                            available_space = disk.available_space();
-                            disk_found = true;
-                            break;
-                        }
-                    }
-
-                    if disk_found && available_space < 15_u64 * 1024 * 1024 * 1024 {
-                        log_crash_abort!(tx, "Capture aborted: Target drive has less than 15GB free space.");
-                        return;
-                    }
-                }
-
-                let width_str = config.resolution_width.to_string();
-                let height_str = config.resolution_height.to_string();
-
-                let mut cmd = std::process::Command::new(hlae_path.as_ref());
-                cmd.args(&[
-                    "-customLoader",
-                    "-noGui",
-                    "-autoStart",
-                    "-hookDllPath",
-                    &dll_path.to_string_lossy(),
-                    "-programPath",
-                    &hl_path.to_string_lossy(),
-                    "-cmdLine",
-                    &cmd_line_str,
-                    "-w",
-                    &width_str,
-                    "-h",
-                    &height_str,
-                    "-forceAlpha",
-                    "true",
-                ]);
-
-                if !config.movie_config.trim().is_empty() {
-                    let mut cfg_name = config.movie_config.trim().to_string();
-                    if cfg_name.ends_with(".cfg") {
-                        cfg_name.truncate(cfg_name.len() - 4);
-                    }
-                    cmd.arg("+exec");
-                    cmd.arg(format!("{}.cfg", cfg_name));
-                }
-                cmd.env("SteamAppId", "30");
-
-                if let Some(parent) = hlae_path.parent() {
-                    cmd.current_dir(parent);
-                }
-
-                let mut child = match cmd.spawn() {
-                    Ok(c) => c,
-                    Err(e) => {
-                        log_crash_abort!(tx, format!("Failed to spawn HLAE (OS Error): {}", e));
-                        #[cfg(not(debug_assertions))]
-                        let _ = std::fs::remove_file(&dest_demo_path);
-                        continue;
-                    }
-                };
-
-                // ── Polling wait loop — checks cancel token every POLL_INTERVAL ──
-                let exit_status = loop {
-                    // Check cancellation first on every tick.
-                    if cancel_token.load(Ordering::Relaxed) {
-                        // Gracefully kill the child process before bailing.
-                        let _ = child.kill();
-                        let _ = child.wait(); // reap so we don't leak a zombie
-                        #[cfg(not(debug_assertions))]
-                        if let Err(e) = std::fs::remove_file(&dest_demo_path) {
-                            log::warn!("Failed to delete temporary demo upon cancellation: {}", e);
-                        }
-                        let _ = tx.send(EngineEvent::Cancelled);
-                        return;
-                    }
-
-                    match child.try_wait() {
-                        Ok(Some(status)) => break Ok(status),
-                        Ok(None) => {
-                            // Child still running — sleep and poll again.
-                            std::thread::sleep(POLL_INTERVAL);
-                        }
-                        Err(e) => break Err(e),
-                    }
-                };
-
-                match exit_status {
-                    Ok(_) => {
-                        let _ = tx.send(EngineEvent::Finished(demo_name_no_ext.clone()));
-                    }
-                    Err(e) => {
-                        log_crash_abort!(tx, format!("Failed to wait for HLAE: {}", e));
-                        #[cfg(not(debug_assertions))]
-                        let _ = std::fs::remove_file(&dest_demo_path);
-                        continue;
-                    }
-                }
-
-                // TODO: Re-enable temporary demo cleanup once the Phase 7 capture pipeline is fully verified.
-                // if let Err(e) = std::fs::remove_file(&dest_demo_path) {
-                //     log::warn!("Failed to delete temporary demo upon success: {}", e);
-                // }
-
-
             }
+
+            let width_str = config.resolution_width.to_string();
+            let height_str = config.resolution_height.to_string();
+
+            let cmd_line_str = format!(
+                "-game dod -insecure -windowed -w {} -h {} +playdemo primer",
+                width_str, height_str
+            );
+
+            let mut cmd = std::process::Command::new(hlae_path.as_ref());
+            cmd.args(&[
+                "-customLoader",
+                "-noGui",
+                "-autoStart",
+                "-hookDllPath",
+                &dll_path.to_string_lossy(),
+                "-programPath",
+                &hl_path.to_string_lossy(),
+                "-cmdLine",
+                &cmd_line_str,
+                "-w",
+                &width_str,
+                "-h",
+                &height_str,
+                "-forceAlpha",
+                "true",
+            ]);
+
+            if !config.movie_config.trim().is_empty() {
+                let mut cfg_name = config.movie_config.trim().to_string();
+                if cfg_name.ends_with(".cfg") {
+                    cfg_name.truncate(cfg_name.len() - 4);
+                }
+                cmd.arg("+exec");
+                cmd.arg(format!("{}.cfg", cfg_name));
+            }
+            cmd.env("SteamAppId", "30");
+
+            if let Some(parent) = hlae_path.parent() {
+                cmd.current_dir(parent);
+            }
+
+            let cfg_path = dod_dir.join("dod_quit.cfg");
+            std::fs::write(&cfg_path, "quit\n").ok();
+
+            let mut child = match cmd.spawn() {
+                Ok(c) => c,
+                Err(e) => {
+                    log_crash_abort!(tx, format!("Failed to spawn HLAE (OS Error): {}", e));
+                    #[cfg(not(debug_assertions))]
+                    for path in &active_dest_paths {
+                        let _ = std::fs::remove_file(path);
+                    }
+                    std::fs::remove_file(&cfg_path).ok();
+                    return;
+                }
+            };
+
+            let mut last_log_check = std::time::Instant::now();
+            while let Ok(None) = child.try_wait() {
+                if cancel_token.load(Ordering::Relaxed) {
+                    let _ = child.kill();
+                    break;
+                }
+                if last_log_check.elapsed().as_millis() > 1000 {
+                    if dummy_path.exists() {
+                        let _ = child.kill();
+                        break;
+                    }
+                    last_log_check = std::time::Instant::now();
+                }
+                std::thread::sleep(std::time::Duration::from_millis(16));
+            }
+            let exit_status = child.wait(); // reap
+
+            if cancel_token.load(Ordering::Relaxed) {
+                #[cfg(not(debug_assertions))]
+                for path in &active_dest_paths {
+                    let _ = std::fs::remove_file(path);
+                }
+                std::fs::remove_file(&cfg_path).ok();
+                std::fs::remove_dir_all(&dummy_path).ok();
+                let _ = tx.send(EngineEvent::Cancelled);
+                return;
+            }
+
+            std::fs::remove_file(&cfg_path).ok();
+            std::fs::remove_dir_all(&dummy_path).ok();
+
+            match exit_status {
+                Ok(_) => {
+                    let _ = tx.send(EngineEvent::Finished("Batch Queue".into()));
+                }
+                Err(e) => {
+                    log_crash_abort!(tx, format!("Failed to wait for HLAE: {}", e));
+                }
+            }
+
+            // TODO: Re-enable temporary demo cleanup once the Phase 7 capture pipeline is fully verified.
+            // #[cfg(not(debug_assertions))]
+            // {
+            //     if !engine_aborted {
+            //         for path in active_dest_paths {
+            //             if let Err(e) = std::fs::remove_file(&path) {
+            //                 log::warn!("Failed to delete temporary demo upon success: {}", e);
+            //             }
+            //         }
+            //     }
+            // }
 
             let _ = tx.send(EngineEvent::AllCompleted);
         })

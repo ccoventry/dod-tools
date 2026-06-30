@@ -607,6 +607,7 @@ pub fn render(
                                 start_index: streak.start_index,
                                 end_index: streak.end_index,
                                 total_demo_frames: demo.playback_frames,
+                                demo_fps: demo.tickrate,
                             });
                         }
                     }
