@@ -409,8 +409,16 @@ pub fn render(
                     .range(0.01..=10.0).speed(0.01));
             });
 
-            // Row 4: Capture FPS
+            // Row 4: Resolution & Capture FPS
             ui.horizontal(|ui| {
+                ui.label("Width:");
+                ui.add(egui::DragValue::new(&mut patcher_config.resolution_width)
+                    .range(640..=7680).speed(1));
+                ui.add_space(10.0);
+                ui.label("Height:");
+                ui.add(egui::DragValue::new(&mut patcher_config.resolution_height)
+                    .range(480..=4320).speed(1));
+                ui.add_space(10.0);
                 ui.label("Capture FPS:");
                 ui.add(egui::DragValue::new(&mut patcher_config.capture_fps)
                     .range(30..=1000).speed(1));
@@ -428,10 +436,22 @@ pub fn render(
                     .on_hover_text("If enabled, the game will automatically inject the 'quit' command after the final clip to close the game.");
             });
 
-            // Row 5.6: Save Local Patched Copy
-            ui.horizontal(|ui| {
-                ui.checkbox(&mut patcher_config.save_local_patched_copy, "Save a copy of patched demo to ./demos/")
-                    .on_hover_text("If enabled, a copy of the patched .dem file will be saved to the workspace's demos/ folder for debugging.");
+            // Row 6: Debugging Settings
+            ui.group(|ui| {
+                ui.vertical(|ui| {
+                    ui.heading("🐛 Debugging Settings");
+                    ui.add_space(4.0);
+                    
+                    ui.horizontal(|ui| {
+                        ui.checkbox(&mut patcher_config.add_condebug, "Add Condebug to Launch Commands")
+                            .on_hover_text("If enabled, '-condebug' will be added to the launch arguments to generate a qconsole.log file.");
+                    });
+                    
+                    ui.horizontal(|ui| {
+                        ui.checkbox(&mut patcher_config.save_local_patched_copy, "Save a copy of patched demo to ./demos/")
+                            .on_hover_text("If enabled, a copy of the patched .dem file will be saved to the workspace's demos/ folder for debugging.");
+                    });
+                });
             });
 
             ui.add_space(8.0);
@@ -608,6 +628,7 @@ pub fn render(
                                 end_index: streak.end_index,
                                 total_demo_frames: demo.playback_frames,
                                 demo_fps: demo.tickrate,
+                                frame_times: streak.frame_times.clone(),
                             });
                         }
                     }

@@ -124,6 +124,7 @@ pub fn render(
                                     end_index: streak.end_index,
                                     total_demo_frames: demo.playback_frames,
                                     demo_fps: demo.tickrate,
+                                    frame_times: streak.frame_times.clone(),
                                 });
                             }
                         }

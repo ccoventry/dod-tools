@@ -3,8 +3,6 @@ use std::sync::{Arc, mpsc::Sender, atomic::{AtomicBool, Ordering}};
 use crate::types::{CaptureJob, EngineEvent};
 use native::log_markdown;
 
-/// Poll interval for the child-process watch loop (16 ms ≈ 60 FPS cadence).
-const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(16);
 
 pub fn spawn_capture_engine(
     jobs: Vec<CaptureJob>,
@@ -204,13 +202,19 @@ pub fn spawn_capture_engine(
             let width_str = config.resolution_width.to_string();
             let height_str = config.resolution_height.to_string();
 
+            let condebug_flag = if config.add_condebug { "-condebug " } else { "" };
+
             let cmd_line_str = format!(
-                "-game dod -insecure -windowed -w {} -h {} +playdemo primer",
-                width_str, height_str
+                "-game dod {}-insecure -windowed -w {} -h {} +playdemo primer",
+                condebug_flag, width_str, height_str
             );
 
+            let primary_dir = config.primary_media_dir.clone().unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+            let dummy_path = primary_dir.join("DOD_BATCH_DONE");
+            let _ = std::fs::remove_dir_all(&dummy_path);
+
             let mut cmd = std::process::Command::new(hlae_path.as_ref());
-            cmd.args(&[
+            cmd.args([
                 "-customLoader",
                 "-noGui",
                 "-autoStart",
@@ -245,7 +249,7 @@ pub fn spawn_capture_engine(
             let cfg_path = dod_dir.join("dod_quit.cfg");
             std::fs::write(&cfg_path, "quit\n").ok();
 
-            let mut child = match cmd.spawn() {
+            let _child = match cmd.spawn() {
                 Ok(c) => c,
                 Err(e) => {
                     log_crash_abort!(tx, format!("Failed to spawn HLAE (OS Error): {}", e));
@@ -258,22 +262,14 @@ pub fn spawn_capture_engine(
                 }
             };
 
-            let mut last_log_check = std::time::Instant::now();
-            while let Ok(None) = child.try_wait() {
-                if cancel_token.load(Ordering::Relaxed) {
-                    let _ = child.kill();
+            let start_time = std::time::Instant::now();
+            loop {
+                if cancel_token.load(Ordering::Relaxed) || (start_time.elapsed().as_secs() > 10 && dummy_path.exists()) {
+                    std::process::Command::new("taskkill").args(&["/F", "/IM", "hl.exe"]).output().ok();
                     break;
                 }
-                if last_log_check.elapsed().as_millis() > 1000 {
-                    if dummy_path.exists() {
-                        let _ = child.kill();
-                        break;
-                    }
-                    last_log_check = std::time::Instant::now();
-                }
-                std::thread::sleep(std::time::Duration::from_millis(16));
+                std::thread::sleep(std::time::Duration::from_millis(500));
             }
-            let exit_status = child.wait(); // reap
 
             if cancel_token.load(Ordering::Relaxed) {
                 #[cfg(not(debug_assertions))]
@@ -289,14 +285,7 @@ pub fn spawn_capture_engine(
             std::fs::remove_file(&cfg_path).ok();
             std::fs::remove_dir_all(&dummy_path).ok();
 
-            match exit_status {
-                Ok(_) => {
-                    let _ = tx.send(EngineEvent::Finished("Batch Queue".into()));
-                }
-                Err(e) => {
-                    log_crash_abort!(tx, format!("Failed to wait for HLAE: {}", e));
-                }
-            }
+            let _ = tx.send(EngineEvent::Finished("Batch Queue".into()));
 
             // TODO: Re-enable temporary demo cleanup once the Phase 7 capture pipeline is fully verified.
             // #[cfg(not(debug_assertions))]

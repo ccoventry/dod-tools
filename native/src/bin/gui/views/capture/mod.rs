@@ -110,7 +110,7 @@ pub(crate) fn get_patcher_config() -> &'static Mutex<PatcherConfig> {
             post_roll_ticks: 60,
             capture_fps: 300,
             exit_on_finish: true,
-            init_commands: vec!["host_framerate 0".to_string()],
+            init_commands: Vec::new(),
             custom_commands: global.custom_commands.clone(),
             pre_roll_seconds: global.capture_pre_record_buffer,
             post_roll_seconds: global.post_record_buffer,
@@ -127,6 +127,7 @@ pub(crate) fn get_patcher_config() -> &'static Mutex<PatcherConfig> {
             backup_media_dir: global.backup_media_dir.clone().map(PathBuf::from),
             movie_config: String::new(),
             save_local_patched_copy: false,
+            add_condebug: false,
         })
     })
 }
@@ -308,6 +309,7 @@ pub(crate) fn spawn_ingestion_thread(
                                     kills: s.kills,
                                     start_index: s.start_index,
                                     end_index: s.end_index,
+                                    frame_times: s.frame_times,
                                 }
                             })
                             .collect();
