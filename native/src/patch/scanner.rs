@@ -106,6 +106,7 @@ pub fn scan_demo_for_highlights(
                 start_index: 0,
                 end_index,
                 total_demo_frames: analysis.demo_info.playback_frames,
+                demo_fps: tickrate,
             };
             streak.update_visuals();
             streaks.push(streak);

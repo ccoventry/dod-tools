@@ -121,7 +121,6 @@ impl StreamPatcher {
 
         // Step 3: Zero-Allocation Copy Loop
         let mut scratch_buf = Vec::new();
-        let mut baseline_tick: Option<i32> = None;
         let mut frame_counter = 0i32;
 
         loop {
@@ -150,7 +149,6 @@ impl StreamPatcher {
 
             if type_byte == 2 && is_first_frame {
                 playback_started = true;
-                baseline_tick = Some(file_tick);
                 writer.write_all(&frame_hdr)?;
                 for cmd in &job.init_commands {
                     let b = write_console_cmd(&mut writer, time, file_tick, cmd)?;
@@ -419,6 +417,8 @@ mod tests {
                     kills: Vec::new(),
                     start_index: 0,
                     end_index: 0,
+                    total_demo_frames: 3000,
+                    demo_fps: 100.0,
                 }
             ],
             target_player: None,
@@ -509,6 +509,8 @@ mod tests {
                     kills: Vec::new(),
                     start_index: 0,
                     end_index: 0,
+                    total_demo_frames: 3000,
+                    demo_fps: 100.0,
                 }
             ],
             target_player: None,
