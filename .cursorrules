@@ -1,0 +1,3 @@
+Always reference the .instructions file or .cursorrules in the workspace root for behavioral rules. Use the docs/ folder for modular project knowledge; do not read documentation files unless explicitly needed for the current task. Always provide code as minimal diffs/blocks.
+WASM Constraint: The GUI compiles to wasm32-unknown-unknown. Never import standard file I/O (std::fs) or native threading crates inside UI modules without explicit conditional gating: #[cfg(not(target_arch = "wasm32"))].
+Lock-Free Layouts: Treat existing atomic debouncers, RwLock architectures, and channel structures as immutable patterns. Avoid introducing blocking mutexes on the UI thread to ensure zero micro-stutters.

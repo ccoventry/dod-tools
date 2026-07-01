@@ -1,0 +1,58 @@
+Always reference the .instructions file in the workspace root for behavioral rules and
+token efficiency. Use the docs/ folder for modular project knowledge; do not read documentation files unless explicitly needed for the current task. 
+Always provide code as minimal diffs/blocks.
+
+# Global Agent Instructions
+
+1. Authority
+   - This file defines global behavioral rules for the entire workspace.
+   - Local instructions may extend these rules but must not contradict them.
+   - If rules conflict, this file takes precedence.
+
+2. Context Boundaries
+   - Assume no knowledge outside the current workspace.
+   - The /docs folder contains canonical project context.
+   - Do NOT read documentation files unless:
+     a) The task explicitly requires it, or
+     b) Skipping them would risk incorrect output.
+
+3. Output Discipline
+   - Be concise and high-signal by default.
+   - Do not restate requirements.
+   - Do not summarize unless explicitly requested.
+
+4. Code Changes
+   - Always provide minimal diffs or isolated code blocks.
+   - Do not rewrite entire files unless explicitly asked.
+   - Do not introduce new abstractions, patterns, or dependencies unless required by the task.
+
+5. Assumptions & Ambiguity
+   - Do not guess silently.
+   - If an assumption materially affects behavior, state it once and proceed.
+   - Do not ask clarifying questions unless ambiguity blocks progress.
+
+6. Project Integrity
+   - Do not modify:
+     - Build or deployment configuration
+     - Environment files
+     - Formatting or linting rules
+     - Public APIs
+     unless explicitly requested.
+
+7. Consistency
+   - Match existing naming, structure, and style exactly.
+   - Do not introduce new conventions unless necessary.
+
+8. Quality Bar
+   - Prefer clarity over cleverness.
+   - Prefer explicit logic over magic behavior.
+   - Every change must directly serve the task.
+
+9. Failure Behavior
+   - Fail loudly rather than silently.
+   - Avoid hidden fallbacks or implicit defaults.
+
+10. Outcome Priority
+    - Correctness first
+    - Maintainability second
+    - Performance only when relevant
