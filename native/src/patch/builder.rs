@@ -9,6 +9,52 @@ use crate::patch::types::{
 };
 use crate::patch::engine::StreamPatcher;
 
+// ── Frame-time helpers ───────────────────────────────────────────────────────
+
+/// Walk backwards from `start_frame` (0-indexed) through `frame_times` until
+/// `gap_seconds` of real demo time has been accumulated. Returns the 0-indexed
+/// frame where that time boundary is reached. Clamps to frame 0 if the gap
+/// exceeds the available history before the start frame.
+fn find_tick_backwards(start_frame: usize, gap_seconds: f32, frame_times: &[f32]) -> i32 {
+    if frame_times.is_empty() || gap_seconds <= 0.0 {
+        return start_frame as i32;
+    }
+    let anchor_time = frame_times.get(start_frame).copied().unwrap_or(0.0);
+    let target_time = anchor_time - gap_seconds;
+    // Walk backwards until we cross target_time
+    let mut frame = start_frame;
+    while frame > 0 {
+        frame -= 1;
+        if frame_times[frame] <= target_time {
+            return frame as i32;
+        }
+    }
+    0
+}
+
+/// Walk forwards from `start_frame` (0-indexed) through `frame_times` until
+/// `gap_seconds` of real demo time has accumulated. Returns the 0-indexed
+/// frame where that time boundary is reached. Clamps to the last valid frame
+/// if the end of the array is reached before the gap is satisfied.
+fn find_tick_forwards(start_frame: usize, gap_seconds: f32, frame_times: &[f32]) -> i32 {
+    if frame_times.is_empty() || gap_seconds <= 0.0 {
+        return start_frame as i32;
+    }
+    let anchor_time = frame_times.get(start_frame).copied().unwrap_or(0.0);
+    let target_time = anchor_time + gap_seconds;
+    let last = frame_times.len().saturating_sub(1);
+    let mut frame = start_frame;
+    while frame < last {
+        frame += 1;
+        if frame_times[frame] >= target_time {
+            return frame as i32;
+        }
+    }
+    last as i32
+}
+
+const LOG_TAG: &str = "[dod]";
+
 // ── Batch queue builder ───────────────────────────────────────────────────────
 
 pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig) -> Vec<PatchJob> {
@@ -102,23 +148,47 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
         let initial_delay_ticks = (config.initial_delay * demo_fps) as i32;
         scheduled_commands.push((initial_delay_ticks, format!("host_framerate {}", config.fast_forward_speed)));
 
-        for (i, streak) in merged_streaks.iter().enumerate() {
-            let pre_roll_ticks = (config.pre_roll_seconds * demo_fps) as i32;
-            let record_lead_ticks = (config.record_start_lead * demo_fps) as i32;
-            let record_trail_ticks = (config.record_stop_trail * demo_fps) as i32;
-            let post_roll_ticks = (config.post_roll_seconds * demo_fps) as i32;
+        // EOF safety: walk backwards 3 seconds from the demo's final frame to get
+        // the hard clamp boundary. All exit/termination commands must land at or
+        // before this frame to guarantee the trigger fires before GoldSrc drops.
+        let eof_safe_frame: i32 = if let Some(first_streak) = merged_streaks.first() {
+            if !first_streak.frame_times.is_empty() {
+                let last_frame = first_streak.total_demo_frames.max(1) as usize - 1;
+                find_tick_backwards(last_frame, 3.0, &first_streak.frame_times)
+            } else {
+                first_streak.total_demo_frames.saturating_sub(250).max(0)
+            }
+        } else {
+            0
+        };
 
-            let stabilize_start_tick = streak.start_tick.saturating_sub(record_lead_ticks + pre_roll_ticks).max(0);
-            let record_start_tick = streak.start_tick.saturating_sub(record_lead_ticks).max(0);
-            let record_stop_tick = streak.end_tick.saturating_add(record_trail_ticks);
-            let post_roll_end_tick = record_stop_tick.saturating_add(post_roll_ticks);
+        for (i, streak) in merged_streaks.iter().enumerate() {
+            let frame_times = &streak.frame_times;
+
+            // --- Time-aware clip bounds using sequential frame-time iteration ---
+            // All tick values produced here are 0-indexed to match engine.rs frame_counter.
+            let record_start_tick = find_tick_backwards(streak.start_tick as usize, config.record_start_lead, frame_times);
+            let stabilize_start_tick = find_tick_backwards(record_start_tick.max(0) as usize, config.pre_roll_seconds, frame_times);
+            let record_stop_tick  = std::cmp::min(
+                find_tick_forwards(streak.end_tick as usize, config.record_stop_trail, frame_times),
+                eof_safe_frame,
+            );
+            let safe_end_tick = std::cmp::min(
+                find_tick_forwards(record_stop_tick.max(0) as usize, config.post_roll_seconds, frame_times),
+                eof_safe_frame,
+            );
+
+            let lead_gap_frames = streak.start_tick.saturating_sub(record_start_tick);
+            let preroll_gap_frames = record_start_tick.saturating_sub(stabilize_start_tick);
 
             // Preroll commands
             scheduled_commands.push((stabilize_start_tick, "host_framerate 0".to_string()));
-            scheduled_commands.push((stabilize_start_tick, "echo \"[dod-tools] host_framerate 0\"".to_string()));
+            scheduled_commands.push((stabilize_start_tick, format!("echo \"{} host_framerate 0\"", LOG_TAG)));
+            scheduled_commands.push((stabilize_start_tick, format!("echo \"{} Lead: {}f/{}s\"", LOG_TAG, lead_gap_frames, config.record_start_lead)));
+            scheduled_commands.push((stabilize_start_tick, format!("echo \"{} Pre: {}f/{}s\"", LOG_TAG, preroll_gap_frames, config.pre_roll_seconds)));
 
             scheduled_commands.push((stabilize_start_tick + 5, "stopsound".to_string()));
-            scheduled_commands.push((stabilize_start_tick + 5, "echo \"[dod-tools] stopsound\"".to_string()));
+            scheduled_commands.push((stabilize_start_tick + 5, format!("echo \"{} stopsound\"", LOG_TAG)));
 
             // Custom command overrides
             for custom in &config.custom_commands {
@@ -132,25 +202,36 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
             // Record start (Atomic execution to prevent delta frame rendering)
             let fps_cmd = format!("mirv_movie_fps {}; mirv_recordmovie_start", config.capture_fps);
             scheduled_commands.push((record_start_tick, fps_cmd.clone()));
-            scheduled_commands.push((record_start_tick, format!("echo \"[dod-tools] Start Frame {}\"", record_start_tick)));
+            scheduled_commands.push((record_start_tick, format!("echo \"{} Start Frame {}\"", LOG_TAG, record_start_tick)));
 
             // Record stop & post roll
+            scheduled_commands.push((record_stop_tick, "mirv_recordmovie_stop".to_string()));
+            scheduled_commands.push((record_stop_tick, format!("echo \"{} Stop Frame {}\"", LOG_TAG, record_stop_tick)));
+
             if i < merged_streaks.len() - 1 {
                 // Not the last streak, resume fast forward
-                scheduled_commands.push((record_stop_tick, "mirv_recordmovie_stop".to_string()));
-                scheduled_commands.push((record_stop_tick, format!("echo \"[dod-tools] Stop Frame {}\"", record_stop_tick)));
-                scheduled_commands.push((post_roll_end_tick, format!("host_framerate {}", config.fast_forward_speed)));
+                // Guard: only fast-forward if there is enough real-time gap before the
+                // next clip's stabilize window, so the audio flush is not trampled.
+                let next_streak = &merged_streaks[i + 1];
+                let next_stabilize_tick = find_tick_backwards(
+                    find_tick_backwards(next_streak.start_tick as usize, config.record_start_lead, &next_streak.frame_times).max(0) as usize,
+                    config.pre_roll_seconds,
+                    &next_streak.frame_times,
+                );
+
+                if safe_end_tick < next_stabilize_tick {
+                    scheduled_commands.push((safe_end_tick, format!("host_framerate {}", config.fast_forward_speed)));
+                } else {
+                    scheduled_commands.push((safe_end_tick, format!("echo \"{} Skip FF (Audio Guard)\"", LOG_TAG)));
+                }
             } else if job_idx < total_jobs - 1 {
                 // Last streak, but NOT the last demo in the batch
                 let next_chain = format!("chain_{:02}", job_idx + 2);
-                scheduled_commands.push((record_stop_tick, "mirv_recordmovie_stop".to_string()));
-                scheduled_commands.push((record_stop_tick, format!("echo \"[dod-tools] Stop Frame {}\"", record_stop_tick)));
-                scheduled_commands.push((record_stop_tick + 2, format!("playdemo {}", next_chain)));
+                scheduled_commands.push((safe_end_tick, format!("playdemo {}", next_chain)));
             } else {
                 // Last streak of the final demo
-                scheduled_commands.push((record_stop_tick, "mirv_recordmovie_stop".to_string()));
-                scheduled_commands.push((record_stop_tick + 1, "mirv_movie_filename DOD_BATCH_DONE".to_string()));
-                scheduled_commands.push((record_stop_tick + 2, "mirv_movie_fps 1; mirv_recordmovie_start".to_string()));
+                scheduled_commands.push((safe_end_tick, "mirv_movie_filename \"DOD_TOOLS_EXIT_TRIGGER\"".to_string()));
+                scheduled_commands.push((safe_end_tick + 1, "mirv_movie_fps 1; mirv_recordmovie_start".to_string()));
             }
         }
 

@@ -2,6 +2,11 @@
 
 ## 1. Recently Completed Tasks
 
+### Capture Engine Timeline Stabilization (July 1, 2026)
+* **Time-Aware 0-Indexed Bounds:** Resurrected `find_tick_backwards` and `find_tick_forwards` to bypass map change jumps, calculating exact bounds via float timestamps while returning engine-safe 0-indexed frame integers.
+* **Payload Truncation:** Extracted logging strings into a `LOG_TAG` constant (`[dod]`) and aggressively abbreviated diagnostic payloads to prevent 64-byte `Cbuf_AddTextToBuffer` overflow corruption.
+* **EOF Safety Buffer & Audio Guards:** Clamped all sequence termination commands within a strict 3.0-second margin from the demo's end to prevent early engine drop, and added lookahead guards to prevent fast-forwarding over overlapping audio-flush windows.
+
 ### I/O Optimization & Capture Engine Fixes
 * **Logging Refactor (I/O Bottlenecks):** Replaced `println!` and `eprintln!` with `log_markdown` in `capture_engine.rs` and `views/capture/mod.rs` to eliminate disk I/O bottlenecks and parsing log spam during demo scanning.
 * **Capture Configuration Logging:** Added exact configuration payload logging `[CAPTURE CONFIG PAYLOAD]` to the session log in `select.rs` before building batch queues.
@@ -67,10 +72,12 @@
 * **Tauri & Vite Integration:** Ongoing migration of the frontend stack from native `egui` to a Tauri + Vite architecture. (Note: Excluded from primary architecture docs until finalized).
 
 ### Upcoming Tasks
-1. **Config Injection:** Ensure the engine dynamically injects `+exec movie.cfg` into the HLAE command line arguments to preserve custom capture framerates and HUD settings.
-2. **Long Demo Validation:** Validate capture sequence for 30+ minute demos.
-3. **Packet Audit:** Audit `.dem` packet length consistency.
-4. **Packet Initialization Rule:** Formalize GoldSrc packet memory initialization rule.
+1. **Graceful Degradation for Clutch Clips:** Update `builder.rs` to handle edge cases where a kill occurs inside the 3.0-second EOF danger zone. The patcher must gracefully sacrifice the post-roll and schedule the `DOD_TOOLS_EXIT_TRIGGER` exactly 5 ticks before the absolute final frame to ensure the highlight is captured without crashing the batch.
+2. **Config Injection:** Ensure the engine dynamically injects `+exec movie.cfg` into the HLAE command line arguments to preserve custom capture framerates and HUD settings.
+3. **Long Demo Validation:** Validate capture sequence for 30+ minute demos.
+4. **Packet Audit:** Audit `.dem` packet length consistency.
+5. **Packet Initialization Rule:** Formalize GoldSrc packet memory initialization rule.
+6. **Meta-Task: Standardize Milestones Architecture:** Design and document a strict, immutable markdown layout for this file to completely prevent AI-driven format drift across future sessions.
 
 ## 3. Future Tech Debt & Enhancements
 
