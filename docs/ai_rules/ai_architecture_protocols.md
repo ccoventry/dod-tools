@@ -7,7 +7,7 @@ Your job is NOT to write raw code for me to copy-paste. Your job is to:
 1. Brainstorm solutions, map architecture, and analyze constraints.
 2. Run S-Tier Diagnostics on my ideas and the IDE AI's proposed changes.
 3. Generate highly optimized, blob-proof, step-by-step prompts for me to feed to the IDE AI.
-- **Proactive Context Lookup:** If the user proposes a task that requires specific architectural, domain, or conventional knowledge not found in the "Mandatory 4" bootstrap files (architecture.md, domain_quirks.md, milestones.md, ai_architecture_protocols.md), I must reference the project tree mapped in README.md and explicitly ask the user for the specific missing file from the docs/ folder before proceeding.
+- **Proactive Context Lookup:** If the user proposes a task that requires specific architectural, domain, or conventional knowledge not found in `bootstrap_payload.md`, I must reference the project tree mapped in README.md and explicitly ask the user for the specific missing file from the docs/ folder before proceeding.
 
 ## 2. The S-Tier Diagnostic Framework
 Analyze the preceding response through a multi-dimensional evaluation framework that measures both technical excellence and user-centered effectiveness. Begin with a rapid dual-perspective assessment that examines the response simultaneously from the requestor's viewpoint and from quality assurance standards.
@@ -47,21 +47,20 @@ You must act as a forensic knowledge extractor. Scan the entire conversation his
 - Ignore standard syntax or UI changes that worked perfectly. Focus EXCLUSIVELY on "gotchas" (e.g., engine quirks, threading deadlocks, hallucinated commands).
 - If we encountered an error and fixed it, extract the underlying rule that prevents that error.
 - Capture any workflow friction points: if the AI read too many tokens, hallucinated a tool, or misunderstood a command, extract the protocol needed to prevent it in the future.
-Output the results as a raw, bulleted Markdown list grouped into `GoldSrc/HLAE Engine Quirks`, `Rust/Architecture Constraints`, and `Agent Protocols & Workflow Optimizations`. You must use your file editing tools to AUTOMATICALLY APPEND these harvested rules to `docs/session_lessons.md`. Do not rely on the user to copy-paste them.
+- **The Null-Harvest Guardrail:** If the session went perfectly smoothly and no new unique gotchas, engine quirks, or workflow friction points were discovered, you are strictly forbidden from inventing rules or duplicating existing entries from documentation. Instead, you must explicitly output: *"Knowledge Extraction: No new lessons or engine quirks discovered in this session."*
+Output the results as a ready-to-copy **IDE AI Prompt** formatted in a single markdown code block. This prompt must provide the exact harvested rules (grouped by `GoldSrc/HLAE Engine Quirks`, `Rust/Architecture Constraints`, etc.) and explicitly instruct the IDE AI to append them to the appropriate documentation files (like `docs/session_lessons.md` or `local/draft_rules.md`). Do not assume you have file editing tools; you must provide the prompt for the user to pass to the IDE.
 
 **Part 2: 📦 Context Payload (State Transfer)**
-Output a minified markdown code block designed to seed the new chat window. It MUST include:
-- **CRITICAL BOOTSTRAP INSTRUCTION:** Read `docs/ai_rules/ai_architecture_protocols.md` before processing context.
+Output a ready-to-copy IDE AI Prompt containing your minified state payload. Instruct the IDE AI to overwrite the `## Web AI State` section of `docs/active_context.md` with your payload.
+The minified payload MUST include:
 - The current overarching goal.
 - The specific crate, file, and function last edited.
 - Any unresolved compiler errors or bugs.
-- The exact next step or terminal command to execute.
-Keep this payload as concise as possible to consume minimum tokens.
+
+**Final User Action:** After generating the IDE AI Prompt, you must output a completely separate, standalone markdown code block containing exactly: `.\build_bootstrap.ps1`. Explicitly instruct the user to click and run this command in their terminal *after* the IDE AI has successfully saved its state, guaranteeing the `bootstrap_payload.md` is freshly compiled for the next session.
+
+**Part 3: The IDE AI State Write**
+When executing the Web AI's Context Handoff prompt, the IDE AI must also evaluate its own immediate state and overwrite the `## IDE AI State` section of `docs/active_context.md` with its own minified payload (including the exact next terminal command to execute or file to edit).
 
 ## 5. Web AI Bootstrapping Protocol
-When the user starts a fresh chat window with you (the Web AI), they must provide the following core files to establish your context map:
-1. `docs/ai_rules/ai_architecture_protocols.md` (Your diagnostic and prompting framework).
-2. `docs/architecture.md` (Rust, UI, and WASM constraints).
-3. `docs/domain_quirks.md` (GoldSrc and HLAE engine rules).
-4. `docs/milestones.md` (The active task backlog).
-*Note: If resuming an active task, the user must also paste the "Context Payload" generated at the end of the previous session.*
+When the user starts a fresh chat window with you (the Web AI), they must provide the unified `bootstrap_payload.md` file to establish your context map. Do not ask for the fragmented source documentation files individually.

@@ -6,6 +6,7 @@
 - **Audio Desync on Time Warping:** Fast-forwarding (`host_framerate 1`) breaks engine audio buffers. The speed must drop back to real-time (`host_framerate 0`) exactly 2 to 4 seconds prior to injecting `mirv_recordmovie_start` to flush and resync the audio engine.
 - **The First-Load Black Map Bug:** GoldSrc fails to render lighting on the first demo load of a session. A stripped "Primer Demo" must be loaded first, which then daisy-chains into the real demo via `playdemo` to pre-cache map assets.
 - **The Post-Roll Jailbreak:** Injecting the terminal capture command (e.g., `DOD_BATCH_DONE`) at `record_stop_tick` acts as an immediate kill switch, jailbreaking the engine out of the configured post-roll screen time. Terminal commands must strictly be delayed until `post_roll_end_tick`.
+- **High-Precision Frame Pacing:** `host_framerate` accepts high-precision decimals (e.g., `0.00001`). This can be used as an "infinite microscope" for frame-by-frame engine debugging, or to artificially stretch network packet processing across thousands of physical frames to prevent `SZ_GetSpace: overflow on netchan->message` crashes during heavy map initialization bursts.
 
 ## Data Parsing Rules
 - **Playdemo Stream Streamlining:** The `playdemo` command acts as a pure sequential stream reader and bypasses the trailing directory index table. It is immune to directory offset mismatch crashes, making it mandatory for automated pipelines over `viewdemo`.
