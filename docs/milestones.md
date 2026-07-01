@@ -23,6 +23,26 @@
 * **Decoupled Patcher & Telemetry:** Threaded the batch patcher, added f32 progress, and 2MB safety caps.
 * **Timeline Pre-calculation:** Built `K98, (+0:15) Luger` strings in background via absolute frame timestamps.
 * **UI-Level POV Filtering:** Added UI toggle for non-recording players to retain safe parser data.
+
+### Phase 12.5: Capture Pipeline Stabilization & Rendering Upgrades (Completed)
+* **Rendering Enhancements:** Implemented HLCR codec selection, NVENC hardware acceleration, and alpha routing.
+* **Drive Failover:** Implemented dynamic multi-demo drive failover to handle storage capacity issues mid-batch.
+* **Quality of Life & Resilience:** Added path collision checks, an AV (Antivirus) file-lock retry loop, configuration persistence, and folder picker bookmarks.
+* **Diagnostics:** Expanded debug tools and enhanced crash logging specifically for the capture engine.
+
+### Phase 12: Continuous Batch Processing (Completed)
+#### Daisy-Chain Architecture
+* **Continuous Batch Processing:** GoldSrc ignores `quit` commands in demo streams. To solve this and reduce process launch overhead, the engine will process demos in a single continuous batch without closing the game.
+* **Stateful Patcher Routing:** The patcher must accept `next_demo_filename` as state.
+* **Chaining Command:** If a next demo exists, inject `mirv_recordmovie_stop; playdemo <next_demo>`.
+* **Completion Command:** If it is the last demo, inject `mirv_recordmovie_stop; disconnect; clear; echo "[dod-tools] BATCH COMPLETE"`.
+* **40-Character Truncation Limit:** Patched `.dem` filenames must be strictly truncated or hashed before chaining so the 1998 engine buffer doesn't clip them.
+
+#### Primer Demo Strategy (Lighting Fix)
+* **First-Load Black Map Bug:** To fix the GoldSrc first-load black map bug, the UI/engine must duplicate the first demo in the batch and save it as `primer_ptch.dem`.
+* **Asset Pre-Caching:** The patcher will strip all killstreaks from `primer_ptch.dem` and inject `playdemo <first_real_demo>` immediately after the `DemoStart` frame to pre-cache map assets.
+* **Capture Engine Startup:** The capture engine will launch HLAE strictly using `+playdemo primer_ptch`.
+
 ### Phase 11: Capture Integration (Completed Items)
 * **Target Directory Selector:** Implemented a UI directory picker to define where raw BMP/WAV takes are saved. Routed off the OS drive.
 * **Disk Space Pre-Flight Check:** Integrated `sysinfo` check before launching engine to halt if target drive has < 15GB free space.
@@ -43,17 +63,8 @@
 
 ## 2. 🚨 Active Priority — Finalize Game Capture Pipeline
 
-### Daisy-Chain Architecture
-* **Continuous Batch Processing:** GoldSrc ignores `quit` commands in demo streams. To solve this and reduce process launch overhead, the engine will process demos in a single continuous batch without closing the game.
-* **Stateful Patcher Routing:** The patcher must accept `next_demo_filename` as state.
-* **Chaining Command:** If a next demo exists, inject `mirv_recordmovie_stop; playdemo <next_demo>`.
-* **Completion Command:** If it is the last demo, inject `mirv_recordmovie_stop; disconnect; clear; echo "[dod-tools] BATCH COMPLETE"`.
-* **40-Character Truncation Limit:** Patched `.dem` filenames must be strictly truncated or hashed before chaining so the 1998 engine buffer doesn't clip them.
-
-### Primer Demo Strategy (Lighting Fix)
-* **First-Load Black Map Bug:** To fix the GoldSrc first-load black map bug, the UI/engine must duplicate the first demo in the batch and save it as `primer_ptch.dem`.
-* **Asset Pre-Caching:** The patcher will strip all killstreaks from `primer_ptch.dem` and inject `playdemo <first_real_demo>` immediately after the `DemoStart` frame to pre-cache map assets.
-* **Capture Engine Startup:** The capture engine will launch HLAE strictly using `+playdemo primer_ptch`.
+### WIP: Frontend Migration
+* **Tauri & Vite Integration:** Ongoing migration of the frontend stack from native `egui` to a Tauri + Vite architecture. (Note: Excluded from primary architecture docs until finalized).
 
 ### Upcoming Tasks
 1. **Config Injection:** Ensure the engine dynamically injects `+exec movie.cfg` into the HLAE command line arguments to preserve custom capture framerates and HUD settings.
@@ -70,7 +81,6 @@
 * **Context:** Review the project to decouple logic, abstract UI components into separate modules/files, and clean up deprecated code. This is an ongoing radar item to maintain code health and readability.
 
 ### Phase 11 & 12 Enhancements (Deferred)
-* **Dynamic Multi-Demo Drive Failover:** Implement lookahead logic in the session queue. Before launching HLAE for the next demo in a batch, check if `Primary Capture Directory` has enough space. If not, dynamically intercept the payload and route to `Backup Capture Directory` to prevent mid-batch crashes.
 * **Batch Queue UI Re-integration:** Restore and integrate the `batch_queue_ui` to allow users to queue up multiple demos for continuous, unattended processing.
 * **HLTV Parser Upgrade:** Reverse-engineer the GoldSrc HLTV proxy byte structure in `patch.rs` to allow the engine to parse massive server-side demos and generate player-specific queues.
 * **Rendering & Finalization:** Handling the resulting `.mov` files.
@@ -119,48 +129,3 @@
 * **Fixes:** Dash-in-filename truncation bug, viewdemo frame_count overflow/array corruption.
 * **Memory Optimizations:** Refactored StreamPatcher to use `std::io::copy` and a unified `scratch_buf` to eliminate all heap allocations within the loop.
 </details>
-
-## 5. Latest Crash / Test Logs (For Debugging)
-
-**Test Run (June 24, 2026)**
-```
-Half-Life Advanced Effects (May 25 2026) loaded.
-
-Playing demo from jlynch_banditsv_BAN_monday_ptch.dem.
-Playing demo from jlynch_banditsv_BAN_monday_ptch.dem.
-
-BUILD 8308 SERVER (0 CRC)
-Server # 12
-Warning! File overviews/dod_saints_b7.txt missing during demo playback.
-Warning! File overviews/dod_saints_b7.bmp missing during demo playback.
-No demos listed with startdemos
-] playdemo jlynch_banditsv_BAN_monday_ptch
-Playing demo from jlynch_banditsv_BAN_monday_ptch.dem.
-
-BUILD 8308 SERVER (0 CRC)
-Server # 12
-Warning! File overviews/dod_saints_b7.txt missing during demo playback.
-Warning! File overviews/dod_saints_b7.bmp missing during demo playback.
-] playdemo jlynch_banditsv_BAN_monday_ptch
-Playing demo from jlynch_banditsv_BAN_monday_ptch.dem.
-
-BUILD 8308 SERVER (0 CRC)
-Server # 12
-Warning! File overviews/dod_saints_b7.txt missing during demo playback.
-Warning! File overviews/dod_saints_b7.bmp missing during demo playback.
-] viewdemo jlynch_banditsv_BAN_monday_ptch
-Playing demo from jlynch_banditsv_BAN_monday_ptch.dem.
->
-BUILD 8308 SERVER (0 CRC)
-Server # 12
-
-Added 1088 resources.
-Received baseline with 234 entities.
-Protocol Version 48, Spawn count 12 
-Warning! File overviews/dod_saints_b7.bmp missing during demo playback.
-Warning! File overviews/dod_saints_b7.txt missing during demo playback.
-WARNING! DemoFile::ReadDemoPacket: message length > MAX_POSSIBLE_MSG
-Demo file completely loaded.
-Disconnected.
-Automatic connection retry...
-```
