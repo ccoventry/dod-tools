@@ -601,6 +601,8 @@ pub fn render(
 
                     set_is_patching(true);
 
+                    patcher_config.session_id = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
+
                     // Build the flat payload from all selected, filter-passing streaks.
                     let mut payload = Vec::new();
                     for demo in queued_demos_shared.iter() {

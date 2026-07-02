@@ -128,6 +128,7 @@ pub(crate) fn get_patcher_config() -> &'static Mutex<PatcherConfig> {
             movie_config: String::new(),
             save_local_patched_copy: false,
             add_condebug: false,
+            session_id: String::new(),
         })
     })
 }

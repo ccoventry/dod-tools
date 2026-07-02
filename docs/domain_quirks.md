@@ -15,3 +15,5 @@
 - **Alignment:** Network messages expect exactly 468 bytes of header data before reading payload lengths.
 - **Filenames:** Filenames for playdemo calls must be strictly alphanumeric with underscores (_) and under 40 characters.
 - **HLAE Commands:** Use mirv_movie_filename and mirv_movie_fps. Do not use modern CS:GO commands like mirv_streams.
+- **Alias Nested Quotes (The Exec Bypass):** GoldSrc cannot parse nested quotes inside aliases. When complex commands like absolute paths require quotes, they must be written to individual `.cfg` files and executed via `exec filename.cfg` instead of injected directly into an alias.
+- **Strict Path Slashes:** HLAE strictly requires backslashes (`\`) for file paths. Forward slashes (`/`) will cause directory creation or path resolution failures. When generating paths dynamically in Rust, you must explicitly sanitize and replace all forward slashes with double-escaped backslashes (`.replace("/", "\\\\")`).
