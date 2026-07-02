@@ -129,6 +129,7 @@ pub struct PatcherConfig {
     pub movie_config: String,
     pub save_local_patched_copy: bool,
     pub add_condebug: bool,
+    pub session_id: String,
 }
 
 impl Default for PatcherConfig {
@@ -156,6 +157,7 @@ impl Default for PatcherConfig {
             movie_config: String::new(),
             save_local_patched_copy: false,
             add_condebug: false,
+            session_id: String::new(),
         }
     }
 }

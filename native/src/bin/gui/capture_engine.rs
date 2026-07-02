@@ -205,7 +205,7 @@ pub fn spawn_capture_engine(
             let condebug_flag = if config.add_condebug { "-condebug " } else { "" };
 
             let cmd_line_str = format!(
-                "-game dod {}-insecure -windowed -w {} -h {} +playdemo primer",
+                "-game dod {}-insecure -windowed -w {} -h {} +exec dod_tools_helper.cfg +playdemo primer",
                 condebug_flag, width_str, height_str
             );
 

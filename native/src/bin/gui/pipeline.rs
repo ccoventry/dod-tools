@@ -411,7 +411,7 @@ pub fn start_capture_pipeline(
             let hook_dll = hlae_dir.join("AfxHookGoldSrc.dll");
             let hook_dll_str = hook_dll.to_string_lossy().to_string();
 
-            let args_str = format!("-game dod -insecure -windowed -w 1280 -h 720 +playdemo {}", demo_name_no_ext);
+            let args_str = format!("-game dod -insecure -windowed -w 1280 -h 720 +exec dod_tools_helper.cfg +playdemo {}", demo_name_no_ext);
             let mut cmd = tokio::process::Command::new(&hlae_path);
             cmd.kill_on_drop(true);
             cmd.env("SteamAppId", "30");

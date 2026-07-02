@@ -70,15 +70,29 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
 
     let mut jobs = Vec::new();
     let total_jobs = sorted_groups.len();
+    
+    let mut helper_cfg_content = String::new();
+    
+    // Remove stale config
+    if let Some(ref out_dir) = config.output_dir {
+        let _ = std::fs::remove_file(out_dir.join("dod_tools_helper.cfg"));
+    }
+    
+    helper_cfg_content.push_str("alias sys_normal_speed \"host_framerate 0\"\n");
+    helper_cfg_content.push_str(&format!("alias sys_fast_forward \"host_framerate {}\"\n", config.fast_forward_speed));
+    helper_cfg_content.push_str("alias sys_sound \"stopsound\"\n");
+    helper_cfg_content.push_str("alias sys_record_start \"mirv_recordmovie_start\"\n");
+    helper_cfg_content.push_str("alias sys_record_stop \"mirv_recordmovie_stop\"\n");
+    let active_export_dir = config.primary_media_dir.clone().unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+    let dummy_trigger_path = active_export_dir.join("DOD_TOOLS_EXIT_TRIGGER").to_string_lossy().replace("\\", "/").replace("/", "\\\\");
+    helper_cfg_content.push_str(&format!("alias sys_hlae_done_path \"mirv_movie_filename \\\"{}\\\"\"\n\n", dummy_trigger_path));
+
+    let mut global_streak_idx = 0;
 
     // 1. Primer Job
     if total_jobs > 0 {
         let first_source = sorted_groups[0].0.0.clone();
         let mut primer_init = config.init_commands.clone();
-        
-        let active_export_dir = config.primary_media_dir.clone().unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
-        let active_export_dir_str = active_export_dir.to_string_lossy().to_string();
-        primer_init.push(format!("mirv_movie_filename \"{}\"", active_export_dir_str));
         
         let separate_hud_str = if config.separate_hud { "1" } else { "0" };
         primer_init.push(format!("mirv_movie_separate_hud {}", separate_hud_str));
@@ -92,7 +106,8 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
         // Delay playdemo chain_01 to tick 500 (~5 seconds) to allow the engine to fully finish the 
         // 2-second GoldSrc server handshake without buffer overflows before jumping to the first real chain.
         let mut primer_scheduled = Vec::new();
-        primer_scheduled.push((500, "playdemo chain_01".to_string()));
+        helper_cfg_content.push_str("alias primer_start \"playdemo chain_01\"\n");
+        primer_scheduled.push((500, "primer_start".to_string()));
 
         jobs.push(PatchJob {
             source_demo: first_source.clone(),
@@ -130,7 +145,9 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
             }
         }
 
-        let output_name = format!("chain_{:02}.dem", job_idx + 1);
+        let demo_name = format!("chain_{:02}", job_idx + 1);
+        let next_demo_name = format!("chain_{:02}", job_idx + 2);
+        let output_name = format!("{}.dem", demo_name);
         let path = std::path::Path::new(&source_demo);
         let mut output_demo = path.with_file_name(&output_name);
 
@@ -141,97 +158,88 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
             output_demo = out_dir.join(&output_name);
         }
 
+        let active_export_dir = config.primary_media_dir.clone().unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+        let session_dir = if !config.session_id.is_empty() {
+            active_export_dir.join(&config.session_id)
+        } else {
+            active_export_dir
+        };
+        if !session_dir.exists() {
+            let _ = std::fs::create_dir_all(&session_dir);
+        }
+        let safe_path = session_dir.join(&demo_name).to_string_lossy().replace("\\", "/").replace("/", "\\\\");
+
+        helper_cfg_content.push_str(&format!("alias path_{} \"mirv_movie_filename \\\"{}\\\"\"\n", demo_name, safe_path));
+        
+        if job_idx < total_jobs - 1 {
+            helper_cfg_content.push_str(&format!("alias route_{} \"playdemo {}\"\n", demo_name, next_demo_name));
+        } else {
+            helper_cfg_content.push_str(&format!("alias route_{} \"sys_hlae_done_path\"\n", demo_name));
+        }
+
         // Generate scheduled commands
         let mut scheduled_commands = Vec::new();
+        scheduled_commands.push((0, format!("path_{}", demo_name)));
         
         // Initialize Engine Speed after Initial Load Delay
         let initial_delay_ticks = (config.initial_delay * demo_fps) as i32;
-        scheduled_commands.push((initial_delay_ticks, format!("host_framerate {}", config.fast_forward_speed)));
-
-        // EOF safety: walk backwards 3 seconds from the demo's final frame to get
-        // the hard clamp boundary. All exit/termination commands must land at or
-        // before this frame to guarantee the trigger fires before GoldSrc drops.
-        let eof_safe_frame: i32 = if let Some(first_streak) = merged_streaks.first() {
-            if !first_streak.frame_times.is_empty() {
-                let last_frame = first_streak.total_demo_frames.max(1) as usize - 1;
-                find_tick_backwards(last_frame, 3.0, &first_streak.frame_times)
-            } else {
-                first_streak.total_demo_frames.saturating_sub(250).max(0)
-            }
-        } else {
-            0
-        };
+        scheduled_commands.push((initial_delay_ticks, "sys_fast_forward".to_string()));
 
         for (i, streak) in merged_streaks.iter().enumerate() {
+            let s_idx = global_streak_idx;
+            global_streak_idx += 1;
+
             let frame_times = &streak.frame_times;
 
-            // --- Time-aware clip bounds using sequential frame-time iteration ---
-            // All tick values produced here are 0-indexed to match engine.rs frame_counter.
             let record_start_tick = find_tick_backwards(streak.start_tick as usize, config.record_start_lead, frame_times);
-            let stabilize_start_tick = find_tick_backwards(record_start_tick.max(0) as usize, config.pre_roll_seconds, frame_times);
-            let record_stop_tick  = std::cmp::min(
-                find_tick_forwards(streak.end_tick as usize, config.record_stop_trail, frame_times),
-                eof_safe_frame,
-            );
-            let safe_end_tick = std::cmp::min(
-                find_tick_forwards(record_stop_tick.max(0) as usize, config.post_roll_seconds, frame_times),
-                eof_safe_frame,
-            );
-
-            let lead_gap_frames = streak.start_tick.saturating_sub(record_start_tick);
-            let preroll_gap_frames = record_start_tick.saturating_sub(stabilize_start_tick);
-
-            // Preroll commands
-            scheduled_commands.push((stabilize_start_tick, "host_framerate 0".to_string()));
-            scheduled_commands.push((stabilize_start_tick, format!("echo \"{} host_framerate 0\"", LOG_TAG)));
-            scheduled_commands.push((stabilize_start_tick, format!("echo \"{} Lead: {}f/{}s\"", LOG_TAG, lead_gap_frames, config.record_start_lead)));
-            scheduled_commands.push((stabilize_start_tick, format!("echo \"{} Pre: {}f/{}s\"", LOG_TAG, preroll_gap_frames, config.pre_roll_seconds)));
-
-            scheduled_commands.push((stabilize_start_tick + 5, "stopsound".to_string()));
-            scheduled_commands.push((stabilize_start_tick + 5, format!("echo \"{} stopsound\"", LOG_TAG)));
+            let s_speed_tick = find_tick_backwards(record_start_tick.max(0) as usize, 3.0, frame_times);
+            let s_sound_tick = find_tick_backwards(record_start_tick.max(0) as usize, 1.0, frame_times);
+            let safe_tickrate = demo_fps;
+            let target_exit_tick = find_tick_forwards(streak.end_tick as usize, config.record_stop_trail, frame_times) as i32;
+            let post_roll_ticks = (config.post_roll_seconds * safe_tickrate) as i32;
+            
+            let eof_safe_frame = (frame_times.len() as i32).saturating_sub(15);
+            
+            let (record_stop_tick, safe_end_tick) = if (target_exit_tick + post_roll_ticks) >= eof_safe_frame {
+                crate::log_markdown("⚠️ **Clutch Clip Detected:** Post-roll truncated to save batch near EOF.");
+                let forced_exit = eof_safe_frame;
+                let forced_stop = (forced_exit - 15).max(0); // 15-tick stagger prevents Cbuf overflow
+                (target_exit_tick.min(forced_stop), forced_exit)
+            } else {
+                let r_stop = std::cmp::min(target_exit_tick, eof_safe_frame);
+                let s_end = std::cmp::min(
+                    find_tick_forwards(r_stop.max(0) as usize, config.post_roll_seconds, frame_times),
+                    eof_safe_frame,
+                );
+                (r_stop, s_end)
+            };
 
             // Custom command overrides
-            for custom in &config.custom_commands {
+            for (c_idx, custom) in config.custom_commands.iter().enumerate() {
                 let target_tick = match custom.relation {
                     CommandRelation::Before => streak.start_tick - (custom.offset * demo_fps) as i32,
                     CommandRelation::After => streak.end_tick + (custom.offset * demo_fps) as i32,
                 };
-                scheduled_commands.push((target_tick.max(0), custom.command.clone()));
+                let custom_alias = format!("s{}_custom_{}", s_idx, c_idx);
+                helper_cfg_content.push_str(&format!("alias {} \"{}\"\n", custom_alias, custom.command));
+                scheduled_commands.push((target_tick.max(0), custom_alias));
             }
 
-            // Record start (Atomic execution to prevent delta frame rendering)
-            let fps_cmd = format!("mirv_movie_fps {}; mirv_recordmovie_start", config.capture_fps);
-            scheduled_commands.push((record_start_tick, fps_cmd.clone()));
-            scheduled_commands.push((record_start_tick, format!("echo \"{} Start Frame {}\"", LOG_TAG, record_start_tick)));
+            // At Pre-roll Speed Flush
+            scheduled_commands.push((s_speed_tick, "sys_normal_speed".to_string()));
+            
+            // At Sound Flush
+            scheduled_commands.push((s_sound_tick, "sys_sound".to_string()));
 
-            // Record stop & post roll
-            scheduled_commands.push((record_stop_tick, "mirv_recordmovie_stop".to_string()));
-            scheduled_commands.push((record_stop_tick, format!("echo \"{} Stop Frame {}\"", LOG_TAG, record_stop_tick)));
+            // At Start Frame
+            scheduled_commands.push((record_start_tick, "sys_record_start".to_string()));
 
-            if i < merged_streaks.len() - 1 {
-                // Not the last streak, resume fast forward
-                // Guard: only fast-forward if there is enough real-time gap before the
-                // next clip's stabilize window, so the audio flush is not trampled.
-                let next_streak = &merged_streaks[i + 1];
-                let next_stabilize_tick = find_tick_backwards(
-                    find_tick_backwards(next_streak.start_tick as usize, config.record_start_lead, &next_streak.frame_times).max(0) as usize,
-                    config.pre_roll_seconds,
-                    &next_streak.frame_times,
-                );
+            // At End Frame
+            scheduled_commands.push((record_stop_tick, "sys_record_stop; sys_fast_forward".to_string()));
 
-                if safe_end_tick < next_stabilize_tick {
-                    scheduled_commands.push((safe_end_tick, format!("host_framerate {}", config.fast_forward_speed)));
-                } else {
-                    scheduled_commands.push((safe_end_tick, format!("echo \"{} Skip FF (Audio Guard)\"", LOG_TAG)));
-                }
-            } else if job_idx < total_jobs - 1 {
-                // Last streak, but NOT the last demo in the batch
-                let next_chain = format!("chain_{:02}", job_idx + 2);
-                scheduled_commands.push((safe_end_tick, format!("playdemo {}", next_chain)));
-            } else {
-                // Last streak of the final demo
-                scheduled_commands.push((safe_end_tick, "mirv_movie_filename \"DOD_TOOLS_EXIT_TRIGGER\"".to_string()));
-                scheduled_commands.push((safe_end_tick + 1, "mirv_movie_fps 1; mirv_recordmovie_start".to_string()));
+            if i == merged_streaks.len() - 1 {
+                // At Absolute EOF
+                scheduled_commands.push((safe_end_tick, format!("route_{}", demo_name)));
             }
         }
 
@@ -240,10 +248,8 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
 
         let mut final_init_commands = config.init_commands.clone();
 
-        let active_export_dir = config.primary_media_dir.clone().unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
-        let active_export_dir_str = active_export_dir.to_string_lossy().to_string();
-        final_init_commands.push(format!("mirv_movie_filename \"{}\"", active_export_dir_str));
-        
+        final_init_commands.push(format!("mirv_movie_fps {}", config.capture_fps));
+
         let separate_hud_str = if config.separate_hud { "1" } else { "0" };
         final_init_commands.push(format!("mirv_movie_separate_hud {}", separate_hud_str));
 
@@ -255,6 +261,15 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
             init_commands: final_init_commands,
             scheduled_commands,
         });
+    }
+    
+    // Write dod_tools_helper.cfg
+    if let Some(ref out_dir) = config.output_dir {
+        if !out_dir.exists() {
+            let _ = std::fs::create_dir_all(out_dir);
+        }
+        let cfg_path = out_dir.join("dod_tools_helper.cfg");
+        let _ = std::fs::write(&cfg_path, helper_cfg_content);
     }
 
     jobs

@@ -1088,11 +1088,28 @@ impl eframe::App for Gui {
                 #[cfg(not(target_arch = "wasm32"))]
                 GuiMessage::CaptureStudioFinished => {
                     self.capture_studio_state = CaptureStudioState::Render;
-                    if let Some(game_dir) = std::path::Path::new(&self.settings.game_path).parent() {
-                        let capt_dir = game_dir.join("dod").join("hlcr_captures");
-                        self.hlcr_state.config.source_folder = capt_dir.to_string_lossy().to_string();
-                        let _ = native::hlcr::config::save_config(&self.hlcr_state.config);
+                    let mut session_dir = std::path::PathBuf::new();
+                    
+                    let config_guard = crate::views::capture::get_patcher_config().lock();
+                    if let Ok(config) = config_guard {
+                        if let Some(primary) = &config.primary_media_dir {
+                            session_dir = if config.session_id.is_empty() {
+                                primary.clone()
+                            } else {
+                                primary.join(&config.session_id)
+                            };
+                        }
                     }
+
+                    if session_dir.as_os_str().is_empty() {
+                        if let Some(game_dir) = std::path::Path::new(&self.settings.game_path).parent() {
+                            session_dir = game_dir.join("dod").join("hlcr_captures");
+                        }
+                    }
+
+                    self.hlcr_state.config.source_folder = session_dir.to_string_lossy().to_string();
+                    let _ = native::hlcr::config::save_config(&self.hlcr_state.config);
+
                     self.hlcr_state.auto_render = true;
                     self.hlcr_state.start_scan();
                 }

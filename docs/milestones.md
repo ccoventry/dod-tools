@@ -1,5 +1,12 @@
 # 📋 Project Backlog & Future Improvements
 
+> # 🛑 AI AGENT INSTRUCTIONS: FILE STRUCTURE CONTRACT
+> **Strict Formatting Rules:**
+> - **Retention:** Never delete completed tasks, historical data, or unassigned backlog items. Only move them between sections.
+> - **Hierarchy:** H2 (`##`) for Major Sections (1-4), H3 (`###`) for Sub-categories/Sprints.
+> - **Task Syntax:** All list items must exactly match the format: `* **Task Name:** Description` or `* [ ] **Task Name:** Description`.
+> - **Historical Archive:** Completed project phases must remain perfectly encapsulated within HTML `<details>` and `<summary>` tags.
+
 ## 1. Recently Completed Tasks
 
 ### Capture Engine Timeline Stabilization (July 1, 2026)
@@ -72,12 +79,12 @@
 * **Tauri & Vite Integration:** Ongoing migration of the frontend stack from native `egui` to a Tauri + Vite architecture. (Note: Excluded from primary architecture docs until finalized).
 
 ### Upcoming Tasks
-1. **Graceful Degradation for Clutch Clips:** Update `builder.rs` to handle edge cases where a kill occurs inside the 3.0-second EOF danger zone. The patcher must gracefully sacrifice the post-roll and schedule the `DOD_TOOLS_EXIT_TRIGGER` exactly 5 ticks before the absolute final frame to ensure the highlight is captured without crashing the batch.
-2. **Config Injection:** Ensure the engine dynamically injects `+exec movie.cfg` into the HLAE command line arguments to preserve custom capture framerates and HUD settings.
-3. **Long Demo Validation:** Validate capture sequence for 30+ minute demos.
-4. **Packet Audit:** Audit `.dem` packet length consistency.
-5. **Packet Initialization Rule:** Formalize GoldSrc packet memory initialization rule.
-6. **Meta-Task: Standardize Milestones Architecture:** Design and document a strict, immutable markdown layout for this file to completely prevent AI-driven format drift across future sessions.
+* [ ] **Graceful Degradation for Clutch Clips:** Update `builder.rs` to handle edge cases where a kill occurs inside the 3.0-second EOF danger zone. The patcher must gracefully sacrifice the post-roll and schedule the `DOD_TOOLS_EXIT_TRIGGER` exactly 5 ticks before the absolute final frame to ensure the highlight is captured without crashing the batch.
+* [ ] **Config Injection:** Ensure the engine dynamically injects `+exec movie.cfg` into the HLAE command line arguments to preserve custom capture framerates and HUD settings.
+* [ ] **Long Demo Validation:** Validate capture sequence for 30+ minute demos.
+* [ ] **Packet Audit:** Audit `.dem` packet length consistency.
+* [ ] **Packet Initialization Rule:** Formalize GoldSrc packet memory initialization rule.
+* [ ] **Meta-Task: Standardize Milestones Architecture:** Design and document a strict, immutable markdown layout for this file to completely prevent AI-driven format drift across future sessions.
 
 ## 3. Future Tech Debt & Enhancements
 
