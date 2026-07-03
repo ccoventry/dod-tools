@@ -1,59 +1,24 @@
-Always reference the .cursorrules file in the workspace root for behavioral rules and token efficiency. Use the docs/ folder for modular project knowledge; do not read documentation files unless explicitly needed for the current task. Always provide code as minimal diffs/blocks.
+# SYSTEM GUARDRAILS (STRICT COMPLIANCE)
+- CONTEXT: Rely strictly on active chat window code and docs/ folder. Do not read documentation files unless explicitly requested.
+- BEHAVIOR: Be concise. No conversational filler, apologies, or requirement summaries.
+- CODE CHANGES: Output ONLY minimal unified diffs (e.g., // ... existing code ...). Never rewrite entire files or unchanged lines.
+- CONSTRAINTS: Do not introduce new dependencies, patterns, or abstractions. Match existing naming and style exactly.
+- LOCKED FILES: Do not modify build/deployment configs, environment files, lint rules, or public APIs unless explicitly requested.
+- AMBIGUITY: State critical assumptions once and proceed. Do not guess silently. Fail loudly on blockers.
+- CHAIN OF THOUGHT: Keep internal reasoning focused exclusively on technical logic. Skip all conversational filler.
 
-# Global Agent Instructions
+# TERMINAL & RUNTIME COMMANDS
+- TERMINAL: Never echo raw compiler output. Provide one-sentence summaries of failures and propose fixes.
+- SHELL MANIPULATION: Multi-step shell actions must be collapsed into a single, chained sequence using semicolons (;). 
+- PIPELINE RUNS: DO NOT run 'cargo check/build' internally; output the exact command piped to tuf (e.g., 'cmd 2>&1 | tuf') for manual user execution.
 
-1. Authority
-   - This file defines global behavioral rules for the entire workspace.
-   - Local instructions may extend these rules but must not contradict them.
-   - If rules conflict, this file takes precedence.
-
-2. Context Boundaries
-   - Assume no knowledge outside the current workspace.
-   - The /docs folder contains canonical project context.
-   - Do NOT read documentation files unless:
-     a) The task explicitly requires it, or
-     b) Skipping them would risk incorrect output.
-
-3. Output Discipline
-   - Be concise and high-signal by default.
-   - Do not restate requirements.
-   - Do not summarize unless explicitly requested.
-
-4. Code Changes
-   - Always provide minimal diffs or isolated code blocks.
-   - Do not rewrite entire files unless explicitly asked.
-   - Do not introduce new abstractions, patterns, or dependencies unless required by the task.
-
-5. Assumptions & Ambiguity
-   - Do not guess silently.
-   - If an assumption materially affects behavior, state it once and proceed.
-   - Do not ask clarifying questions unless ambiguity blocks progress.
-
-6. Project Integrity
-   - Do not modify:
-     - Build or deployment configuration
-     - Environment files
-     - Formatting or linting rules
-     - Public APIs
-     unless explicitly requested.
-
-7. Consistency
-   - Match existing naming, structure, and style exactly.
-   - Do not introduce new conventions unless necessary.
-
-8. Quality Bar
-   - Prefer clarity over cleverness.
-   - Prefer explicit logic over magic behavior.
-   - Every change must directly serve the task.
-
-9. Failure Behavior
-   - Fail loudly rather than silently.
-   - Avoid hidden fallbacks or implicit defaults.
-
-10. Outcome Priority
-    - Correctness first
-    - Maintainability second
-    - Performance only when relevant
-
-WASM Constraint: The GUI compiles to wasm32-unknown-unknown. Never import standard file I/O (std::fs) or native threading crates inside UI modules without explicit conditional gating: #[cfg(not(target_arch = "wasm32"))].
-Lock-Free Layouts: Treat existing atomic debouncers, RwLock architectures, and channel structures as immutable patterns. Avoid introducing blocking mutexes on the UI thread to ensure zero micro-stutters.
+# RUST, WASM & CONCURRENCY CONSTRAINTS
+- TERMINOLOGY: Strictly preserve the "HLAE Game Capture" naming convention; never revert to "Native Game Capture".
+- WASM TARGETS: The GUI compiles to wasm32-unknown-unknown. Isolate native multi-threading, direct file system structures (std::fs), and external commands (std::process::Command) behind strict #[cfg(not(target_arch = "wasm32"))] macros.
+- THREADING & I/O: The main UI thread must not block. Offload all long-running disk I/O, binary stream patches, and process management to dedicated background threads using std::thread::Builder.
+- LOCK-FREE UI PARITY: Treat existing atomic debouncers, RwLock architectures, and channel structures as immutable patterns. Do not introduce blocking mutexes on the UI thread. Wrap highly accessed catalogs in std::sync::RwLock.
+- TELEMETRY THROTTLING: Background progress telemetry must debounce updates using an Arc<AtomicU32> framework to throttle channel traffic to ~30fps (33ms). This prevents ctx.request_repaint() event loop flooding.
+- PROCESS LIFECYCLES: External processes require interruptible polling (child.try_wait()) matched with a ~16ms thread sleep. Verify an Arc<AtomicBool> cancellation token on every cycle. Headless wrappers must explicitly chain .kill_on_drop(true).
+- MEMORY SAFETY: Never use fixed-size stack buffers ([u8; N]) for binary stream slicing. Use heap-allocated Vec<u8> gated by explicit 2MB payload limits.
+- EGUI PERFORMANCE: Enforce zero-allocation render loops (no format!(), .clone(), or string concatenation inside the update loop). Never nest dynamic elements (like CollapsingHeader) inside virtualized show_rows structures. Use flat egui_extras::TableBuilder hierarchies.
+- PATHING: Bind configuration parameters to absolute paths derived from std::env::current_exe(). Dynamically generated Rust paths targeting HLAE must replace forward slashes with double-escaped backslashes (.replace("/", "\\\\")).
