@@ -216,11 +216,20 @@ At the beginning of any new chat session or complex task, you must immediately r
 - **Alignment:** Network messages expect exactly 468 bytes of header data before reading payload lengths.
 - **Filenames:** Filenames for playdemo calls must be strictly alphanumeric with underscores (_) and under 40 characters.
 - **HLAE Commands:** Use mirv_movie_filename and mirv_movie_fps. Do not use modern CS:GO commands like mirv_streams.
+- **Alias Nested Quotes (The Exec Bypass):** GoldSrc cannot parse nested quotes inside aliases. When complex commands like absolute paths require quotes, they must be written to individual `.cfg` files and executed via `exec filename.cfg` instead of injected directly into an alias.
+- **Strict Path Slashes:** HLAE strictly requires backslashes (`\`) for file paths. Forward slashes (`/`) will cause directory creation or path resolution failures. When generating paths dynamically in Rust, you must explicitly sanitize and replace all forward slashes with double-escaped backslashes (`.replace("/", "\\\\")`).
 
 ---
 # File: docs/milestones.md
 
 # 📋 Project Backlog & Future Improvements
+
+> # 🛑 AI AGENT INSTRUCTIONS: FILE STRUCTURE CONTRACT
+> **Strict Formatting Rules:**
+> - **Retention:** Never delete completed tasks, historical data, or unassigned backlog items. Only move them between sections.
+> - **Hierarchy:** H2 (`##`) for Major Sections (1-4), H3 (`###`) for Sub-categories/Sprints.
+> - **Task Syntax:** All list items must exactly match the format: `* **Task Name:** Description` or `* [ ] **Task Name:** Description`.
+> - **Historical Archive:** Completed project phases must remain perfectly encapsulated within HTML `<details>` and `<summary>` tags.
 
 ## 1. Recently Completed Tasks
 
@@ -294,12 +303,12 @@ At the beginning of any new chat session or complex task, you must immediately r
 * **Tauri & Vite Integration:** Ongoing migration of the frontend stack from native `egui` to a Tauri + Vite architecture. (Note: Excluded from primary architecture docs until finalized).
 
 ### Upcoming Tasks
-1. **Graceful Degradation for Clutch Clips:** Update `builder.rs` to handle edge cases where a kill occurs inside the 3.0-second EOF danger zone. The patcher must gracefully sacrifice the post-roll and schedule the `DOD_TOOLS_EXIT_TRIGGER` exactly 5 ticks before the absolute final frame to ensure the highlight is captured without crashing the batch.
-2. **Config Injection:** Ensure the engine dynamically injects `+exec movie.cfg` into the HLAE command line arguments to preserve custom capture framerates and HUD settings.
-3. **Long Demo Validation:** Validate capture sequence for 30+ minute demos.
-4. **Packet Audit:** Audit `.dem` packet length consistency.
-5. **Packet Initialization Rule:** Formalize GoldSrc packet memory initialization rule.
-6. **Meta-Task: Standardize Milestones Architecture:** Design and document a strict, immutable markdown layout for this file to completely prevent AI-driven format drift across future sessions.
+* [ ] **Graceful Degradation for Clutch Clips:** Update `builder.rs` to handle edge cases where a kill occurs inside the 3.0-second EOF danger zone. The patcher must gracefully sacrifice the post-roll and schedule the `DOD_TOOLS_EXIT_TRIGGER` exactly 5 ticks before the absolute final frame to ensure the highlight is captured without crashing the batch.
+* [ ] **Config Injection:** Ensure the engine dynamically injects `+exec movie.cfg` into the HLAE command line arguments to preserve custom capture framerates and HUD settings.
+* [ ] **Long Demo Validation:** Validate capture sequence for 30+ minute demos.
+* [ ] **Packet Audit:** Audit `.dem` packet length consistency.
+* [ ] **Packet Initialization Rule:** Formalize GoldSrc packet memory initialization rule.
+* [ ] **Meta-Task: Standardize Milestones Architecture:** Design and document a strict, immutable markdown layout for this file to completely prevent AI-driven format drift across future sessions.
 
 ## 3. Future Tech Debt & Enhancements
 
