@@ -3,6 +3,7 @@
 
 # === Temporary Debug / Scratch Files ===
 scratch/
+!scratch/debug.rs
 
 # === Project Configuration & Caches ===
 .dod-tools-cache.json
@@ -33,4 +34,3 @@ Desktop.ini
 /local/
 
 bootstrap_payload.md
-
