@@ -11,6 +11,27 @@ use crate::patch::types::{PatchJob, PatcherConfig};
 fn write_console_cmd(writer: &mut std::io::BufWriter<std::fs::File>, time: f32, tick: i32, cmd: &str) -> std::io::Result<i32> {
     use std::io::Write;
     log::debug!("Injecting Command: {} at tick: {}", cmd, tick);
+    let command_string = cmd;
+    if command_string.len() >= 64 {
+        let msg = format!(
+            "FATAL: GoldSrc Cbuf Overflow (64-byte limit breached). Command: '{}', Length: {}",
+            command_string,
+            command_string.len()
+        );
+        log::error!("{}", msg);
+        use std::io::Write as _;
+        let _ = (|| -> Result<(), Box<dyn std::error::Error>> {
+            let exe_path = std::env::current_exe()?;
+            let exe_dir = exe_path.parent().ok_or("Failed to get exe parent")?;
+            let local_dir = exe_dir.join("local");
+            std::fs::create_dir_all(&local_dir)?;
+            let log_path = local_dir.join("crash_log.md");
+            let mut file = std::fs::OpenOptions::new().create(true).append(true).open(&log_path)?;
+            writeln!(file, "{}", msg)?;
+            Ok(())
+        })();
+        panic!("{}", msg);
+    }
     writer.write_all(&[3_u8])?;
     writer.write_all(&time.to_le_bytes())?;
     writer.write_all(&tick.to_le_bytes())?;

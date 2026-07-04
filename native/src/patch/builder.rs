@@ -53,7 +53,83 @@ fn find_tick_forwards(start_frame: usize, gap_seconds: f32, frame_times: &[f32])
     last as i32
 }
 
-const LOG_TAG: &str = "[dod]";
+const LOG_TAG: &str = "[dod-tools]";
+
+fn format_win_path(path: &std::path::Path) -> String {
+    path.to_string_lossy()
+        .replace("\\", "/")
+        .replace("/", "\\")
+}
+
+fn build_safe_echos(tick: i32, message: &str) -> Vec<(i32, String)> {
+    let mut result = Vec::new();
+    let mut current_tick = tick;
+    
+    let mut words: Vec<&str> = message.split(' ').collect();
+    if words.is_empty() {
+        return result;
+    }
+    
+    let mut current_chunk = String::new();
+    let mut is_first = true;
+    
+    let mut i = 0;
+    while i < words.len() {
+        let word = words[i];
+        let prefix = if is_first {
+            format!("{} ", LOG_TAG)
+        } else {
+            "[dodtools] ->".to_string()
+        };
+        
+        let test_message = if current_chunk.is_empty() {
+            word.to_string()
+        } else {
+            format!("{} {}", current_chunk, word)
+        };
+        
+        let full_string = format!("{}{}", prefix, test_message);
+        
+        if full_string.len() > 55 {
+            if current_chunk.is_empty() {
+                let limit = 55_usize.saturating_sub(prefix.len());
+                let (part1, part2) = word.split_at(limit.min(word.len()));
+                
+                let cmd = format!("echo \"{}{}\"", prefix, part1);
+                result.push((current_tick, cmd));
+                current_tick += 1;
+                
+                is_first = false;
+                words[i] = part2;
+                continue;
+            } else {
+                let cmd = format!("echo \"{}{}\"", prefix, current_chunk);
+                result.push((current_tick, cmd));
+                current_tick += 1;
+                
+                current_chunk.clear();
+                is_first = false;
+                continue;
+            }
+        } else {
+            current_chunk = test_message;
+            i += 1;
+        }
+    }
+    
+    if !current_chunk.is_empty() {
+        let prefix = if is_first {
+            format!("{} ", LOG_TAG)
+        } else {
+            "[dodtools] ->".to_string()
+        };
+        let cmd = format!("echo \"{}{}\"", prefix, current_chunk);
+        result.push((current_tick, cmd));
+    }
+    
+    result
+}
+
 
 // ── Batch queue builder ───────────────────────────────────────────────────────
 
@@ -71,21 +147,48 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
     let mut jobs = Vec::new();
     let total_jobs = sorted_groups.len();
     
+    let date_time = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
     let mut helper_cfg_content = String::new();
     
     // Remove stale config
     if let Some(ref out_dir) = config.output_dir {
-        let _ = std::fs::remove_file(out_dir.join("dod_tools_helper.cfg"));
+        let _ = std::fs::remove_file(out_dir.join("dodtools_helper.cfg"));
+        let _ = std::fs::remove_file(out_dir.join("dodtools_capture_done.cfg"));
+        let _ = std::fs::remove_file(out_dir.join("dod_quit.cfg"));
+        
+        if let Ok(entries) = std::fs::read_dir(out_dir) {
+            for entry in entries.flatten() {
+                let filename = entry.file_name().to_string_lossy().to_string();
+                if filename.starts_with("dodtools_chain_") && filename.ends_with(".cfg") {
+                    let _ = std::fs::remove_file(entry.path());
+                }
+            }
+        }
     }
     
+    let active_export_dir = config.primary_media_dir.clone().unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+    let session_dir = if !config.session_id.is_empty() {
+        active_export_dir.join(&config.session_id)
+    } else {
+        active_export_dir
+    };
+    if !session_dir.exists() {
+        let _ = std::fs::create_dir_all(&session_dir);
+    }
+    
+    helper_cfg_content.push_str(&format!(
+        "# dodtools_helper.cfg\n# Created by: dod_tools.exe v{}\n# Date: {}\n\n",
+        crate::VERSION,
+        date_time
+    ));
+    
+    helper_cfg_content.push_str("# Global aliases\n");
     helper_cfg_content.push_str("alias sys_normal_speed \"host_framerate 0\"\n");
     helper_cfg_content.push_str(&format!("alias sys_fast_forward \"host_framerate {}\"\n", config.fast_forward_speed));
     helper_cfg_content.push_str("alias sys_sound \"stopsound\"\n");
     helper_cfg_content.push_str("alias sys_record_start \"mirv_recordmovie_start\"\n");
     helper_cfg_content.push_str("alias sys_record_stop \"mirv_recordmovie_stop\"\n");
-    let active_export_dir = config.primary_media_dir.clone().unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
-    let dummy_trigger_path = active_export_dir.join("DOD_TOOLS_EXIT_TRIGGER").to_string_lossy().replace("\\", "/").replace("/", "\\\\");
-    helper_cfg_content.push_str(&format!("alias sys_hlae_done_path \"mirv_movie_filename \\\"{}\\\"\"\n\n", dummy_trigger_path));
+    helper_cfg_content.push_str("alias sys_capture_done_path \"mirv_movie_filename DOD_TOOLS_EXIT_TRIGGER; mirv_recordmovie_start; mirv_recordmovie_stop\"\n\n");
 
     let mut global_streak_idx = 0;
 
@@ -106,8 +209,9 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
         // Delay playdemo chain_01 to tick 500 (~5 seconds) to allow the engine to fully finish the 
         // 2-second GoldSrc server handshake without buffer overflows before jumping to the first real chain.
         let mut primer_scheduled = Vec::new();
-        helper_cfg_content.push_str("alias primer_start \"playdemo chain_01\"\n");
-        primer_scheduled.push((500, "primer_start".to_string()));
+        helper_cfg_content.push_str("# Demo specific next demos\n");
+        helper_cfg_content.push_str("alias primer_next \"playdemo chain_01\"\n");
+        primer_scheduled.push((500, "primer_next".to_string()));
 
         jobs.push(PatchJob {
             source_demo: first_source.clone(),
@@ -158,28 +262,23 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
             output_demo = out_dir.join(&output_name);
         }
 
-        let active_export_dir = config.primary_media_dir.clone().unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
-        let session_dir = if !config.session_id.is_empty() {
-            active_export_dir.join(&config.session_id)
-        } else {
-            active_export_dir
-        };
-        if !session_dir.exists() {
-            let _ = std::fs::create_dir_all(&session_dir);
-        }
-        let safe_path = session_dir.join(&demo_name).to_string_lossy().replace("\\", "/").replace("/", "\\\\");
 
-        helper_cfg_content.push_str(&format!("alias path_{} \"mirv_movie_filename \\\"{}\\\"\"\n", demo_name, safe_path));
+
+        if let Some(ref out_dir) = config.output_dir {
+            // Deprecated: CFGs are no longer generated as we use dodtools_session junction instead
+        }
         
         if job_idx < total_jobs - 1 {
-            helper_cfg_content.push_str(&format!("alias route_{} \"playdemo {}\"\n", demo_name, next_demo_name));
+            helper_cfg_content.push_str(&format!("alias {}_next \"playdemo {}\"\n", demo_name, next_demo_name));
         } else {
-            helper_cfg_content.push_str(&format!("alias route_{} \"sys_hlae_done_path\"\n", demo_name));
+            helper_cfg_content.push_str(&format!("alias {}_next \"sys_capture_done_path\"\n", demo_name));
         }
+        
+        helper_cfg_content.push_str(&format!("alias {}_path \"mirv_movie_filename dodtools_session/{}\"\n", demo_name, demo_name));
 
         // Generate scheduled commands
         let mut scheduled_commands = Vec::new();
-        scheduled_commands.push((0, format!("path_{}", demo_name)));
+        scheduled_commands.push((0, format!("{}_path", demo_name)));
         
         // Initialize Engine Speed after Initial Load Delay
         let initial_delay_ticks = (config.initial_delay * demo_fps) as i32;
@@ -215,31 +314,70 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
             };
 
             // Custom command overrides
-            for (c_idx, custom) in config.custom_commands.iter().enumerate() {
+            let mut before_count = 1;
+            let mut after_count = 1;
+            for custom in &config.custom_commands {
                 let target_tick = match custom.relation {
                     CommandRelation::Before => streak.start_tick - (custom.offset * demo_fps) as i32,
                     CommandRelation::After => streak.end_tick + (custom.offset * demo_fps) as i32,
                 };
-                let custom_alias = format!("s{}_custom_{}", s_idx, c_idx);
-                helper_cfg_content.push_str(&format!("alias {} \"{}\"\n", custom_alias, custom.command));
-                scheduled_commands.push((target_tick.max(0), custom_alias));
+                let cmd_name = match custom.relation {
+                    CommandRelation::Before => {
+                        let name = format!("custom_{}_before", before_count);
+                        before_count += 1;
+                        for (t, echo_cmd) in build_safe_echos(target_tick.max(0), "Executing Pre-roll Customs") {
+                            scheduled_commands.push((t, echo_cmd));
+                        }
+                        name
+                    }
+                    CommandRelation::After => {
+                        let name = format!("custom_{}_after", after_count);
+                        after_count += 1;
+                        for (t, echo_cmd) in build_safe_echos(target_tick.max(0), "Executing Post-roll Customs") {
+                            scheduled_commands.push((t, echo_cmd));
+                        }
+                        name
+                    }
+                };
+                scheduled_commands.push((target_tick.max(0), cmd_name));
             }
 
             // At Pre-roll Speed Flush
             scheduled_commands.push((s_speed_tick, "sys_normal_speed".to_string()));
+            for (t, echo_cmd) in build_safe_echos(s_speed_tick, "host_framerate 0") {
+                scheduled_commands.push((t, echo_cmd));
+            }
             
             // At Sound Flush
             scheduled_commands.push((s_sound_tick, "sys_sound".to_string()));
+            for (t, echo_cmd) in build_safe_echos(s_sound_tick, "stopsound") {
+                scheduled_commands.push((t, echo_cmd));
+            }
 
             // At Start Frame
             scheduled_commands.push((record_start_tick, "sys_record_start".to_string()));
+            for (t, echo_cmd) in build_safe_echos(record_start_tick, &format!("Start Frame {}", record_start_tick)) {
+                scheduled_commands.push((t, echo_cmd));
+            }
 
             // At End Frame
             scheduled_commands.push((record_stop_tick, "sys_record_stop; sys_fast_forward".to_string()));
+            for (t, echo_cmd) in build_safe_echos(record_stop_tick, &format!("Stop Frame {}", record_stop_tick)) {
+                scheduled_commands.push((t, echo_cmd));
+            }
 
             if i == merged_streaks.len() - 1 {
                 // At Absolute EOF
-                scheduled_commands.push((safe_end_tick, format!("route_{}", demo_name)));
+                if job_idx == total_jobs - 1 {
+                    let echos = build_safe_echos(safe_end_tick, "BATCH COMPLETE");
+                    let echos_len = echos.len() as i32;
+                    for (t, echo_cmd) in echos {
+                        scheduled_commands.push((t, echo_cmd));
+                    }
+                    scheduled_commands.push((safe_end_tick + echos_len, format!("{}_next", demo_name)));
+                } else {
+                    scheduled_commands.push((safe_end_tick, format!("{}_next", demo_name)));
+                }
             }
         }
 
@@ -262,13 +400,42 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
             scheduled_commands,
         });
     }
+
+    helper_cfg_content.push_str("\n# Demo specific CFGs\n");
+    for job_idx in 0..total_jobs {
+        let demo_name = format!("chain_{:02}", job_idx + 1);
+        helper_cfg_content.push_str(&format!("alias {}_path \"mirv_movie_filename dodtools_session/{}\"\n", demo_name, demo_name));
+    }
+
+    helper_cfg_content.push_str("\n# Initial Commands Run Per Demo\n");
+    for (idx, cmd) in config.init_commands.iter().enumerate() {
+        helper_cfg_content.push_str(&format!("alias init_cmd{} \"{}\"\n", idx + 1, cmd));
+    }
+
+    helper_cfg_content.push_str("\n# Custom Commands Run X seconds BEFORE each streak\n");
+    let mut before_idx = 1;
+    for custom in &config.custom_commands {
+        if custom.relation == CommandRelation::Before {
+            helper_cfg_content.push_str(&format!("alias custom_{}_before \"{}\"\n", before_idx, custom.command));
+            before_idx += 1;
+        }
+    }
+
+    helper_cfg_content.push_str("\n# Custom Commands Run X seconds AFTER each streak\n");
+    let mut after_idx = 1;
+    for custom in &config.custom_commands {
+        if custom.relation == CommandRelation::After {
+            helper_cfg_content.push_str(&format!("alias custom_{}_after \"{}\"\n", after_idx, custom.command));
+            after_idx += 1;
+        }
+    }
     
-    // Write dod_tools_helper.cfg
+    // Write dodtools_helper.cfg
     if let Some(ref out_dir) = config.output_dir {
         if !out_dir.exists() {
             let _ = std::fs::create_dir_all(out_dir);
         }
-        let cfg_path = out_dir.join("dod_tools_helper.cfg");
+        let cfg_path = out_dir.join("dodtools_helper.cfg");
         let _ = std::fs::write(&cfg_path, helper_cfg_content);
     }
 
