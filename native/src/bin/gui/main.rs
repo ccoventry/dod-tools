@@ -71,8 +71,13 @@ async fn main() {
         &title,
         options,
         Box::new(|_cc| {
+            let args: Vec<PathBuf> = std::env::args()
+                .skip(1)
+                .map(PathBuf::from)
+                .filter(|path| path.extension().unwrap_or_default() == "dem")
+                .collect();
             Ok(Box::new(
-                Gui::default().with_initial_files(Args::parse().demo_paths),
+                Gui::default().with_initial_files(args),
             ))
         }),
     )
