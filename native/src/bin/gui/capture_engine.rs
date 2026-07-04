@@ -61,6 +61,22 @@ pub fn spawn_capture_engine(
             let dummy_path = hl_exe_parent.join("DOD_BATCH_DONE");
             std::fs::remove_dir_all(&dummy_path).ok();
 
+            let exit_trigger = hl_exe_parent.join("DOD_TOOLS_EXIT_TRIGGER");
+            std::fs::remove_dir_all(&exit_trigger).ok();
+
+            let active_export_dir = config.primary_media_dir.clone().unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+            let session_dir = if !config.session_id.is_empty() {
+                active_export_dir.join(&config.session_id)
+            } else {
+                active_export_dir
+            };
+            let session_link = hl_exe_parent.join("dodtools_session");
+            let _ = std::fs::remove_dir(&session_link);
+            std::process::Command::new("cmd")
+                .args(&["/C", "mklink", "/J", session_link.to_str().unwrap(), session_dir.to_str().unwrap()])
+                .status()
+                .ok();
+
             for job in jobs {
                 if cancel_token.load(Ordering::Relaxed) {
                     let _ = tx.send(EngineEvent::Cancelled);
@@ -205,7 +221,7 @@ pub fn spawn_capture_engine(
             let condebug_flag = if config.add_condebug { "-condebug " } else { "" };
 
             let cmd_line_str = format!(
-                "-game dod {}-insecure -windowed -w {} -h {} +exec dod_tools_helper.cfg +playdemo primer",
+                "-game dod {}-insecure -windowed -w {} -h {} +exec dodtools_helper.cfg +playdemo primer",
                 condebug_flag, width_str, height_str
             );
 
@@ -264,7 +280,7 @@ pub fn spawn_capture_engine(
 
             let start_time = std::time::Instant::now();
             loop {
-                if cancel_token.load(Ordering::Relaxed) || (start_time.elapsed().as_secs() > 10 && dummy_path.exists()) {
+                if cancel_token.load(Ordering::Relaxed) || (start_time.elapsed().as_secs() > 10 && (dummy_path.exists() || exit_trigger.exists())) {
                     std::process::Command::new("taskkill").args(&["/F", "/IM", "hl.exe"]).output().ok();
                     break;
                 }
@@ -278,12 +294,16 @@ pub fn spawn_capture_engine(
                 }
                 std::fs::remove_file(&cfg_path).ok();
                 std::fs::remove_dir_all(&dummy_path).ok();
+                std::fs::remove_dir_all(&exit_trigger).ok();
+                let _ = std::fs::remove_dir(&session_link);
                 let _ = tx.send(EngineEvent::Cancelled);
                 return;
             }
 
             std::fs::remove_file(&cfg_path).ok();
             std::fs::remove_dir_all(&dummy_path).ok();
+            std::fs::remove_dir_all(&exit_trigger).ok();
+            let _ = std::fs::remove_dir(&session_link);
 
             let _ = tx.send(EngineEvent::Finished("Batch Queue".into()));
 
