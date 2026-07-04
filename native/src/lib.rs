@@ -1,3 +1,5 @@
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 #[cfg(not(target_arch = "wasm32"))]
 use analysis::Analysis;
 #[cfg(not(target_arch = "wasm32"))]
