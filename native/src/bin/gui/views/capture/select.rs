@@ -15,10 +15,10 @@
 //     spawns patch_worker thread, sends GuiMessage::PatchingComplete on completion
 // ============================================================
 
-use std::sync::{Arc, Mutex, atomic::AtomicBool};
+use std::sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}};
 use native::patch::{PatcherConfig, CaptureStreak, build_batch_queue};
 use crate::types::{DemoData, CaptureStudioState};
-use super::{is_patching, set_is_patching, acquire_lock};
+use super::{is_patching, set_is_patching, acquire_lock, IS_PATCHING};
 use super::log_markdown;
 use egui_extras::{TableBuilder, Column};
 
@@ -376,39 +376,6 @@ pub fn render(
 
             ui.add_space(8.0);
 
-            // Row 1: Pre-roll / Post-roll
-            ui.horizontal(|ui| {
-                ui.label("Pre-roll (sec):");
-                ui.add(egui::DragValue::new(&mut patcher_config.pre_roll_seconds)
-                    .range(0.0..=10.0).speed(0.1));
-                ui.add_space(10.0);
-                ui.label("Post-roll (sec):");
-                ui.add(egui::DragValue::new(&mut patcher_config.post_roll_seconds)
-                    .range(0.0..=10.0).speed(0.1));
-            });
-
-            // Row 2: Record Start Lead / Record Stop Trail
-            ui.horizontal(|ui| {
-                ui.label("Record Start Lead (sec):");
-                ui.add(egui::DragValue::new(&mut patcher_config.record_start_lead)
-                    .range(0.0..=10.0).speed(0.1));
-                ui.add_space(10.0);
-                ui.label("Record Stop Trail (sec):");
-                ui.add(egui::DragValue::new(&mut patcher_config.record_stop_trail)
-                    .range(0.0..=10.0).speed(0.1));
-            });
-
-            // Row 3: Initial Load Delay / Fast Forward Speed
-            ui.horizontal(|ui| {
-                ui.label("Initial Load Delay (sec):");
-                ui.add(egui::DragValue::new(&mut patcher_config.initial_delay)
-                    .range(0.0..=10.0).speed(0.1));
-                ui.add_space(10.0);
-                ui.label("Fast Forward Speed:");
-                ui.add(egui::DragValue::new(&mut patcher_config.fast_forward_speed)
-                    .range(0.01..=10.0).speed(0.01));
-            });
-
             // Row 4: Resolution & Capture FPS
             ui.horizontal(|ui| {
                 ui.label("Width:");
@@ -680,6 +647,44 @@ pub fn render(
                     ui.spinner();
                     ui.label("Patching Demos... Please wait.");
                 }
+            });
+
+            ui.separator();
+            ui.collapsing("Capture Parameters", |ui| {
+                ui.add_enabled_ui(!IS_PATCHING.load(Ordering::SeqCst), |ui| {
+                    // Row 1: Pre-roll / Post-roll
+                    ui.horizontal(|ui| {
+                        ui.label("Pre-roll (sec):");
+                        ui.add(egui::DragValue::new(&mut patcher_config.pre_roll_seconds)
+                            .range(0.0..=10.0).speed(0.1));
+                        ui.add_space(10.0);
+                        ui.label("Post-roll (sec):");
+                        ui.add(egui::DragValue::new(&mut patcher_config.post_roll_seconds)
+                            .range(0.0..=10.0).speed(0.1));
+                    });
+
+                    // Row 2: Record Start Lead / Record Stop Trail
+                    ui.horizontal(|ui| {
+                        ui.label("Record Start Lead (sec):");
+                        ui.add(egui::DragValue::new(&mut patcher_config.record_start_lead)
+                            .range(0.0..=10.0).speed(0.1));
+                        ui.add_space(10.0);
+                        ui.label("Record Stop Trail (sec):");
+                        ui.add(egui::DragValue::new(&mut patcher_config.record_stop_trail)
+                            .range(0.0..=10.0).speed(0.1));
+                    });
+
+                    // Row 3: Initial Load Delay / Fast Forward Speed
+                    ui.horizontal(|ui| {
+                        ui.label("Initial Load Delay (sec):");
+                        ui.add(egui::DragValue::new(&mut patcher_config.initial_delay)
+                            .range(0.0..=10.0).speed(0.1));
+                        ui.add_space(10.0);
+                        ui.label("Fast Forward Speed:");
+                        ui.add(egui::DragValue::new(&mut patcher_config.fast_forward_speed)
+                            .range(0.01..=10.0).speed(0.01));
+                    });
+                });
             });
         });
     });
