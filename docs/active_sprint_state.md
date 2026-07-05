@@ -1,28 +1,7 @@
 ## Web AI State
-```json
-{
-  "project": "dod-tools",
-  "version": "0.10.0",
-  "render_strategy": "Waterfall (User -> Local -> System)",
-  "wdac_status": "Bypassed via LocalRustDev cert",
-  "backlog": [
-    "Consolidate Capture Configuration into pre-flight setup view",
-    "Add 'Killstreak #' column to 'Select' page grid",
-    "Relocate 'Debugging Settings' to footer of Capture/Export blocks",
-    "Fully automate batch capture queue."
-  ]
-}
-```
+- Goal: Inject director events into POV demos to enable UI bookmarking.
+- Last Edited: `local/scripts/test_director_inject.rs`.
+- Status: Script logic now correctly targets the 'Playback' directory entry, avoiding the Initialization Rule. Pending test compilation and execution.
 
 ## IDE AI State
-```json
-{
-  "last_edited": "native/src/hlcr/ui.rs",
-  "status": "Ready for verification",
-  "next_file_for_review": "local/tools/ffmpeg.exe",
-  "pending_tasks": [
-    "Verify build stability",
-    "Install/place FFmpeg binary in local/tools/ to test the local bundle resolution path"
-  ]
-}
-```
+- Immediate Task: Run `rustc local\scripts\test_director_inject.rs -o local\test_director_inject.exe`, execute against `analysis_target_pov.dem`, and verify UI population.
