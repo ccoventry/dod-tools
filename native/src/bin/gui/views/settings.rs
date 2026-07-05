@@ -205,16 +205,63 @@ impl Gui {
             });
 
             ui.add_space(8.0);
+
+            // Custom FFmpeg Path configuration
+            ui.label("Custom FFmpeg Path (Optional):");
+            ui.horizontal(|ui| {
+                let mut path_str = self.draft_settings.ffmpeg_override_path.clone().unwrap_or_default();
+                if ui.add(egui::TextEdit::singleline(&mut path_str).desired_width(ui.available_width() - 80.0)).changed() {
+                    self.draft_settings.ffmpeg_override_path = if path_str.trim().is_empty() {
+                        None
+                    } else {
+                        Some(path_str.trim().to_string())
+                    };
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    if ui.button("Browse...").clicked() {
+                        if let Some(path) = rfd::FileDialog::new()
+                            .add_filter("Executables", &["exe"])
+                            .pick_file()
+                        {
+                            self.draft_settings.ffmpeg_override_path = Some(path.to_string_lossy().to_string());
+                        }
+                    }
+                }
+            });
+
+            ui.add_space(8.0);
             ui.separator();
             ui.add_space(8.0);
             ui.heading("Highlight Capture Settings");
             ui.add_space(8.0);
 
             ui.label("Init Commands (startup):");
-            let mut val = self.draft_settings.capture_init_commands.clone();
-            if ui.text_edit_multiline(&mut val).changed() {
-                self.draft_settings.capture_init_commands = val;
-            }
+            ui.add_space(4.0);
+            ui.vertical(|ui| {
+                let mut delete_idx = None;
+                
+                egui::ScrollArea::vertical()
+                    .max_height(120.0)
+                    .id_salt("init_commands_scroll")
+                    .show(ui, |ui| {
+                        for (i, cmd) in self.draft_settings.capture_init_commands.iter_mut().enumerate() {
+                            ui.horizontal(|ui| {
+                                ui.add(egui::TextEdit::singleline(cmd).desired_width(ui.available_width() - 40.0));
+                                if ui.button("❌").clicked() {
+                                    delete_idx = Some(i);
+                                }
+                            });
+                        }
+                    });
+
+                if let Some(i) = delete_idx {
+                    self.draft_settings.capture_init_commands.remove(i);
+                }
+                if ui.button("➕ Add Command").clicked() {
+                    self.draft_settings.capture_init_commands.push("".to_string());
+                }
+            });
             
             ui.add_space(8.0);
             ui.label("Default Custom Commands:");

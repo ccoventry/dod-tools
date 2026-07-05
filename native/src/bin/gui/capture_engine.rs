@@ -72,10 +72,15 @@ pub fn spawn_capture_engine(
             };
             let session_link = hl_exe_parent.join("dodtools_session");
             let _ = std::fs::remove_dir(&session_link);
-            std::process::Command::new("cmd")
+            let _ = std::process::Command::new("cmd")
                 .args(&["/C", "mklink", "/J", session_link.to_str().unwrap(), session_dir.to_str().unwrap()])
                 .status()
                 .ok();
+
+            let _guard = native::patch::WorkspaceGuard {
+                session_junction: session_link.clone(),
+                exit_trigger: exit_trigger.clone(),
+            };
 
             for job in jobs {
                 if cancel_token.load(Ordering::Relaxed) {

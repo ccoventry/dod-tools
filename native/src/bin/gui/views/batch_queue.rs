@@ -266,7 +266,23 @@ pub fn batch_queue_ui(
                                         ui.end_row();
 
                                         ui.label("Init Commands:");
-                                        ui.text_edit_multiline(&mut item.init_commands);
+                                        ui.vertical(|ui| {
+                                            let mut delete_cmd_idx = None;
+                                            for (c_idx, cmd) in item.init_commands.iter_mut().enumerate() {
+                                                ui.horizontal(|ui| {
+                                                    ui.add(egui::TextEdit::singleline(cmd).desired_width(ui.available_width() - 40.0));
+                                                    if ui.button("❌").clicked() {
+                                                        delete_cmd_idx = Some(c_idx);
+                                                    }
+                                                });
+                                            }
+                                            if let Some(c_idx) = delete_cmd_idx {
+                                                item.init_commands.remove(c_idx);
+                                            }
+                                            if ui.button("➕ Add Command").clicked() {
+                                                item.init_commands.push("".to_string());
+                                            }
+                                        });
                                         ui.end_row();
 
                                         ui.label("Custom Timed Commands:");

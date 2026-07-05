@@ -787,7 +787,7 @@ impl eframe::App for Gui {
 
                             let options = native::patch::PatchOptions {
                                 exit_on_finish: false,
-                                init_commands: self.settings.capture_init_commands.lines().map(String::from).collect(),
+                                init_commands: self.settings.capture_init_commands.clone(),
                                 custom_commands: self.settings.custom_commands.clone(),
                                 fast_forward_speed: Some(self.settings.capture_fast_forward_speed),
                                 hltv_spec_player,
@@ -858,7 +858,7 @@ impl eframe::App for Gui {
 
                                 let options = native::patch::PatchOptions {
                                     exit_on_finish: item.exit_on_finish,
-                                    init_commands: item.init_commands.lines().map(String::from).collect(),
+                                    init_commands: item.init_commands.clone(),
                                     custom_commands: item.custom_commands.clone(),
                                     fast_forward_speed: Some(item.fast_forward_speed),
                                     hltv_spec_player: item.hltv_spec_player.clone(),

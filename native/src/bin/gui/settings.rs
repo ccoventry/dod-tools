@@ -8,7 +8,7 @@ pub struct AppSettings {
     pub scan_folders_for_demos: bool,
     pub demo_folder_history: Vec<PathBuf>,
     pub pinned_folders: Vec<PathBuf>,
-    pub capture_init_commands: String,
+    pub capture_init_commands: Vec<String>,
     pub custom_commands: Vec<native::patch::CustomCommand>,
     pub capture_initial_delay: f32,
     pub capture_fast_forward_speed: f32,
@@ -20,6 +20,7 @@ pub struct AppSettings {
     pub game_path: String,
     pub primary_media_dir: Option<String>,
     pub backup_media_dir: Option<String>,
+    pub ffmpeg_override_path: Option<String>,
 }
 
 impl Default for AppSettings {
@@ -29,7 +30,7 @@ impl Default for AppSettings {
             scan_folders_for_demos: false,
             demo_folder_history: Vec::new(),
             pinned_folders: Vec::new(),
-            capture_init_commands: "".to_string(),
+            capture_init_commands: Vec::new(),
             custom_commands: vec![
                 native::patch::CustomCommand {
                     command: "r_decals 5555".to_string(),
@@ -62,6 +63,7 @@ impl Default for AppSettings {
             game_path: "".to_string(),
             primary_media_dir: None,
             backup_media_dir: None,
+            ffmpeg_override_path: None,
         }
     }
 }
@@ -101,9 +103,16 @@ pub fn load_settings() -> AppSettings {
                     .unwrap_or_default();
                 let capture_init_commands = val
                     .get("capture_init_commands")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
+                    .map(|v| {
+                        if let Some(arr) = v.as_array() {
+                            arr.iter().filter_map(|x| x.as_str().map(String::from)).collect()
+                        } else if let Some(s) = v.as_str() {
+                            s.lines().map(String::from).collect()
+                        } else {
+                            Vec::new()
+                        }
+                    })
+                    .unwrap_or_default();
                 let custom_commands = val
                     .get("custom_commands")
                     .and_then(|v| v.as_array())
@@ -136,6 +145,7 @@ pub fn load_settings() -> AppSettings {
                 let game_path = val.get("game_path").and_then(|v| v.as_str()).unwrap_or("").to_string();
                 let primary_media_dir = val.get("primary_media_dir").and_then(|v| v.as_str()).map(|s| s.to_string());
                 let backup_media_dir = val.get("backup_media_dir").and_then(|v| v.as_str()).map(|s| s.to_string());
+                let ffmpeg_override_path = val.get("ffmpeg_override_path").and_then(|v| v.as_str()).map(|s| s.to_string());
                 return AppSettings {
                     language,
                     scan_folders_for_demos,
@@ -153,6 +163,7 @@ pub fn load_settings() -> AppSettings {
                     game_path,
                     primary_media_dir,
                     backup_media_dir,
+                    ffmpeg_override_path,
                 };
             }
         }
@@ -195,9 +206,16 @@ pub fn load_settings() -> AppSettings {
                         .unwrap_or_default();
                     let capture_init_commands = val
                         .get("capture_init_commands")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
+                        .map(|v| {
+                            if let Some(arr) = v.as_array() {
+                                arr.iter().filter_map(|x| x.as_str().map(String::from)).collect()
+                            } else if let Some(s) = v.as_str() {
+                                s.lines().map(String::from).collect()
+                            } else {
+                                Vec::new()
+                            }
+                        })
+                        .unwrap_or_default();
                     let custom_commands = val
                         .get("custom_commands")
                         .and_then(|v| v.as_array())
@@ -230,6 +248,7 @@ pub fn load_settings() -> AppSettings {
                     let game_path = val.get("game_path").and_then(|v| v.as_str()).unwrap_or("").to_string();
                     let primary_media_dir = val.get("primary_media_dir").and_then(|v| v.as_str()).map(|s| s.to_string());
                     let backup_media_dir = val.get("backup_media_dir").and_then(|v| v.as_str()).map(|s| s.to_string());
+                    let ffmpeg_override_path = val.get("ffmpeg_override_path").and_then(|v| v.as_str()).map(|s| s.to_string());
                     return AppSettings {
                         language,
                         scan_folders_for_demos,
@@ -247,6 +266,7 @@ pub fn load_settings() -> AppSettings {
                         game_path,
                         primary_media_dir,
                         backup_media_dir,
+                        ffmpeg_override_path,
                     };
                 }
             }
@@ -288,7 +308,13 @@ pub fn save_settings(settings: &AppSettings) {
     );
     map.insert(
         "capture_init_commands".to_string(),
-        serde_json::Value::String(settings.capture_init_commands.clone()),
+        serde_json::Value::Array(
+            settings
+                .capture_init_commands
+                .iter()
+                .map(|s| serde_json::Value::String(s.clone()))
+                .collect(),
+        ),
     );
     let mut custom_cmds_json = vec![];
     for cmd in &settings.custom_commands {
@@ -340,6 +366,9 @@ pub fn save_settings(settings: &AppSettings) {
     }
     if let Some(b) = &settings.backup_media_dir {
         map.insert("backup_media_dir".to_string(), serde_json::Value::String(b.clone()));
+    }
+    if let Some(f) = &settings.ffmpeg_override_path {
+        map.insert("ffmpeg_override_path".to_string(), serde_json::Value::String(f.clone()));
     }
     let val = serde_json::Value::Object(map);
     if let Ok(content) = serde_json::to_string_pretty(&val) {
@@ -380,7 +409,13 @@ pub fn save_settings(settings: &AppSettings) {
     );
     map.insert(
         "capture_init_commands".to_string(),
-        serde_json::Value::String(settings.capture_init_commands.clone()),
+        serde_json::Value::Array(
+            settings
+                .capture_init_commands
+                .iter()
+                .map(|s| serde_json::Value::String(s.clone()))
+                .collect(),
+        ),
     );
     let mut custom_cmds_json = vec![];
     for cmd in &settings.custom_commands {
@@ -432,6 +467,9 @@ pub fn save_settings(settings: &AppSettings) {
     }
     if let Some(b) = &settings.backup_media_dir {
         map.insert("backup_media_dir".to_string(), serde_json::Value::String(b.clone()));
+    }
+    if let Some(f) = &settings.ffmpeg_override_path {
+        map.insert("ffmpeg_override_path".to_string(), serde_json::Value::String(f.clone()));
     }
     let val = serde_json::Value::Object(map);
     if let Ok(content) = serde_json::to_string_pretty(&val) {
@@ -590,4 +628,32 @@ pub fn apply_language_setting(settings_lang: &str) {
         _ => "english",
     };
     analysis::set_active_language(static_lang);
+}
+
+pub fn resolve_ffmpeg_path(settings: &AppSettings) -> Result<std::path::PathBuf, String> {
+    // 1. User Override (Settings)
+    if let Some(ref path_str) = settings.ffmpeg_override_path {
+        if !path_str.trim().is_empty() {
+            let path = std::path::PathBuf::from(path_str);
+            if path.exists() {
+                return Ok(path);
+            }
+        }
+    }
+
+    // 2. Bundled Local Executable
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        if let Ok(exe_path) = std::env::current_exe() {
+            if let Some(parent) = exe_path.parent() {
+                let local_path = parent.join("local/tools/ffmpeg.exe");
+                if local_path.exists() {
+                    return Ok(local_path);
+                }
+            }
+        }
+    }
+
+    // 3. System PATH (return "ffmpeg")
+    Ok(std::path::PathBuf::from("ffmpeg"))
 }

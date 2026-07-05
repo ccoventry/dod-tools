@@ -344,11 +344,9 @@ impl HlcrState {
                     .num_columns(3)
                     .spacing([8.0, 8.0])
                     .show(ui, |ui| {
-                        ui.label("FFmpeg Path:");
-                        ui.add(egui::TextEdit::singleline(&mut self.config.ffmpeg_path).desired_width(800.0));
-                        if ui.button("Browse...").clicked() {
-                            self.ffmpeg_picker.pick_file();
-                        }
+                        ui.label(format!("FFmpeg Path: {}", self.config.ffmpeg_path));
+                        ui.label("");
+                        ui.label("");
                         ui.end_row();
 
                         ui.label("Source Folder:");
