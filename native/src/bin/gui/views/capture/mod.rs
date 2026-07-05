@@ -46,7 +46,7 @@ use crate::types::{
 
 // ── Live atomic: gates the "Proceed to Capture" button and drives the spinner ──
 
-static IS_PATCHING: AtomicBool = AtomicBool::new(false);
+pub(crate) static IS_PATCHING: AtomicBool = AtomicBool::new(false);
 
 pub(crate) fn is_patching() -> bool {
     IS_PATCHING.load(Ordering::SeqCst)
