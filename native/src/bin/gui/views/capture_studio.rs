@@ -100,6 +100,9 @@ impl Gui {
                 CaptureStudioState::Render => {
                     #[cfg(not(target_arch = "wasm32"))]
                     {
+                        if let Ok(resolved_path) = crate::settings::resolve_ffmpeg_path(&self.settings) {
+                            self.hlcr_state.config.ffmpeg_path = resolved_path.to_string_lossy().to_string();
+                        }
                         self.hlcr_state.draw_ui(ui, ctx);
                     }
                     #[cfg(target_arch = "wasm32")]

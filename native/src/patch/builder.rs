@@ -55,12 +55,6 @@ fn find_tick_forwards(start_frame: usize, gap_seconds: f32, frame_times: &[f32])
 
 const LOG_TAG: &str = "[dod-tools]";
 
-fn format_win_path(path: &std::path::Path) -> String {
-    path.to_string_lossy()
-        .replace("\\", "/")
-        .replace("/", "\\")
-}
-
 fn build_safe_echos(tick: i32, message: &str) -> Vec<(i32, String)> {
     let mut result = Vec::new();
     let mut current_tick = tick;
@@ -263,11 +257,6 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
         }
 
 
-
-        if let Some(ref out_dir) = config.output_dir {
-            // Deprecated: CFGs are no longer generated as we use dodtools_session junction instead
-        }
-        
         if job_idx < total_jobs - 1 {
             helper_cfg_content.push_str(&format!("alias {}_next \"playdemo {}\"\n", demo_name, next_demo_name));
         } else {
@@ -285,98 +274,94 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
         scheduled_commands.push((initial_delay_ticks, "sys_fast_forward".to_string()));
 
         for (i, streak) in merged_streaks.iter().enumerate() {
-            let s_idx = global_streak_idx;
             global_streak_idx += 1;
 
             let frame_times = &streak.frame_times;
 
-            let record_start_tick = find_tick_backwards(streak.start_tick as usize, config.record_start_lead, frame_times);
-            let s_speed_tick = find_tick_backwards(record_start_tick.max(0) as usize, 3.0, frame_times);
-            let s_sound_tick = find_tick_backwards(record_start_tick.max(0) as usize, 1.0, frame_times);
+            let first_kill = streak.start_tick;
+            let last_kill = streak.end_tick;
             let safe_tickrate = demo_fps;
-            let target_exit_tick = find_tick_forwards(streak.end_tick as usize, config.record_stop_trail, frame_times) as i32;
+            let record_start_lead_ticks = (config.record_start_lead * safe_tickrate) as i32;
+            let pre_roll_ticks = (config.pre_roll_seconds * safe_tickrate) as i32;
+            let record_end_trail_ticks = (config.record_stop_trail * safe_tickrate) as i32;
             let post_roll_ticks = (config.post_roll_seconds * safe_tickrate) as i32;
-            
+
+            let audio_flush_tick = first_kill.saturating_sub(record_start_lead_ticks + pre_roll_ticks).max(0);
+            let record_start_tick = first_kill.saturating_sub(record_start_lead_ticks).max(0);
+            let mut record_stop_tick = last_kill + record_end_trail_ticks;
+            let mut post_roll_end_tick = record_stop_tick + post_roll_ticks;
+
+            let frame_times = &streak.frame_times;
             let eof_safe_frame = (frame_times.len() as i32).saturating_sub(15);
-            
-            let (record_stop_tick, safe_end_tick) = if (target_exit_tick + post_roll_ticks) >= eof_safe_frame {
+
+            if post_roll_end_tick >= eof_safe_frame {
                 crate::log_markdown("⚠️ **Clutch Clip Detected:** Post-roll truncated to save batch near EOF.");
-                let forced_exit = eof_safe_frame;
-                let forced_stop = (forced_exit - 15).max(0); // 15-tick stagger prevents Cbuf overflow
-                (target_exit_tick.min(forced_stop), forced_exit)
+                post_roll_end_tick = eof_safe_frame;
+                record_stop_tick = record_stop_tick.min((eof_safe_frame - 15).max(0));
             } else {
-                let r_stop = std::cmp::min(target_exit_tick, eof_safe_frame);
-                let s_end = std::cmp::min(
-                    find_tick_forwards(r_stop.max(0) as usize, config.post_roll_seconds, frame_times),
-                    eof_safe_frame,
-                );
-                (r_stop, s_end)
-            };
+                record_stop_tick = record_stop_tick.min(eof_safe_frame);
+            }
 
             // Custom command overrides
-            let mut before_count = 1;
-            let mut after_count = 1;
             for custom in &config.custom_commands {
                 let target_tick = match custom.relation {
-                    CommandRelation::Before => streak.start_tick - (custom.offset * demo_fps) as i32,
-                    CommandRelation::After => streak.end_tick + (custom.offset * demo_fps) as i32,
-                };
-                let cmd_name = match custom.relation {
                     CommandRelation::Before => {
-                        let name = format!("custom_{}_before", before_count);
-                        before_count += 1;
-                        for (t, echo_cmd) in build_safe_echos(target_tick.max(0), "Executing Pre-roll Customs") {
-                            scheduled_commands.push((t, echo_cmd));
+                        let mut t = first_kill.saturating_sub((custom.offset * safe_tickrate) as i32).max(0);
+                        if t == audio_flush_tick || t == record_start_tick {
+                            t += 1;
                         }
-                        name
+                        t
                     }
                     CommandRelation::After => {
-                        let name = format!("custom_{}_after", after_count);
-                        after_count += 1;
-                        for (t, echo_cmd) in build_safe_echos(target_tick.max(0), "Executing Post-roll Customs") {
-                            scheduled_commands.push((t, echo_cmd));
+                        let mut t = last_kill + (custom.offset * safe_tickrate) as i32;
+                        if t == record_stop_tick {
+                            t += 1;
                         }
-                        name
+                        t
                     }
                 };
-                scheduled_commands.push((target_tick.max(0), cmd_name));
+
+                for (t, echo_cmd) in build_safe_echos(target_tick, "C") {
+                    scheduled_commands.push((t, echo_cmd));
+                }
+                scheduled_commands.push((target_tick, custom.command.clone()));
             }
 
-            // At Pre-roll Speed Flush
-            scheduled_commands.push((s_speed_tick, "sys_normal_speed".to_string()));
-            for (t, echo_cmd) in build_safe_echos(s_speed_tick, "host_framerate 0") {
-                scheduled_commands.push((t, echo_cmd));
-            }
-            
-            // At Sound Flush
-            scheduled_commands.push((s_sound_tick, "sys_sound".to_string()));
-            for (t, echo_cmd) in build_safe_echos(s_sound_tick, "stopsound") {
+            // At Audio Flush (Stage 1)
+            scheduled_commands.push((audio_flush_tick, "sys_normal_speed; sys_sound".to_string()));
+            for (t, echo_cmd) in build_safe_echos(audio_flush_tick, "F") {
                 scheduled_commands.push((t, echo_cmd));
             }
 
-            // At Start Frame
+            // At Start Frame (Stage 2)
             scheduled_commands.push((record_start_tick, "sys_record_start".to_string()));
-            for (t, echo_cmd) in build_safe_echos(record_start_tick, &format!("Start Frame {}", record_start_tick)) {
+            for (t, echo_cmd) in build_safe_echos(record_start_tick, "S") {
                 scheduled_commands.push((t, echo_cmd));
             }
 
-            // At End Frame
-            scheduled_commands.push((record_stop_tick, "sys_record_stop; sys_fast_forward".to_string()));
-            for (t, echo_cmd) in build_safe_echos(record_stop_tick, &format!("Stop Frame {}", record_stop_tick)) {
+            // At End Frame (Stage 3)
+            scheduled_commands.push((record_stop_tick, "sys_record_stop".to_string()));
+            for (t, echo_cmd) in build_safe_echos(record_stop_tick, "E") {
+                scheduled_commands.push((t, echo_cmd));
+            }
+
+            // At Post-Roll End (Stage 4)
+            scheduled_commands.push((post_roll_end_tick, "sys_fast_forward".to_string()));
+            for (t, echo_cmd) in build_safe_echos(post_roll_end_tick, "FF") {
                 scheduled_commands.push((t, echo_cmd));
             }
 
             if i == merged_streaks.len() - 1 {
                 // At Absolute EOF
                 if job_idx == total_jobs - 1 {
-                    let echos = build_safe_echos(safe_end_tick, "BATCH COMPLETE");
+                    let echos = build_safe_echos(post_roll_end_tick, "BC");
                     let echos_len = echos.len() as i32;
                     for (t, echo_cmd) in echos {
                         scheduled_commands.push((t, echo_cmd));
                     }
-                    scheduled_commands.push((safe_end_tick + echos_len, format!("{}_next", demo_name)));
+                    scheduled_commands.push((post_roll_end_tick + echos_len, format!("{}_next", demo_name)));
                 } else {
-                    scheduled_commands.push((safe_end_tick, format!("{}_next", demo_name)));
+                    scheduled_commands.push((post_roll_end_tick, format!("{}_next", demo_name)));
                 }
             }
         }
@@ -400,35 +385,6 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
             scheduled_commands,
         });
     }
-
-    helper_cfg_content.push_str("\n# Demo specific CFGs\n");
-    for job_idx in 0..total_jobs {
-        let demo_name = format!("chain_{:02}", job_idx + 1);
-        helper_cfg_content.push_str(&format!("alias {}_path \"mirv_movie_filename dodtools_session/{}\"\n", demo_name, demo_name));
-    }
-
-    helper_cfg_content.push_str("\n# Initial Commands Run Per Demo\n");
-    for (idx, cmd) in config.init_commands.iter().enumerate() {
-        helper_cfg_content.push_str(&format!("alias init_cmd{} \"{}\"\n", idx + 1, cmd));
-    }
-
-    helper_cfg_content.push_str("\n# Custom Commands Run X seconds BEFORE each streak\n");
-    let mut before_idx = 1;
-    for custom in &config.custom_commands {
-        if custom.relation == CommandRelation::Before {
-            helper_cfg_content.push_str(&format!("alias custom_{}_before \"{}\"\n", before_idx, custom.command));
-            before_idx += 1;
-        }
-    }
-
-    helper_cfg_content.push_str("\n# Custom Commands Run X seconds AFTER each streak\n");
-    let mut after_idx = 1;
-    for custom in &config.custom_commands {
-        if custom.relation == CommandRelation::After {
-            helper_cfg_content.push_str(&format!("alias custom_{}_after \"{}\"\n", after_idx, custom.command));
-            after_idx += 1;
-        }
-    }
     
     // Write dodtools_helper.cfg
     if let Some(ref out_dir) = config.output_dir {
@@ -440,6 +396,33 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
     }
 
     jobs
+}
+
+pub struct WorkspaceGuard {
+    pub session_junction: std::path::PathBuf,
+    pub exit_trigger: std::path::PathBuf,
+}
+
+impl Drop for WorkspaceGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.session_junction);
+        let _ = std::fs::remove_file(&self.exit_trigger);
+        let _ = std::fs::remove_dir_all(&self.exit_trigger);
+        if let Some(parent) = self.exit_trigger.parent() {
+            let dod_dir = parent.join("dod");
+            let _ = std::fs::remove_file(dod_dir.join("dodtools_helper.cfg"));
+            let _ = std::fs::remove_file(dod_dir.join("dodtools_capture_done.cfg"));
+            let _ = std::fs::remove_file(dod_dir.join("dod_quit.cfg"));
+            if let Ok(entries) = std::fs::read_dir(&dod_dir) {
+                for entry in entries.flatten() {
+                    let filename = entry.file_name().to_string_lossy().to_string();
+                    if filename.starts_with("dodtools_chain_") && filename.ends_with(".cfg") {
+                        let _ = std::fs::remove_file(entry.path());
+                    }
+                }
+            }
+        }
+    }
 }
 
 // ── Channel-based worker spawner ──────────────────────────────────────────────

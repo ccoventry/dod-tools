@@ -95,7 +95,7 @@ pub struct QueuedStreakExport {
     pub output_name: String,
     pub enabled: bool,
     pub exit_on_finish: bool,
-    pub init_commands: String,
+    pub init_commands: Vec<String>,
     pub custom_commands: Vec<native::patch::CustomCommand>,
     pub fast_forward_speed: f32,
     pub hltv_spec_player: Option<String>,

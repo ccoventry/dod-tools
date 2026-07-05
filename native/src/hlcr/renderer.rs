@@ -165,10 +165,15 @@ pub async fn run_render_job(
     let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => {
+            let error_msg = if e.kind() == std::io::ErrorKind::NotFound {
+                "FFmpeg not found. Please install FFmpeg or set a custom path in Settings.".to_string()
+            } else {
+                format!("Failed to spawn FFmpeg process: {}", e)
+            };
             let _ = tx.send(RenderUpdate::Finished(
                 job_id.clone(),
                 false,
-                Some(format!("Failed to spawn FFmpeg process: {}", e)),
+                Some(error_msg),
             ));
             return;
         }

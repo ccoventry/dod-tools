@@ -257,7 +257,7 @@ pub fn start_capture_pipeline(
             let player_deaths = player_deaths_map.get(&item.id).cloned().unwrap_or_default();
             let options = native::patch::PatchOptions {
                 exit_on_finish: item.exit_on_finish,
-                init_commands: item.init_commands.lines().map(String::from).collect(),
+                init_commands: item.init_commands.clone(),
                 custom_commands,
                 fast_forward_speed: Some(item.fast_forward_speed),
                 hltv_spec_player: item.hltv_spec_player.clone(),
