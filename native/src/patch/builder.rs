@@ -485,6 +485,77 @@ pub fn spawn_patch_batch(
     }
 }
 
+// ── svc_director payload builder ──────────────────────────────────────────────
+
+/// Build a GoldSrc `svc_director` (OpCode 0x33) net-message payload for a
+/// `DRC_CMD_MESSAGE` (sub-command 0x06) HLTV title card.
+///
+/// The returned `Vec<u8>` is a self-contained net-message body ready to be
+/// embedded inside a `Dem_NetworkBuffer` (frame type 0x00 / 0x01) payload.
+///
+/// Fixed wire layout (30 bytes before the text):
+///
+/// | Offset | Size | Value       | Meaning                 |
+/// |--------|------|-------------|-------------------------|
+/// | 0      | 1    | 0x33        | svc_director opcode     |
+/// | 1      | 1    | payload_len | total bytes after opcode|
+/// | 2      | 1    | 0x06        | DRC_CMD_MESSAGE         |
+/// | 3      | 1    | 0x00        | effect (none)           |
+/// | 4      | 4    | FF A0 00 00 | RGBA colour #FFA000FF   |
+/// | 8      | 4    | -1.0 f32 LE | position X (centered)   |
+/// | 12     | 4    | 0.85 f32 LE | position Y              |
+/// | 16     | 4    | 0.5  f32 LE | fade-in  (seconds)      |
+/// | 20     | 4    | 0.5  f32 LE | fade-out (seconds)      |
+/// | 24     | 4    | 3.0  f32 LE | hold time (seconds)     |
+/// | 28     | 4    | 0.0  f32 LE | FX time                 |
+/// | 32     | N+1  | text + \0   | null-terminated string  |
+///
+/// `payload_len` = 30 (fields 2-31) + text_len + 1 (null), capped at 255.
+pub fn build_director_message(text: &str) -> Vec<u8> {
+    // Null-terminate and clamp so payload_len fits in one byte.
+    // payload_len covers everything from the sub-command byte (offset 2) to the
+    // end of the null-terminated string, i.e. 30 fixed bytes + string + NUL.
+    // Maximum payload_len = 255, so maximum text bytes = 255 - 30 - 1 = 224.
+    const FIXED_OVERHEAD: usize = 30; // bytes 2..31 (sub-cmd through FX time)
+    const MAX_TEXT_BYTES: usize = 255 - FIXED_OVERHEAD - 1; // 224
+
+    let raw = text.as_bytes();
+    let text_len = raw.len().min(MAX_TEXT_BYTES);
+    let text_bytes = &raw[..text_len];
+
+    // payload_len is everything after the opcode and length byte itself.
+    let payload_len: u8 = (FIXED_OVERHEAD + text_len + 1) as u8;
+
+    let mut msg: Vec<u8> = Vec::with_capacity(2 + FIXED_OVERHEAD + text_len + 1);
+
+    // Opcode + payload length
+    msg.push(0x33);          // svc_director
+    msg.push(payload_len);
+
+    // Sub-command and effect
+    msg.push(0x06);          // DRC_CMD_MESSAGE
+    msg.push(0x00);          // effect: none
+
+    // RGBA colour #FFA000FF
+    msg.extend_from_slice(&[0xFF, 0xA0, 0x00, 0x00]);
+
+    // Position (X = -1.0 → engine centers horizontally; Y = 0.85)
+    msg.extend_from_slice(&(-1.0f32).to_le_bytes());
+    msg.extend_from_slice(&(0.85f32).to_le_bytes());
+
+    // Timing
+    msg.extend_from_slice(&(0.5f32).to_le_bytes());  // fade in
+    msg.extend_from_slice(&(0.5f32).to_le_bytes());  // fade out
+    msg.extend_from_slice(&(3.0f32).to_le_bytes());  // hold time
+    msg.extend_from_slice(&(0.0f32).to_le_bytes());  // FX time
+
+    // Null-terminated text payload
+    msg.extend_from_slice(text_bytes);
+    msg.push(0x00);
+
+    msg
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
