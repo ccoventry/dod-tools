@@ -556,6 +556,43 @@ pub fn build_director_message(text: &str) -> Vec<u8> {
     msg
 }
 
+/// Build a GoldSrc `svc_director` (OpCode 0x33) net-message for a
+/// `DRC_CMD_STUFFTEXT` (sub-command 0x0A) executable command.
+///
+/// The engine executes `command` on the client console when the event fires
+/// in the `viewdemo` event list. The returned `Vec<u8>` is a self-contained
+/// net-message body ready to embed inside a `Dem_NetworkBuffer` frame.
+///
+/// Wire layout:
+///
+/// | Offset | Size | Value        | Meaning              |
+/// |--------|------|--------------|----------------------|
+/// | 0      | 1    | 0x33         | svc_director opcode  |
+/// | 1      | 1    | payload_len  | 1 + text_len + 1     |
+/// | 2      | 1    | 0x0A         | DRC_CMD_STUFFTEXT    |
+/// | 3      | N    | command      | raw command string   |
+/// | 3+N    | 1    | 0x00         | null terminator      |
+///
+/// Maximum `command` length is 253 bytes (keeps `payload_len` ≤ 255).
+pub fn build_director_stufftext(command: &str) -> Vec<u8> {
+    const MAX_TEXT_BYTES: usize = 253; // keeps payload_len <= 255
+
+    let raw      = command.as_bytes();
+    let text_len = raw.len().min(MAX_TEXT_BYTES);
+    let text_bytes = &raw[..text_len];
+
+    // payload_len = sub-command byte (1) + text + NUL
+    let payload_len: u8 = (1 + text_len + 1) as u8;
+
+    let mut msg: Vec<u8> = Vec::with_capacity(2 + 1 + text_len + 1);
+    msg.push(0x33);           // svc_director
+    msg.push(payload_len);
+    msg.push(0x0A);           // DRC_CMD_STUFFTEXT
+    msg.extend_from_slice(text_bytes);
+    msg.push(0x00);           // null terminator
+    msg
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
