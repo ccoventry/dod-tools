@@ -21,6 +21,8 @@ use crate::types::{DemoData, CaptureStudioState};
 use super::{is_patching, set_is_patching, acquire_lock, IS_PATCHING};
 use super::log_markdown;
 use egui_extras::{TableBuilder, Column};
+use crate::views::t;
+use crate::settings::{save_settings, apply_language_setting};
 
 fn create_pinned_file_dialog() -> egui_file_dialog::FileDialog {
     let mut fd = egui_file_dialog::FileDialog::new();
@@ -46,6 +48,11 @@ pub fn render(
     queued_demos_arc: Arc<Mutex<Arc<Vec<DemoData>>>>,
     patcher_config_mutex: &'static Mutex<PatcherConfig>,
     render_config_mutex: &'static Mutex<native::hlcr::config::RenderConfig>,
+    settings: &mut crate::settings::AppSettings,
+    draft_settings: &mut crate::settings::AppSettings,
+    error_message: &mut Option<String>,
+    subdir_cache: &mut std::collections::HashMap<std::path::PathBuf, Vec<std::path::PathBuf>>,
+    tree_demo_cache: &mut std::collections::HashMap<std::path::PathBuf, usize>,
 ) {
     // Loading guard: ingestion thread may still be finishing its final write.
     if *loading_ptr {
@@ -319,6 +326,378 @@ pub fn render(
             } else {
                 ui.weak("No discovered highlight streaks. Go back to Scan and add demo files.");
             }
+        });
+    });
+
+    ui.add_space(10.0);
+
+    // ── Global Paths & Configuration ─────────────────────────────────────────────
+    ui.collapsing("⚙ Global Paths & Configuration", |ui| {
+        if let Some(error) = error_message.clone() {
+            let mut dismiss = false;
+            egui::Frame::NONE
+                .fill(ui.visuals().faint_bg_color)
+                .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(239, 68, 68)))
+                .corner_radius(6.0)
+                .inner_margin(12.0)
+                .show(ui, |ui| {
+                    ui.vertical(|ui| {
+                        ui.label(
+                            egui::RichText::new("Configuration Error")
+                                .heading()
+                                .color(egui::Color32::from_rgb(239, 68, 68)),
+                        );
+                        ui.add_space(8.0);
+                        ui.label(&error);
+                        ui.add_space(12.0);
+                        if ui.button("Dismiss").clicked() {
+                            dismiss = true;
+                        }
+                    });
+                });
+            if dismiss {
+                *error_message = None;
+                ctx.request_repaint();
+            }
+        }
+
+        ui.vertical(|ui| {
+            ui.heading(t("#app_prefs_general"));
+            ui.add_space(8.0);
+
+            ui.horizontal(|ui| {
+                ui.label(t("#app_prefs_language"));
+                let mut current_lang = draft_settings.language.clone();
+                egui::ComboBox::from_id_salt("language_select")
+                    .selected_text(match current_lang.as_str() {
+                        "auto" => t("#app_prefs_lang_auto"),
+                        other => {
+                            let mut chars = other.chars();
+                            match chars.next() {
+                                None => String::new(),
+                                Some(f) => {
+                                    f.to_uppercase().collect::<String>()
+                                        + chars.as_str()
+                                }
+                            }
+                        }
+                    })
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut current_lang,
+                            "auto".to_string(),
+                            t("#app_prefs_lang_auto"),
+                        );
+                        ui.separator();
+                        ui.selectable_value(
+                            &mut current_lang,
+                            "english".to_string(),
+                            "English",
+                        );
+                        ui.selectable_value(
+                            &mut current_lang,
+                            "french".to_string(),
+                            "French",
+                        );
+                        ui.selectable_value(
+                            &mut current_lang,
+                            "german".to_string(),
+                            "German",
+                        );
+                        ui.selectable_value(
+                            &mut current_lang,
+                            "spanish".to_string(),
+                            "Spanish",
+                        );
+                        ui.selectable_value(
+                            &mut current_lang,
+                            "russian".to_string(),
+                            "Russian",
+                        );
+                        ui.selectable_value(
+                            &mut current_lang,
+                            "serbian".to_string(),
+                            "Serbian",
+                        );
+                        ui.selectable_value(
+                            &mut current_lang,
+                            "polish".to_string(),
+                            "Polish",
+                        );
+                        ui.selectable_value(
+                            &mut current_lang,
+                            "turkish".to_string(),
+                            "Turkish",
+                        );
+                    });
+
+                if current_lang != draft_settings.language {
+                    draft_settings.language = current_lang;
+                    ctx.request_repaint();
+                }
+            });
+
+            ui.add_space(8.0);
+            let mut scan_val = draft_settings.scan_folders_for_demos;
+            if ui.checkbox(&mut scan_val, t("#app_prefs_scan_folders")).changed() {
+                draft_settings.scan_folders_for_demos = scan_val;
+                ctx.request_repaint();
+            }
+
+            ui.add_space(8.0);
+            ui.separator();
+            ui.add_space(8.0);
+            ui.heading("File Picker Bookmarks");
+            ui.add_space(8.0);
+
+            ui.vertical(|ui| {
+                let mut index_to_remove = None;
+                for (i, folder) in draft_settings.pinned_folders.iter().enumerate() {
+                    ui.horizontal(|ui| {
+                        if ui.button("🗑").on_hover_text("Remove Pin").clicked() {
+                            index_to_remove = Some(i);
+                        }
+                        ui.label(folder.to_string_lossy());
+                    });
+                }
+
+                if let Some(i) = index_to_remove {
+                    draft_settings.pinned_folders.remove(i);
+                    *settings = draft_settings.clone();
+                    save_settings(settings);
+                    ctx.request_repaint();
+                }
+
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    if ui.button("➕ Add New Pin").clicked() {
+                        if let Some(folder) = rfd::FileDialog::new().pick_folder() {
+                            draft_settings.pinned_folders.push(folder);
+                            *settings = draft_settings.clone();
+                            save_settings(settings);
+                            ctx.request_repaint();
+                        }
+                    }
+                }
+            });
+
+            ui.add_space(8.0);
+            ui.separator();
+            ui.add_space(8.0);
+            ui.heading("Recording Engine Configurations");
+            ui.add_space(8.0);
+
+            // HLAE Path configuration
+            ui.label("HLAE Path (hlae.exe):");
+            ui.horizontal(|ui| {
+                ui.add(egui::TextEdit::singleline(&mut draft_settings.hlae_path).desired_width(ui.available_width() - 80.0));
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    if ui.button("Browse...").clicked() {
+                        if let Some(path) = rfd::FileDialog::new()
+                            .add_filter("Executables", &["exe"])
+                            .pick_file()
+                        {
+                            if path.file_name().and_then(|n| n.to_str()).map(|s| s.to_lowercase()) == Some("hlae.exe".to_string()) {
+                                draft_settings.hlae_path = path.to_string_lossy().to_string();
+                            } else {
+                                *error_message = Some("Selected file must be hlae.exe".to_string());
+                            }
+                        }
+                    }
+                }
+            });
+
+            ui.add_space(8.0);
+
+            // DoD Game Path configuration
+            ui.label("DoD Game Path (hl.exe):");
+            ui.horizontal(|ui| {
+                ui.add(egui::TextEdit::singleline(&mut draft_settings.game_path).desired_width(ui.available_width() - 80.0));
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    if ui.button("Browse...").clicked() {
+                        if let Some(path) = rfd::FileDialog::new()
+                            .add_filter("Executables", &["exe"])
+                            .pick_file()
+                        {
+                            if path.file_name().and_then(|n| n.to_str()).map(|s| s.to_lowercase()) == Some("hl.exe".to_string()) {
+                                draft_settings.game_path = path.to_string_lossy().to_string();
+                            } else {
+                                *error_message = Some("Selected file must be hl.exe".to_string());
+                            }
+                        }
+                    }
+                }
+            });
+
+            ui.add_space(8.0);
+
+            // Custom FFmpeg Path configuration
+            ui.label("Custom FFmpeg Path (Optional):");
+            ui.horizontal(|ui| {
+                let mut path_str = draft_settings.ffmpeg_override_path.clone().unwrap_or_default();
+                if ui.add(egui::TextEdit::singleline(&mut path_str).desired_width(ui.available_width() - 80.0)).changed() {
+                    draft_settings.ffmpeg_override_path = if path_str.trim().is_empty() {
+                        None
+                    } else {
+                        Some(path_str.trim().to_string())
+                    };
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    if ui.button("Browse...").clicked() {
+                        if let Some(path) = rfd::FileDialog::new()
+                            .add_filter("Executables", &["exe"])
+                            .pick_file()
+                        {
+                            draft_settings.ffmpeg_override_path = Some(path.to_string_lossy().to_string());
+                        }
+                    }
+                }
+            });
+
+            ui.add_space(8.0);
+            ui.separator();
+            ui.add_space(8.0);
+            ui.heading("Highlight Capture Settings");
+            ui.add_space(8.0);
+
+            ui.label("Init Commands (startup):");
+            ui.add_space(4.0);
+            ui.vertical(|ui| {
+                let mut delete_idx = None;
+                
+                egui::ScrollArea::vertical()
+                    .max_height(120.0)
+                    .id_salt("init_commands_scroll_select")
+                    .show(ui, |ui| {
+                        for (i, cmd) in draft_settings.capture_init_commands.iter_mut().enumerate() {
+                            ui.horizontal(|ui| {
+                                ui.add(egui::TextEdit::singleline(cmd).desired_width(ui.available_width() - 40.0));
+                                if ui.button("❌").clicked() {
+                                    delete_idx = Some(i);
+                                }
+                            });
+                        }
+                    });
+
+                if let Some(i) = delete_idx {
+                    draft_settings.capture_init_commands.remove(i);
+                }
+                if ui.button("➕ Add Command").clicked() {
+                    draft_settings.capture_init_commands.push("".to_string());
+                }
+            });
+            
+            ui.add_space(8.0);
+            ui.label("Default Custom Commands:");
+            ui.add_space(4.0);
+            ui.vertical(|ui| {
+                let mut delete_idx = None;
+                
+                egui::ScrollArea::vertical()
+                    .max_height(120.0)
+                    .id_salt("default_commands_scroll_select")
+                    .show(ui, |ui| {
+                        for (i, cmd) in draft_settings.custom_commands.iter_mut().enumerate() {
+                            ui.horizontal(|ui| {
+                                ui.add(egui::TextEdit::singleline(&mut cmd.command).desired_width(120.0));
+                                
+                                let is_after = cmd.relation == native::patch::CommandRelation::After;
+                                if ui.selectable_label(!is_after, "B").on_hover_text("Before Highlight").clicked() {
+                                    cmd.relation = native::patch::CommandRelation::Before;
+                                }
+                                if ui.selectable_label(is_after, "A").on_hover_text("After Highlight").clicked() {
+                                    cmd.relation = native::patch::CommandRelation::After;
+                                }
+                                
+                                ui.add(egui::DragValue::new(&mut cmd.offset).speed(0.1).range(0.0..=60.0).suffix("s"));
+                                if ui.button("❌").clicked() {
+                                    delete_idx = Some(i);
+                                }
+                            });
+                        }
+                    });
+
+                if let Some(i) = delete_idx {
+                    draft_settings.custom_commands.remove(i);
+                }
+                if ui.button("➕ Add Default").clicked() {
+                    draft_settings.custom_commands.push(native::patch::CustomCommand {
+                        command: "".to_string(),
+                        offset: 2.0,
+                        relation: native::patch::CommandRelation::Before,
+                    });
+                }
+            });
+
+            ui.add_space(8.0);
+            ui.separator();
+            ui.add_space(8.0);
+            ui.strong("Timeline Buffers");
+            ui.add_space(4.0);
+
+            ui.label("Initial Load Delay:");
+            let mut val = draft_settings.capture_initial_delay;
+            if ui.add(egui::Slider::new(&mut val, 0.0..=30.0).step_by(0.5).suffix("s")).changed() {
+                draft_settings.capture_initial_delay = val;
+            }
+
+            ui.label("Fast-Forward Speed:");
+            let mut val = draft_settings.capture_fast_forward_speed;
+            if ui.add(egui::Slider::new(&mut val, 0.01..=5.0).step_by(0.05)).changed() {
+                draft_settings.capture_fast_forward_speed = val;
+            }
+
+            ui.label("Pre-Record Buffer:");
+            let mut val = draft_settings.capture_pre_record_buffer;
+            if ui.add(egui::Slider::new(&mut val, 0.0..=30.0).step_by(0.5).suffix("s")).changed() {
+                draft_settings.capture_pre_record_buffer = val;
+            }
+
+            ui.label("Record Start Lead:");
+            let mut val = draft_settings.capture_record_start_lead;
+            if ui.add(egui::Slider::new(&mut val, 0.0..=10.0).step_by(0.5).suffix("s")).changed() {
+                draft_settings.capture_record_start_lead = val;
+            }
+
+            ui.label("Record Stop Trail:");
+            let mut val = draft_settings.capture_record_stop_trail;
+            if ui.add(egui::Slider::new(&mut val, 0.0..=10.0).step_by(0.5).suffix("s")).changed() {
+                draft_settings.capture_record_stop_trail = val;
+            }
+
+            ui.label("Post-Record Buffer:");
+            let mut val = draft_settings.post_record_buffer;
+            if ui.add(egui::Slider::new(&mut val, 0.0..=30.0).step_by(0.5).suffix("s")).changed() {
+                draft_settings.post_record_buffer = val;
+            }
+
+            ui.add_space(16.0);
+            ui.separator();
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                if ui.button("💾 Save Settings").clicked() {
+                    let old_scan = settings.scan_folders_for_demos;
+                    *settings = draft_settings.clone();
+                    apply_language_setting(&settings.language);
+                    save_settings(settings);
+                    
+                    if old_scan != settings.scan_folders_for_demos {
+                        #[cfg(not(target_arch = "wasm32"))]
+                        {
+                            subdir_cache.clear();
+                            tree_demo_cache.clear();
+                        }
+                    }
+                    ctx.request_repaint();
+                }
+                if ui.button("🔄 Revert Settings").clicked() {
+                    *draft_settings = settings.clone();
+                    ctx.request_repaint();
+                }
+            });
         });
     });
 
@@ -684,6 +1063,100 @@ pub fn render(
                         ui.add(egui::DragValue::new(&mut patcher_config.fast_forward_speed)
                             .range(0.01..=10.0).speed(0.01));
                     });
+
+                    // ── Mock Execution Timeline Visualizer ─────────────────────
+                    ui.add_space(8.0);
+                    ui.separator();
+                    ui.add_space(8.0);
+                    ui.label(egui::RichText::new("Execution Timeline (Mock)").strong());
+                    ui.add_space(4.0);
+
+                    struct TimelineEvent {
+                        time: f32,
+                        name: String,
+                        is_custom: bool,
+                    }
+
+                    let mut events = Vec::new();
+                    events.push(TimelineEvent {
+                        time: 0.0,
+                        name: "First Kill (Anchor)".to_string(),
+                        is_custom: false,
+                    });
+                    events.push(TimelineEvent {
+                        time: -patcher_config.record_start_lead,
+                        name: "Record Start".to_string(),
+                        is_custom: false,
+                    });
+                    events.push(TimelineEvent {
+                        time: -patcher_config.record_start_lead - patcher_config.pre_roll_seconds,
+                        name: "Pre-Roll (Speed Normal & Audio Flush)".to_string(),
+                        is_custom: false,
+                    });
+                    events.push(TimelineEvent {
+                        time: 10.0,
+                        name: "Last Kill (Anchor)".to_string(),
+                        is_custom: false,
+                    });
+                    events.push(TimelineEvent {
+                        time: 10.0 + patcher_config.record_stop_trail,
+                        name: "Record Stop".to_string(),
+                        is_custom: false,
+                    });
+                    events.push(TimelineEvent {
+                        time: 10.0 + patcher_config.record_stop_trail + patcher_config.post_roll_seconds,
+                        name: "Post-Roll End (Fast Forward)".to_string(),
+                        is_custom: false,
+                    });
+
+                    for custom in &patcher_config.custom_commands {
+                        let t = match custom.relation {
+                            native::patch::CommandRelation::Before => -custom.offset,
+                            native::patch::CommandRelation::After => 10.0 + custom.offset,
+                        };
+                        events.push(TimelineEvent {
+                            time: t,
+                            name: format!("Custom Cmd: {}", custom.command),
+                            is_custom: true,
+                        });
+                    }
+
+                    events.sort_by(|a, b| a.time.partial_cmp(&b.time).unwrap_or(std::cmp::Ordering::Equal));
+
+                    TableBuilder::new(ui)
+                        .striped(true)
+                        .column(Column::exact(100.0))
+                        .column(Column::remainder())
+                        .header(18.0, |mut header| {
+                            header.col(|ui| { ui.strong("Relative Time"); });
+                            header.col(|ui| { ui.strong("Action/Event"); });
+                        })
+                        .body(|body| {
+                            body.rows(18.0, events.len(), |mut row| {
+                                let event = &events[row.index()];
+                                row.col(|ui| {
+                                    let time_str = if event.time >= 0.0 {
+                                        format!("+{:.1} sec", event.time)
+                                    } else {
+                                        format!("{:.1} sec", event.time)
+                                    };
+                                    let color = if event.is_custom {
+                                        egui::Color32::LIGHT_BLUE
+                                    } else {
+                                        egui::Color32::GRAY
+                                    };
+                                    ui.colored_label(color, time_str);
+                                });
+                                row.col(|ui| {
+                                    let color = if event.is_custom {
+                                        egui::Color32::LIGHT_BLUE
+                                    } else {
+                                        egui::Color32::GRAY
+                                    };
+                                    ui.colored_label(color, &event.name);
+                                });
+                            });
+                        });
                 });
             });
         });

@@ -43,6 +43,50 @@ fn write_console_cmd(writer: &mut std::io::BufWriter<std::fs::File>, time: f32, 
     Ok(73)
 }
 
+fn write_director_event_payload(
+    writer: &mut std::io::BufWriter<std::fs::File>,
+    time: f32,
+    tick: i32,
+    info_block: &[u8],
+    command: &str,
+) -> std::io::Result<i32> {
+    use std::io::Write;
+    
+    if command.len() >= 64 {
+        let msg = format!(
+            "FATAL: GoldSrc Cbuf Overflow (64-byte limit breached). Command: '{}', Length: {}",
+            command,
+            command.len()
+        );
+        log::error!("{}", msg);
+        panic!("{}", msg);
+    }
+
+    let cmd_bytes = command.as_bytes();
+    let cmd_len = cmd_bytes.len();
+    let payload_len = (1 + cmd_len + 1) as u8;
+    
+    let mut payload = Vec::with_capacity(3 + cmd_len + 1);
+    payload.push(0x33);         // svc_director
+    payload.push(payload_len);
+    payload.push(0x0A);         // DRC_CMD_STUFFTEXT
+    payload.extend_from_slice(cmd_bytes);
+    payload.push(0x00);         // null terminator
+
+    writer.write_all(&[1_u8])?; // type (NetworkMessage)
+    writer.write_all(&time.to_le_bytes())?;
+    writer.write_all(&tick.to_le_bytes())?;
+    writer.write_all(info_block)?;
+    
+    let msg_len = (payload.len() + 1) as u32;
+    writer.write_all(&msg_len.to_le_bytes())?;
+    writer.write_all(&payload)?;
+    writer.write_all(&[1_u8])?; // svc_nop
+    
+    let total_bytes = 9 + 464 + 4 + payload.len() + 1;
+    Ok(total_bytes as i32)
+}
+
 // ── Stream patcher ────────────────────────────────────────────────────────────
 
 pub struct StreamPatcher {
@@ -96,6 +140,11 @@ impl StreamPatcher {
         let mut bytes_injected: i32 = 0;
         let mut is_first_frame = true;
         let mut playback_started = false;
+        let mut bookmark_queue: std::collections::VecDeque<i32> = {
+            let mut b = job.bookmarks.clone();
+            b.sort_unstable();
+            b.into()
+        };
         let mut scheduled_queue: std::collections::VecDeque<(i32, String)> = job.scheduled_commands.iter().cloned().collect();
 
         // Step 2.5: Pre-read the directory to map entry boundaries
@@ -277,6 +326,20 @@ impl StreamPatcher {
                     // NetworkMessage (468 bytes + message_length)
                     scratch_buf.resize(464, 0);
                     read_exact(&mut reader, &mut scratch_buf, "NetworkMessage Info")?;
+
+                    // Inject director events if bookmark ticks are reached within playback entry
+                    while let Some(&target_tick) = bookmark_queue.front() {
+                        if playback_started && file_tick >= target_tick {
+                            let bookmark_tick = bookmark_queue.pop_front().unwrap();
+                            let command = format!("echo [dod-tools] BOOKMARK_{}", bookmark_tick);
+                            let b = write_director_event_payload(&mut writer, time, file_tick, &scratch_buf, &command)?;
+                            update_injection(pos, b, 1);
+                            bytes_injected += b;
+                        } else {
+                            break;
+                        }
+                    }
+
                     writer.write_all(&scratch_buf)?;
 
                     let mut len_buf = [0u8; 4];
@@ -447,6 +510,7 @@ mod tests {
             target_player: None,
             init_commands: vec!["host_framerate 0".to_string()],
             scheduled_commands: vec![(10, "some_command".to_string())],
+            bookmarks: Vec::new(),
         };
 
         let config = PatcherConfig {
@@ -539,6 +603,7 @@ mod tests {
             target_player: None,
             init_commands: vec!["host_framerate 0".to_string()],
             scheduled_commands: vec![(10, "some_command".to_string())],
+            bookmarks: Vec::new(),
         };
 
         let config = PatcherConfig {
