@@ -156,6 +156,10 @@ pub fn render_patch_ui(
     hide_non_pov: &mut bool,
     // Fields forwarded exclusively to the Capture step renderer:
     settings: &mut crate::settings::AppSettings,
+    draft_settings: &mut crate::settings::AppSettings,
+    error_message: &mut Option<String>,
+    subdir_cache: &mut std::collections::HashMap<std::path::PathBuf, Vec<std::path::PathBuf>>,
+    tree_demo_cache: &mut std::collections::HashMap<std::path::PathBuf, usize>,
     capture_engine_running: &mut bool,
     engine_msg: &str,
     engine_progress: f32,
@@ -198,6 +202,11 @@ pub fn render_patch_ui(
                 get_queued_demos(),
                 get_patcher_config(),
                 get_render_config(),
+                settings,
+                draft_settings,
+                error_message,
+                subdir_cache,
+                tree_demo_cache,
             );
         }
         CaptureStudioState::Capture => {

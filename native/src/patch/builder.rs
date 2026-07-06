@@ -214,6 +214,7 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
             target_player: None,
             init_commands: primer_init,
             scheduled_commands: primer_scheduled,
+            bookmarks: Vec::new(),
         });
     }
 
@@ -221,6 +222,8 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
     for (job_idx, ((source_demo, target_player), mut streaks)) in sorted_groups.into_iter().enumerate() {
         // Sort by start_tick in ascending order
         streaks.sort_by_key(|s| s.start_tick);
+
+        let demo_bookmarks: Vec<i32> = streaks.iter().map(|s| s.start_tick).collect();
 
         let demo_fps = streaks.first().map(|s| s.demo_fps).filter(|&fps| fps > 0.0).unwrap_or(30.0);
 
@@ -277,44 +280,38 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
             global_streak_idx += 1;
 
             let frame_times = &streak.frame_times;
-
-            let first_kill = streak.start_tick;
-            let last_kill = streak.end_tick;
-            let safe_tickrate = demo_fps;
-            let record_start_lead_ticks = (config.record_start_lead * safe_tickrate) as i32;
-            let pre_roll_ticks = (config.pre_roll_seconds * safe_tickrate) as i32;
-            let record_end_trail_ticks = (config.record_stop_trail * safe_tickrate) as i32;
-            let post_roll_ticks = (config.post_roll_seconds * safe_tickrate) as i32;
-
-            let audio_flush_tick = first_kill.saturating_sub(record_start_lead_ticks + pre_roll_ticks).max(0);
-            let record_start_tick = first_kill.saturating_sub(record_start_lead_ticks).max(0);
-            let mut record_stop_tick = last_kill + record_end_trail_ticks;
-            let mut post_roll_end_tick = record_stop_tick + post_roll_ticks;
-
-            let frame_times = &streak.frame_times;
             let eof_safe_frame = (frame_times.len() as i32).saturating_sub(15);
 
-            if post_roll_end_tick >= eof_safe_frame {
+            let record_start_tick = find_tick_backwards(streak.start_tick as usize, config.record_start_lead, frame_times);
+            let s_speed_tick = find_tick_backwards(record_start_tick.max(0) as usize, 3.0, frame_times);
+            let s_sound_tick = find_tick_backwards(record_start_tick.max(0) as usize, 1.0, frame_times);
+            let mut r_stop = find_tick_forwards(streak.end_tick as usize, config.record_stop_trail, frame_times) as i32;
+            let mut s_end = std::cmp::min(
+                find_tick_forwards(r_stop.max(0) as usize, config.post_roll_seconds, frame_times),
+                eof_safe_frame,
+            );
+
+            if s_end >= eof_safe_frame {
                 crate::log_markdown("⚠️ **Clutch Clip Detected:** Post-roll truncated to save batch near EOF.");
-                post_roll_end_tick = eof_safe_frame;
-                record_stop_tick = record_stop_tick.min((eof_safe_frame - 15).max(0));
+                r_stop = r_stop.min(eof_safe_frame);
+                s_end = eof_safe_frame;
             } else {
-                record_stop_tick = record_stop_tick.min(eof_safe_frame);
+                r_stop = r_stop.min(eof_safe_frame);
             }
 
             // Custom command overrides
             for custom in &config.custom_commands {
                 let target_tick = match custom.relation {
                     CommandRelation::Before => {
-                        let mut t = first_kill.saturating_sub((custom.offset * safe_tickrate) as i32).max(0);
-                        if t == audio_flush_tick || t == record_start_tick {
+                        let mut t = find_tick_backwards(streak.start_tick as usize, custom.offset, frame_times);
+                        if t == s_speed_tick || t == s_sound_tick || t == record_start_tick {
                             t += 1;
                         }
                         t
                     }
                     CommandRelation::After => {
-                        let mut t = last_kill + (custom.offset * safe_tickrate) as i32;
-                        if t == record_stop_tick {
+                        let mut t = find_tick_forwards(streak.end_tick as usize, custom.offset, frame_times);
+                        if t == r_stop {
                             t += 1;
                         }
                         t
@@ -324,12 +321,22 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
                 for (t, echo_cmd) in build_safe_echos(target_tick, "C") {
                     scheduled_commands.push((t, echo_cmd));
                 }
+                let cmd_len = custom.command.len();
+                if cmd_len > 60 {
+                    crate::log_markdown(&format!("⚠️ **WARNING:** Custom command exceeds 60 bytes and will likely be dropped by the GoldSrc Cbuf: {}", custom.command));
+                }
                 scheduled_commands.push((target_tick, custom.command.clone()));
             }
 
-            // At Audio Flush (Stage 1)
-            scheduled_commands.push((audio_flush_tick, "sys_normal_speed; sys_sound".to_string()));
-            for (t, echo_cmd) in build_safe_echos(audio_flush_tick, "F") {
+            // At Speed Flush (Stage 1)
+            scheduled_commands.push((s_speed_tick, "sys_normal_speed".to_string()));
+            for (t, echo_cmd) in build_safe_echos(s_speed_tick, "F") {
+                scheduled_commands.push((t, echo_cmd));
+            }
+
+            // At Sound Flush (Stage 1.5)
+            scheduled_commands.push((s_sound_tick, "sys_sound".to_string()));
+            for (t, echo_cmd) in build_safe_echos(s_sound_tick, "S_SOUND") {
                 scheduled_commands.push((t, echo_cmd));
             }
 
@@ -340,28 +347,28 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
             }
 
             // At End Frame (Stage 3)
-            scheduled_commands.push((record_stop_tick, "sys_record_stop".to_string()));
-            for (t, echo_cmd) in build_safe_echos(record_stop_tick, "E") {
+            scheduled_commands.push((r_stop, "sys_record_stop".to_string()));
+            for (t, echo_cmd) in build_safe_echos(r_stop, "E") {
                 scheduled_commands.push((t, echo_cmd));
             }
 
             // At Post-Roll End (Stage 4)
-            scheduled_commands.push((post_roll_end_tick, "sys_fast_forward".to_string()));
-            for (t, echo_cmd) in build_safe_echos(post_roll_end_tick, "FF") {
+            scheduled_commands.push((s_end, "sys_fast_forward".to_string()));
+            for (t, echo_cmd) in build_safe_echos(s_end, "FF") {
                 scheduled_commands.push((t, echo_cmd));
             }
 
             if i == merged_streaks.len() - 1 {
                 // At Absolute EOF
                 if job_idx == total_jobs - 1 {
-                    let echos = build_safe_echos(post_roll_end_tick, "BC");
+                    let echos = build_safe_echos(s_end, "BC");
                     let echos_len = echos.len() as i32;
                     for (t, echo_cmd) in echos {
                         scheduled_commands.push((t, echo_cmd));
                     }
-                    scheduled_commands.push((post_roll_end_tick + echos_len, format!("{}_next", demo_name)));
+                    scheduled_commands.push((s_end + echos_len, format!("{}_next", demo_name)));
                 } else {
-                    scheduled_commands.push((post_roll_end_tick, format!("{}_next", demo_name)));
+                    scheduled_commands.push((s_end, format!("{}_next", demo_name)));
                 }
             }
         }
@@ -383,6 +390,7 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
             target_player: target_player.clone(),
             init_commands: final_init_commands,
             scheduled_commands,
+            bookmarks: demo_bookmarks,
         });
     }
     

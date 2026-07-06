@@ -84,6 +84,10 @@ impl Gui {
                             &mut self.hide_non_pov,
                             // Capture step fields:
                             &mut self.settings,
+                            &mut self.draft_settings,
+                            &mut self.error_message,
+                            &mut self.subdir_cache,
+                            &mut self.tree_demo_cache,
                             &mut self.capture_engine_running,
                             &self.capture_engine_msg,
                             self.capture_engine_progress,

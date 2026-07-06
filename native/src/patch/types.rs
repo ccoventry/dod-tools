@@ -101,6 +101,7 @@ pub struct PatchJob {
     pub target_player: Option<String>,
     pub init_commands: Vec<String>,
     pub scheduled_commands: Vec<(i32, String)>,
+    pub bookmarks: Vec<i32>,
 }
 
 // ── Patcher configuration ─────────────────────────────────────────────────────
