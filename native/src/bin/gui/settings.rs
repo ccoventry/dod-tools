@@ -8,19 +8,6 @@ pub struct AppSettings {
     pub scan_folders_for_demos: bool,
     pub demo_folder_history: Vec<PathBuf>,
     pub pinned_folders: Vec<PathBuf>,
-    pub capture_init_commands: Vec<String>,
-    pub custom_commands: Vec<native::patch::CustomCommand>,
-    pub capture_initial_delay: f32,
-    pub capture_fast_forward_speed: f32,
-    pub capture_pre_record_buffer: f32,
-    pub capture_record_start_lead: f32,
-    pub capture_record_stop_trail: f32,
-    pub post_record_buffer: f32,
-    pub hlae_path: String,
-    pub game_path: String,
-    pub primary_media_dir: Option<String>,
-    pub backup_media_dir: Option<String>,
-    pub ffmpeg_override_path: Option<String>,
 }
 
 impl Default for AppSettings {
@@ -30,40 +17,6 @@ impl Default for AppSettings {
             scan_folders_for_demos: false,
             demo_folder_history: Vec::new(),
             pinned_folders: Vec::new(),
-            capture_init_commands: Vec::new(),
-            custom_commands: vec![
-                native::patch::CustomCommand {
-                    command: "r_decals 5555".to_string(),
-                    offset: 2.0,
-                    relation: native::patch::CommandRelation::Before,
-                },
-                native::patch::CustomCommand {
-                    command: "hud_deathnotice_time 5555".to_string(),
-                    offset: 2.0,
-                    relation: native::patch::CommandRelation::Before,
-                },
-                native::patch::CustomCommand {
-                    command: "r_decals 0".to_string(),
-                    offset: 2.0,
-                    relation: native::patch::CommandRelation::After,
-                },
-                native::patch::CustomCommand {
-                    command: "hud_deathnotice_time 5".to_string(),
-                    offset: 2.0,
-                    relation: native::patch::CommandRelation::After,
-                }
-            ],
-            capture_initial_delay: 3.0,
-            capture_fast_forward_speed: 0.2,
-            capture_pre_record_buffer: 6.0,
-            capture_record_start_lead: 2.0,
-            capture_record_stop_trail: 2.0,
-            post_record_buffer: 4.0,
-            hlae_path: "".to_string(),
-            game_path: "".to_string(),
-            primary_media_dir: None,
-            backup_media_dir: None,
-            ffmpeg_override_path: None,
         }
     }
 }
@@ -101,69 +54,11 @@ pub fn load_settings() -> AppSettings {
                             .collect()
                     })
                     .unwrap_or_default();
-                let capture_init_commands = val
-                    .get("capture_init_commands")
-                    .map(|v| {
-                        if let Some(arr) = v.as_array() {
-                            arr.iter().filter_map(|x| x.as_str().map(String::from)).collect()
-                        } else if let Some(s) = v.as_str() {
-                            s.lines().map(String::from).collect()
-                        } else {
-                            Vec::new()
-                        }
-                    })
-                    .unwrap_or_default();
-                let custom_commands = val
-                    .get("custom_commands")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|v| {
-                                let cmd = v.get("command")?.as_str()?.to_string();
-                                let offset = v.get("offset")?.as_f64()? as f32;
-                                let rel_str = v.get("relation")?.as_str()?;
-                                let relation = match rel_str {
-                                    "After" => native::patch::CommandRelation::After,
-                                    _ => native::patch::CommandRelation::Before,
-                                };
-                                Some(native::patch::CustomCommand {
-                                    command: cmd,
-                                    offset,
-                                    relation,
-                                })
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_else(|| AppSettings::default().custom_commands);
-                let capture_initial_delay = val.get("capture_initial_delay").and_then(|v| v.as_f64()).unwrap_or(3.0) as f32;
-                let capture_fast_forward_speed = val.get("capture_fast_forward_speed").and_then(|v| v.as_f64()).unwrap_or(0.2) as f32;
-                let capture_pre_record_buffer = val.get("capture_pre_record_buffer").and_then(|v| v.as_f64()).unwrap_or(6.0) as f32;
-                let capture_record_start_lead = val.get("capture_record_start_lead").and_then(|v| v.as_f64()).unwrap_or(2.0) as f32;
-                let capture_record_stop_trail = val.get("capture_record_stop_trail").and_then(|v| v.as_f64()).unwrap_or(2.0) as f32;
-                let post_record_buffer = val.get("capture_post_record_buffer").and_then(|v| v.as_f64()).unwrap_or(4.0) as f32;
-                let hlae_path = val.get("hlae_path").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let game_path = val.get("game_path").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let primary_media_dir = val.get("primary_media_dir").and_then(|v| v.as_str()).map(|s| s.to_string());
-                let backup_media_dir = val.get("backup_media_dir").and_then(|v| v.as_str()).map(|s| s.to_string());
-                let ffmpeg_override_path = val.get("ffmpeg_override_path").and_then(|v| v.as_str()).map(|s| s.to_string());
                 return AppSettings {
                     language,
                     scan_folders_for_demos,
                     demo_folder_history,
                     pinned_folders,
-                    capture_init_commands,
-                    custom_commands,
-                    capture_initial_delay,
-                    capture_fast_forward_speed,
-                    capture_pre_record_buffer,
-                    capture_record_start_lead,
-                    capture_record_stop_trail,
-                    post_record_buffer,
-                    hlae_path,
-                    game_path,
-                    primary_media_dir,
-                    backup_media_dir,
-                    ffmpeg_override_path,
                 };
             }
         }
@@ -204,69 +99,11 @@ pub fn load_settings() -> AppSettings {
                                 .collect()
                         })
                         .unwrap_or_default();
-                    let capture_init_commands = val
-                        .get("capture_init_commands")
-                        .map(|v| {
-                            if let Some(arr) = v.as_array() {
-                                arr.iter().filter_map(|x| x.as_str().map(String::from)).collect()
-                            } else if let Some(s) = v.as_str() {
-                                s.lines().map(String::from).collect()
-                            } else {
-                                Vec::new()
-                            }
-                        })
-                        .unwrap_or_default();
-                    let custom_commands = val
-                        .get("custom_commands")
-                        .and_then(|v| v.as_array())
-                        .map(|arr| {
-                            arr.iter()
-                                .filter_map(|v| {
-                                    let cmd = v.get("command")?.as_str()?.to_string();
-                                    let offset = v.get("offset")?.as_f64()? as f32;
-                                    let rel_str = v.get("relation")?.as_str()?;
-                                    let relation = match rel_str {
-                                        "After" => native::patch::CommandRelation::After,
-                                        _ => native::patch::CommandRelation::Before,
-                                    };
-                                    Some(native::patch::CustomCommand {
-                                        command: cmd,
-                                        offset,
-                                        relation,
-                                    })
-                                })
-                                .collect()
-                        })
-                        .unwrap_or_else(|| AppSettings::default().custom_commands);
-                    let capture_initial_delay = val.get("capture_initial_delay").and_then(|v| v.as_f64()).unwrap_or(3.0) as f32;
-                    let capture_fast_forward_speed = val.get("capture_fast_forward_speed").and_then(|v| v.as_f64()).unwrap_or(0.2) as f32;
-                    let capture_pre_record_buffer = val.get("capture_pre_record_buffer").and_then(|v| v.as_f64()).unwrap_or(6.0) as f32;
-                    let capture_record_start_lead = val.get("capture_record_start_lead").and_then(|v| v.as_f64()).unwrap_or(2.0) as f32;
-                    let capture_record_stop_trail = val.get("capture_record_stop_trail").and_then(|v| v.as_f64()).unwrap_or(2.0) as f32;
-                    let post_record_buffer = val.get("capture_post_record_buffer").and_then(|v| v.as_f64()).unwrap_or(4.0) as f32;
-                    let hlae_path = val.get("hlae_path").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                    let game_path = val.get("game_path").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                    let primary_media_dir = val.get("primary_media_dir").and_then(|v| v.as_str()).map(|s| s.to_string());
-                    let backup_media_dir = val.get("backup_media_dir").and_then(|v| v.as_str()).map(|s| s.to_string());
-                    let ffmpeg_override_path = val.get("ffmpeg_override_path").and_then(|v| v.as_str()).map(|s| s.to_string());
                     return AppSettings {
                         language,
                         scan_folders_for_demos,
                         demo_folder_history,
                         pinned_folders,
-                        capture_init_commands,
-                        custom_commands,
-                        capture_initial_delay,
-                        capture_fast_forward_speed,
-                        capture_pre_record_buffer,
-                        capture_record_start_lead,
-                        capture_record_stop_trail,
-                        post_record_buffer,
-                        hlae_path,
-                        game_path,
-                        primary_media_dir,
-                        backup_media_dir,
-                        ffmpeg_override_path,
                     };
                 }
             }
@@ -306,70 +143,6 @@ pub fn save_settings(settings: &AppSettings) {
                 .collect(),
         ),
     );
-    map.insert(
-        "capture_init_commands".to_string(),
-        serde_json::Value::Array(
-            settings
-                .capture_init_commands
-                .iter()
-                .map(|s| serde_json::Value::String(s.clone()))
-                .collect(),
-        ),
-    );
-    let mut custom_cmds_json = vec![];
-    for cmd in &settings.custom_commands {
-        let mut cmd_map = serde_json::Map::new();
-        cmd_map.insert("command".to_string(), serde_json::Value::String(cmd.command.clone()));
-        cmd_map.insert("offset".to_string(), serde_json::Value::Number(serde_json::Number::from_f64(cmd.offset as f64).unwrap()));
-        let rel_str = match cmd.relation {
-            native::patch::CommandRelation::Before => "Before",
-            native::patch::CommandRelation::After => "After",
-        };
-        cmd_map.insert("relation".to_string(), serde_json::Value::String(rel_str.to_string()));
-        custom_cmds_json.push(serde_json::Value::Object(cmd_map));
-    }
-    map.insert("custom_commands".to_string(), serde_json::Value::Array(custom_cmds_json));
-    map.insert(
-        "capture_initial_delay".to_string(),
-        serde_json::Value::Number(serde_json::Number::from_f64(settings.capture_initial_delay as f64).unwrap()),
-    );
-    map.insert(
-        "capture_fast_forward_speed".to_string(),
-        serde_json::Value::Number(serde_json::Number::from_f64(settings.capture_fast_forward_speed as f64).unwrap()),
-    );
-    map.insert(
-        "capture_pre_record_buffer".to_string(),
-        serde_json::Value::Number(serde_json::Number::from_f64(settings.capture_pre_record_buffer as f64).unwrap()),
-    );
-    map.insert(
-        "capture_record_start_lead".to_string(),
-        serde_json::Value::Number(serde_json::Number::from_f64(settings.capture_record_start_lead as f64).unwrap()),
-    );
-    map.insert(
-        "capture_record_stop_trail".to_string(),
-        serde_json::Value::Number(serde_json::Number::from_f64(settings.capture_record_stop_trail as f64).unwrap()),
-    );
-    map.insert(
-        "capture_post_record_buffer".to_string(),
-        serde_json::Value::Number(serde_json::Number::from_f64(settings.post_record_buffer as f64).unwrap()),
-    );
-    map.insert(
-        "hlae_path".to_string(),
-        serde_json::Value::String(settings.hlae_path.clone()),
-    );
-    map.insert(
-        "game_path".to_string(),
-        serde_json::Value::String(settings.game_path.clone()),
-    );
-    if let Some(p) = &settings.primary_media_dir {
-        map.insert("primary_media_dir".to_string(), serde_json::Value::String(p.clone()));
-    }
-    if let Some(b) = &settings.backup_media_dir {
-        map.insert("backup_media_dir".to_string(), serde_json::Value::String(b.clone()));
-    }
-    if let Some(f) = &settings.ffmpeg_override_path {
-        map.insert("ffmpeg_override_path".to_string(), serde_json::Value::String(f.clone()));
-    }
     let val = serde_json::Value::Object(map);
     if let Ok(content) = serde_json::to_string_pretty(&val) {
         let _ = std::fs::write("settings.json", content);
@@ -407,70 +180,6 @@ pub fn save_settings(settings: &AppSettings) {
                 .collect(),
         ),
     );
-    map.insert(
-        "capture_init_commands".to_string(),
-        serde_json::Value::Array(
-            settings
-                .capture_init_commands
-                .iter()
-                .map(|s| serde_json::Value::String(s.clone()))
-                .collect(),
-        ),
-    );
-    let mut custom_cmds_json = vec![];
-    for cmd in &settings.custom_commands {
-        let mut cmd_map = serde_json::Map::new();
-        cmd_map.insert("command".to_string(), serde_json::Value::String(cmd.command.clone()));
-        cmd_map.insert("offset".to_string(), serde_json::Value::Number(serde_json::Number::from_f64(cmd.offset as f64).unwrap()));
-        let rel_str = match cmd.relation {
-            native::patch::CommandRelation::Before => "Before",
-            native::patch::CommandRelation::After => "After",
-        };
-        cmd_map.insert("relation".to_string(), serde_json::Value::String(rel_str.to_string()));
-        custom_cmds_json.push(serde_json::Value::Object(cmd_map));
-    }
-    map.insert("custom_commands".to_string(), serde_json::Value::Array(custom_cmds_json));
-    map.insert(
-        "capture_initial_delay".to_string(),
-        serde_json::Value::Number(serde_json::Number::from_f64(settings.capture_initial_delay as f64).unwrap()),
-    );
-    map.insert(
-        "capture_fast_forward_speed".to_string(),
-        serde_json::Value::Number(serde_json::Number::from_f64(settings.capture_fast_forward_speed as f64).unwrap()),
-    );
-    map.insert(
-        "capture_pre_record_buffer".to_string(),
-        serde_json::Value::Number(serde_json::Number::from_f64(settings.capture_pre_record_buffer as f64).unwrap()),
-    );
-    map.insert(
-        "capture_record_start_lead".to_string(),
-        serde_json::Value::Number(serde_json::Number::from_f64(settings.capture_record_start_lead as f64).unwrap()),
-    );
-    map.insert(
-        "capture_record_stop_trail".to_string(),
-        serde_json::Value::Number(serde_json::Number::from_f64(settings.capture_record_stop_trail as f64).unwrap()),
-    );
-    map.insert(
-        "capture_post_record_buffer".to_string(),
-        serde_json::Value::Number(serde_json::Number::from_f64(settings.post_record_buffer as f64).unwrap()),
-    );
-    map.insert(
-        "hlae_path".to_string(),
-        serde_json::Value::String(settings.hlae_path.clone()),
-    );
-    map.insert(
-        "game_path".to_string(),
-        serde_json::Value::String(settings.game_path.clone()),
-    );
-    if let Some(p) = &settings.primary_media_dir {
-        map.insert("primary_media_dir".to_string(), serde_json::Value::String(p.clone()));
-    }
-    if let Some(b) = &settings.backup_media_dir {
-        map.insert("backup_media_dir".to_string(), serde_json::Value::String(b.clone()));
-    }
-    if let Some(f) = &settings.ffmpeg_override_path {
-        map.insert("ffmpeg_override_path".to_string(), serde_json::Value::String(f.clone()));
-    }
     let val = serde_json::Value::Object(map);
     if let Ok(content) = serde_json::to_string_pretty(&val) {
         if let Some(window) = web_sys::window() {
@@ -630,9 +339,9 @@ pub fn apply_language_setting(settings_lang: &str) {
     analysis::set_active_language(static_lang);
 }
 
-pub fn resolve_ffmpeg_path(settings: &AppSettings) -> Result<std::path::PathBuf, String> {
+pub fn resolve_ffmpeg_path(ffmpeg_override_path: Option<&String>) -> Result<std::path::PathBuf, String> {
     // 1. User Override (Settings)
-    if let Some(ref path_str) = settings.ffmpeg_override_path {
+    if let Some(path_str) = ffmpeg_override_path {
         if !path_str.trim().is_empty() {
             let path = std::path::PathBuf::from(path_str);
             if path.exists() {
@@ -656,4 +365,25 @@ pub fn resolve_ffmpeg_path(settings: &AppSettings) -> Result<std::path::PathBuf,
 
     // 3. System PATH (return "ffmpeg")
     Ok(std::path::PathBuf::from("ffmpeg"))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn load_patcher_config() -> native::patch::PatcherConfig {
+    let path = PathBuf::from("patcher_config.json");
+    if path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            if let Ok(config) = serde_json::from_str::<native::patch::PatcherConfig>(&content) {
+                return config;
+            }
+        }
+    }
+    native::patch::PatcherConfig::default()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn save_patcher_config(config: &native::patch::PatcherConfig) {
+    let path = PathBuf::from("patcher_config.json");
+    if let Ok(json) = serde_json::to_string_pretty(config) {
+        let _ = std::fs::write(&path, json);
+    }
 }

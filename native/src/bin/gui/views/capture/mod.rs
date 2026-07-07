@@ -104,32 +104,7 @@ fn get_capture_state() -> &'static Mutex<CaptureState> {
 
 pub(crate) fn get_patcher_config() -> &'static Mutex<PatcherConfig> {
     PATCHER_CONFIG.get_or_init(|| {
-        let global = crate::settings::load_settings();
-        Mutex::new(PatcherConfig {
-            pre_roll_ticks: 200,
-            post_roll_ticks: 60,
-            capture_fps: 300,
-            exit_on_finish: true,
-            init_commands: Vec::new(),
-            custom_commands: global.custom_commands.clone(),
-            pre_roll_seconds: global.capture_pre_record_buffer,
-            post_roll_seconds: global.post_record_buffer,
-            record_start_lead: global.capture_record_start_lead,
-            record_stop_trail: global.capture_record_stop_trail,
-            initial_delay: global.capture_initial_delay,
-            fast_forward_speed: global.capture_fast_forward_speed,
-            tickrate: 100.0,
-            output_dir: std::path::Path::new(&global.game_path).parent().map(|p| p.join("dod")),
-            separate_hud: false,
-            resolution_width: 1280,
-            resolution_height: 720,
-            primary_media_dir: global.primary_media_dir.clone().map(PathBuf::from),
-            backup_media_dir: global.backup_media_dir.clone().map(PathBuf::from),
-            movie_config: String::new(),
-            save_local_patched_copy: false,
-            add_condebug: false,
-            session_id: String::new(),
-        })
+        Mutex::new(crate::settings::load_patcher_config())
     })
 }
 
@@ -212,7 +187,6 @@ pub fn render_patch_ui(
             capture::render(
                 ui,
                 ctx,
-                settings,
                 capture_engine_running,
                 engine_msg,
                 engine_progress,

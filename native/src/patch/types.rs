@@ -108,7 +108,7 @@ pub struct PatchJob {
 
 // ── Patcher configuration ─────────────────────────────────────────────────────
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PatcherConfig {
     pub pre_roll_ticks: i32,
     pub post_roll_ticks: i32,
@@ -133,6 +133,9 @@ pub struct PatcherConfig {
     pub save_local_patched_copy: bool,
     pub add_condebug: bool,
     pub session_id: String,
+    pub hlae_path: String,
+    pub game_path: String,
+    pub ffmpeg_override_path: Option<String>,
 }
 
 impl Default for PatcherConfig {
@@ -161,6 +164,9 @@ impl Default for PatcherConfig {
             save_local_patched_copy: false,
             add_condebug: false,
             session_id: String::new(),
+            hlae_path: String::new(),
+            game_path: String::new(),
+            ffmpeg_override_path: None,
         }
     }
 }

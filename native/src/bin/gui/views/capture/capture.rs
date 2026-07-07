@@ -19,7 +19,6 @@
 pub fn render(
     ui: &mut egui::Ui,
     ctx: &egui::Context,
-    settings: &mut crate::settings::AppSettings,
     capture_engine_running: &mut bool,
     engine_msg: &str,
     _engine_progress: f32,
@@ -37,54 +36,54 @@ pub fn render(
         // ── Paths configuration ──────────────────────────────────────────────
         ui.group(|ui| {
             ui.strong("Paths Configuration");
+            let mut config = crate::views::capture::get_patcher_config().lock().unwrap();
+            
             ui.add_space(4.0);
 
             ui.horizontal(|ui| {
                 ui.label("hl.exe Path:");
-                // Draft-only update on keystroke — no disk write.
-                ui.text_edit_singleline(&mut settings.game_path);
+                ui.text_edit_singleline(&mut config.game_path);
                 if ui.button("Browse...").clicked() {
                     if let Some(path) = rfd::FileDialog::new()
                         .add_filter("hl.exe", &["exe"])
                         .pick_file()
                     {
-                        settings.game_path = path.to_string_lossy().to_string();
-                        // Save only on explicit Browse dialog confirmation.
-                        crate::settings::save_settings(settings);
+                        config.game_path = path.to_string_lossy().to_string();
+                        crate::settings::save_patcher_config(&config);
                     }
                 }
             });
 
             ui.horizontal(|ui| {
                 ui.label("hlae.exe Path:");
-                // Draft-only update on keystroke — no disk write.
-                ui.text_edit_singleline(&mut settings.hlae_path);
+                ui.text_edit_singleline(&mut config.hlae_path);
                 if ui.button("Browse...").clicked() {
                     if let Some(path) = rfd::FileDialog::new()
                         .add_filter("hlae.exe", &["exe"])
                         .pick_file()
                     {
-                        settings.hlae_path = path.to_string_lossy().to_string();
-                        // Save only on explicit Browse dialog confirmation.
-                        crate::settings::save_settings(settings);
+                        config.hlae_path = path.to_string_lossy().to_string();
+                        crate::settings::save_patcher_config(&config);
                     }
                 }
             });
         });
 
+        let config = crate::views::capture::get_patcher_config().lock().unwrap();
+
         ui.add_space(12.0);
 
         // ── Launch controls ──────────────────────────────────────────────────
-        let hl_exists = !settings.game_path.is_empty()
-            && std::path::Path::new(&settings.game_path).exists();
-        let hlae_exists = !settings.hlae_path.is_empty()
-            && std::path::Path::new(&settings.hlae_path).exists();
+        let hl_exists = !config.game_path.is_empty()
+            && std::path::Path::new(&config.game_path).exists();
+        let hlae_exists = !config.hlae_path.is_empty()
+            && std::path::Path::new(&config.hlae_path).exists();
         let can_launch = hl_exists && hlae_exists && !*capture_engine_running;
 
         ui.horizontal(|ui| {
             if ui.add_enabled(can_launch, egui::Button::new("🎬 Launch Capture Engine")).clicked() {
-                let hlae_path = std::sync::Arc::new(std::path::PathBuf::from(&settings.hlae_path));
-                let hl_path = std::sync::Arc::new(std::path::PathBuf::from(&settings.game_path));
+                let hlae_path = std::sync::Arc::new(std::path::PathBuf::from(&config.hlae_path));
+                let hl_path = std::sync::Arc::new(std::path::PathBuf::from(&config.game_path));
                 let dod_dir = hl_path.parent().unwrap().join("dod");
 
                 // Build raw streak list from the shared queued demos mutex.

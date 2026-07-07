@@ -393,7 +393,7 @@ pub fn render(
             // HLAE Path configuration
             ui.label("HLAE Path (hlae.exe):");
             ui.horizontal(|ui| {
-                ui.add(egui::TextEdit::singleline(&mut draft_settings.hlae_path).desired_width(ui.available_width() - 80.0));
+                ui.add(egui::TextEdit::singleline(&mut patcher_config.hlae_path).desired_width(ui.available_width() - 80.0));
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     if ui.button("Browse...").clicked() {
@@ -402,7 +402,7 @@ pub fn render(
                             .pick_file()
                         {
                             if path.file_name().and_then(|n| n.to_str()).map(|s| s.to_lowercase()) == Some("hlae.exe".to_string()) {
-                                draft_settings.hlae_path = path.to_string_lossy().to_string();
+                                patcher_config.hlae_path = path.to_string_lossy().to_string();
                             } else {
                                 *error_message = Some("Selected file must be hlae.exe".to_string());
                             }
@@ -416,7 +416,7 @@ pub fn render(
             // DoD Game Path configuration
             ui.label("DoD Game Path (hl.exe):");
             ui.horizontal(|ui| {
-                ui.add(egui::TextEdit::singleline(&mut draft_settings.game_path).desired_width(ui.available_width() - 80.0));
+                ui.add(egui::TextEdit::singleline(&mut patcher_config.game_path).desired_width(ui.available_width() - 80.0));
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     if ui.button("Browse...").clicked() {
@@ -425,7 +425,7 @@ pub fn render(
                             .pick_file()
                         {
                             if path.file_name().and_then(|n| n.to_str()).map(|s| s.to_lowercase()) == Some("hl.exe".to_string()) {
-                                draft_settings.game_path = path.to_string_lossy().to_string();
+                                patcher_config.game_path = path.to_string_lossy().to_string();
                             } else {
                                 *error_message = Some("Selected file must be hl.exe".to_string());
                             }
@@ -439,9 +439,9 @@ pub fn render(
             // Custom FFmpeg Path configuration
             ui.label("Custom FFmpeg Path (Optional):");
             ui.horizontal(|ui| {
-                let mut path_str = draft_settings.ffmpeg_override_path.clone().unwrap_or_default();
+                let mut path_str = patcher_config.ffmpeg_override_path.clone().unwrap_or_default();
                 if ui.add(egui::TextEdit::singleline(&mut path_str).desired_width(ui.available_width() - 80.0)).changed() {
-                    draft_settings.ffmpeg_override_path = if path_str.trim().is_empty() {
+                    patcher_config.ffmpeg_override_path = if path_str.trim().is_empty() {
                         None
                     } else {
                         Some(path_str.trim().to_string())
@@ -450,11 +450,9 @@ pub fn render(
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     if ui.button("Browse...").clicked() {
-                        if let Some(path) = rfd::FileDialog::new()
-                            .add_filter("Executables", &["exe"])
-                            .pick_file()
-                        {
-                            draft_settings.ffmpeg_override_path = Some(path.to_string_lossy().to_string());
+                        if let Some(path) = rfd::FileDialog::new().pick_file() {
+                            patcher_config.ffmpeg_override_path = Some(path.to_string_lossy().to_string());
+                            crate::settings::save_patcher_config(&patcher_config);
                         }
                     }
                 }
@@ -475,7 +473,7 @@ pub fn render(
                     .max_height(120.0)
                     .id_salt("init_commands_scroll_select")
                     .show(ui, |ui| {
-                        for (i, cmd) in draft_settings.capture_init_commands.iter_mut().enumerate() {
+                        for (i, cmd) in patcher_config.init_commands.iter_mut().enumerate() {
                             ui.horizontal(|ui| {
                                 ui.add(egui::TextEdit::singleline(cmd).desired_width(ui.available_width() - 40.0));
                                 if ui.button("❌").clicked() {
@@ -486,10 +484,10 @@ pub fn render(
                     });
 
                 if let Some(i) = delete_idx {
-                    draft_settings.capture_init_commands.remove(i);
+                    patcher_config.init_commands.remove(i);
                 }
                 if ui.button("➕ Add Command").clicked() {
-                    draft_settings.capture_init_commands.push("".to_string());
+                    patcher_config.init_commands.push("".to_string());
                 }
             });
             
@@ -503,7 +501,7 @@ pub fn render(
                     .max_height(120.0)
                     .id_salt("default_commands_scroll_select")
                     .show(ui, |ui| {
-                        for (i, cmd) in draft_settings.custom_commands.iter_mut().enumerate() {
+                        for (i, cmd) in patcher_config.custom_commands.iter_mut().enumerate() {
                             ui.horizontal(|ui| {
                                 ui.add(egui::TextEdit::singleline(&mut cmd.command).desired_width(120.0));
                                 
@@ -524,10 +522,10 @@ pub fn render(
                     });
 
                 if let Some(i) = delete_idx {
-                    draft_settings.custom_commands.remove(i);
+                    patcher_config.custom_commands.remove(i);
                 }
                 if ui.button("➕ Add Default").clicked() {
-                    draft_settings.custom_commands.push(native::patch::CustomCommand {
+                    patcher_config.custom_commands.push(native::patch::CustomCommand {
                         command: "".to_string(),
                         offset: 2.0,
                         relation: native::patch::CommandRelation::Before,
@@ -542,39 +540,39 @@ pub fn render(
             ui.add_space(4.0);
 
             ui.label("Initial Load Delay:");
-            let mut val = draft_settings.capture_initial_delay;
+            let mut val = patcher_config.initial_delay;
             if ui.add(egui::Slider::new(&mut val, 0.0..=30.0).step_by(0.5).suffix("s")).changed() {
-                draft_settings.capture_initial_delay = val;
+                patcher_config.initial_delay = val;
             }
 
             ui.label("Fast-Forward Speed:");
-            let mut val = draft_settings.capture_fast_forward_speed;
+            let mut val = patcher_config.fast_forward_speed;
             if ui.add(egui::Slider::new(&mut val, 0.01..=5.0).step_by(0.05)).changed() {
-                draft_settings.capture_fast_forward_speed = val;
+                patcher_config.fast_forward_speed = val;
             }
 
             ui.label("Pre-Record Buffer:");
-            let mut val = draft_settings.capture_pre_record_buffer;
+            let mut val = patcher_config.pre_roll_seconds;
             if ui.add(egui::Slider::new(&mut val, 0.0..=30.0).step_by(0.5).suffix("s")).changed() {
-                draft_settings.capture_pre_record_buffer = val;
+                patcher_config.pre_roll_seconds = val;
             }
 
             ui.label("Record Start Lead:");
-            let mut val = draft_settings.capture_record_start_lead;
+            let mut val = patcher_config.record_start_lead;
             if ui.add(egui::Slider::new(&mut val, 0.0..=10.0).step_by(0.5).suffix("s")).changed() {
-                draft_settings.capture_record_start_lead = val;
+                patcher_config.record_start_lead = val;
             }
 
             ui.label("Record Stop Trail:");
-            let mut val = draft_settings.capture_record_stop_trail;
+            let mut val = patcher_config.record_stop_trail;
             if ui.add(egui::Slider::new(&mut val, 0.0..=10.0).step_by(0.5).suffix("s")).changed() {
-                draft_settings.capture_record_stop_trail = val;
+                patcher_config.record_stop_trail = val;
             }
 
             ui.label("Post-Record Buffer:");
-            let mut val = draft_settings.post_record_buffer;
+            let mut val = patcher_config.post_roll_seconds;
             if ui.add(egui::Slider::new(&mut val, 0.0..=30.0).step_by(0.5).suffix("s")).changed() {
-                draft_settings.post_record_buffer = val;
+                patcher_config.post_roll_seconds = val;
             }
 
             // ── Mock Execution Timeline Visualizer ─────────────────────
@@ -597,12 +595,12 @@ pub fn render(
                 is_custom: false,
             });
             events.push(TimelineEvent {
-                time: -draft_settings.capture_record_start_lead,
+                time: -patcher_config.record_start_lead,
                 name: "Record Start".to_string(),
                 is_custom: false,
             });
             events.push(TimelineEvent {
-                time: -draft_settings.capture_record_start_lead - draft_settings.capture_pre_record_buffer,
+                time: -patcher_config.record_start_lead - patcher_config.pre_roll_seconds,
                 name: "Pre-Roll (Speed Normal & Audio Flush)".to_string(),
                 is_custom: false,
             });
@@ -612,17 +610,17 @@ pub fn render(
                 is_custom: false,
             });
             events.push(TimelineEvent {
-                time: 10.0 + draft_settings.capture_record_stop_trail,
+                time: 10.0 + patcher_config.record_stop_trail,
                 name: "Record Stop".to_string(),
                 is_custom: false,
             });
             events.push(TimelineEvent {
-                time: 10.0 + draft_settings.capture_record_stop_trail + draft_settings.post_record_buffer,
+                time: 10.0 + patcher_config.record_stop_trail + patcher_config.post_roll_seconds,
                 name: "Post-Roll End (Fast Forward)".to_string(),
                 is_custom: false,
             });
 
-            for custom in &draft_settings.custom_commands {
+            for custom in &patcher_config.custom_commands {
                 let t = match custom.relation {
                     native::patch::CommandRelation::Before => -custom.offset,
                     native::patch::CommandRelation::After => 10.0 + custom.offset,
@@ -725,9 +723,7 @@ pub fn render(
                 cap_primary_picker.update(ctx);
                 if let Some(path) = cap_primary_picker.take_picked() {
                     patcher_config.primary_media_dir = Some(path.to_path_buf());
-                    let mut global = crate::settings::load_settings();
-                    global.primary_media_dir = Some(path.to_string_lossy().into_owned());
-                    crate::settings::save_settings(&global);
+                    crate::settings::save_patcher_config(&patcher_config);
                 }
 
                 let mut cap_backup_picker = acquire_lock!(CAPTURE_BACKUP_PICKER.get_or_init(|| Mutex::new(create_pinned_file_dialog())));
@@ -743,9 +739,7 @@ pub fn render(
                 cap_backup_picker.update(ctx);
                 if let Some(path) = cap_backup_picker.take_picked() {
                     patcher_config.backup_media_dir = Some(path.to_path_buf());
-                    let mut global = crate::settings::load_settings();
-                    global.backup_media_dir = Some(path.to_string_lossy().into_owned());
-                    crate::settings::save_settings(&global);
+                    crate::settings::save_patcher_config(&patcher_config);
                 }
             }
 
@@ -874,7 +868,7 @@ pub fn render(
                 .filter(|s| s.is_selected)
                 .count() as f32;
 
-            let total_sequence_duration = selected_streaks_count * (draft_settings.capture_pre_record_buffer + draft_settings.post_record_buffer + 10.0);
+            let total_sequence_duration = selected_streaks_count * (patcher_config.pre_roll_seconds + patcher_config.post_roll_seconds + 10.0);
             let w = patcher_config.resolution_width;
             let h = patcher_config.resolution_height;
             let fps = patcher_config.capture_fps;
@@ -943,6 +937,8 @@ pub fn render(
 
                     set_is_patching(true);
 
+                    crate::settings::save_patcher_config(&patcher_config);
+
                     patcher_config.session_id = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
 
                     // Build the flat payload from all selected, filter-passing streaks.
@@ -982,13 +978,7 @@ pub fn render(
                     if !payload.is_empty() {
                         let cancel_token = Arc::new(AtomicBool::new(false));
                         
-                        patcher_config.pre_roll_seconds = draft_settings.capture_pre_record_buffer;
-                        patcher_config.post_roll_seconds = draft_settings.post_record_buffer;
-                        patcher_config.record_start_lead = draft_settings.capture_record_start_lead;
-                        patcher_config.record_stop_trail = draft_settings.capture_record_stop_trail;
-                        patcher_config.initial_delay = draft_settings.capture_initial_delay;
-                        patcher_config.fast_forward_speed = draft_settings.capture_fast_forward_speed;
-                        patcher_config.custom_commands = draft_settings.custom_commands.clone();
+
 
                         log_markdown(&format!("[CAPTURE CONFIG PAYLOAD] Pre: {}, Lead: {}, Trail: {}, Post: {}, FPS: {}, Auto-Quit: {}",
                             patcher_config.pre_roll_seconds,
