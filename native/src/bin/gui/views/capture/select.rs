@@ -72,6 +72,7 @@ pub fn render(
     let mut patcher_config = acquire_lock!(patcher_config_mutex);
 
     // ── Step 2 header group ──────────────────────────────────────────────────────
+    egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
     ui.group(|ui| {
         ui.vertical(|ui| {
             ui.heading("📂 Step 2: Select Highlights & Patch");
@@ -347,7 +348,6 @@ pub fn render(
     ui.add_space(10.0);
 
     // ── Global Paths & Configuration ─────────────────────────────────────────────
-    ui.collapsing("⚙ Global Paths & Configuration", |ui| {
         if let Some(error) = error_message.clone() {
             let mut dismiss = false;
             egui::Frame::NONE
@@ -376,129 +376,7 @@ pub fn render(
             }
         }
 
-        ui.vertical(|ui| {
-            ui.heading(t("#app_prefs_general"));
-            ui.add_space(8.0);
 
-            ui.horizontal(|ui| {
-                ui.label(t("#app_prefs_language"));
-                let mut current_lang = draft_settings.language.clone();
-                egui::ComboBox::from_id_salt("language_select")
-                    .selected_text(match current_lang.as_str() {
-                        "auto" => t("#app_prefs_lang_auto"),
-                        other => {
-                            let mut chars = other.chars();
-                            match chars.next() {
-                                None => String::new(),
-                                Some(f) => {
-                                    f.to_uppercase().collect::<String>()
-                                        + chars.as_str()
-                                }
-                            }
-                        }
-                    })
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(
-                            &mut current_lang,
-                            "auto".to_string(),
-                            t("#app_prefs_lang_auto"),
-                        );
-                        ui.separator();
-                        ui.selectable_value(
-                            &mut current_lang,
-                            "english".to_string(),
-                            "English",
-                        );
-                        ui.selectable_value(
-                            &mut current_lang,
-                            "french".to_string(),
-                            "French",
-                        );
-                        ui.selectable_value(
-                            &mut current_lang,
-                            "german".to_string(),
-                            "German",
-                        );
-                        ui.selectable_value(
-                            &mut current_lang,
-                            "spanish".to_string(),
-                            "Spanish",
-                        );
-                        ui.selectable_value(
-                            &mut current_lang,
-                            "russian".to_string(),
-                            "Russian",
-                        );
-                        ui.selectable_value(
-                            &mut current_lang,
-                            "serbian".to_string(),
-                            "Serbian",
-                        );
-                        ui.selectable_value(
-                            &mut current_lang,
-                            "polish".to_string(),
-                            "Polish",
-                        );
-                        ui.selectable_value(
-                            &mut current_lang,
-                            "turkish".to_string(),
-                            "Turkish",
-                        );
-                    });
-
-                if current_lang != draft_settings.language {
-                    draft_settings.language = current_lang;
-                    ctx.request_repaint();
-                }
-            });
-
-            ui.add_space(8.0);
-            let mut scan_val = draft_settings.scan_folders_for_demos;
-            if ui.checkbox(&mut scan_val, t("#app_prefs_scan_folders")).changed() {
-                draft_settings.scan_folders_for_demos = scan_val;
-                ctx.request_repaint();
-            }
-
-            ui.add_space(8.0);
-            ui.separator();
-            ui.add_space(8.0);
-            ui.heading("File Picker Bookmarks");
-            ui.add_space(8.0);
-
-            ui.vertical(|ui| {
-                let mut index_to_remove = None;
-                for (i, folder) in draft_settings.pinned_folders.iter().enumerate() {
-                    ui.horizontal(|ui| {
-                        if ui.button("🗑").on_hover_text("Remove Pin").clicked() {
-                            index_to_remove = Some(i);
-                        }
-                        ui.label(folder.to_string_lossy());
-                    });
-                }
-
-                if let Some(i) = index_to_remove {
-                    draft_settings.pinned_folders.remove(i);
-                    *settings = draft_settings.clone();
-                    save_settings(settings);
-                    ctx.request_repaint();
-                }
-
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                    if ui.button("➕ Add New Pin").clicked() {
-                        if let Some(folder) = rfd::FileDialog::new().pick_folder() {
-                            draft_settings.pinned_folders.push(folder);
-                            *settings = draft_settings.clone();
-                            save_settings(settings);
-                            ctx.request_repaint();
-                        }
-                    }
-                }
-            });
-
-            ui.add_space(8.0);
-            ui.separator();
-            ui.add_space(8.0);
             ui.heading("Recording Engine Configurations");
             ui.add_space(8.0);
 
@@ -713,8 +591,7 @@ pub fn render(
                     ctx.request_repaint();
                 }
             });
-        });
-    });
+
 
     ui.add_space(10.0);
 
@@ -1174,5 +1051,6 @@ pub fn render(
                 });
             });
         });
+    });
     });
 }

@@ -1,7 +1,7 @@
 ## Web AI State
-- Goal: Inject director events into POV demos to enable UI bookmarking.
-- Last Edited: local/scripts/test_director_inject.rs
-- Status: Injection script testing on hold. Session pivoting to remove the 'hide_non_pov' UI components and batch payload filtering logic.
+- Goal: Graceful Degradation for Clutch Clips (Bounds checking for highlights hitting the 3.0-second EOF danger zone).
+- Last Edited: `native/src/bin/gui/views/capture/select.rs`, `native/src/bin/gui/main.rs`, and `native/src/bin/gui/views/capture/mod.rs` (UI Layout Refactor, POV filter hardcoding).
+- Status: Ready to return to the active sprint priority.
 
 ## IDE AI State
-- Immediate Task: Target `native/src/bin/gui/views/capture/select.rs` and `native/src/patch/builder.rs` to prepare for UI component teardown (removing `hide_non_pov` components and batch payload filtering logic).
+- Immediate Task: Target `native/src/patch/builder.rs` to complete the payload filtering teardown (removing conditional filtering blocks).

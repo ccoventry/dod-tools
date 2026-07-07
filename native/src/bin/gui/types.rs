@@ -144,6 +144,7 @@ pub enum SidebarTab {
     #[cfg(not(target_arch = "wasm32"))]
     Auditor,
     CaptureStudio,
+    Settings,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
