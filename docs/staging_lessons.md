@@ -8,6 +8,7 @@
 - **Workflow Optimization:** Directory Junctions (mklink /J) allow for non-administrative, transparent directory redirection, effectively bypassing the engine's security and buffer constraints without requiring elevated permissions.
 - **Build Workflow:** Using a dedicated 'run.ps1' script to perform 'Stop-Process', 'cargo build', and 'Set-AuthenticodeSignature' sequentially bypasses Windows Smart App Control/WDAC 'cloud reputation' blocks for local dev binaries.
 - **GoldSrc Engine quirk:** Setting `gl_spriteblend 0` before a demo fully loads causes severe crosshair corruption. Initialization configurations must strictly be injected after the `DemoStart` frame to allow map and UI assets to initialize first.
+- **NTFS `read_dir` Non-Determinism & Ingestion Performance:** File ingestion order via `std::fs::read_dir` is non-deterministic on Windows NTFS. To maintain UI sort consistency across decoupled views without redundant sorting overhead, shared state collections (like `QUEUED_DEMOS`) must be sorted strictly at the background ingestion layer using `binary_search_by` and `insert`. Avoid using `push` followed by `sort_by()`, as it creates O(N log N) overhead on every file operation and chokes the ingestion thread during large batch directory reads.
 
 
 ## Workflow & AI Protocols
