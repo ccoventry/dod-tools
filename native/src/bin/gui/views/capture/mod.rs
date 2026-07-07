@@ -153,7 +153,6 @@ pub fn render_patch_ui(
     state_ptr: &mut CaptureStudioState,
     tx: std::sync::mpsc::Sender<crate::types::GuiMessage>,
     loading_ptr: &mut bool,
-    hide_non_pov: &mut bool,
     // Fields forwarded exclusively to the Capture step renderer:
     settings: &mut crate::settings::AppSettings,
     draft_settings: &mut crate::settings::AppSettings,
@@ -198,7 +197,7 @@ pub fn render_patch_ui(
         }
         CaptureStudioState::Select => {
             select::render(
-                ui, ctx, state_ptr, tx, loading_ptr, hide_non_pov,
+                ui, ctx, state_ptr, tx, loading_ptr,
                 get_queued_demos(),
                 get_patcher_config(),
                 get_render_config(),
@@ -219,7 +218,6 @@ pub fn render_patch_ui(
                 engine_progress,
                 engine_jobs_done,
                 engine_jobs_total,
-                *hide_non_pov,
                 tx,
                 state_ptr,
                 cancel_token,

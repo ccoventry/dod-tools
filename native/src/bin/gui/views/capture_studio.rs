@@ -81,7 +81,6 @@ impl Gui {
                             &mut self.capture_studio_state,
                             self.tx.clone(),
                             &mut self.capture_studio_loading,
-                            &mut self.hide_non_pov,
                             // Capture step fields:
                             &mut self.settings,
                             &mut self.draft_settings,
