@@ -783,17 +783,18 @@ impl eframe::App for Gui {
                                 vec![]
                             };
 
+                            let config = crate::views::capture::get_patcher_config().lock().unwrap();
                             let options = native::patch::PatchOptions {
                                 exit_on_finish: false,
-                                init_commands: self.settings.capture_init_commands.clone(),
-                                custom_commands: self.settings.custom_commands.clone(),
-                                fast_forward_speed: Some(self.settings.capture_fast_forward_speed),
+                                init_commands: config.init_commands.clone(),
+                                custom_commands: config.custom_commands.clone(),
+                                fast_forward_speed: Some(config.fast_forward_speed),
                                 hltv_spec_player,
-                                initial_delay: Some(self.settings.capture_initial_delay),
-                                pre_record_buffer: Some(self.settings.capture_pre_record_buffer),
-                                record_start_lead: Some(self.settings.capture_record_start_lead),
-                                record_stop_trail: Some(self.settings.capture_record_stop_trail),
-                                post_record_buffer: Some(self.settings.post_record_buffer),
+                                initial_delay: Some(config.initial_delay),
+                                pre_record_buffer: Some(config.pre_roll_seconds),
+                                record_start_lead: Some(config.record_start_lead),
+                                record_stop_trail: Some(config.record_stop_trail),
+                                post_record_buffer: Some(config.post_roll_seconds),
                                 player_deaths: Some(player_deaths),
                             };
                             let intervals = &[(export_info.start_time, export_info.stop_time)];
@@ -910,7 +911,8 @@ impl eframe::App for Gui {
                         }
 
                         let queue_py_path = dest_dir.join("capture_queue.py");
-                        let py_script = generate_python_queue_sequencer(&self.settings.hlae_path, &self.settings.game_path);
+                        let config = crate::views::capture::get_patcher_config().lock().unwrap();
+                        let py_script = generate_python_queue_sequencer(&config.hlae_path, &config.game_path);
                         if let Err(e) = std::fs::write(&queue_py_path, py_script) {
                             self.error_message = Some(format!("Failed to write capture_queue.py: {}", e));
                         }
@@ -1094,7 +1096,9 @@ impl eframe::App for Gui {
                     let mut session_dir = std::path::PathBuf::new();
                     
                     let config_guard = crate::views::capture::get_patcher_config().lock();
+                    let mut game_path = String::new();
                     if let Ok(config) = config_guard {
+                        game_path = config.game_path.clone();
                         if let Some(primary) = &config.primary_media_dir {
                             session_dir = if config.session_id.is_empty() {
                                 primary.clone()
@@ -1105,7 +1109,7 @@ impl eframe::App for Gui {
                     }
 
                     if session_dir.as_os_str().is_empty() {
-                        if let Some(game_dir) = std::path::Path::new(&self.settings.game_path).parent() {
+                        if let Some(game_dir) = std::path::Path::new(&game_path).parent() {
                             session_dir = game_dir.join("dod").join("hlcr_captures");
                         }
                     }
@@ -2254,13 +2258,14 @@ impl eframe::App for Gui {
                     }
 
                     self.cancel_flag.store(false, std::sync::atomic::Ordering::Relaxed);
+                    let config = crate::views::capture::get_patcher_config().lock().unwrap();
                     start_capture_pipeline(
                         ctx.clone(),
                         self.tx.clone(),
                         enabled_items,
                         player_deaths_map,
-                        self.settings.game_path.clone(),
-                        self.settings.hlae_path.clone(),
+                        config.game_path.clone(),
+                        config.hlae_path.clone(),
                         self.cancel_flag.clone(),
                     );
                 }
@@ -2332,27 +2337,28 @@ impl eframe::App for Gui {
                     let new_id = format!("{}_{}_{}", active_path_str, player_id, req.streak_idx);
 
                     if !self.export_queue.iter().any(|item| item.id == new_id) {
-                        self.export_queue.push(QueuedStreakExport {
-                            id: new_id,
-                            input_path,
-                            player_id,
-                            player_name,
-                            start_time: req.start_time,
-                            stop_time: req.stop_time,
-                            streak_idx: req.streak_idx,
-                            kills_count: req.kills_count,
-                            output_name: default_name,
-                            enabled: true,
-                            exit_on_finish: true,
-                            init_commands: self.settings.capture_init_commands.clone(),
-                            custom_commands: self.settings.custom_commands.clone(),
-                            fast_forward_speed: self.settings.capture_fast_forward_speed,
-                            hltv_spec_player,
-                            initial_delay: self.settings.capture_initial_delay,
-                            pre_record_buffer: self.settings.capture_pre_record_buffer,
-                            record_start_lead: self.settings.capture_record_start_lead,
-                            record_stop_trail: self.settings.capture_record_stop_trail,
-                            post_record_buffer: self.settings.post_record_buffer,
+                            let config = crate::views::capture::get_patcher_config().lock().unwrap();
+                            self.export_queue.push(QueuedStreakExport {
+                                id: new_id,
+                                input_path,
+                                player_id,
+                                player_name,
+                                start_time: req.start_time,
+                                stop_time: req.stop_time,
+                                streak_idx: req.streak_idx,
+                                kills_count: req.kills_count,
+                                output_name: default_name,
+                                enabled: true,
+                                exit_on_finish: true,
+                                init_commands: config.init_commands.clone(),
+                                custom_commands: config.custom_commands.clone(),
+                                fast_forward_speed: config.fast_forward_speed,
+                                hltv_spec_player,
+                                initial_delay: config.initial_delay,
+                                pre_record_buffer: config.pre_roll_seconds,
+                                record_start_lead: config.record_start_lead,
+                                record_stop_trail: config.record_stop_trail,
+                                post_record_buffer: config.post_roll_seconds,
                             status: CapturePhase::ReviewQueue,
                             error_message: None,
                             sub_status: None,
