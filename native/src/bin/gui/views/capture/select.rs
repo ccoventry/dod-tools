@@ -577,6 +577,100 @@ pub fn render(
                 draft_settings.post_record_buffer = val;
             }
 
+            // ── Mock Execution Timeline Visualizer ─────────────────────
+            ui.add_space(8.0);
+            ui.separator();
+            ui.add_space(8.0);
+            ui.label(egui::RichText::new("Execution Timeline (Mock)").strong());
+            ui.add_space(4.0);
+
+            struct TimelineEvent {
+                time: f32,
+                name: String,
+                is_custom: bool,
+            }
+
+            let mut events = Vec::new();
+            events.push(TimelineEvent {
+                time: 0.0,
+                name: "First Kill (Anchor)".to_string(),
+                is_custom: false,
+            });
+            events.push(TimelineEvent {
+                time: -draft_settings.capture_record_start_lead,
+                name: "Record Start".to_string(),
+                is_custom: false,
+            });
+            events.push(TimelineEvent {
+                time: -draft_settings.capture_record_start_lead - draft_settings.capture_pre_record_buffer,
+                name: "Pre-Roll (Speed Normal & Audio Flush)".to_string(),
+                is_custom: false,
+            });
+            events.push(TimelineEvent {
+                time: 10.0,
+                name: "Last Kill (Anchor)".to_string(),
+                is_custom: false,
+            });
+            events.push(TimelineEvent {
+                time: 10.0 + draft_settings.capture_record_stop_trail,
+                name: "Record Stop".to_string(),
+                is_custom: false,
+            });
+            events.push(TimelineEvent {
+                time: 10.0 + draft_settings.capture_record_stop_trail + draft_settings.post_record_buffer,
+                name: "Post-Roll End (Fast Forward)".to_string(),
+                is_custom: false,
+            });
+
+            for custom in &draft_settings.custom_commands {
+                let t = match custom.relation {
+                    native::patch::CommandRelation::Before => -custom.offset,
+                    native::patch::CommandRelation::After => 10.0 + custom.offset,
+                };
+                events.push(TimelineEvent {
+                    time: t,
+                    name: format!("Custom Cmd: {}", custom.command),
+                    is_custom: true,
+                });
+            }
+
+            events.sort_by(|a, b| a.time.partial_cmp(&b.time).unwrap_or(std::cmp::Ordering::Equal));
+
+            TableBuilder::new(ui)
+                .striped(true)
+                .column(Column::exact(100.0))
+                .column(Column::remainder())
+                .header(18.0, |mut header| {
+                    header.col(|ui| { ui.strong("Relative Time"); });
+                    header.col(|ui| { ui.strong("Action/Event"); });
+                })
+                .body(|body| {
+                    body.rows(18.0, events.len(), |mut row| {
+                        let event = &events[row.index()];
+                        row.col(|ui| {
+                            let time_str = if event.time >= 0.0 {
+                                format!("+{:.1} sec", event.time)
+                            } else {
+                                format!("{:.1} sec", event.time)
+                            };
+                            let color = if event.is_custom {
+                                egui::Color32::LIGHT_BLUE
+                            } else {
+                                egui::Color32::GRAY
+                            };
+                            ui.colored_label(color, time_str);
+                        });
+                        row.col(|ui| {
+                            let color = if event.is_custom {
+                                egui::Color32::LIGHT_BLUE
+                            } else {
+                                egui::Color32::GRAY
+                            };
+                            ui.colored_label(color, &event.name);
+                        });
+                    });
+                });
+
             ui.add_space(16.0);
             ui.separator();
             ui.add_space(8.0);
@@ -780,7 +874,7 @@ pub fn render(
                 .filter(|s| s.is_selected)
                 .count() as f32;
 
-            let total_sequence_duration = selected_streaks_count * (patcher_config.pre_roll_seconds + patcher_config.post_roll_seconds + 10.0);
+            let total_sequence_duration = selected_streaks_count * (draft_settings.capture_pre_record_buffer + draft_settings.post_record_buffer + 10.0);
             let w = patcher_config.resolution_width;
             let h = patcher_config.resolution_height;
             let fps = patcher_config.capture_fps;
@@ -888,6 +982,14 @@ pub fn render(
                     if !payload.is_empty() {
                         let cancel_token = Arc::new(AtomicBool::new(false));
                         
+                        patcher_config.pre_roll_seconds = draft_settings.capture_pre_record_buffer;
+                        patcher_config.post_roll_seconds = draft_settings.post_record_buffer;
+                        patcher_config.record_start_lead = draft_settings.capture_record_start_lead;
+                        patcher_config.record_stop_trail = draft_settings.capture_record_stop_trail;
+                        patcher_config.initial_delay = draft_settings.capture_initial_delay;
+                        patcher_config.fast_forward_speed = draft_settings.capture_fast_forward_speed;
+                        patcher_config.custom_commands = draft_settings.custom_commands.clone();
+
                         log_markdown(&format!("[CAPTURE CONFIG PAYLOAD] Pre: {}, Lead: {}, Trail: {}, Post: {}, FPS: {}, Auto-Quit: {}",
                             patcher_config.pre_roll_seconds,
                             patcher_config.record_start_lead,
@@ -928,138 +1030,6 @@ pub fn render(
                     ui.spinner();
                     ui.label("Patching Demos... Please wait.");
                 }
-            });
-
-            ui.separator();
-            ui.collapsing("Capture Parameters", |ui| {
-                ui.add_enabled_ui(!IS_PATCHING.load(Ordering::SeqCst), |ui| {
-                    // Row 1: Pre-roll / Post-roll
-                    ui.horizontal(|ui| {
-                        ui.label("Pre-roll (sec):");
-                        ui.add(egui::DragValue::new(&mut patcher_config.pre_roll_seconds)
-                            .range(0.0..=10.0).speed(0.1));
-                        ui.add_space(10.0);
-                        ui.label("Post-roll (sec):");
-                        ui.add(egui::DragValue::new(&mut patcher_config.post_roll_seconds)
-                            .range(0.0..=10.0).speed(0.1));
-                    });
-
-                    // Row 2: Record Start Lead / Record Stop Trail
-                    ui.horizontal(|ui| {
-                        ui.label("Record Start Lead (sec):");
-                        ui.add(egui::DragValue::new(&mut patcher_config.record_start_lead)
-                            .range(0.0..=10.0).speed(0.1));
-                        ui.add_space(10.0);
-                        ui.label("Record Stop Trail (sec):");
-                        ui.add(egui::DragValue::new(&mut patcher_config.record_stop_trail)
-                            .range(0.0..=10.0).speed(0.1));
-                    });
-
-                    // Row 3: Initial Load Delay / Fast Forward Speed
-                    ui.horizontal(|ui| {
-                        ui.label("Initial Load Delay (sec):");
-                        ui.add(egui::DragValue::new(&mut patcher_config.initial_delay)
-                            .range(0.0..=10.0).speed(0.1));
-                        ui.add_space(10.0);
-                        ui.label("Fast Forward Speed:");
-                        ui.add(egui::DragValue::new(&mut patcher_config.fast_forward_speed)
-                            .range(0.01..=10.0).speed(0.01));
-                    });
-
-                    // ── Mock Execution Timeline Visualizer ─────────────────────
-                    ui.add_space(8.0);
-                    ui.separator();
-                    ui.add_space(8.0);
-                    ui.label(egui::RichText::new("Execution Timeline (Mock)").strong());
-                    ui.add_space(4.0);
-
-                    struct TimelineEvent {
-                        time: f32,
-                        name: String,
-                        is_custom: bool,
-                    }
-
-                    let mut events = Vec::new();
-                    events.push(TimelineEvent {
-                        time: 0.0,
-                        name: "First Kill (Anchor)".to_string(),
-                        is_custom: false,
-                    });
-                    events.push(TimelineEvent {
-                        time: -patcher_config.record_start_lead,
-                        name: "Record Start".to_string(),
-                        is_custom: false,
-                    });
-                    events.push(TimelineEvent {
-                        time: -patcher_config.record_start_lead - patcher_config.pre_roll_seconds,
-                        name: "Pre-Roll (Speed Normal & Audio Flush)".to_string(),
-                        is_custom: false,
-                    });
-                    events.push(TimelineEvent {
-                        time: 10.0,
-                        name: "Last Kill (Anchor)".to_string(),
-                        is_custom: false,
-                    });
-                    events.push(TimelineEvent {
-                        time: 10.0 + patcher_config.record_stop_trail,
-                        name: "Record Stop".to_string(),
-                        is_custom: false,
-                    });
-                    events.push(TimelineEvent {
-                        time: 10.0 + patcher_config.record_stop_trail + patcher_config.post_roll_seconds,
-                        name: "Post-Roll End (Fast Forward)".to_string(),
-                        is_custom: false,
-                    });
-
-                    for custom in &patcher_config.custom_commands {
-                        let t = match custom.relation {
-                            native::patch::CommandRelation::Before => -custom.offset,
-                            native::patch::CommandRelation::After => 10.0 + custom.offset,
-                        };
-                        events.push(TimelineEvent {
-                            time: t,
-                            name: format!("Custom Cmd: {}", custom.command),
-                            is_custom: true,
-                        });
-                    }
-
-                    events.sort_by(|a, b| a.time.partial_cmp(&b.time).unwrap_or(std::cmp::Ordering::Equal));
-
-                    TableBuilder::new(ui)
-                        .striped(true)
-                        .column(Column::exact(100.0))
-                        .column(Column::remainder())
-                        .header(18.0, |mut header| {
-                            header.col(|ui| { ui.strong("Relative Time"); });
-                            header.col(|ui| { ui.strong("Action/Event"); });
-                        })
-                        .body(|body| {
-                            body.rows(18.0, events.len(), |mut row| {
-                                let event = &events[row.index()];
-                                row.col(|ui| {
-                                    let time_str = if event.time >= 0.0 {
-                                        format!("+{:.1} sec", event.time)
-                                    } else {
-                                        format!("{:.1} sec", event.time)
-                                    };
-                                    let color = if event.is_custom {
-                                        egui::Color32::LIGHT_BLUE
-                                    } else {
-                                        egui::Color32::GRAY
-                                    };
-                                    ui.colored_label(color, time_str);
-                                });
-                                row.col(|ui| {
-                                    let color = if event.is_custom {
-                                        egui::Color32::LIGHT_BLUE
-                                    } else {
-                                        egui::Color32::GRAY
-                                    };
-                                    ui.colored_label(color, &event.name);
-                                });
-                            });
-                        });
-                });
             });
         });
     });
