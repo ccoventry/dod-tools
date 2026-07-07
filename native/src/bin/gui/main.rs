@@ -728,6 +728,15 @@ impl eframe::App for Gui {
                     if ui.add(capture_studio_btn).on_hover_text("Capture Studio").clicked() {
                         self.active_sidebar_tab = SidebarTab::CaptureStudio;
                     }
+
+                    ui.add_space(8.0);
+
+                    let settings_active = self.active_sidebar_tab == SidebarTab::Settings;
+                    let settings_btn = egui::Button::new(egui::RichText::new("⚙").size(18.0))
+                        .selected(settings_active);
+                    if ui.add(settings_btn).on_hover_text("Settings").clicked() {
+                        self.active_sidebar_tab = SidebarTab::Settings;
+                    }
                 });
             });
 
@@ -1284,8 +1293,7 @@ impl eframe::App for Gui {
                         }
 
                         if ui.button(t("#app_menu_preferences")).clicked() {
-                            self.active_sidebar_tab = SidebarTab::CaptureStudio;
-                            self.capture_studio_state = CaptureStudioState::Select;
+                            self.active_sidebar_tab = SidebarTab::Settings;
                             ui.close();
                         }
 
@@ -2116,6 +2124,9 @@ impl eframe::App for Gui {
                     }
                     SidebarTab::CaptureStudio => {
                         self.capture_studio_ui(ui, ctx);
+                    }
+                    SidebarTab::Settings => {
+                        self.render_settings_ui(ui, ctx);
                     }
                     #[cfg(not(target_arch = "wasm32"))]
                     SidebarTab::Auditor => {}

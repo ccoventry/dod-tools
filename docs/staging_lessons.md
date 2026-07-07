@@ -2,6 +2,7 @@
 *Temporary holding zone for newly harvested rules. Review entries here before manually moving them into quirks or architecture files.*
 
 ## 📥 Unsorted Gotchas (Pending Review)
+- **UI vs. Data Initialization Desync:** Applying data filters exclusively at the immediate-mode UI rendering layer causes reactive components (like real-time disk space calculators or batch-action iterators) to silently process visually hidden data. Data filtering constraints (like POV exclusions) must be applied directly to the struct defaults during the asynchronous backend ingestion phase *before* the payload is passed to the active UI state blocks.
 - **GoldSrc Engine quirk:** The 'exec' command is hard-locked during demo playback as a security measure.
 - **GoldSrc Engine quirk:** Demo file injection is subject to a strict 64-byte 'Cbuf' buffer limit, causing crashes when paths are long or contain spaces.
 - **Workflow Optimization:** Directory Junctions (mklink /J) allow for non-administrative, transparent directory redirection, effectively bypassing the engine's security and buffer constraints without requiring elevated permissions.
