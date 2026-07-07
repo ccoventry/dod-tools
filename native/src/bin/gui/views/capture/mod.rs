@@ -324,7 +324,7 @@ pub(crate) fn spawn_ingestion_thread(
 
                         if !selectable.is_empty() {
                             let demo_name = file.file_name().unwrap_or_default().to_string_lossy().into_owned();
-                            let item = DemoData {
+                            let mut item = DemoData {
                                 demo_name,
                                 path: file.to_path_buf(),
                                 streaks: selectable,
@@ -333,6 +333,14 @@ pub(crate) fn spawn_ingestion_thread(
                                 local_player_index,
                                 playback_frames,
                             };
+
+                            if item.is_pov {
+                                for streak in &mut item.streaks {
+                                    if Some(streak.player_index) != item.local_player_index {
+                                        streak.is_selected = false;
+                                    }
+                                }
+                            }
 
                             // Lock is dropped immediately after modifying the collection.
                             let _added = {

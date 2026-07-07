@@ -137,16 +137,16 @@ pub fn render(
                                          .striped(true)
                                          .vscroll(false)
                                          .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-                                         .column(Column::auto())          // [Checkbox]
                                          .column(Column::initial(30.0))   // [Row Number]
+                                         .column(Column::auto())          // [Checkbox]
                                          .column(Column::exact(140.0))    // [Kill Range]
                                          .column(Column::exact(40.0))     // [Kills]
                                          .column(Column::exact(70.0))     // [Start Time]
                                          .column(Column::exact(50.0))     // [Duration]
                                          .column(Column::remainder())     // [Details]
                                          .header(20.0, |mut header| {
-                                             header.col(|ui| { ui.strong("Sel"); });
                                              header.col(|ui| { ui.strong("Row #"); });
+                                             header.col(|ui| { ui.strong("Sel"); });
                                              header.col(|ui| { ui.strong("Kill Range"); });
                                              header.col(|ui| { ui.strong("Kills"); });
                                              header.col(|ui| { ui.strong("Start Time"); });
@@ -170,6 +170,11 @@ pub fn render(
                                                 let streak_idx = filtered_indices[row_idx];
                                                 let streak = &demo.streaks[streak_idx];
 
+                                                // ── [Row Number] ──────────────────────
+                                                row.col(|ui| {
+                                                    ui.label(format!("{}", row_idx + 1));
+                                                });
+
                                                 // ── [Checkbox] ────────────────────────
                                                 row.col(|ui| {
                                                     let mut is_selected = streak.is_selected;
@@ -182,11 +187,6 @@ pub fn render(
                                                         let queued = Arc::make_mut(&mut *guard);
                                                         queued[d_idx].streaks[streak_idx].is_selected = is_selected;
                                                     }
-                                                });
-
-                                                // ── [Row Number] ──────────────────────
-                                                row.col(|ui| {
-                                                    ui.label(format!("{}", row_idx + 1));
                                                 });
 
                                                 // ── [Kill Range] ───────────────────────
