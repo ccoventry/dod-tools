@@ -245,7 +245,6 @@ pub(crate) struct Gui {
     pub(crate) capture_cancel_token: std::sync::Arc<std::sync::atomic::AtomicBool>,
     pub(crate) capture_studio_loading: bool,
     pub(crate) last_capture_studio_state: Option<CaptureStudioState>,
-    pub(crate) hide_non_pov: bool,
 }
 
 
@@ -650,7 +649,6 @@ impl Default for Gui {
             capture_cancel_token: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             capture_studio_loading: false,
             last_capture_studio_state: None,
-            hide_non_pov: true,
         }
     }
 }

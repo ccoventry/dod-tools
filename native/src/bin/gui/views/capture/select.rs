@@ -44,7 +44,6 @@ pub fn render(
     state_ptr: &mut CaptureStudioState,
     tx: std::sync::mpsc::Sender<crate::types::GuiMessage>,
     loading_ptr: &mut bool,
-    hide_non_pov: &mut bool,
     queued_demos_arc: Arc<Mutex<Arc<Vec<DemoData>>>>,
     patcher_config_mutex: &'static Mutex<PatcherConfig>,
     render_config_mutex: &'static Mutex<native::hlcr::config::RenderConfig>,
@@ -80,8 +79,7 @@ pub fn render(
             ui.label("Enable streaks, adjust patch parameters, and launch patcher.");
             ui.add_space(8.0);
 
-            ui.checkbox(hide_non_pov, "Hide Non-Recording Players in POV Demos");
-            ui.add_space(8.0);
+
 
             if !queued_demos_shared.is_empty() {
                 ui.strong("Discovered Highlight Streaks");
@@ -111,7 +109,12 @@ pub fn render(
                                 egui::Frame::group(col_ui.style()).show(col_ui, |ui| {
                                     // ── Per-demo header row with bulk controls ───────
                                     ui.horizontal(|ui| {
-                                        ui.strong(&demo.demo_name);
+                                        let player_name = demo.streaks.iter()
+                                            .find(|s| Some(s.player_index) == demo.local_player_index)
+                                            .map(|s| s.target_player.as_str())
+                                            .unwrap_or("Unknown");
+                                        let header_text = format!("{} - Player: {}", demo.demo_name, player_name);
+                                        ui.strong(header_text);
                                         ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                                             if ui.button("Select All").clicked() {
                                                 actions_to_apply.push(DemoAction::SelectAll(d_idx));
@@ -131,31 +134,31 @@ pub fn render(
                                     ui.add_space(2.0);
 
                                     TableBuilder::new(ui)
-                                        .striped(true)
-                                        .vscroll(false)
-                                        .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-                                        .column(Column::auto())          // [Checkbox]
-                                        .column(Column::auto())          // [Player Name]
-                                        .column(Column::exact(140.0))    // [Kill Range]
-                                        .column(Column::exact(40.0))     // [Kills]
-                                        .column(Column::exact(70.0))     // [Start Time]
-                                        .column(Column::exact(50.0))     // [Duration]
-                                        .column(Column::remainder())     // [Details]
-                                        .header(20.0, |mut header| {
-                                            header.col(|ui| { ui.strong("Sel"); });
-                                            header.col(|ui| { ui.strong("Player"); });
-                                            header.col(|ui| { ui.strong("Kill Range"); });
-                                            header.col(|ui| { ui.strong("Kills"); });
-                                            header.col(|ui| { ui.strong("Start Time"); });
-                                            header.col(|ui| { ui.strong("Dur."); });
-                                            header.col(|ui| { ui.strong("Details"); });
-                                        })
+                                         .striped(true)
+                                         .vscroll(false)
+                                         .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                                         .column(Column::auto())          // [Checkbox]
+                                         .column(Column::initial(30.0))   // [Row Number]
+                                         .column(Column::exact(140.0))    // [Kill Range]
+                                         .column(Column::exact(40.0))     // [Kills]
+                                         .column(Column::exact(70.0))     // [Start Time]
+                                         .column(Column::exact(50.0))     // [Duration]
+                                         .column(Column::remainder())     // [Details]
+                                         .header(20.0, |mut header| {
+                                             header.col(|ui| { ui.strong("Sel"); });
+                                             header.col(|ui| { ui.strong("Row #"); });
+                                             header.col(|ui| { ui.strong("Kill Range"); });
+                                             header.col(|ui| { ui.strong("Kills"); });
+                                             header.col(|ui| { ui.strong("Start Time"); });
+                                             header.col(|ui| { ui.strong("Dur."); });
+                                             header.col(|ui| { ui.strong("Details"); });
+                                         })
                                         .body(|body| {
                                             let filtered_indices: Vec<usize> = (0..demo.streaks.len())
                                                 .filter(|&idx| {
                                                     let streak = &demo.streaks[idx];
-                                                    if demo.is_pov && *hide_non_pov {
-                                                        Some(streak.player_index) == demo.local_player_index
+                                                    if demo.is_pov && Some(streak.player_index) != demo.local_player_index {
+                                                        false
                                                     } else {
                                                         true
                                                     }
@@ -181,8 +184,10 @@ pub fn render(
                                                     }
                                                 });
 
-                                                // ── [Player Name] ──────────────────────
-                                                row.col(|ui| { ui.label(&streak.target_player); });
+                                                // ── [Row Number] ──────────────────────
+                                                row.col(|ui| {
+                                                    ui.label(format!("{}", row_idx + 1));
+                                                });
 
                                                 // ── [Kill Range] ───────────────────────
                                                 row.col(|ui| {
@@ -279,7 +284,12 @@ pub fn render(
                             let mut guard = acquire_lock!(queued_demos_arc);
                             let queued = Arc::make_mut(&mut *guard);
                             if let Some(demo) = queued.get_mut(*idx) {
-                                for s in &mut demo.streaks { s.is_selected = true; }
+                                for s in &mut demo.streaks {
+                                    if demo.is_pov && Some(s.player_index) != demo.local_player_index {
+                                        continue;
+                                    }
+                                    s.is_selected = true;
+                                }
                             }
                         }
                         DemoAction::DeselectAll(idx) => {
@@ -312,7 +322,12 @@ pub fn render(
                         let mut guard = acquire_lock!(queued_demos_arc);
                         let queued = Arc::make_mut(&mut *guard);
                         for d in queued.iter_mut() {
-                            for s in &mut d.streaks { s.is_selected = true; }
+                            for s in &mut d.streaks {
+                                if d.is_pov && Some(s.player_index) != d.local_player_index {
+                                    continue;
+                                }
+                                s.is_selected = true;
+                            }
                         }
                     }
                     if ui.button("Deselect All").clicked() {
@@ -957,11 +972,10 @@ pub fn render(
                             if !streak.is_selected {
                                 continue;
                             }
-                            if demo.is_pov && *hide_non_pov
-                                && Some(streak.player_index) != demo.local_player_index
-                            {
+                            if demo.is_pov && Some(streak.player_index) != demo.local_player_index {
                                 continue;
                             }
+
                             payload.push(CaptureStreak {
                                 start_tick: streak.start_tick,
                                 end_tick: streak.end_tick,

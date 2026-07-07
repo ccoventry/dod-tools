@@ -13,7 +13,6 @@
 /// - `settings`              — mutable ref to `Gui.settings` (game_path, hlae_path, save_settings)
 /// - `capture_engine_running` — read to gate Launch/Proceed; written eagerly before spawn
 /// - `engine_msg/progress/done/total` — display-only progress fields
-/// - `hide_non_pov`          — streak filter flag (read-only)
 /// - `tx`                    — GuiMessage sender for the relay thread
 /// - `studio_state`          — written to CaptureStudioState::Render on Proceed
 #[cfg(not(target_arch = "wasm32"))]
@@ -26,7 +25,6 @@ pub fn render(
     _engine_progress: f32,
     engine_jobs_done: usize,
     engine_jobs_total: usize,
-    hide_non_pov: bool,
     tx: std::sync::mpsc::Sender<crate::types::GuiMessage>,
     studio_state: &mut crate::types::CaptureStudioState,
     cancel_token: std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -104,10 +102,7 @@ pub fn render(
                         let demo_path_str = demo.path.to_string_lossy().to_string();
                         for streak in &demo.streaks {
                             if streak.is_selected {
-                                if hide_non_pov
-                                    && demo.is_pov
-                                    && Some(streak.player_index) != demo.local_player_index
-                                {
+                                if demo.is_pov && Some(streak.player_index) != demo.local_player_index {
                                     continue;
                                 }
                                 raw_streaks.push(native::patch::CaptureStreak {
@@ -262,7 +257,6 @@ pub fn render(
     _engine_progress: f32,
     _engine_jobs_done: usize,
     _engine_jobs_total: usize,
-    _hide_non_pov: bool,
     _tx: std::sync::mpsc::Sender<crate::types::GuiMessage>,
     _studio_state: &mut crate::types::CaptureStudioState,
     _cancel_token: std::sync::Arc<std::sync::atomic::AtomicBool>,
