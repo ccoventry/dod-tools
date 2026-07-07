@@ -134,6 +134,10 @@ pub fn scan_demo_for_highlights(
                 })
                 .collect();
 
+            let viewdemo_times: Vec<f32> = kill_streak.kills.iter()
+                .map(|(time, _, _)| time.viewdemo_offset.as_secs_f32())
+                .collect();
+
             let end_index = kills_raw.len().saturating_sub(1);
             let mut streak = CaptureStreak {
                 start_tick: kills_raw[0].0,
@@ -145,6 +149,7 @@ pub fn scan_demo_for_highlights(
                 duration_string: String::new(),
                 player_index,
                 kills: kills_raw,
+                viewdemo_times,
                 start_index: 0,
                 end_index,
                 total_demo_frames: analysis.demo_info.playback_frames,

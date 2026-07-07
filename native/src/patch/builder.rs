@@ -184,7 +184,7 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
     helper_cfg_content.push_str("alias sys_record_stop \"mirv_recordmovie_stop\"\n");
     helper_cfg_content.push_str("alias sys_capture_done_path \"mirv_movie_filename DOD_TOOLS_EXIT_TRIGGER; mirv_recordmovie_start; mirv_recordmovie_stop\"\n\n");
 
-    let mut global_streak_idx = 0;
+
 
     // 1. Primer Job
     if total_jobs > 0 {
@@ -277,26 +277,27 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
         scheduled_commands.push((initial_delay_ticks, "sys_fast_forward".to_string()));
 
         for (i, streak) in merged_streaks.iter().enumerate() {
-            global_streak_idx += 1;
+
 
             let frame_times = &streak.frame_times;
-            let eof_safe_frame = (frame_times.len() as i32).saturating_sub(15);
+            let safe_boundary = streak.total_demo_frames - (demo_fps * 3.0) as i32;
+            let exit_frame = streak.total_demo_frames.saturating_sub(5);
 
             let record_start_tick = find_tick_backwards(streak.start_tick as usize, config.record_start_lead, frame_times);
             let s_speed_tick = find_tick_backwards(record_start_tick.max(0) as usize, 3.0, frame_times);
             let s_sound_tick = find_tick_backwards(record_start_tick.max(0) as usize, 1.0, frame_times);
             let mut r_stop = find_tick_forwards(streak.end_tick as usize, config.record_stop_trail, frame_times) as i32;
-            let mut s_end = std::cmp::min(
-                find_tick_forwards(r_stop.max(0) as usize, config.post_roll_seconds, frame_times),
-                eof_safe_frame,
-            );
+            let mut s_end = find_tick_forwards(r_stop.max(0) as usize, config.post_roll_seconds, frame_times) as i32;
 
-            if s_end >= eof_safe_frame {
+            let mut is_clutch = false;
+            if r_stop >= safe_boundary {
                 crate::log_markdown("⚠️ **Clutch Clip Detected:** Post-roll truncated to save batch near EOF.");
-                r_stop = r_stop.min(eof_safe_frame);
-                s_end = eof_safe_frame;
+                is_clutch = true;
+                r_stop = r_stop.min(exit_frame);
+                s_end = exit_frame;
             } else {
-                r_stop = r_stop.min(eof_safe_frame);
+                r_stop = r_stop.min(exit_frame);
+                s_end = s_end.min(exit_frame);
             }
 
             // Custom command overrides
@@ -366,9 +367,11 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
                     for (t, echo_cmd) in echos {
                         scheduled_commands.push((t, echo_cmd));
                     }
-                    scheduled_commands.push((s_end + echos_len, format!("{}_next", demo_name)));
+                    let final_tick = if is_clutch { exit_frame } else { s_end + echos_len };
+                    scheduled_commands.push((final_tick, format!("{}_next", demo_name)));
                 } else {
-                    scheduled_commands.push((s_end, format!("{}_next", demo_name)));
+                    let final_tick = if is_clutch { exit_frame } else { s_end };
+                    scheduled_commands.push((final_tick, format!("{}_next", demo_name)));
                 }
             }
         }

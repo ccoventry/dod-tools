@@ -317,6 +317,7 @@ pub(crate) fn spawn_ingestion_thread(
                                     kills: s.kills,
                                     start_index: s.start_index,
                                     end_index: s.end_index,
+                                    viewdemo_times: s.viewdemo_times,
                                     frame_times: s.frame_times,
                                 }
                             })
@@ -349,7 +350,9 @@ pub(crate) fn spawn_ingestion_thread(
                                 log::info!("Ingestion thread acquired lock to push: {:?}", item.path);
                                 if !queued_guard.iter().any(|d| d.path == item.path) {
                                     let queued = Arc::make_mut(&mut *queued_guard);
-                                    queued.push(item);
+                                    let insert_idx = queued.binary_search_by(|d| d.demo_name.cmp(&item.demo_name))
+                                        .unwrap_or_else(|pos| pos);
+                                    queued.insert(insert_idx, item);
                                     true
                                 } else {
                                     false
