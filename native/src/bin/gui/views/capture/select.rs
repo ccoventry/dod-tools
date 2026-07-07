@@ -142,6 +142,7 @@ pub fn render(
                                          .column(Column::auto())          // [Checkbox]
                                          .column(Column::exact(140.0))    // [Kill Range]
                                          .column(Column::exact(40.0))     // [Kills]
+                                         .column(Column::initial(70.0).resizable(true)) // [Timestamp]
                                          .column(Column::exact(70.0))     // [Start Time]
                                          .column(Column::exact(50.0))     // [Duration]
                                          .column(Column::remainder())     // [Details]
@@ -150,6 +151,7 @@ pub fn render(
                                              header.col(|ui| { ui.strong("Sel"); });
                                              header.col(|ui| { ui.strong("Kill Range"); });
                                              header.col(|ui| { ui.strong("Kills"); });
+                                             header.col(|ui| { ui.strong("Timestamp"); });
                                              header.col(|ui| { ui.strong("Start Time"); });
                                              header.col(|ui| { ui.strong("Dur."); });
                                              header.col(|ui| { ui.strong("Details"); });
@@ -165,6 +167,7 @@ pub fn render(
                                                     }
                                                 })
                                                 .collect();
+
 
                                             body.rows(20.0, filtered_indices.len(), |mut row| {
                                                 let row_idx = row.index();
@@ -250,6 +253,13 @@ pub fn render(
 
                                                 // ── [Kills] ───────────────────────────
                                                 row.col(|ui| { ui.label(streak.kill_count.to_string()); });
+
+                                                // ── [Timestamp] ───────────────────────
+                                                row.col(|ui| {
+                                                    let absolute_timestamp = streak.viewdemo_times.get(streak.start_index).copied().unwrap_or(0.0);
+                                                    let ts_secs = absolute_timestamp.round() as i32;
+                                                    ui.label(format!("{}:{:02}", ts_secs / 60, ts_secs % 60));
+                                                });
 
                                                 // ── [Start Time] ──────────────────────
                                                 row.col(|ui| {
@@ -867,6 +877,7 @@ pub fn render(
                                 end_index: streak.end_index,
                                 total_demo_frames: demo.playback_frames,
                                 demo_fps: demo.tickrate,
+                                viewdemo_times: streak.viewdemo_times.clone(),
                                 frame_times: streak.frame_times.clone(),
                             });
                         }

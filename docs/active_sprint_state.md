@@ -4,4 +4,4 @@
 - Status: Ready to return to the active sprint priority.
 
 ## IDE AI State
-- Immediate Task: Target `native/src/patch/builder.rs` to complete the payload filtering teardown (removing conditional filtering blocks).
+- Immediate Task: Ready for next task.

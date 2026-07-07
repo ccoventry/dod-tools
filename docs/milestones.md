@@ -1,14 +1,22 @@
+<!--
+IMMUTABLE MILESTONES ARCHITECTURE RULES:
+1. Standard markdown headings must remain intact.
+2. Completed items must be explicitly checked (changed from - [ ] to - [x]).
+3. Active Sprint Priorities must reflect the current sprint's focus.
+4. Historical phases must be archived using <details> tags.
+-->
+
 # Project Milestones
 
 ## 🚀 Active Sprint Priorities
 
 ### Game Capture Pipeline
-- [ ] Task: Graceful Degradation for Clutch Clips — Update `builder.rs` to handle edge cases where a kill occurs inside the 3.0-second EOF danger zone. The patcher must gracefully sacrifice the post-roll and schedule the `DOD_TOOLS_EXIT_TRIGGER` exactly 5 ticks before the absolute final frame to ensure the highlight is captured without crashing the batch.
-- [ ] Feature: Config Injection — Ensure the engine dynamically injects `+exec movie.cfg` into the HLAE command line arguments to preserve custom capture framerates and HUD settings.
+- [x] Task: Graceful Degradation for Clutch Clips — Update `builder.rs` to handle edge cases where a kill occurs inside the 3.0-second EOF danger zone. The patcher must gracefully sacrifice the post-roll and schedule the `DOD_TOOLS_EXIT_TRIGGER` exactly 5 ticks before the absolute final frame to ensure the highlight is captured without crashing the batch.
+- [x] Feature: Config Injection — Ensure the engine dynamically injects `+exec movie.cfg` into the HLAE command line arguments to preserve custom capture framerates and HUD settings.
 - [ ] Task: Long Demo Validation — Validate capture sequence for 30+ minute demos.
 - [ ] Task: Packet Audit — Audit `.dem` packet length consistency.
 - [ ] Chore: Packet Initialization Rule — Formalize GoldSrc packet memory initialization rule.
-- [ ] Chore: Standardize Milestones Architecture — Design and document a strict, immutable markdown layout for this file to completely prevent AI-driven format drift across future sessions.
+- [x] Chore: Standardize Milestones Architecture — Design and document a strict, immutable markdown layout for this file to completely prevent AI-driven format drift across future sessions.
 
 ### Frontend Migration
 - [ ] Feature: Tauri & Vite Integration — Ongoing migration of the frontend stack from native `egui` to a Tauri + Vite architecture. (Note: Excluded from primary architecture docs until finalized).
