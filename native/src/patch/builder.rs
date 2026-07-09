@@ -197,7 +197,7 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
     
     helper_cfg_content.push_str("# Global aliases\n");
     helper_cfg_content.push_str("alias sys_normal_speed \"clear; host_framerate 0\"\n");
-    helper_cfg_content.push_str(&format!("alias sys_fast_forward \"host_framerate {}\"\n", config.fast_forward_speed));
+    helper_cfg_content.push_str("alias sys_fast_forward \"host_framerate 0.05\"\n");
     helper_cfg_content.push_str("alias sys_sound \"stopsound\"\n");
     helper_cfg_content.push_str("alias sys_record_start \"mirv_recordmovie_start; stopsound\"\n");
     helper_cfg_content.push_str("alias sys_record_stop \"mirv_recordmovie_stop\"\n");
@@ -233,7 +233,7 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
             target_player: None,
             init_commands: primer_init,
             scheduled_commands: primer_scheduled,
-            bookmarks: Vec::new(),
+            director_events: Vec::new(),
         });
     }
 
@@ -242,7 +242,12 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
         // Sort by start_tick in ascending order
         streaks.sort_by_key(|s| s.start_tick);
 
-        let demo_bookmarks: Vec<i32> = streaks.iter().map(|s| s.start_tick).collect();
+        // One svc_director STUFFTEXT event per streak — label mirrors the highlight table:
+        // "#<row>: <kill_count> kills: <timeline_string>"
+        let director_events: Vec<(i32, String)> = streaks.iter().enumerate().map(|(i, s)| {
+            let label = format!("#{}: {} kills: {}", i + 1, s.kill_count, s.timeline_string);
+            (s.start_tick, label)
+        }).collect();
 
         let demo_fps = streaks.first().map(|s| s.demo_fps).filter(|&fps| fps > 0.0).unwrap_or(30.0);
 
@@ -430,7 +435,7 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
             target_player: target_player.clone(),
             init_commands: final_init_commands,
             scheduled_commands,
-            bookmarks: demo_bookmarks,
+            director_events,
         });
     }
     
@@ -529,6 +534,64 @@ pub fn spawn_patch_batch(
         cancel_token,
         handle: Some(handle),
     }
+}
+
+// ── Preview-only patcher ──────────────────────────────────────────────────────
+// Builds minimal PatchJobs that inject ONLY svc_director STUFFTEXT events into
+// a copy of the original demo — no capture commands, no chaining, no CFG files.
+// One output demo per source demo, saved as "<stem>_preview.dem" next to the
+// original (or inside `output_dir` if configured).
+
+pub fn build_preview_patch_jobs(
+    raw_streaks: Vec<CaptureStreak>,
+    output_dir: Option<&std::path::Path>,
+) -> Vec<PatchJob> {
+    // Group all streaks by source demo path.
+    let mut grouped: std::collections::HashMap<String, Vec<CaptureStreak>> =
+        std::collections::HashMap::new();
+    for streak in raw_streaks {
+        grouped.entry(streak.source_demo.clone()).or_default().push(streak);
+    }
+
+    let mut jobs = Vec::new();
+
+    for (source_demo, mut streaks) in grouped {
+        // Sort chronologically.
+        streaks.sort_by_key(|s| s.start_tick);
+
+        // Build (tick, label) for each streak — same format as the highlight table.
+        let director_events: Vec<(i32, String)> = streaks.iter().enumerate().map(|(i, s)| {
+            let label = format!("#{}: {} kills: {}", i + 1, s.kill_count, s.timeline_string);
+            (s.start_tick, label)
+        }).collect();
+
+        // Resolve output path: "<stem>_preview.dem" beside original, or in output_dir.
+        let source_path = std::path::PathBuf::from(&source_demo);
+        let stem = source_path
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy();
+        let preview_name = format!("{}_preview.dem", stem);
+        let output_demo = if let Some(dir) = output_dir {
+            dir.join(&preview_name)
+        } else {
+            source_path.with_file_name(&preview_name)
+        };
+
+        jobs.push(PatchJob {
+            source_demo,
+            output_demo,
+            streaks,
+            target_player: None,
+            // No capture init commands — preview only.
+            init_commands: Vec::new(),
+            // No scheduled capture commands — preview only.
+            scheduled_commands: Vec::new(),
+            director_events,
+        });
+    }
+
+    jobs
 }
 
 // ── svc_director payload builder ──────────────────────────────────────────────
