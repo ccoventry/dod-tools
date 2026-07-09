@@ -1,8 +1,9 @@
 ## Web AI State
-- Goal: Session concluded. Completed EOF graceful degradation for clutch clips, payload filtering teardown, and UI sorting synchronization. Ready for new sprint tasks.
-- Last Edited: `native/src/patch/builder.rs`, `docs/milestones.md`, `docs/active_sprint_state.md`.
-- Status: Standing by for new feature requests.
+- **Overarching Goal:** Stabilize the `dod-tools` demo capture pipeline by eliminating binary desyncs and engine crashes during HLAE recording.
+- **Last Modified:** `native/src/patch/engine.rs` (Fixed bookmark interleaving), `native/src/patch/builder.rs` (Fixed test alignment).
+- **Compiler Status:** `cargo test` and `cargo check --bin parse_demo` are passing; binary structure is validated frame-for-frame.
+- **Unresolved Bugs:** None; the `svc_bad` crash is confirmed resolved.
 
 ## IDE AI State
-- Goal: Ready for next session tasks.
-- Status: Standing by to edit files or run test builds as requested.
+- **Goal:** Stream patcher bookmark frame layout corrected, code verified, tests passing, and documentation updated.
+- **Status:** Done. Standing by for further workspace tasks.

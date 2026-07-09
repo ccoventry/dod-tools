@@ -989,7 +989,14 @@ pub fn render(
                             patcher_config.exit_on_finish
                         ));
                         
-                        let jobs = build_batch_queue(payload, &patcher_config);
+                        let jobs = match build_batch_queue(payload, &patcher_config) {
+                            Ok(jobs) => jobs,
+                            Err(e) => {
+                                log::error!("Failed to write helper config: {}", e);
+                                let _ = tx.send(crate::types::GuiMessage::CaptureEngineEvent(crate::types::EngineEvent::Error(format!("Failed to write helper config: {}", e))));
+                                return;
+                            }
+                        };
                         let tx_clone = tx.clone();
                         let ctx_clone = ctx.clone();
                         let config_clone = patcher_config.clone();

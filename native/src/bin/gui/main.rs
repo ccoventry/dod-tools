@@ -783,7 +783,7 @@ impl eframe::App for Gui {
                                 vec![]
                             };
 
-                            let config = crate::views::capture::get_patcher_config().lock().unwrap();
+                            let config = crate::views::capture::get_patcher_config().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
                             let options = native::patch::PatchOptions {
                                 exit_on_finish: false,
                                 init_commands: config.init_commands.clone(),
@@ -911,7 +911,7 @@ impl eframe::App for Gui {
                         }
 
                         let queue_py_path = dest_dir.join("capture_queue.py");
-                        let config = crate::views::capture::get_patcher_config().lock().unwrap();
+                        let config = crate::views::capture::get_patcher_config().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
                         let py_script = generate_python_queue_sequencer(&config.hlae_path, &config.game_path);
                         if let Err(e) = std::fs::write(&queue_py_path, py_script) {
                             self.error_message = Some(format!("Failed to write capture_queue.py: {}", e));
@@ -2258,7 +2258,7 @@ impl eframe::App for Gui {
                     }
 
                     self.cancel_flag.store(false, std::sync::atomic::Ordering::Relaxed);
-                    let config = crate::views::capture::get_patcher_config().lock().unwrap();
+                    let config = crate::views::capture::get_patcher_config().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
                     start_capture_pipeline(
                         ctx.clone(),
                         self.tx.clone(),
@@ -2337,7 +2337,7 @@ impl eframe::App for Gui {
                     let new_id = format!("{}_{}_{}", active_path_str, player_id, req.streak_idx);
 
                     if !self.export_queue.iter().any(|item| item.id == new_id) {
-                            let config = crate::views::capture::get_patcher_config().lock().unwrap();
+                            let config = crate::views::capture::get_patcher_config().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
                             self.export_queue.push(QueuedStreakExport {
                                 id: new_id,
                                 input_path,

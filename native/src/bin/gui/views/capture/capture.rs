@@ -36,7 +36,7 @@ pub fn render(
         // ── Paths configuration ──────────────────────────────────────────────
         ui.group(|ui| {
             ui.strong("Paths Configuration");
-            let mut config = crate::views::capture::get_patcher_config().lock().unwrap();
+            let mut config = crate::views::capture::get_patcher_config().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             
             ui.add_space(4.0);
 
@@ -69,21 +69,24 @@ pub fn render(
             });
         });
 
-        let config = crate::views::capture::get_patcher_config().lock().unwrap();
+        let (hlae_path_str, game_path_str) = {
+            let config = crate::views::capture::get_patcher_config().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            (config.hlae_path.clone(), config.game_path.clone())
+        };
 
         ui.add_space(12.0);
 
         // ── Launch controls ──────────────────────────────────────────────────
-        let hl_exists = !config.game_path.is_empty()
-            && std::path::Path::new(&config.game_path).exists();
-        let hlae_exists = !config.hlae_path.is_empty()
-            && std::path::Path::new(&config.hlae_path).exists();
+        let hl_exists = !game_path_str.is_empty()
+            && std::path::Path::new(&game_path_str).exists();
+        let hlae_exists = !hlae_path_str.is_empty()
+            && std::path::Path::new(&hlae_path_str).exists();
         let can_launch = hl_exists && hlae_exists && !*capture_engine_running;
 
         ui.horizontal(|ui| {
             if ui.add_enabled(can_launch, egui::Button::new("🎬 Launch Capture Engine")).clicked() {
-                let hlae_path = std::sync::Arc::new(std::path::PathBuf::from(&config.hlae_path));
-                let hl_path = std::sync::Arc::new(std::path::PathBuf::from(&config.game_path));
+                let hlae_path = std::sync::Arc::new(std::path::PathBuf::from(&hlae_path_str));
+                let hl_path = std::sync::Arc::new(std::path::PathBuf::from(&game_path_str));
                 let dod_dir = hl_path.parent().unwrap().join("dod");
 
                 // Build raw streak list from the shared queued demos mutex.
@@ -139,7 +142,14 @@ pub fn render(
                 patcher_config.pre_roll_ticks = (patcher_config.pre_roll_seconds * 100.0) as i32;
                 patcher_config.post_roll_ticks = (patcher_config.post_roll_seconds * 100.0) as i32;
 
-                let patch_jobs = native::patch::build_batch_queue(raw_streaks, &patcher_config);
+                let patch_jobs = match native::patch::build_batch_queue(raw_streaks, &patcher_config) {
+                    Ok(jobs) => jobs,
+                    Err(e) => {
+                        log::error!("Failed to write helper config: {}", e);
+                        let _ = tx.send(crate::types::GuiMessage::CaptureEngineEvent(crate::types::EngineEvent::Error(format!("Failed to write helper config: {}", e))));
+                        return;
+                    }
+                };
 
                 let mut capture_jobs = Vec::new();
                 for job in patch_jobs {
