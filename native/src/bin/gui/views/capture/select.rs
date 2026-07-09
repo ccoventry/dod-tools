@@ -464,7 +464,7 @@ pub fn render(
         }
 
 
-            ui.heading("Recording Engine Configurations");
+            egui::CollapsingHeader::new("Recording Engine Configurations").default_open(true).show(ui, |ui| {
             ui.add_space(8.0);
 
             // HLAE Path configuration
@@ -538,7 +538,9 @@ pub fn render(
             ui.add_space(8.0);
             ui.separator();
             ui.add_space(8.0);
-            ui.heading("Highlight Capture Settings");
+            });
+            ui.add_space(8.0);
+            egui::CollapsingHeader::new("Highlight Capture Settings").default_open(true).show(ui, |ui| {
             ui.add_space(8.0);
 
             ui.label("Init Commands (startup):");
@@ -851,23 +853,22 @@ pub fn render(
                     .on_hover_text("If enabled, the game will automatically inject the 'quit' command after the final clip to close the game.");
             });
 
+        });
+
+        egui::CollapsingHeader::new("🐛 Debugging Settings").default_open(true).show(ui, |ui| {
             // Row 6: Debugging Settings
-            ui.group(|ui| {
-                ui.vertical(|ui| {
-                    ui.heading("🐛 Debugging Settings");
-                    ui.add_space(4.0);
-                    
-                    ui.horizontal(|ui| {
-                        ui.checkbox(&mut patcher_config.add_condebug, "Add Condebug to Launch Commands")
-                            .on_hover_text("If enabled, '-condebug' will be added to the launch arguments to generate a qconsole.log file.");
-                    });
-                    
-                    ui.horizontal(|ui| {
-                        ui.checkbox(&mut patcher_config.save_local_patched_copy, "Save a copy of patched demo to ./demos/")
-                            .on_hover_text("If enabled, a copy of the patched .dem file will be saved to the workspace's demos/ folder for debugging.");
-                    });
-                });
+            ui.add_space(4.0);
+            
+            ui.horizontal(|ui| {
+                ui.checkbox(&mut patcher_config.add_condebug, "Add Condebug to Launch Commands")
+                    .on_hover_text("If enabled, '-condebug' will be added to the launch arguments to generate a qconsole.log file.");
             });
+            
+            ui.horizontal(|ui| {
+                ui.checkbox(&mut patcher_config.save_local_patched_copy, "Save a copy of patched demo to ./demos/")
+                    .on_hover_text("If enabled, a copy of the patched .dem file will be saved to the workspace's demos/ folder for debugging.");
+            });
+        });
 
             ui.add_space(8.0);
 
