@@ -292,6 +292,10 @@ impl HlcrState {
 
             if active_count < self.config.max_concurrent_renders {
                 let limit = self.config.max_concurrent_renders - active_count;
+                // Count queued jobs that will actually start this tick so we can
+                // calculate the true concurrent count for thread allocation.
+                let queued_count = self.jobs.iter().filter(|j| j.status == "Queued").count();
+                let jobs_starting = queued_count.min(limit);
                 let mut started = 0;
 
                 for i in 0..self.jobs.len() {
@@ -306,8 +310,16 @@ impl HlcrState {
 
                         let job_id = job.id.clone();
                         let clip = self.clips[i].clone();
-                        let config = self.config.clone();
                         let tx = self.render_tx.clone();
+
+                        // Use the real concurrent count (already-running + newly starting),
+                        // capped at max_concurrent_renders.  This ensures a lone job gets
+                        // all available CPU threads instead of only 1/max of them.
+                        let effective_concurrent = (active_count + jobs_starting)
+                            .min(self.config.max_concurrent_renders)
+                            .max(1);
+                        let mut config = self.config.clone();
+                        config.max_concurrent_renders = effective_concurrent;
 
                         tokio::spawn(async move {
                             run_render_job(job_id, clip, config, tx, cancel_flag).await;
