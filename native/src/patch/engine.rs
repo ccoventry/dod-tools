@@ -52,15 +52,9 @@ fn write_director_event_payload(
 ) -> std::io::Result<i32> {
     use std::io::Write;
     
-    if command.len() >= 64 {
-        let msg = format!(
-            "FATAL: GoldSrc Cbuf Overflow (64-byte limit breached). Command: '{}', Length: {}",
-            command,
-            command.len()
-        );
-        log::error!("{}", msg);
-        panic!("{}", msg);
-    }
+    // svc_director STUFFTEXT payload_len is a u8; silently clamp to 253 bytes.
+    // (64-byte panic is for ConsoleCommand frames, not for director payloads.)
+    let command = if command.len() > 253 { &command[..253] } else { command };
 
     let cmd_bytes = command.as_bytes();
     let cmd_len = cmd_bytes.len();
@@ -140,9 +134,9 @@ impl StreamPatcher {
         let mut bytes_injected: i32 = 0;
         let mut is_first_frame = true;
         let mut playback_started = false;
-        let mut bookmark_queue: std::collections::VecDeque<i32> = {
-            let mut b = job.bookmarks.clone();
-            b.sort_unstable();
+        let mut director_queue: std::collections::VecDeque<(i32, String)> = {
+            let mut b = job.director_events.clone();
+            b.sort_unstable_by_key(|(tick, _)| *tick);
             b.into()
         };
         let mut scheduled_queue: std::collections::VecDeque<(i32, String)> = job.scheduled_commands.iter().cloned().collect();
@@ -333,12 +327,11 @@ impl StreamPatcher {
                     scratch_buf.resize(464, 0);
                     read_exact(&mut reader, &mut scratch_buf, "NetworkMessage Info")?;
 
-                    // Inject director events if bookmark ticks are reached within playback entry
-                    while let Some(&target_tick) = bookmark_queue.front() {
-                        if playback_started && file_tick >= target_tick {
-                            let bookmark_tick = bookmark_queue.pop_front().unwrap();
-                            let command = format!("echo [dod-tools] BOOKMARK_{}", bookmark_tick);
-                            let b = write_director_event_payload(&mut writer, time, file_tick, &scratch_buf, &command)?;
+                    // Inject svc_director STUFFTEXT events at highlight start ticks
+                    while let Some((target_tick, _)) = director_queue.front() {
+                        if playback_started && frame_counter >= *target_tick {
+                            let (_, label) = director_queue.pop_front().unwrap();
+                            let b = write_director_event_payload(&mut writer, time, file_tick, &scratch_buf, &label)?;
                             update_injection(pos, b, 1);
                             bytes_injected += b;
                         } else {
@@ -520,7 +513,7 @@ mod tests {
             target_player: None,
             init_commands: vec!["host_framerate 0".to_string()],
             scheduled_commands: vec![(10, "some_command".to_string())],
-            bookmarks: Vec::new(),
+            director_events: Vec::new(),
         };
 
         let config = PatcherConfig {
@@ -615,7 +608,7 @@ mod tests {
             target_player: None,
             init_commands: vec!["host_framerate 0".to_string()],
             scheduled_commands: vec![(10, "some_command".to_string())],
-            bookmarks: Vec::new(),
+            director_events: Vec::new(),
         };
 
         let config = PatcherConfig {

@@ -103,7 +103,9 @@ pub struct PatchJob {
     pub target_player: Option<String>,
     pub init_commands: Vec<String>,
     pub scheduled_commands: Vec<(i32, String)>,
-    pub bookmarks: Vec<i32>,
+    /// (tick, label) pairs — each becomes a named `svc_director` STUFFTEXT event
+    /// in the `viewdemo` Event List labelled "<N> kills: <timeline_string>".
+    pub director_events: Vec<(i32, String)>,
 }
 
 // ── Patcher configuration ─────────────────────────────────────────────────────
