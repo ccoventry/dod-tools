@@ -989,6 +989,74 @@ pub fn render(
             let is_running = is_patching();
 
             ui.horizontal(|ui| {
+                let can_preview = !is_running && !queued_demos_shared.is_empty();
+                if ui.add_enabled(can_preview, egui::Button::new("🔍 Add Director Events for Previewing"))
+                    .on_hover_text("Patches all detected highlights as viewdemo Event List entries into a _preview.dem copy of each demo. No capture is triggered.")
+                    .clicked()
+                {
+                    let mut preview_payload = Vec::new();
+                    for demo in queued_demos_shared.iter() {
+                        let demo_path_str = demo.path.to_string_lossy().to_string();
+                        for streak in &demo.streaks {
+                            if demo.is_pov && Some(streak.player_index) != demo.local_player_index {
+                                continue;
+                            }
+                            preview_payload.push(CaptureStreak {
+                                start_tick: streak.start_tick,
+                                end_tick: streak.end_tick,
+                                source_demo: demo_path_str.clone(),
+                                target_player: Some(streak.target_player.clone()),
+                                kill_count: streak.kill_count,
+                                timeline_string: streak.timeline_string.clone(),
+                                duration_string: streak.duration_string.clone(),
+                                player_index: streak.player_index,
+                                kills: streak.kills.clone(),
+                                start_index: streak.start_index,
+                                end_index: streak.end_index,
+                                total_demo_frames: demo.playback_frames,
+                                demo_fps: demo.tickrate,
+                                viewdemo_times: streak.viewdemo_times.clone(),
+                                frame_times: streak.frame_times.clone(),
+                            });
+                        }
+                    }
+
+                    if !preview_payload.is_empty() {
+                        use native::patch::build_preview_patch_jobs;
+                        let jobs = build_preview_patch_jobs(
+                            preview_payload,
+                            patcher_config.output_dir.as_deref(),
+                        );
+                        let tx_clone = tx.clone();
+                        let ctx_clone = ctx.clone();
+                        let cancel_token = Arc::new(AtomicBool::new(false));
+
+                        super::log_markdown(&format!("[PREVIEW PATCH] Injecting director events into {} demo(s).", jobs.len()));
+
+                        set_is_patching(true);
+                        std::thread::Builder::new()
+                            .name("preview_patch_worker".into())
+                            .spawn(move || {
+                                for job in &jobs {
+                                    super::log_markdown(&format!("[PREVIEW PATCH] Writing: {}", job.output_demo.display()));
+                                    let patcher = native::patch::StreamPatcher::new(
+                                        &job.source_demo,
+                                        &job.output_demo,
+                                    );
+                                    match patcher.patch(job, &native::patch::PatcherConfig::default(), &cancel_token) {
+                                        Ok(()) => super::log_markdown(&format!("[PREVIEW PATCH] ✅ Done: {}", job.output_demo.display())),
+                                        Err(e) => super::log_markdown(&format!("[PREVIEW PATCH] ❌ Error: {}", e)),
+                                    }
+                                }
+                                let _ = tx_clone.send(crate::types::GuiMessage::PatchingComplete);
+                                ctx_clone.request_repaint();
+                            })
+                            .unwrap();
+                    }
+                }
+
+                ui.add_space(16.0);
+
                 let btn = egui::Button::new("Proceed to Capture ->");
                 println!("Button State -> is_running: {}, has_demos: {}, exceeds_space: {}, missing_dir: {}", is_running, !queued_demos_shared.is_empty(), exceeds_space, is_missing_primary_dir);
                 if ui.add_enabled(!is_running && !queued_demos_shared.is_empty() && !exceeds_space && !is_missing_primary_dir, btn).clicked() {
