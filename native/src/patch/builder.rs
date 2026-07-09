@@ -127,7 +127,7 @@ fn build_safe_echos(tick: i32, message: &str) -> Vec<(i32, String)> {
 
 // ── Batch queue builder ───────────────────────────────────────────────────────
 
-pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig) -> Vec<PatchJob> {
+pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig) -> Result<Vec<PatchJob>, std::io::Error> {
     // tickrate is extracted dynamically from streaks per-demo
     let mut grouped: std::collections::HashMap<(String, Option<String>), Vec<CaptureStreak>> = std::collections::HashMap::new();
     for streak in raw_streaks {
@@ -143,8 +143,27 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
     
     let date_time = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
     let mut helper_cfg_content = String::new();
+
+    let game_path_buf = std::path::PathBuf::from(&config.game_path);
+    let dod_dir = match game_path_buf.parent() {
+        Some(parent) => parent.join("dod"),
+        None => std::path::PathBuf::from("dod"),
+    };
+
+    // Remove stale config from dod_dir
+    let _ = std::fs::remove_file(dod_dir.join("dodtools_helper.cfg"));
+    let _ = std::fs::remove_file(dod_dir.join("dodtools_capture_done.cfg"));
+    let _ = std::fs::remove_file(dod_dir.join("dod_quit.cfg"));
+    if let Ok(entries) = std::fs::read_dir(&dod_dir) {
+        for entry in entries.flatten() {
+            let filename = entry.file_name().to_string_lossy().to_string();
+            if filename.starts_with("dodtools_chain_") && filename.ends_with(".cfg") {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+    }
     
-    // Remove stale config
+    // Remove stale config from output_dir if configured
     if let Some(ref out_dir) = config.output_dir {
         let _ = std::fs::remove_file(out_dir.join("dodtools_helper.cfg"));
         let _ = std::fs::remove_file(out_dir.join("dodtools_capture_done.cfg"));
@@ -177,12 +196,13 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
     ));
     
     helper_cfg_content.push_str("# Global aliases\n");
-    helper_cfg_content.push_str("alias sys_normal_speed \"host_framerate 0\"\n");
-    helper_cfg_content.push_str(&format!("alias sys_fast_forward \"host_framerate {}\"\n", config.fast_forward_speed));
+    helper_cfg_content.push_str("alias sys_normal_speed \"fps_max 100; host_framerate 0\"\n");
+    let safe_ff_speed = config.fast_forward_speed.min(0.05);
+    helper_cfg_content.push_str(&format!("alias sys_fast_forward \"fps_override 1; fps_max 1000; host_framerate {}\"\n", safe_ff_speed));
     helper_cfg_content.push_str("alias sys_sound \"stopsound\"\n");
-    helper_cfg_content.push_str("alias sys_record_start \"mirv_recordmovie_start\"\n");
+    helper_cfg_content.push_str("alias sys_record_start \"mirv_recordmovie_start; stopsound\"\n");
     helper_cfg_content.push_str("alias sys_record_stop \"mirv_recordmovie_stop\"\n");
-    helper_cfg_content.push_str("alias sys_capture_done_path \"mirv_movie_filename DOD_TOOLS_EXIT_TRIGGER; mirv_recordmovie_start; mirv_recordmovie_stop\"\n\n");
+    helper_cfg_content.push_str("alias sys_capture_done_path \"mirv_movie_filename DOD_TOOLS_EXIT_TRIGGER; mirv_recordmovie_start; mirv_recordmovie_stop\"\n");
 
 
 
@@ -280,17 +300,18 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
 
 
             let frame_times = &streak.frame_times;
-            let safe_boundary = streak.total_demo_frames - (demo_fps * 3.0) as i32;
-            let exit_frame = streak.total_demo_frames.saturating_sub(5);
+            let absolute_final_frame = frame_times.len() as i32;
+            let exit_frame = absolute_final_frame.saturating_sub(5);
+            let danger_zone = absolute_final_frame.saturating_sub(10);
 
             let record_start_tick = find_tick_backwards(streak.start_tick as usize, config.record_start_lead, frame_times);
             let s_speed_tick = find_tick_backwards(record_start_tick.max(0) as usize, 3.0, frame_times);
             let s_sound_tick = find_tick_backwards(record_start_tick.max(0) as usize, 1.0, frame_times);
-            let mut r_stop = find_tick_forwards(streak.end_tick as usize, config.record_stop_trail, frame_times) as i32;
-            let mut s_end = find_tick_forwards(r_stop.max(0) as usize, config.post_roll_seconds, frame_times) as i32;
+            let mut r_stop = find_tick_forwards(streak.end_tick as usize, config.record_stop_trail, frame_times);
+            let mut s_end = find_tick_forwards(r_stop.max(0) as usize, config.post_roll_seconds, frame_times);
 
             let mut is_clutch = false;
-            if r_stop >= safe_boundary {
+            if s_end >= danger_zone {
                 crate::log_markdown("⚠️ **Clutch Clip Detected:** Post-roll truncated to save batch near EOF.");
                 is_clutch = true;
                 r_stop = r_stop.min(exit_frame);
@@ -301,7 +322,11 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
             }
 
             // Custom command overrides
-            for custom in &config.custom_commands {
+            for (idx, custom) in config.custom_commands.iter().enumerate() {
+                let relation_str = match custom.relation {
+                    CommandRelation::Before => "BEFORE",
+                    CommandRelation::After => "AFTER",
+                };
                 let target_tick = match custom.relation {
                     CommandRelation::Before => {
                         let mut t = find_tick_backwards(streak.start_tick as usize, custom.offset, frame_times);
@@ -319,7 +344,7 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
                     }
                 };
 
-                for (t, echo_cmd) in build_safe_echos(target_tick, "C") {
+                for (t, echo_cmd) in build_safe_echos(target_tick, &format!("CUSTOM_CMD{}_{} - Tick {}", idx + 1, relation_str, target_tick)) {
                     scheduled_commands.push((t, echo_cmd));
                 }
                 let cmd_len = custom.command.len();
@@ -331,38 +356,38 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
 
             // At Speed Flush (Stage 1)
             scheduled_commands.push((s_speed_tick, "sys_normal_speed".to_string()));
-            for (t, echo_cmd) in build_safe_echos(s_speed_tick, "F") {
+            for (t, echo_cmd) in build_safe_echos(s_speed_tick, &format!("SPEED_FLUSH - Tick {}", s_speed_tick)) {
                 scheduled_commands.push((t, echo_cmd));
             }
 
             // At Sound Flush (Stage 1.5)
             scheduled_commands.push((s_sound_tick, "sys_sound".to_string()));
-            for (t, echo_cmd) in build_safe_echos(s_sound_tick, "S_SOUND") {
+            for (t, echo_cmd) in build_safe_echos(s_sound_tick, &format!("AUDIO_SYNC - Tick {}", s_sound_tick)) {
                 scheduled_commands.push((t, echo_cmd));
             }
 
             // At Start Frame (Stage 2)
             scheduled_commands.push((record_start_tick, "sys_record_start".to_string()));
-            for (t, echo_cmd) in build_safe_echos(record_start_tick, "S") {
+            for (t, echo_cmd) in build_safe_echos(record_start_tick, &format!("START_RECORD - Tick {}", record_start_tick)) {
                 scheduled_commands.push((t, echo_cmd));
             }
 
             // At End Frame (Stage 3)
             scheduled_commands.push((r_stop, "sys_record_stop".to_string()));
-            for (t, echo_cmd) in build_safe_echos(r_stop, "E") {
+            for (t, echo_cmd) in build_safe_echos(r_stop, &format!("STOP_RECORD - Tick {}", r_stop)) {
                 scheduled_commands.push((t, echo_cmd));
             }
 
             // At Post-Roll End (Stage 4)
             scheduled_commands.push((s_end, "sys_fast_forward".to_string()));
-            for (t, echo_cmd) in build_safe_echos(s_end, "FF") {
+            for (t, echo_cmd) in build_safe_echos(s_end, &format!("FAST_FORWARD - Tick {}", s_end)) {
                 scheduled_commands.push((t, echo_cmd));
             }
 
             if i == merged_streaks.len() - 1 {
                 // At Absolute EOF
                 if job_idx == total_jobs - 1 {
-                    let echos = build_safe_echos(s_end, "BC");
+                    let echos = build_safe_echos(s_end, "BATCH_COMPLETE");
                     let echos_len = echos.len() as i32;
                     for (t, echo_cmd) in echos {
                         scheduled_commands.push((t, echo_cmd));
@@ -374,6 +399,17 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
                     scheduled_commands.push((final_tick, format!("{}_next", demo_name)));
                 }
             }
+        }
+
+        // Implement Global Breadcrumb Loop
+        let total_demo_frames = merged_streaks.first().map(|s| s.frame_times.len()).unwrap_or(0) as i32;
+        let mut step = 0;
+        while step < total_demo_frames {
+            scheduled_commands.push((
+                step, 
+                format!("echo \"[dod-tools] BREADCRUMB - Tick {}\"", step)
+            ));
+            step += 5000;
         }
 
         // Sort scheduled_commands by tick
@@ -397,16 +433,14 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
         });
     }
     
-    // Write dodtools_helper.cfg
-    if let Some(ref out_dir) = config.output_dir {
-        if !out_dir.exists() {
-            let _ = std::fs::create_dir_all(out_dir);
-        }
-        let cfg_path = out_dir.join("dodtools_helper.cfg");
-        let _ = std::fs::write(&cfg_path, helper_cfg_content);
+    // Write dodtools_helper.cfg to dod_dir
+    if !dod_dir.exists() {
+        std::fs::create_dir_all(&dod_dir)?;
     }
+    let cfg_path = dod_dir.join("dodtools_helper.cfg");
+    std::fs::write(&cfg_path, helper_cfg_content)?;
 
-    jobs
+    Ok(jobs)
 }
 
 pub struct WorkspaceGuard {
@@ -628,6 +662,8 @@ mod tests {
                 end_index: 2,
                 total_demo_frames: 3000,
                 demo_fps: 100.0,
+                viewdemo_times: Vec::new(),
+                frame_times: std::sync::Arc::new(Vec::new()),
             },
             CaptureStreak {
                 start_tick: 1300,
@@ -643,6 +679,8 @@ mod tests {
                 end_index: 2,
                 total_demo_frames: 3000,
                 demo_fps: 100.0,
+                viewdemo_times: Vec::new(),
+                frame_times: std::sync::Arc::new(Vec::new()),
             },
             CaptureStreak {
                 start_tick: 2000,
@@ -658,14 +696,21 @@ mod tests {
                 end_index: 2,
                 total_demo_frames: 3000,
                 demo_fps: 100.0,
+                viewdemo_times: Vec::new(),
+                frame_times: std::sync::Arc::new(Vec::new()),
             },
         ];
 
-        let jobs = build_batch_queue(raw_streaks, &config);
-        assert_eq!(jobs.len(), 1);
-        let job = &jobs[0];
+        let jobs = build_batch_queue(raw_streaks, &config).unwrap();
+        assert_eq!(jobs.len(), 2);
+        
+        let primer = &jobs[0];
+        assert_eq!(primer.output_demo, std::path::PathBuf::from("primer.dem"));
+        assert_eq!(primer.streaks.len(), 0);
+
+        let job = &jobs[1];
         assert_eq!(job.source_demo, "demo1.dem");
-        assert_eq!(job.output_demo, std::path::PathBuf::from("demo1_patched.dem"));
+        assert_eq!(job.output_demo, std::path::PathBuf::from("chain_01.dem"));
         assert_eq!(job.streaks.len(), 2);
         assert_eq!(job.streaks[0].start_tick, 1000);
         assert_eq!(job.streaks[0].end_tick, 1500); // Merged 1000-1200 and 1300-1500

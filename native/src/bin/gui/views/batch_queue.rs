@@ -14,7 +14,7 @@ pub fn batch_queue_ui(
     ui.vertical(|ui| {
 
 
-        let config = crate::views::capture::get_patcher_config().lock().unwrap();
+        let config = crate::views::capture::get_patcher_config().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         // Path existence checks
         let hlae_exists = !config.hlae_path.is_empty() && std::path::Path::new(&config.hlae_path).exists();
         let game_exists = !config.game_path.is_empty() && std::path::Path::new(&config.game_path).exists();
@@ -326,7 +326,7 @@ pub fn batch_queue_ui(
 
                                 ui.add_space(4.0);
                                 if ui.button("Reset to Defaults").on_hover_text("Reset all fields of this highlight item to match global preferences").clicked() {
-                                    let config = crate::views::capture::get_patcher_config().lock().unwrap();
+                                    let config = crate::views::capture::get_patcher_config().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
                                     item.exit_on_finish = true;
                                     item.init_commands = config.init_commands.clone();
                                     item.custom_commands = config.custom_commands.clone();

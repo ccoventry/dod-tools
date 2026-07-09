@@ -252,42 +252,47 @@ impl StreamPatcher {
                     break;
                 }
             }
-            writer.write_all(&frame_hdr)?;
-
-            // Determine payload size to read/write
+            // Determine payload size to read/write and write frame header where appropriate
             match type_byte {
                 2 => {
                     // DemoStart (0 bytes)
+                    writer.write_all(&frame_hdr)?;
                 }
                 3 => {
                     // ConsoleCommand (64 bytes)
+                    writer.write_all(&frame_hdr)?;
                     scratch_buf.resize(64, 0);
                     read_exact(&mut reader, &mut scratch_buf, "ConsoleCommand")?;
                     writer.write_all(&scratch_buf)?;
                 }
                 4 => {
                     // ClientData (32 bytes)
+                    writer.write_all(&frame_hdr)?;
                     scratch_buf.resize(32, 0);
                     read_exact(&mut reader, &mut scratch_buf, "ClientData")?;
                     writer.write_all(&scratch_buf)?;
                 }
                 5 => {
                     // NextSection (0 bytes)
+                    writer.write_all(&frame_hdr)?;
                 }
                 6 => {
                     // Event (84 bytes)
+                    writer.write_all(&frame_hdr)?;
                     scratch_buf.resize(84, 0);
                     read_exact(&mut reader, &mut scratch_buf, "Event")?;
                     writer.write_all(&scratch_buf)?;
                 }
                 7 => {
                     // WeaponAnimation (8 bytes)
+                    writer.write_all(&frame_hdr)?;
                     scratch_buf.resize(8, 0);
                     read_exact(&mut reader, &mut scratch_buf, "WeaponAnimation")?;
                     writer.write_all(&scratch_buf)?;
                 }
                 8 => {
                     // Sound (24 bytes + sample_length)
+                    writer.write_all(&frame_hdr)?;
                     let mut prefix = [0u8; 8];
                     read_exact(&mut reader, &mut prefix, "Sound Prefix")?;
                     writer.write_all(&prefix)?;
@@ -306,6 +311,7 @@ impl StreamPatcher {
                 }
                 9 => {
                     // DemoBuffer (4 bytes + buffer_length)
+                    writer.write_all(&frame_hdr)?;
                     let mut prefix = [0u8; 4];
                     read_exact(&mut reader, &mut prefix, "DemoBuffer Prefix")?;
                     writer.write_all(&prefix)?;
@@ -340,6 +346,8 @@ impl StreamPatcher {
                         }
                     }
 
+                    // Write original frame header and info block
+                    writer.write_all(&frame_hdr)?;
                     writer.write_all(&scratch_buf)?;
 
                     let mut len_buf = [0u8; 4];
@@ -505,6 +513,8 @@ mod tests {
                     end_index: 0,
                     total_demo_frames: 3000,
                     demo_fps: 100.0,
+                    viewdemo_times: Vec::new(),
+                    frame_times: std::sync::Arc::new(Vec::new()),
                 }
             ],
             target_player: None,
@@ -598,6 +608,8 @@ mod tests {
                     end_index: 0,
                     total_demo_frames: 3000,
                     demo_fps: 100.0,
+                    viewdemo_times: Vec::new(),
+                    frame_times: std::sync::Arc::new(Vec::new()),
                 }
             ],
             target_player: None,

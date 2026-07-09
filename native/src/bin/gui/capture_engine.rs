@@ -3,6 +3,25 @@ use std::sync::{Arc, mpsc::Sender, atomic::{AtomicBool, Ordering}};
 use crate::types::{CaptureJob, EngineEvent};
 use native::log_markdown;
 
+struct CaptureCleanupGuard {
+    exit_trigger: PathBuf,
+    session_junction: PathBuf,
+}
+
+impl CaptureCleanupGuard {
+    fn new(exit_trigger: PathBuf, session_junction: PathBuf) -> Self {
+        let _ = std::fs::remove_dir_all(&exit_trigger);
+        let _ = std::fs::remove_dir(&session_junction);
+        Self { exit_trigger, session_junction }
+    }
+}
+
+impl Drop for CaptureCleanupGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.exit_trigger);
+        let _ = std::fs::remove_dir(&self.session_junction);
+    }
+}
 
 pub fn spawn_capture_engine(
     jobs: Vec<CaptureJob>,
@@ -62,7 +81,9 @@ pub fn spawn_capture_engine(
             std::fs::remove_dir_all(&dummy_path).ok();
 
             let exit_trigger = hl_exe_parent.join("DOD_TOOLS_EXIT_TRIGGER");
-            std::fs::remove_dir_all(&exit_trigger).ok();
+            let session_junction = hl_exe_parent.join("dodtools_session");
+            
+            let _cleanup_guard = CaptureCleanupGuard::new(exit_trigger.clone(), session_junction.clone());
 
             let active_export_dir = config.primary_media_dir.clone().unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
             let session_dir = if !config.session_id.is_empty() {
@@ -70,15 +91,14 @@ pub fn spawn_capture_engine(
             } else {
                 active_export_dir
             };
-            let session_link = hl_exe_parent.join("dodtools_session");
-            let _ = std::fs::remove_dir(&session_link);
+
             let _ = std::process::Command::new("cmd")
-                .args(&["/C", "mklink", "/J", session_link.to_str().unwrap(), session_dir.to_str().unwrap()])
-                .status()
+                .args(&["/C", "mklink", "/J", session_junction.to_str().unwrap(), session_dir.to_str().unwrap()])
+                .output()
                 .ok();
 
             let _guard = native::patch::WorkspaceGuard {
-                session_junction: session_link.clone(),
+                session_junction: session_junction.clone(),
                 exit_trigger: exit_trigger.clone(),
             };
 
@@ -300,7 +320,7 @@ pub fn spawn_capture_engine(
                 std::fs::remove_file(&cfg_path).ok();
                 std::fs::remove_dir_all(&dummy_path).ok();
                 std::fs::remove_dir_all(&exit_trigger).ok();
-                let _ = std::fs::remove_dir(&session_link);
+                let _ = std::fs::remove_dir(&session_junction);
                 let _ = tx.send(EngineEvent::Cancelled);
                 return;
             }
@@ -308,7 +328,7 @@ pub fn spawn_capture_engine(
             std::fs::remove_file(&cfg_path).ok();
             std::fs::remove_dir_all(&dummy_path).ok();
             std::fs::remove_dir_all(&exit_trigger).ok();
-            let _ = std::fs::remove_dir(&session_link);
+            let _ = std::fs::remove_dir(&session_junction);
 
             let _ = tx.send(EngineEvent::Finished("Batch Queue".into()));
 
