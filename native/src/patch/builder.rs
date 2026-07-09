@@ -196,9 +196,8 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
     ));
     
     helper_cfg_content.push_str("# Global aliases\n");
-    helper_cfg_content.push_str("alias sys_normal_speed \"fps_max 100; host_framerate 0\"\n");
-    let safe_ff_speed = config.fast_forward_speed.min(0.05);
-    helper_cfg_content.push_str(&format!("alias sys_fast_forward \"fps_override 1; fps_max 1000; host_framerate {}\"\n", safe_ff_speed));
+    helper_cfg_content.push_str("alias sys_normal_speed \"host_framerate 0\"\n");
+    helper_cfg_content.push_str(&format!("alias sys_fast_forward \"host_framerate {}\"\n", config.fast_forward_speed));
     helper_cfg_content.push_str("alias sys_sound \"stopsound\"\n");
     helper_cfg_content.push_str("alias sys_record_start \"mirv_recordmovie_start; stopsound\"\n");
     helper_cfg_content.push_str("alias sys_record_stop \"mirv_recordmovie_stop\"\n");
