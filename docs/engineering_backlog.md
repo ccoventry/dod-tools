@@ -18,7 +18,10 @@
 - [ ] Evaluate the necessity of the Settings page once the Demo Analyzer and Capture Studio are split into separate projects.
 - [ ] Implement a Rust `Drop` trait "Garbage Collector" to safely delete the `dodtools_session` junction, `DOD_TOOLS_EXIT_TRIGGER`, and helper configs if the program exits or panics.
 
-## Future Ideas / R&D
+## Completed
+- [x] [UI/State] Demo Queue Session Import/Export: Implemented async JSON export/import with FNV-1a hash-based fallback validation and metadata persistence (highlights/ranges).
+
+## Future Upgrades / R&D
 - **External Demo Playback:** Investigate if DoD `.dem` files can be parsed and rendered outside the game engine (e.g., a web browser or lightweight desktop app) to preview killstreaks quickly.
 - **Mode Toggle:** Add functionality to Capture Studio to switch between "Timing Mode" and "Capture Mode".
-- **Session State Management:** Implement Import/Export/Save/Load functionality for demo settings so users can save their timing progress and resume batch capturing later.
+- **[Optimization] Session Compression & Modular Export:** Add options for Gzip/Zstd compression for JSON and "Selective Export" feature flags (e.g., export demos only vs. export full project metadata).

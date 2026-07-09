@@ -11,6 +11,7 @@ pub mod worker;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod pipeline;
 pub mod capture_engine;
+pub mod session;
 
 use analysis::Analysis;
 use clap::Parser;

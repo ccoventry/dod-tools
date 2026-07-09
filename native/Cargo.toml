@@ -49,6 +49,10 @@ name = "dod-tools-inspect"
 path = "src/bin/inspect.rs"
 
 [[bin]]
+name = "frame_inspector"
+path = "src/bin/frame_inspector.rs"
+
+[[bin]]
 name = "inspect_reconnect"
 path = "src/bin/inspect_reconnect.rs"
 

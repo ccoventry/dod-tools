@@ -20,6 +20,7 @@ pub mod patch;
 pub mod hlcr;
 
 pub mod sys;
+pub mod utils;
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct FileInfo {
