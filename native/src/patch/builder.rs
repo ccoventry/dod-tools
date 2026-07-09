@@ -196,7 +196,7 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
     ));
     
     helper_cfg_content.push_str("# Global aliases\n");
-    helper_cfg_content.push_str("alias sys_normal_speed \"host_framerate 0\"\n");
+    helper_cfg_content.push_str("alias sys_normal_speed \"clear; host_framerate 0\"\n");
     helper_cfg_content.push_str(&format!("alias sys_fast_forward \"host_framerate {}\"\n", config.fast_forward_speed));
     helper_cfg_content.push_str("alias sys_sound \"stopsound\"\n");
     helper_cfg_content.push_str("alias sys_record_start \"mirv_recordmovie_start; stopsound\"\n");
@@ -355,6 +355,8 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
 
             // At Speed Flush (Stage 1)
             scheduled_commands.push((s_speed_tick, "sys_normal_speed".to_string()));
+            scheduled_commands.push((s_speed_tick + 1, "sys_normal_speed".to_string()));
+            scheduled_commands.push((s_speed_tick + 2, "sys_normal_speed".to_string()));
             for (t, echo_cmd) in build_safe_echos(s_speed_tick, &format!("SPEED_FLUSH - Tick {}", s_speed_tick)) {
                 scheduled_commands.push((t, echo_cmd));
             }

@@ -12,6 +12,7 @@
 - **Playdemo Stream Streamlining:** The `playdemo` command acts as a pure sequential stream reader and bypasses the trailing directory index table. It is immune to directory offset mismatch crashes, making it mandatory for automated pipelines over `viewdemo`.
 - **Alias Nested Quotes (The Exec Bypass):** GoldSrc cannot parse nested quotes inside aliases. When complex commands like absolute paths require quotes, they must be written to individual `.cfg` files and executed via `exec filename.cfg` instead of injected directly into an alias.
 - **Filenames:** Filenames for playdemo calls must be strictly alphanumeric with underscores (_) and under 40 characters.
+- **Engine Logging vs. Console Buffer (The Clear Failsafe Bug):** The `-condebug` launch parameter generates `qconsole.log` in real-time via continuous disk I/O, meaning the `clear` command does not erase historical data. The `condump` console command relies on the visual console memory buffer. Executing `clear` permanently destroys this history, resulting in an empty or partial text file.
 
 ## 🎮 Day of Defeat 1.3 Gameplay Parsing Logic
 - **British Faction Mis-assignment:** The native parser drops British players into Allies or Unassigned categories. Faction tracking requires dynamically upgrading Allies entities to the British faction when `BritishRifleman` or `BritishMortar` classes are explicitly detected.

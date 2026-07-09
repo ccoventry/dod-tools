@@ -1,0 +1,54 @@
+{
+  "pre_roll_ticks": 200,
+  "post_roll_ticks": 60,
+  "capture_fps": 300,
+  "exit_on_finish": true,
+  "init_commands": [
+    "cl_xhair_style 6",
+    "gl_spriteblend 0",
+    "r_decals 0",
+    "hud_deathnotice_time 1"
+  ],
+  "custom_commands": [
+    {
+      "command": "r_decals 5555",
+      "offset": 5.0,
+      "relation": "Before"
+    },
+    {
+      "command": "hud_deathnotice_time 5555",
+      "offset": 8.0,
+      "relation": "Before"
+    },
+    {
+      "command": "r_decals 0",
+      "offset": 5.0,
+      "relation": "After"
+    },
+    {
+      "command": "hud_deathnotice_time 1",
+      "offset": 5.0,
+      "relation": "After"
+    }
+  ],
+  "pre_roll_seconds": 5.0,
+  "post_roll_seconds": 5.0,
+  "record_start_lead": 5.0,
+  "record_stop_trail": 5.0,
+  "initial_delay": 5.0,
+  "fast_forward_speed": 0.21,
+  "tickrate": 100.0,
+  "output_dir": null,
+  "separate_hud": false,
+  "resolution_width": 2560,
+  "resolution_height": 1440,
+  "primary_media_dir": "D:\\DICEWSOD25\\02_Audio_Video\\02_HLAE_Raw",
+  "backup_media_dir": null,
+  "movie_config": "",
+  "save_local_patched_copy": true,
+  "add_condebug": true,
+  "session_id": "",
+  "hlae_path": "C:\\Program Files (x86)\\HLAE\\HLAE (Latest)\\HLAE.exe",
+  "game_path": "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Half-Life - PRE-Anniversary for Movies\\hl.exe",
+  "ffmpeg_override_path": null
+}

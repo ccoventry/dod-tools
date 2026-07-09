@@ -15,13 +15,12 @@
 //     spawns patch_worker thread, sends GuiMessage::PatchingComplete on completion
 // ============================================================
 
-use std::sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}};
+use std::sync::{Arc, Mutex, atomic::AtomicBool};
 use native::patch::{PatcherConfig, CaptureStreak, build_batch_queue};
 use crate::types::{DemoData, CaptureStudioState};
-use super::{is_patching, set_is_patching, acquire_lock, IS_PATCHING};
+use super::{is_patching, set_is_patching, acquire_lock};
 use super::log_markdown;
 use egui_extras::{TableBuilder, Column};
-use crate::views::t;
 use crate::settings::{save_settings, apply_language_setting};
 
 fn create_pinned_file_dialog() -> egui_file_dialog::FileDialog {
@@ -44,6 +43,7 @@ pub fn render(
     state_ptr: &mut CaptureStudioState,
     tx: std::sync::mpsc::Sender<crate::types::GuiMessage>,
     loading_ptr: &mut bool,
+    rules_mutex: &'static Mutex<native::patch::HighlightRules>,
     queued_demos_arc: Arc<Mutex<Arc<Vec<DemoData>>>>,
     patcher_config_mutex: &'static Mutex<PatcherConfig>,
     render_config_mutex: &'static Mutex<native::hlcr::config::RenderConfig>,
@@ -348,6 +348,83 @@ pub fn render(
                             for s in &mut d.streaks { s.is_selected = false; }
                         }
                     }
+
+                    if ui.button("💾 Export Session").clicked() {
+                        let queued_guard = acquire_lock!(queued_demos_arc);
+                        let entries = queued_guard.iter().map(|d| {
+                            let highlights = d.streaks.iter().map(|s| {
+                                crate::session::HighlightMetadata {
+                                    is_selected: s.is_selected,
+                                    start_kill: s.start_index as i32,
+                                    end_kill: s.end_index as i32,
+                                }
+                            }).collect();
+                            crate::session::DemoEntry {
+                                path: d.path.clone(),
+                                key: native::utils::demo_hasher::calculate_demo_key(&d.path),
+                                highlights,
+                            }
+                        }).collect();
+                        let session_data = crate::session::SessionData { entries };
+                        if let Some(path) = rfd::FileDialog::new().add_filter("JSON", &["json"]).save_file() {
+                            if let Ok(json) = serde_json::to_string_pretty(&session_data) {
+                                let _ = std::fs::write(path, json);
+                            }
+                        }
+                    }
+
+                    if ui.button("📂 Import Session").clicked() {
+                        *loading_ptr = true;
+                        let ctx_clone = ctx.clone();
+                        let rules_clone = acquire_lock!(rules_mutex).clone();
+                        let tx_clone = tx.clone();
+                        let queued_demos_clone = queued_demos_arc.clone();
+                        std::thread::Builder::new()
+                            .name("rfd_dialog_import".into())
+                            .stack_size(8 * 1024 * 1024)
+                            .spawn(move || {
+                                if let Some(json_path) = rfd::FileDialog::new().add_filter("JSON", &["json"]).pick_file() {
+                                    if let Ok(json) = std::fs::read_to_string(&json_path) {
+                                        if let Ok(session_data) = serde_json::from_str::<crate::session::SessionData>(&json) {
+                                            if let Some(base_dir) = rfd::FileDialog::new().pick_folder() {
+                                                let rt = tokio::runtime::Runtime::new().unwrap();
+                                                let resolved = rt.block_on(crate::session::import_session_async(base_dir, session_data.entries));
+                                                if !resolved.is_empty() {
+                                                    let mut paths_to_ingest = Vec::new();
+                                                    {
+                                                        let mut guard = acquire_lock!(queued_demos_clone);
+                                                        let queued = std::sync::Arc::make_mut(&mut *guard);
+                                                        for (path, metas) in resolved {
+                                                            if let Some(demo) = queued.iter_mut().find(|d| d.path == path) {
+                                                                for (streak, meta) in demo.streaks.iter_mut().zip(metas) {
+                                                                    streak.is_selected = meta.is_selected;
+                                                                    streak.start_index = meta.start_kill as usize;
+                                                                    streak.end_index = meta.end_kill as usize;
+                                                                    streak.update_visuals();
+                                                                }
+                                                            } else {
+                                                                paths_to_ingest.push(path);
+                                                            }
+                                                        }
+                                                    }
+                                                    if !paths_to_ingest.is_empty() {
+                                                        super::spawn_ingestion_thread(
+                                                            super::IngestionInput::Batch(paths_to_ingest),
+                                                            rules_clone,
+                                                            ctx_clone,
+                                                            tx_clone,
+                                                        );
+                                                        return;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                let _ = tx_clone.send(crate::types::GuiMessage::IngestionFinished);
+                            })
+                            .unwrap();
+                    }
                 });
             } else {
                 ui.weak("No discovered highlight streaks. Go back to Scan and add demo files.");
@@ -546,10 +623,12 @@ pub fn render(
             }
 
             ui.label("Fast-Forward Speed:");
-            let mut val = patcher_config.fast_forward_speed;
-            if ui.add(egui::Slider::new(&mut val, 0.01..=5.0).step_by(0.05)).changed() {
-                patcher_config.fast_forward_speed = val;
-            }
+            ui.add_enabled_ui(false, |ui| {
+                let mut val = patcher_config.fast_forward_speed;
+                if ui.add(egui::Slider::new(&mut val, 0.01..=5.0).step_by(0.05)).changed() {
+                    patcher_config.fast_forward_speed = val;
+                }
+            });
 
             ui.label("Pre-Record Buffer:");
             let mut val = patcher_config.pre_roll_seconds;

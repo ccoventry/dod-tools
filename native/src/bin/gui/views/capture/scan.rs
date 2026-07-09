@@ -124,6 +124,7 @@ pub fn render(
                         .unwrap();
                 }
 
+
                 if ingesting {
                     ui.spinner();
                     ui.weak("Scanning files... (App is responsive)");

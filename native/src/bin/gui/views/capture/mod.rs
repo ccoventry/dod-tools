@@ -173,6 +173,7 @@ pub fn render_patch_ui(
         CaptureStudioState::Select => {
             select::render(
                 ui, ctx, state_ptr, tx, loading_ptr,
+                get_highlight_rules(),
                 get_queued_demos(),
                 get_patcher_config(),
                 get_render_config(),
@@ -235,7 +236,9 @@ pub(crate) fn spawn_ingestion_thread(
                         if path.is_dir() {
                             dir_stack.push(path);
                         } else if path.is_file() && path.extension().map(|ext| ext == "dem").unwrap_or(false) {
-                            list.push(path);
+                            let insert_idx = list.binary_search_by(|p: &PathBuf| p.file_name().unwrap_or_default().cmp(&path.file_name().unwrap_or_default()))
+                                .unwrap_or_else(|pos| pos);
+                            list.insert(insert_idx, path);
                         }
                     }
 
@@ -249,7 +252,9 @@ pub(crate) fn spawn_ingestion_thread(
                                 } else if path.is_file()
                                     && path.extension().map(|ext| ext == "dem").unwrap_or(false)
                                 {
-                                    list.push(path);
+                                    let insert_idx = list.binary_search_by(|p: &PathBuf| p.file_name().unwrap_or_default().cmp(&path.file_name().unwrap_or_default()))
+                                        .unwrap_or_else(|pos| pos);
+                                    list.insert(insert_idx, path);
                                 }
                             }
                         }
