@@ -125,8 +125,12 @@ pub async fn run_render_job(
 
     if clip_type == "hud_only" {
         cmd_args.extend(vec![
+            // Skip probe/analyze on known BMP sequences; add read-ahead buffering.
+            "-probesize", "32", "-analyzeduration", "0", "-thread_queue_size", "512",
             "-framerate", &fps, "-i", "hudcolor/%05d.bmp",
+            "-probesize", "32", "-analyzeduration", "0", "-thread_queue_size", "512",
             "-framerate", &fps, "-i", "hudalpha/%05d.bmp",
+            "-thread_queue_size", "512",
             "-i", &clip.wav_file,
             "-filter_complex", "[1:v]extractplanes=r[alpha];[0:v][alpha]alphamerge[hud]",
             "-map", "[hud]", "-map", "2:a",
@@ -134,8 +138,11 @@ pub async fn run_render_job(
     } else {
         img_input = format!("{}/%05d.bmp", clip.img_folder);
         cmd_args.extend(vec![
+            // Skip probe/analyze on known BMP sequences; add read-ahead buffering.
+            "-probesize", "32", "-analyzeduration", "0", "-thread_queue_size", "512",
             "-framerate", &fps,
             "-i", &img_input,
+            "-thread_queue_size", "512",
             "-i", &clip.wav_file,
         ]);
     }
@@ -146,7 +153,9 @@ pub async fn run_render_job(
 
     cmd_args.extend(vec![
         "-threads", &threads_str,
-        "-c:a", "pcm_s16le", "-shortest", "-movflags", "+faststart",
+        // +faststart is only needed for HTTP streaming; omitting it avoids the
+        // post-render moov-atom rewrite pass on what can be multi-GB files.
+        "-c:a", "pcm_s16le", "-shortest",
         "-progress", "pipe:1", "-loglevel", "error",
         &out_file_str,
     ]);

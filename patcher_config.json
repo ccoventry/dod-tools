@@ -4,8 +4,7 @@
   "capture_fps": 300,
   "exit_on_finish": true,
   "init_commands": [
-    "cl_xhair_style 6",
-    "gl_spriteblend 0",
+    "cl_xhair_style 2",
     "r_decals 0",
     "hud_deathnotice_time 1"
   ],
@@ -17,7 +16,7 @@
     },
     {
       "command": "hud_deathnotice_time 5555",
-      "offset": 8.0,
+      "offset": 10.0,
       "relation": "Before"
     },
     {
@@ -36,7 +35,7 @@
   "record_start_lead": 5.0,
   "record_stop_trail": 5.0,
   "initial_delay": 5.0,
-  "fast_forward_speed": 0.21,
+  "fast_forward_speed": 0.06,
   "tickrate": 100.0,
   "output_dir": null,
   "separate_hud": false,
@@ -50,5 +49,5 @@
   "session_id": "",
   "hlae_path": "C:\\Program Files (x86)\\HLAE\\HLAE (Latest)\\HLAE.exe",
   "game_path": "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Half-Life - PRE-Anniversary for Movies\\hl.exe",
-  "ffmpeg_override_path": null
+  "ffmpeg_override_path": "C:\\Users\\chris\\Repos\\dod-tools\\tools\\ffmpeg.exe"
 }
