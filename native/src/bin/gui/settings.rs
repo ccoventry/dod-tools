@@ -23,7 +23,7 @@ impl Default for AppSettings {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn load_settings() -> AppSettings {
-    let path = PathBuf::from("settings.json");
+    let path = native::shared::paths::get_appdata_dir().join("settings.json");
     if path.exists() {
         if let Ok(content) = std::fs::read_to_string(&path) {
             if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
@@ -145,7 +145,8 @@ pub fn save_settings(settings: &AppSettings) {
     );
     let val = serde_json::Value::Object(map);
     if let Ok(content) = serde_json::to_string_pretty(&val) {
-        let _ = std::fs::write("settings.json", content);
+        let path = native::shared::paths::get_appdata_dir().join("settings.json");
+        let _ = std::fs::write(path, content);
     }
 }
 
@@ -369,7 +370,7 @@ pub fn resolve_ffmpeg_path(ffmpeg_override_path: Option<&String>) -> Result<std:
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn load_patcher_config() -> native::patch::PatcherConfig {
-    let path = PathBuf::from("patcher_config.json");
+    let path = native::shared::paths::get_appdata_dir().join("patcher_config.json");
     if path.exists() {
         if let Ok(content) = std::fs::read_to_string(&path) {
             if let Ok(config) = serde_json::from_str::<native::patch::PatcherConfig>(&content) {
@@ -382,7 +383,7 @@ pub fn load_patcher_config() -> native::patch::PatcherConfig {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn save_patcher_config(config: &native::patch::PatcherConfig) {
-    let path = PathBuf::from("patcher_config.json");
+    let path = native::shared::paths::get_appdata_dir().join("patcher_config.json");
     if let Ok(json) = serde_json::to_string_pretty(config) {
         let _ = std::fs::write(&path, json);
     }

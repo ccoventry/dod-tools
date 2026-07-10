@@ -21,6 +21,7 @@ pub mod hlcr;
 
 pub mod sys;
 pub mod utils;
+pub mod shared;
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct FileInfo {
@@ -96,9 +97,9 @@ pub fn log_markdown(msg: &str) {
     {
         use chrono::Local;
         use std::io::Write;
-        let local_dir = std::env::current_dir().unwrap_or_default().join("local");
-        let _ = std::fs::create_dir_all(&local_dir);
-        let log_path_md = local_dir.join("crash_log.md");
+        let log_dir = crate::shared::paths::get_appdata_dir().join("logs");
+        let _ = std::fs::create_dir_all(&log_dir);
+        let log_path_md = log_dir.join("crash_log.md");
 
         static LOG_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
         let _guard = LOG_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
