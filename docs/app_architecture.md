@@ -16,3 +16,7 @@
 - **Memory Safety Guardrails:** Never use fixed-size stack buffers (`[u8; N]`) for binary stream slicing inside the engine memory layer. Always use heap-allocated `Vec<u8>` gated by explicit 2MB payload limits to avoid stack overruns during memory injection.
 - **Pure Float Timestamps:** Purge all average `demo_fps` math estimations when synchronizing highlights. Timeline alignment must rely strictly on extracting absolute binary float timestamps (`Arc<Vec<f32>>`) during the initial engine scan and mapping them via binary search to prevent drift over long matches.
 - **Eager Layout Gating:** Always toggle active UI state flags (e.g., `capture_engine_running = true`) to true *prior* to launching asynchronous background threads. Wrap the triggering widgets in strict `ui.add_enabled(!state)` blocks to prevent the immediate-mode loop from executing double-launch thread allocations.
+
+## 🛑 Architectural Non-Goals
+- No support for native engine multi-threading layers operating inside immediate-mode UI thread blocks.
+- No direct architectural support for alternative Source/GoldSrc modifications outside of Day of Defeat 1.3.

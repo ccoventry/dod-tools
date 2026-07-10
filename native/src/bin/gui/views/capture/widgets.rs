@@ -106,6 +106,9 @@ pub fn render_primary_actions(
     queued_demos_shared: &Arc<Mutex<Arc<Vec<DemoData>>>>,
     ctx: &egui::Context,
 ) {
+    let temp_id = egui::Id::new("dodtools_clear_previews_list");
+    let clear_previews_list: Option<Vec<std::path::PathBuf>> = ctx.data(|d| d.get_temp(temp_id));
+
     let is_running = is_patching();
     let queued_demos = super::acquire_lock!(queued_demos_shared).clone();
 
@@ -153,7 +156,11 @@ pub fn render_primary_actions(
                                 &job.output_demo,
                             );
                             match patcher.patch(job, &native::patch::PatcherConfig::default(), &cancel_token) {
-                                Ok(()) => super::log_markdown(&format!("[PREVIEW PATCH] ✅ Done: {}", job.output_demo.display())),
+                                Ok(()) => {
+                                    super::log_markdown(&format!("[PREVIEW PATCH] ✅ Done: {}", job.output_demo.display()));
+                                    let sidecar_path = job.output_demo.with_extension("dodtools_preview");
+                                    let _ = std::fs::write(&sidecar_path, "");
+                                }
                                 Err(e) => super::log_markdown(&format!("[PREVIEW PATCH] ❌ Error: {}", e)),
                             }
                         }
@@ -162,6 +169,39 @@ pub fn render_primary_actions(
                     })
                     .unwrap();
             }
+        }
+
+        ui.add_space(8.0);
+
+        if ui.button("🗑️ Clear Previews").clicked() {
+            let mut verified_previews = Vec::new();
+            let mut dirs_to_scan = std::collections::HashSet::new();
+            if let Some(ref out_dir) = patcher_config.output_dir {
+                dirs_to_scan.insert(out_dir.clone());
+            }
+            for demo in &queued_demos {
+                if let Some(parent) = demo.path.parent() {
+                    dirs_to_scan.insert(parent.to_path_buf());
+                }
+            }
+            for dir in dirs_to_scan {
+                if let Ok(entries) = std::fs::read_dir(dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.is_file() {
+                            if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
+                                if filename.ends_with("_preview.dem") {
+                                    let sidecar = path.with_extension("dodtools_preview");
+                                    if sidecar.exists() {
+                                        verified_previews.push(path);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            ctx.data_mut(|d| d.insert_temp(temp_id, verified_previews));
         }
 
         ui.add_space(16.0);
@@ -333,6 +373,40 @@ pub fn render_primary_actions(
             ui.label("Patching Demos... Please wait.");
         }
     });
+
+    if let Some(ref list) = clear_previews_list {
+        let mut open = true;
+        egui::Window::new("Audit Preview Files to Delete")
+            .open(&mut open)
+            .resizable(true)
+            .show(ctx, |ui| {
+                ui.label(format!("Found {} verified preview files to delete:", list.len()));
+                ui.add_space(8.0);
+                
+                egui::ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
+                    for path in list {
+                        ui.label(path.to_string_lossy());
+                    }
+                });
+                
+                ui.add_space(12.0);
+                ui.horizontal(|ui| {
+                    if ui.button(format!("Delete {} Files", list.len())).clicked() {
+                        for path in list {
+                            let _ = std::fs::remove_file(path);
+                            let _ = std::fs::remove_file(path.with_extension("dodtools_preview"));
+                        }
+                        ctx.data_mut(|d| d.remove_temp::<Vec<std::path::PathBuf>>(temp_id));
+                    }
+                    if ui.button("Cancel").clicked() {
+                        ctx.data_mut(|d| d.remove_temp::<Vec<std::path::PathBuf>>(temp_id));
+                    }
+                });
+            });
+        if !open {
+            ctx.data_mut(|d| d.remove_temp::<Vec<std::path::PathBuf>>(temp_id));
+        }
+    }
 }
 
 pub fn render_error_banner(

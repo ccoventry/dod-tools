@@ -452,23 +452,64 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
 pub struct WorkspaceGuard {
     pub session_junction: std::path::PathBuf,
     pub exit_trigger: std::path::PathBuf,
+    pub auto_clear_logs: bool,
+    pub auto_clear_temp_demos: bool,
+    pub save_local_patched_copy: bool,
 }
 
 impl Drop for WorkspaceGuard {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.session_junction);
+        let _ = std::fs::remove_dir(&self.session_junction);
         let _ = std::fs::remove_file(&self.exit_trigger);
         let _ = std::fs::remove_dir_all(&self.exit_trigger);
         if let Some(parent) = self.exit_trigger.parent() {
             let dod_dir = parent.join("dod");
-            let _ = std::fs::remove_file(dod_dir.join("dodtools_helper.cfg"));
-            let _ = std::fs::remove_file(dod_dir.join("dodtools_capture_done.cfg"));
-            let _ = std::fs::remove_file(dod_dir.join("dod_quit.cfg"));
-            if let Ok(entries) = std::fs::read_dir(&dod_dir) {
-                for entry in entries.flatten() {
-                    let filename = entry.file_name().to_string_lossy().to_string();
-                    if filename.starts_with("dodtools_chain_") && filename.ends_with(".cfg") {
-                        let _ = std::fs::remove_file(entry.path());
+            
+            if self.auto_clear_logs {
+                let _ = std::fs::remove_file(dod_dir.join("qconsole.log"));
+                let _ = std::fs::remove_file(dod_dir.join("dodtools_helper.cfg"));
+                let _ = std::fs::remove_file(dod_dir.join("dodtools_capture_done.cfg"));
+                let _ = std::fs::remove_file(dod_dir.join("dod_quit.cfg"));
+                if let Ok(entries) = std::fs::read_dir(&dod_dir) {
+                    for entry in entries.flatten() {
+                        let filename = entry.file_name().to_string_lossy().to_string();
+                        if filename.starts_with("dodtools_chain_") && filename.ends_with(".cfg") {
+                            let _ = std::fs::remove_file(entry.path());
+                        }
+                    }
+                }
+            }
+            
+            if self.auto_clear_temp_demos && !self.save_local_patched_copy {
+                let _ = std::fs::remove_file(dod_dir.join("primer.dem"));
+                if let Ok(entries) = std::fs::read_dir(&dod_dir) {
+                    for entry in entries.flatten() {
+                        let filename = entry.file_name().to_string_lossy().to_string();
+                        if filename.starts_with("dodtools_chain_") && filename.ends_with(".dem") {
+                            let _ = std::fs::remove_file(entry.path());
+                        }
+                    }
+                }
+            }
+
+            if self.auto_clear_previews {
+                let scan_dirs = vec![dod_dir.clone(), parent.to_path_buf()];
+                for scan_dir in scan_dirs {
+                    if let Ok(entries) = std::fs::read_dir(scan_dir) {
+                        for entry in entries.flatten() {
+                            let path = entry.path();
+                            if path.is_file() {
+                                if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
+                                    if filename.ends_with("_preview.dem") {
+                                        let sidecar = path.with_extension("dodtools_preview");
+                                        if sidecar.exists() {
+                                            let _ = std::fs::remove_file(&path);
+                                            let _ = std::fs::remove_file(sidecar);
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }

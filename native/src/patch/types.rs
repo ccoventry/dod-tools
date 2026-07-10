@@ -138,6 +138,9 @@ pub struct PatcherConfig {
     pub hlae_path: String,
     pub game_path: String,
     pub ffmpeg_override_path: Option<String>,
+    pub auto_clear_logs: bool,
+    pub auto_clear_previews: bool,
+    pub auto_clear_temp_demos: bool,
 }
 
 impl Default for PatcherConfig {
@@ -169,6 +172,9 @@ impl Default for PatcherConfig {
             hlae_path: String::new(),
             game_path: String::new(),
             ffmpeg_override_path: None,
+            auto_clear_logs: false,
+            auto_clear_previews: false,
+            auto_clear_temp_demos: false,
         }
     }
 }
