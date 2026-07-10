@@ -454,6 +454,7 @@ pub struct WorkspaceGuard {
     pub exit_trigger: std::path::PathBuf,
     pub auto_clear_logs: bool,
     pub auto_clear_temp_demos: bool,
+    pub auto_clear_previews: bool,
     pub save_local_patched_copy: bool,
 }
 

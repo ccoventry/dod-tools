@@ -179,7 +179,7 @@ pub fn render_primary_actions(
             if let Some(ref out_dir) = patcher_config.output_dir {
                 dirs_to_scan.insert(out_dir.clone());
             }
-            for demo in &queued_demos {
+            for demo in queued_demos.iter() {
                 if let Some(parent) = demo.path.parent() {
                     dirs_to_scan.insert(parent.to_path_buf());
                 }
