@@ -134,16 +134,14 @@ pub fn spawn_capture_engine(
                         log::error!("{}", $msg);
                         use std::io::Write;
                         let _ = (|| -> Result<(), Box<dyn std::error::Error>> {
-                            let exe_path = std::env::current_exe()?;
-                            let exe_dir = exe_path.parent().ok_or("Failed to get exe parent")?;
-                            let local_dir = exe_dir.join("local");
-                            std::fs::create_dir_all(&local_dir)?;
-                            let log_path = local_dir.join("crash_log.md");
+                            let log_dir = native::shared::paths::get_appdata_dir().join("logs");
+                            std::fs::create_dir_all(&log_dir)?;
+                            let log_path = log_dir.join("crash_log.md");
                             let mut file = std::fs::OpenOptions::new().create(true).append(true).open(&log_path)?;
                             writeln!(file, "{}", $msg)?;
                             Ok(())
                         })();
-                        let _ = $tx.send(EngineEvent::Error("Capture Engine Aborted - Check local/crash_log.md".to_string()));
+                        let _ = $tx.send(EngineEvent::Error("Capture Engine Aborted - Check AppData/logs/crash_log.md".to_string()));
                     }
                 };
             }
@@ -232,7 +230,8 @@ pub fn spawn_capture_engine(
                 let session_data = crate::session::SessionData { entries };
                 match serde_json::to_string_pretty(&session_data) {
                     Ok(json) => {
-                        if let Err(e) = std::fs::write(".autosave.json", &json) {
+                        let autosave_path = native::shared::paths::get_appdata_dir().join(".autosave.json");
+                        if let Err(e) = std::fs::write(&autosave_path, &json) {
                             log::warn!("[autosave] Failed to write .autosave.json: {}", e);
                         } else {
                             log::info!("[autosave] Lockfile written (.autosave.json)");
@@ -486,7 +485,8 @@ pub fn spawn_capture_engine(
 
             // Remove the autosave lockfile on a clean completion so that the
             // recovery modal is not shown on the next startup.
-            if let Err(e) = std::fs::remove_file(".autosave.json") {
+            let autosave_path = native::shared::paths::get_appdata_dir().join(".autosave.json");
+            if let Err(e) = std::fs::remove_file(&autosave_path) {
                 if e.kind() != std::io::ErrorKind::NotFound {
                     log::warn!("[autosave] Failed to remove .autosave.json: {}", e);
                 }

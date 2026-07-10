@@ -655,7 +655,7 @@ impl Default for Gui {
             capture_studio_loading: false,
             last_capture_studio_state: None,
             #[cfg(not(target_arch = "wasm32"))]
-            startup_state: if std::path::Path::new(".autosave.json").exists() {
+            startup_state: if native::shared::paths::get_appdata_dir().join(".autosave.json").exists() {
                 log::warn!("[Startup] .autosave.json detected — unclean exit recovery pending");
                 StartupState::PendingRecovery
             } else {
@@ -688,26 +688,26 @@ impl eframe::App for Gui {
         // ── Unclean-exit recovery modal ───────────────────────────────────────────
         // Rendered first so it can intercept the frame before any other panel
         // attempts to draw.  The modal is native-only; wasm has no lockfile I/O.
-        #[cfg(not(target_arch = \"wasm32\"))]
+        #[cfg(not(target_arch = "wasm32"))]
         if self.startup_state == StartupState::PendingRecovery {
             let mut recover_clicked = false;
             let mut discard_clicked = false;
 
-            egui::Window::new(\"⚠ Unclean Exit Detected\")
+            egui::Window::new("⚠ Unclean Exit Detected")
                 .collapsible(false)
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
                 .show(ctx, |ui| {
                     ui.add_space(4.0);
-                    ui.label(\"The previous session did not exit cleanly.\");
-                    ui.label(\"An autosave of the capture queue was found (.autosave.json).\");
+                    ui.label("The previous session did not exit cleanly.");
+                    ui.label("An autosave of the capture queue was found (.autosave.json).");
                     ui.add_space(8.0);
                     ui.horizontal(|ui| {
-                        if ui.button(\"🔄 Recover Session\").clicked() {
+                        if ui.button("🔄 Recover Session").clicked() {
                             recover_clicked = true;
                         }
                         ui.add_space(8.0);
-                        if ui.button(\"🗑 Discard & Clean Up\").clicked() {
+                        if ui.button("🗑 Discard & Clean Up").clicked() {
                             discard_clicked = true;
                         }
                     });
@@ -716,8 +716,8 @@ impl eframe::App for Gui {
 
             if recover_clicked {
                 // Deserialize the lockfile and feed it into the existing import pipeline.
-                let autosave_path = std::path::Path::new(\".autosave.json\");
-                if let Ok(json) = std::fs::read_to_string(autosave_path) {
+                let autosave_path = native::shared::paths::get_appdata_dir().join(".autosave.json");
+                if let Ok(json) = std::fs::read_to_string(&autosave_path) {
                     if let Ok(session_data) = serde_json::from_str::<crate::session::SessionData>(&json) {
                         self.capture_studio_loading = true;
                         self.active_sidebar_tab = SidebarTab::CaptureStudio;
@@ -737,7 +737,7 @@ impl eframe::App for Gui {
                         );
                     }
                 }
-                let _ = std::fs::remove_file(\".autosave.json\");
+                let _ = std::fs::remove_file(&autosave_path);
                 self.startup_state = StartupState::Normal;
             }
 
@@ -749,21 +749,22 @@ impl eframe::App for Gui {
                     .unwrap_or_else(|p| p.into_inner());
                 if !config.game_path.is_empty() {
                     if let Some(hl_parent) = std::path::Path::new(&config.game_path).parent() {
-                        let exit_trigger = hl_parent.join(\"DOD_TOOLS_EXIT_TRIGGER\");
-                        let session_junction = hl_parent.join(\"dodtools_session\");
+                        let exit_trigger = hl_parent.join("DOD_TOOLS_EXIT_TRIGGER");
+                        let session_junction = hl_parent.join("dodtools_session");
                         if let Err(e) = std::fs::remove_dir_all(&exit_trigger) {
                             if e.kind() != std::io::ErrorKind::NotFound {
-                                log::warn!(\"[GC::discard] remove exit_trigger {:?}: {}\", exit_trigger, e);
+                                log::warn!("[GC::discard] remove exit_trigger {:?}: {}", exit_trigger, e);
                             }
                         }
                         if let Err(e) = std::fs::remove_dir(&session_junction) {
                             if e.kind() != std::io::ErrorKind::NotFound {
-                                log::warn!(\"[GC::discard] remove session_junction {:?}: {}\", session_junction, e);
+                                log::warn!("[GC::discard] remove session_junction {:?}: {}", session_junction, e);
                             }
                         }
                     }
                 }
-                let _ = std::fs::remove_file(\".autosave.json\");
+                let autosave_path = native::shared::paths::get_appdata_dir().join(".autosave.json");
+                let _ = std::fs::remove_file(&autosave_path);
                 self.startup_state = StartupState::Normal;
             }
 
