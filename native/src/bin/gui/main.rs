@@ -369,7 +369,8 @@ impl Gui {
         #[cfg(not(target_arch = "wasm32"))]
         {
             if let Ok(content) = serde_json::to_string_pretty(&self.cache) {
-                let _ = std::fs::write(".dod-tools-cache.json", content);
+                let cache_path = native::shared::paths::get_appdata_dir().join(".dod-tools-cache.json");
+                let _ = std::fs::write(cache_path, content);
             }
         }
         #[cfg(target_arch = "wasm32")]
@@ -527,9 +528,9 @@ impl Default for Gui {
 
         #[cfg(not(target_arch = "wasm32"))]
         let cache = {
-            let cache_path = std::path::Path::new(".dod-tools-cache.json");
+            let cache_path = native::shared::paths::get_appdata_dir().join(".dod-tools-cache.json");
             if cache_path.exists() {
-                std::fs::read_to_string(cache_path)
+                std::fs::read_to_string(&cache_path)
                     .ok()
                     .and_then(|content| serde_json::from_str::<DemoCache>(&content).ok())
                     .unwrap_or_default()
@@ -655,11 +656,18 @@ impl Default for Gui {
             capture_studio_loading: false,
             last_capture_studio_state: None,
             #[cfg(not(target_arch = "wasm32"))]
-            startup_state: if native::shared::paths::get_appdata_dir().join(".autosave.json").exists() {
-                log::warn!("[Startup] .autosave.json detected — unclean exit recovery pending");
-                StartupState::PendingRecovery
-            } else {
-                StartupState::Normal
+            startup_state: {
+                let capture_autosave = native::shared::paths::get_appdata_dir().join(".autosave.json");
+                let render_autosave = native::shared::paths::get_appdata_dir().join(".render_autosave.json");
+                if capture_autosave.exists() {
+                    log::warn!("[Startup] .autosave.json detected — capture recovery pending");
+                    StartupState::PendingRecovery
+                } else if render_autosave.exists() {
+                    log::warn!("[Startup] .render_autosave.json detected — render recovery pending");
+                    StartupState::PendingRenderRecovery
+                } else {
+                    StartupState::Normal
+                }
             },
         }
     }
@@ -769,6 +777,124 @@ impl eframe::App for Gui {
             }
 
             // Do not render the rest of the UI while the modal is active.
+            return;
+        }
+
+        // ── Render batch recovery modal ───────────────────────────────────────
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.startup_state == StartupState::PendingRenderRecovery {
+            let render_autosave_path = native::shared::paths::get_appdata_dir()
+                .join(".render_autosave.json");
+
+            let mut recover_clicked = false;
+            let mut discard_clicked = false;
+
+            // Read metadata for display while we still hold the path.
+            let (pending_count, completed_count, source_folder) = {
+                std::fs::read_to_string(&render_autosave_path)
+                    .ok()
+                    .and_then(|json| {
+                        serde_json::from_str::<native::hlcr::RenderSessionData>(&json).ok()
+                    })
+                    .map(|s| {
+                        let pending = s.jobs.iter()
+                            .filter(|j| j.status == native::hlcr::RenderJobStatus::Pending)
+                            .count();
+                        let completed = s.jobs.iter()
+                            .filter(|j| j.status == native::hlcr::RenderJobStatus::Completed)
+                            .count();
+                        (pending, completed, s.source_folder.clone())
+                    })
+                    .unwrap_or((0, 0, String::new()))
+            };
+
+            egui::Window::new("🎬 Render Batch Interrupted")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                .show(ctx, |ui| {
+                    ui.add_space(4.0);
+                    ui.label("A render batch did not complete cleanly.");
+                    ui.label(format!("Source: {}", source_folder));
+                    ui.add_space(6.0);
+                    ui.label(format!("✅ Completed: {}   ⏳ Pending: {}", completed_count, pending_count));
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        if ui.button("🔄 Recover Render Batch").clicked() {
+                            recover_clicked = true;
+                        }
+                        ui.add_space(8.0);
+                        if ui.button("🗑 Discard").clicked() {
+                            discard_clicked = true;
+                        }
+                    });
+                    ui.add_space(4.0);
+                });
+
+            if recover_clicked {
+                if let Ok(json) = std::fs::read_to_string(&render_autosave_path) {
+                    if let Ok(session) = serde_json::from_str::<native::hlcr::RenderSessionData>(&json) {
+                        use std::sync::Arc;
+                        use std::sync::atomic::AtomicBool;
+
+                        // Populate HlcrState from the saved session.
+                        // Only Pending jobs are set to "Queued"; Completed ones
+                        // display as "Finished" in the render table.
+                        self.hlcr_state.config.source_folder = session.source_folder.clone();
+                        self.hlcr_state.jobs.clear();
+                        self.hlcr_state.clips.clear();
+
+                        for (i, rj) in session.jobs.iter().enumerate() {
+                            let (status_str, progress) = if rj.status == native::hlcr::RenderJobStatus::Completed {
+                                ("Finished".to_string(), 100u32)
+                            } else {
+                                ("Queued".to_string(), 0u32)
+                            };
+                            self.hlcr_state.jobs.push(native::hlcr::ui::RenderJobState {
+                                id: i.to_string(),
+                                name: rj.name.clone(),
+                                stream: String::new(),
+                                frames: 0,
+                                date: String::new(),
+                                status: status_str,
+                                speed: String::new(),
+                                progress,
+                                error_log: None,
+                                cancel_flag: Arc::new(AtomicBool::new(false)),
+                                resolved_output_path: if rj.output_path.is_empty() {
+                                    None
+                                } else {
+                                    Some(rj.output_path.clone())
+                                },
+                            });
+                            // Push a stub ClipData so index alignment is preserved.
+                            self.hlcr_state.clips.push(native::hlcr::scanner::ClipData {
+                                take_folder: rj.take_folder.clone(),
+                                clip_type: "single".to_string(),
+                                img_folder: String::new(),
+                                wav_file: "sound.wav".to_string(),
+                                base_name: rj.name.clone(),
+                                frame_count: 0,
+                                date: String::new(),
+                            });
+                        }
+                        self.hlcr_state.render_session = Some(session);
+                        self.hlcr_state.status_message =
+                            format!("Recovered: {} pending, {} completed.",
+                                pending_count, completed_count);
+                        self.active_sidebar_tab = SidebarTab::CaptureStudio;
+                        self.capture_studio_state = CaptureStudioState::Render;
+                    }
+                }
+                let _ = std::fs::remove_file(&render_autosave_path);
+                self.startup_state = StartupState::Normal;
+            }
+
+            if discard_clicked {
+                let _ = std::fs::remove_file(&render_autosave_path);
+                self.startup_state = StartupState::Normal;
+            }
+
             return;
         }
 

@@ -317,4 +317,6 @@ pub enum StartupState {
     Normal,
     /// An `.autosave.json` lockfile was found; prompt the user before loading.
     PendingRecovery,
+    /// A `.render_autosave.json` lockfile was found (render batch interrupted).
+    PendingRenderRecovery,
 }
