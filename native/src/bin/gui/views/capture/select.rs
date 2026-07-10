@@ -106,7 +106,8 @@ pub fn render(
                                 }
 
                                 let col_ui = &mut columns[d_idx % 2];
-                                egui::Frame::group(col_ui.style()).show(col_ui, |ui| {
+                                col_ui.push_id(&demo.demo_name, |ui| {
+                                    egui::Frame::group(ui.style()).show(ui, |ui| {
                                     // ── Per-demo header row with bulk controls ───────
                                     ui.horizontal(|ui| {
                                         let player_name = demo.streaks.iter()
@@ -134,6 +135,7 @@ pub fn render(
                                     ui.add_space(2.0);
 
                                     TableBuilder::new(ui)
+                                         .id_salt(format!("{}_table", demo.demo_name))
                                          .striped(true)
                                          .vscroll(false)
                                          .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
@@ -265,6 +267,7 @@ pub fn render(
                                                 row.col(|ui| { ui.label(&streak.timeline_string); });
                                             });
                                         });
+                                    });
                                 });
                                 col_ui.add_space(4.0);
                             }
