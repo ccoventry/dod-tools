@@ -460,9 +460,19 @@ pub struct WorkspaceGuard {
 
 impl Drop for WorkspaceGuard {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir(&self.session_junction);
-        let _ = std::fs::remove_file(&self.exit_trigger);
-        let _ = std::fs::remove_dir_all(&self.exit_trigger);
+        // Junction link: remove_dir unlinks without touching the junction target.
+        if let Err(e) = std::fs::remove_dir(&self.session_junction) {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                log::warn!("[WorkspaceGuard::drop] Failed to remove session_junction {:?}: {}", self.session_junction, e);
+            }
+        }
+        // Signal dirs (DOD_TOOLS_EXIT_TRIGGER) are directories, not files.
+        // Use remove_dir_all; silently ignore NotFound, log anything else.
+        if let Err(e) = std::fs::remove_dir_all(&self.exit_trigger) {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                log::warn!("[WorkspaceGuard::drop] Failed to remove exit_trigger {:?}: {}", self.exit_trigger, e);
+            }
+        }
         if let Some(parent) = self.exit_trigger.parent() {
             let dod_dir = parent.join("dod");
             
