@@ -17,6 +17,7 @@
 pub mod scan;
 pub mod select;
 pub mod capture;
+pub mod widgets;
 
 use std::sync::{Arc, Mutex, OnceLock, atomic::{AtomicBool, Ordering}};
 use std::path::PathBuf;
