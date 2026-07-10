@@ -309,3 +309,12 @@ pub enum EngineEvent {
     /// Signals the GUI to reset the running flag and show a cancelled message.
     Cancelled,
 }
+
+/// Controls whether a recovery modal is shown on startup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StartupState {
+    /// Normal startup — no autosave lockfile detected.
+    Normal,
+    /// An `.autosave.json` lockfile was found; prompt the user before loading.
+    PendingRecovery,
+}

@@ -29,7 +29,7 @@ use views::{PlayerHighlighting, report_ui, t};
 use types::{
     SortColumn, ScoreboardCache, ChatFilterState, ChatCache,
     CapturePhase, CaptureStudioState, QueuedStreakExport, PlayerDetailsCache, SidebarTab,
-    GuiMessage,
+    GuiMessage, StartupState,
 };
 #[cfg(not(target_arch = "wasm32"))]
 use types::{AuditorState, PendingStreakExport, BrowserView};
@@ -246,6 +246,10 @@ pub(crate) struct Gui {
     pub(crate) capture_cancel_token: std::sync::Arc<std::sync::atomic::AtomicBool>,
     pub(crate) capture_studio_loading: bool,
     pub(crate) last_capture_studio_state: Option<CaptureStudioState>,
+    /// Autosave recovery state: set to PendingRecovery on startup when
+    /// `.autosave.json` is present (indicates an unclean prior exit).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) startup_state: StartupState,
 }
 
 
@@ -650,6 +654,13 @@ impl Default for Gui {
             capture_cancel_token: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             capture_studio_loading: false,
             last_capture_studio_state: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            startup_state: if std::path::Path::new(".autosave.json").exists() {
+                log::warn!("[Startup] .autosave.json detected — unclean exit recovery pending");
+                StartupState::PendingRecovery
+            } else {
+                StartupState::Normal
+            },
         }
     }
 }
@@ -673,6 +684,92 @@ impl eframe::App for Gui {
         }
 
         let modal_open = self.show_about_window;
+
+        // ── Unclean-exit recovery modal ───────────────────────────────────────────
+        // Rendered first so it can intercept the frame before any other panel
+        // attempts to draw.  The modal is native-only; wasm has no lockfile I/O.
+        #[cfg(not(target_arch = \"wasm32\"))]
+        if self.startup_state == StartupState::PendingRecovery {
+            let mut recover_clicked = false;
+            let mut discard_clicked = false;
+
+            egui::Window::new(\"⚠ Unclean Exit Detected\")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                .show(ctx, |ui| {
+                    ui.add_space(4.0);
+                    ui.label(\"The previous session did not exit cleanly.\");
+                    ui.label(\"An autosave of the capture queue was found (.autosave.json).\");
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        if ui.button(\"🔄 Recover Session\").clicked() {
+                            recover_clicked = true;
+                        }
+                        ui.add_space(8.0);
+                        if ui.button(\"🗑 Discard & Clean Up\").clicked() {
+                            discard_clicked = true;
+                        }
+                    });
+                    ui.add_space(4.0);
+                });
+
+            if recover_clicked {
+                // Deserialize the lockfile and feed it into the existing import pipeline.
+                let autosave_path = std::path::Path::new(\".autosave.json\");
+                if let Ok(json) = std::fs::read_to_string(autosave_path) {
+                    if let Ok(session_data) = serde_json::from_str::<crate::session::SessionData>(&json) {
+                        self.capture_studio_loading = true;
+                        self.active_sidebar_tab = SidebarTab::CaptureStudio;
+                        self.capture_studio_state = CaptureStudioState::Scan;
+                        let rules = crate::views::capture::get_highlight_rules_clone();
+                        let tx_clone = self.tx.clone();
+                        let ctx_clone = ctx.clone();
+                        let paths: Vec<std::path::PathBuf> = session_data.entries
+                            .iter()
+                            .map(|e| e.path.clone())
+                            .collect();
+                        crate::views::capture::spawn_ingestion_thread(
+                            crate::views::capture::IngestionInput::Batch(paths),
+                            rules,
+                            ctx_clone,
+                            tx_clone,
+                        );
+                    }
+                }
+                let _ = std::fs::remove_file(\".autosave.json\");
+                self.startup_state = StartupState::Normal;
+            }
+
+            if discard_clicked {
+                // GC sweep: remove any stale signal dirs and junction from a crashed batch.
+                // Use the same semantics as CaptureCleanupGuard::drop.
+                let config = crate::views::capture::get_patcher_config()
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner());
+                if !config.game_path.is_empty() {
+                    if let Some(hl_parent) = std::path::Path::new(&config.game_path).parent() {
+                        let exit_trigger = hl_parent.join(\"DOD_TOOLS_EXIT_TRIGGER\");
+                        let session_junction = hl_parent.join(\"dodtools_session\");
+                        if let Err(e) = std::fs::remove_dir_all(&exit_trigger) {
+                            if e.kind() != std::io::ErrorKind::NotFound {
+                                log::warn!(\"[GC::discard] remove exit_trigger {:?}: {}\", exit_trigger, e);
+                            }
+                        }
+                        if let Err(e) = std::fs::remove_dir(&session_junction) {
+                            if e.kind() != std::io::ErrorKind::NotFound {
+                                log::warn!(\"[GC::discard] remove session_junction {:?}: {}\", session_junction, e);
+                            }
+                        }
+                    }
+                }
+                let _ = std::fs::remove_file(\".autosave.json\");
+                self.startup_state = StartupState::Normal;
+            }
+
+            // Do not render the rest of the UI while the modal is active.
+            return;
+        }
 
         if self.loading_path.is_some() {
             ctx.request_repaint();

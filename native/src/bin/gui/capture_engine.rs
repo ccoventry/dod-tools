@@ -21,9 +21,20 @@ impl CaptureCleanupGuard {
         auto_clear_previews: bool,
         save_local_patched_copy: bool,
     ) -> Self {
-        let _ = std::fs::remove_file(&exit_trigger);
-        let _ = std::fs::remove_dir_all(&exit_trigger);
-        let _ = std::fs::remove_dir(&session_junction);
+        // Pre-clean any stale signal dirs/junctions from a previous aborted run.
+        // exit_trigger is a directory signal — never use remove_file on it.
+        if let Err(e) = std::fs::remove_dir_all(&exit_trigger) {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                log::warn!("[GC::new] Failed to pre-clean exit_trigger {:?}: {}", exit_trigger, e);
+            }
+        }
+        // session_junction is a directory junction link — remove_dir unlinks the
+        // junction itself without recursing into the target directory.
+        if let Err(e) = std::fs::remove_dir(&session_junction) {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                log::warn!("[GC::new] Failed to pre-clean session_junction {:?}: {}", session_junction, e);
+            }
+        }
         Self {
             exit_trigger,
             session_junction,
@@ -37,9 +48,19 @@ impl CaptureCleanupGuard {
 
 impl Drop for CaptureCleanupGuard {
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.exit_trigger);
-        let _ = std::fs::remove_dir_all(&self.exit_trigger);
-        let _ = std::fs::remove_dir(&self.session_junction);
+        // Signal dirs (DOD_TOOLS_EXIT_TRIGGER) are directories, not files.
+        // Use remove_dir_all; silently ignore NotFound, log anything else.
+        if let Err(e) = std::fs::remove_dir_all(&self.exit_trigger) {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                log::warn!("[GC::drop] Failed to remove exit_trigger {:?}: {}", self.exit_trigger, e);
+            }
+        }
+        // Junction link: remove_dir unlinks without touching the junction target.
+        if let Err(e) = std::fs::remove_dir(&self.session_junction) {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                log::warn!("[GC::drop] Failed to remove session_junction {:?}: {}", self.session_junction, e);
+            }
+        }
 
         if let Some(parent) = self.exit_trigger.parent() {
             let dod_dir = parent.join("dod");
@@ -185,6 +206,41 @@ pub fn spawn_capture_engine(
                 auto_clear_previews: config.auto_clear_previews,
                 save_local_patched_copy: config.save_local_patched_copy,
             };
+
+            // ── Autosave lockfile ─────────────────────────────────────────────────
+            // Write a session snapshot immediately before the batch executes so
+            // that a hard crash or power loss can be detected on the next startup.
+            // Uses the same SessionData format as the manual "Export Session" button.
+            {
+                let queued_demos_arc = crate::views::capture::get_queued_demos();
+                let guard = match queued_demos_arc.lock() {
+                    Ok(g) => g,
+                    Err(p) => p.into_inner(),
+                };
+                let entries: Vec<crate::session::DemoEntry> = guard.iter().map(|d| {
+                    let highlights = d.streaks.iter().map(|s| crate::session::HighlightMetadata {
+                        is_selected: s.is_selected,
+                        start_kill: s.start_index as i32,
+                        end_kill: s.end_index as i32,
+                    }).collect();
+                    crate::session::DemoEntry {
+                        path: d.path.clone(),
+                        key: native::utils::demo_hasher::calculate_demo_key(&d.path),
+                        highlights,
+                    }
+                }).collect();
+                let session_data = crate::session::SessionData { entries };
+                match serde_json::to_string_pretty(&session_data) {
+                    Ok(json) => {
+                        if let Err(e) = std::fs::write(".autosave.json", &json) {
+                            log::warn!("[autosave] Failed to write .autosave.json: {}", e);
+                        } else {
+                            log::info!("[autosave] Lockfile written (.autosave.json)");
+                        }
+                    }
+                    Err(e) => log::warn!("[autosave] Failed to serialize session: {}", e),
+                }
+            }
 
             for job in jobs {
                 if cancel_token.load(Ordering::Relaxed) {
@@ -427,6 +483,16 @@ pub fn spawn_capture_engine(
             //         }
             //     }
             // }
+
+            // Remove the autosave lockfile on a clean completion so that the
+            // recovery modal is not shown on the next startup.
+            if let Err(e) = std::fs::remove_file(".autosave.json") {
+                if e.kind() != std::io::ErrorKind::NotFound {
+                    log::warn!("[autosave] Failed to remove .autosave.json: {}", e);
+                }
+            } else {
+                log::info!("[autosave] Lockfile removed after clean completion");
+            }
 
             let _ = tx.send(EngineEvent::AllCompleted);
         })
