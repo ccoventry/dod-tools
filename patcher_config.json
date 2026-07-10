@@ -4,9 +4,9 @@
   "capture_fps": 300,
   "exit_on_finish": true,
   "init_commands": [
-    "cl_xhair_style 2",
     "r_decals 0",
-    "hud_deathnotice_time 1"
+    "hud_deathnotice_time 1",
+    "cl_xhair_style 2"
   ],
   "custom_commands": [
     {
@@ -42,12 +42,15 @@
   "resolution_width": 2560,
   "resolution_height": 1440,
   "primary_media_dir": "D:\\DICEWSOD25\\02_Audio_Video\\02_HLAE_Raw",
-  "backup_media_dir": null,
+  "backup_media_dir": "E:\\DICEWSOD25\\02_Audio_Video\\02_HLAE_Raw",
   "movie_config": "",
-  "save_local_patched_copy": true,
+  "save_local_patched_copy": false,
   "add_condebug": true,
-  "session_id": "",
+  "session_id": "20260710_054521",
   "hlae_path": "C:\\Program Files (x86)\\HLAE\\HLAE (Latest)\\HLAE.exe",
   "game_path": "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Half-Life - PRE-Anniversary for Movies\\hl.exe",
-  "ffmpeg_override_path": "C:\\Users\\chris\\Repos\\dod-tools\\tools\\ffmpeg.exe"
+  "ffmpeg_override_path": "C:\\Users\\chris\\Repos\\dod-tools\\tools\\ffmpeg.exe",
+  "auto_clear_logs": false,
+  "auto_clear_previews": false,
+  "auto_clear_temp_demos": false
 }
