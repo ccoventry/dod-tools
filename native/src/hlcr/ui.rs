@@ -346,6 +346,10 @@ impl HlcrState {
     pub fn draw_ui(&mut self, ui: &mut Ui, ctx: &egui::Context) {
         self.update_channels(ctx);
 
+        if self.is_rendering {
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        }
+
         ui.vertical(|ui| {
             // 1. Settings Grid
             ui.group(|ui| {
