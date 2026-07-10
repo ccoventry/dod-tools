@@ -603,8 +603,9 @@ pub fn build_preview_patch_jobs(
 
         // Build (tick, label) for each streak — same format as the highlight table.
         let director_events: Vec<(i32, String)> = streaks.iter().enumerate().map(|(i, s)| {
-            let label = format!("#{}: {} kills: {}", i + 1, s.kill_count, s.timeline_string);
-            (s.start_tick, label)
+            let label = format!("#{}/{}: {} kills: {}", i + 1,streaks.len(), s.kill_count, s.timeline_string);
+            let preview_tick = find_tick_backwards(s.start_tick as usize, 3.0, &s.frame_times);
+            (preview_tick, label)
         }).collect();
 
         // Resolve output path: "<stem>_preview.dem" beside original, or in output_dir.
