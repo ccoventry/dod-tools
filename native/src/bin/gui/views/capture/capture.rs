@@ -40,33 +40,34 @@ pub fn render(
             
             ui.add_space(4.0);
 
-            ui.horizontal(|ui| {
-                ui.label("hl.exe Path:");
-                ui.text_edit_singleline(&mut config.game_path);
-                if ui.button("Browse...").clicked() {
-                    if let Some(path) = rfd::FileDialog::new()
-                        .add_filter("hl.exe", &["exe"])
-                        .pick_file()
-                    {
-                        config.game_path = path.to_string_lossy().to_string();
-                        crate::settings::save_patcher_config(&config);
-                    }
-                }
-            });
+            let mut dummy_error = None;
+            let old_game = config.game_path.clone();
+            crate::views::capture::widgets::render_path_row(
+                ui,
+                "hl.exe Path:",
+                &mut config.game_path,
+                "hl.exe",
+                &["exe"],
+                None,
+                &mut dummy_error,
+            );
+            if old_game != config.game_path {
+                crate::settings::save_patcher_config(&config);
+            }
 
-            ui.horizontal(|ui| {
-                ui.label("hlae.exe Path:");
-                ui.text_edit_singleline(&mut config.hlae_path);
-                if ui.button("Browse...").clicked() {
-                    if let Some(path) = rfd::FileDialog::new()
-                        .add_filter("hlae.exe", &["exe"])
-                        .pick_file()
-                    {
-                        config.hlae_path = path.to_string_lossy().to_string();
-                        crate::settings::save_patcher_config(&config);
-                    }
-                }
-            });
+            let old_hlae = config.hlae_path.clone();
+            crate::views::capture::widgets::render_path_row(
+                ui,
+                "hlae.exe Path:",
+                &mut config.hlae_path,
+                "hlae.exe",
+                &["exe"],
+                None,
+                &mut dummy_error,
+            );
+            if old_hlae != config.hlae_path {
+                crate::settings::save_patcher_config(&config);
+            }
         });
 
         let (hlae_path_str, game_path_str) = {
@@ -90,8 +91,7 @@ pub fn render(
                 let dod_dir = hl_path.parent().unwrap().join("dod");
 
                 // Build raw streak list from the shared queued demos mutex.
-                let mut raw_streaks = Vec::new();
-                {
+                let raw_streaks = {
                     let queued_demos_arc = crate::views::capture::get_queued_demos();
                     let queued_demos = match queued_demos_arc.lock() {
                         Ok(guard) => guard,
@@ -100,34 +100,14 @@ pub fn render(
                             poisoned.into_inner()
                         }
                     };
-                    for demo in queued_demos.iter() {
-                        let demo_path_str = demo.path.to_string_lossy().to_string();
-                        for streak in &demo.streaks {
-                            if streak.is_selected {
-                                if demo.is_pov && Some(streak.player_index) != demo.local_player_index {
-                                    continue;
-                                }
-                                raw_streaks.push(native::patch::CaptureStreak {
-                                    start_tick: streak.start_tick,
-                                    end_tick: streak.end_tick,
-                                    source_demo: demo_path_str.clone(),
-                                    target_player: Some(streak.target_player.clone()),
-                                    kill_count: streak.kill_count,
-                                    timeline_string: streak.timeline_string.clone(),
-                                    duration_string: streak.duration_string.clone(),
-                                    player_index: streak.player_index,
-                                    kills: streak.kills.clone(),
-                                    start_index: streak.start_index,
-                                    end_index: streak.end_index,
-                                    total_demo_frames: demo.playback_frames,
-                                    demo_fps: demo.tickrate,
-                                    viewdemo_times: streak.viewdemo_times.clone(),
-                                    frame_times: streak.frame_times.clone(),
-                                });
-                            }
-                        }
-                    }
-                }
+                    crate::views::capture::payload::build_capture_streak_payload(
+                        &queued_demos,
+                        crate::views::capture::payload::StreakFilter {
+                            selected_only: true,
+                            pov_local_only: true,
+                        },
+                    )
+                };
 
                 // Resolve patcher config and convert seconds → ticks.
                 let patcher_config_mutex = crate::views::capture::get_patcher_config();
