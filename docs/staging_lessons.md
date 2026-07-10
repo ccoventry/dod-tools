@@ -12,6 +12,9 @@
 - **Binary Order of Operations:** In GoldSrc `.dem` file patching, custom frame injection (bookmarks/commands) must be written as discrete, self-contained frames. Interleaving them within the payload of a `NetworkMessage` frame corrupts the binary structure and causes the engine to misinterpret subsequent data.
 - **Diagnostic Red Herrings:** A `svc_bad` (buffer overflow) during demo playback is frequently a red herring for "memory fragmentation." If the engine attempts to read an impossibly large payload (e.g., 2.9GB), it is definitive proof of a frame header desync caused by corrupted/nested binary data, not an actual network traffic spike.
 - **Stream Patching Integrity:** When modifying binary streams, the patcher must buffer the original frame's info block, write the new frame, and only then write the original header/info block. Order is survival.
+- **Filesystem Semantics:** `remove_dir_all` is the correct operation for signal folders (`DOD_TOOLS_EXIT_TRIGGER`, `DOD_BATCH_DONE`) created by HLAE/Engine, even if they serve as trigger mechanisms. Use `remove_file` only for persistent static files or config artifacts.
+- **GC Architecture:** Always decouple GC *Policy* (Configuration) from GC *Mechanism* (Execution). This allows the `Drop` trait to remain lightweight and configuration-aware.
+- **Watermarking Pattern:** 1:1 sidecar files (`.dodtools_preview`) are safer than master lists for tracking generated assets because they ensure atomic cleanup and file-system renaming resilience.
 
 
 ## Workflow & AI Protocols
