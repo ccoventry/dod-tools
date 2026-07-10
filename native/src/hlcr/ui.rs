@@ -11,6 +11,8 @@ use super::config::{RenderConfig, load_config, save_config};
 use super::scanner::{ClipData, scan_folder_background};
 use super::renderer::{run_render_job, RenderUpdate};
 
+pub use super::autosave::{RenderJob, RenderJobStatus, RenderSessionData};
+
 pub struct RenderJobState {
     pub id: String,
     pub name: String,
@@ -22,6 +24,9 @@ pub struct RenderJobState {
     pub progress: u32,
     pub error_log: Option<String>,
     pub cancel_flag: Arc<AtomicBool>,
+    /// Output file path, populated once FFmpeg finishes successfully.
+    /// Used to update the `.render_autosave.json` lockfile.
+    pub resolved_output_path: Option<String>,
 }
 
 pub struct HlcrState {
@@ -33,6 +38,10 @@ pub struct HlcrState {
     pub status_message: String,
     pub active_modal_job_id: Option<String>,
     pub auto_render: bool,
+
+    // Render autosave state — written at batch start, updated per-job,
+    // deleted on clean completion.
+    pub render_session: Option<RenderSessionData>,
 
     // Scanner channels
     pub clip_rx: Option<mpsc::Receiver<ClipData>>,
@@ -69,6 +78,7 @@ impl HlcrState {
             status_message: "Idle / Waiting for Scan".to_string(),
             active_modal_job_id: None,
             auto_render: false,
+            render_session: None,
             clip_rx: None,
             status_rx: None,
             scan_thread: None,
@@ -125,12 +135,40 @@ impl HlcrState {
                 job.speed = "".to_string();
                 job.error_log = None;
                 job.cancel_flag = Arc::new(AtomicBool::new(false));
+                job.resolved_output_path = None;
             }
         }
 
         let _ = save_config(&self.config);
         self.is_rendering = true;
         self.status_message = "Starting parallel render queue...".to_string();
+
+        // ── Write render autosave lockfile ────────────────────────────────────
+        // Pre-collect take_folder by job index to avoid double-borrow on self.
+        let take_folders: Vec<String> = self.clips.iter()
+            .map(|c| c.take_folder.clone())
+            .collect();
+
+        let session = RenderSessionData {
+            source_folder: self.config.source_folder.clone(),
+            fps: self.config.fps,
+            target_codec: format!("{:?}", self.config.target_codec),
+            jobs: self.jobs.iter().enumerate().map(|(i, j)| RenderJob {
+                take_folder: take_folders.get(i).cloned().unwrap_or_default(),
+                output_path: String::new(), // resolved when FFmpeg exits successfully
+                status: RenderJobStatus::Pending,
+                name: j.name.clone(),
+            }).collect(),
+        };
+        if let Ok(json) = serde_json::to_string_pretty(&session) {
+            let path = native::shared::paths::get_appdata_dir().join(".render_autosave.json");
+            if let Err(e) = std::fs::write(&path, &json) {
+                log::warn!("[render_autosave] Failed to write lockfile: {}", e);
+            } else {
+                log::info!("[render_autosave] Lockfile written");
+            }
+        }
+        self.render_session = Some(session);
     }
 
     pub fn cancel_all(&mut self) {
@@ -268,7 +306,7 @@ impl HlcrState {
                         job.status = status;
                     }
                 }
-                RenderUpdate::Finished(id, _success, err_log) => {
+                RenderUpdate::Finished(id, success, err_log) => {
                     if let Some(job) = self.jobs.iter_mut().find(|j| j.id == id) {
                         if job.status == "Rendering" {
                             if err_log.is_some() {
@@ -279,6 +317,25 @@ impl HlcrState {
                             }
                         }
                         job.error_log = err_log;
+
+                        // ── Update autosave: mark job Completed on success ──────
+                        if success {
+                            if let Some(ref mut session) = self.render_session {
+                                // Match by name (id order == session.jobs order).
+                                let idx: usize = id.parse().unwrap_or(usize::MAX);
+                                if let Some(rj) = session.jobs.get_mut(idx) {
+                                    rj.status = RenderJobStatus::Completed;
+                                    if let Some(ref out) = job.resolved_output_path {
+                                        rj.output_path = out.clone();
+                                    }
+                                }
+                                let path = native::shared::paths::get_appdata_dir()
+                                    .join(".render_autosave.json");
+                                if let Ok(json) = serde_json::to_string_pretty(session) {
+                                    let _ = std::fs::write(&path, &json);
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -336,6 +393,19 @@ impl HlcrState {
             if !has_active_or_queued {
                 self.is_rendering = false;
                 self.status_message = "Render queue processing finished.".to_string();
+
+                // ── Clean up render autosave on successful completion ──────────
+                let autosave_path = native::shared::paths::get_appdata_dir()
+                    .join(".render_autosave.json");
+                if let Err(e) = std::fs::remove_file(&autosave_path) {
+                    if e.kind() != std::io::ErrorKind::NotFound {
+                        log::warn!("[render_autosave] Failed to remove lockfile: {}", e);
+                    }
+                } else {
+                    log::info!("[render_autosave] Lockfile removed after clean completion");
+                }
+                self.render_session = None;
+
                 ctx.request_repaint();
             } else if started_any {
                 ctx.request_repaint();

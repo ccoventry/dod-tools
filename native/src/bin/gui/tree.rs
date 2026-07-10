@@ -175,9 +175,9 @@ fn process_demo_file(p: PathBuf, cache: &DemoCache) -> DemoListItem {
 #[cfg(not(target_arch = "wasm32"))]
 fn get_dir_contents_parallel(path: &Path) -> Vec<DemoListItem> {
     // Load central cache from disk
-    let cache_path = Path::new(".dod-tools-cache.json");
+    let cache_path = native::shared::paths::get_appdata_dir().join(".dod-tools-cache.json");
     let cache = if cache_path.exists() {
-        std::fs::read_to_string(cache_path)
+        std::fs::read_to_string(&cache_path)
             .ok()
             .and_then(|content| serde_json::from_str::<DemoCache>(&content).ok())
             .unwrap_or_default()
