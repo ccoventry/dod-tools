@@ -1,6 +1,7 @@
 # Engineering Backlog
 
 ## 📋 General Backlog (Future Roadmap Items)
+- [ ] Feature: Add match start and demo end director events in `native/src/patch/builder.rs` for each demo (requires piping `match_start_tick` from `AnalyzerState` to `DemoData`).
 - [ ] Refactor: Isolate native engine stream slicing mechanisms behind explicit `target_arch` macro controls.
 - [ ] Feature: Implement "Session Restore" on startup (Detects unclean exits and prompts user to restore state).
 
