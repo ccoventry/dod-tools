@@ -3,12 +3,12 @@
 ## 📋 General Backlog (Future Roadmap Items)
 - [ ] Feature: Add match start and demo end director events in `native/src/patch/builder.rs` for each demo (requires piping `match_start_tick` from `AnalyzerState` to `DemoData`).
 - [ ] Refactor: Isolate native engine stream slicing mechanisms behind explicit `target_arch` macro controls.
-- [ ] Feature: Implement "Session Restore" on startup (Detects unclean exits and prompts user to restore state).
 
 ## Immediate Tasks (Next Session)
-- [ ] Review and finalize the Rust `Drop` trait "Garbage Collector" to ensure `DOD_TOOLS_EXIT_TRIGGER` and junction links are safely cleaned up on program exit/panic.
 
 ## Completed
+- [x] Feature: Implement "Session Restore" on startup (Detects unclean exits and prompts user to restore state).
+- [x] Review and finalize the Rust `Drop` trait "Garbage Collector" to ensure `DOD_TOOLS_EXIT_TRIGGER` and junction links are safely cleaned up on program exit/panic.
 - [x] Feature: Set up an automated directory watch mechanism looking out for local `DOD_BATCH_DONE` signals.
 - [x] Chore: Build absolute workspace path anchors derived natively from `std::env::current_exe()`.
 - [x] Implement initial commands (Injected as raw text, limited to 50-60 characters per line).
@@ -21,3 +21,4 @@
 - **External Demo Playback:** Investigate if DoD `.dem` files can be parsed and rendered outside the game engine (e.g., a web browser or lightweight desktop app) to preview killstreaks quickly.
 - **Mode Toggle:** Add functionality to Capture Studio to switch between "Timing Mode" and "Capture Mode".
 - **[Optimization] Session Compression & Modular Export:** Add options for Gzip/Zstd compression for JSON and "Selective Export" feature flags (e.g., export demos only vs. export full project metadata).
+

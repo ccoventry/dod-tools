@@ -2,7 +2,7 @@
 - **Overarching Goal:** Transitioning to creative workflow (DoD movie clips); Infrastructure maintenance complete.
 - **Last Touched Modules:** `builder.rs`, `capture_engine.rs`, `types.rs`, `widgets.rs`, `panels.rs`, `payload.rs`.
 - **Open Issues/Bugs:** None. Infrastructure is stable.
-- **Next Priority:** Feature development (Session Restore).
+- **Next Priority:** Long Demo Validation & Packet Audit.
 
 ## IDE AI State
 - **Open Documents:** `docs/staging_lessons.md`, `docs/active_sprint_state.md`, `docs/engineering_backlog.md`.
