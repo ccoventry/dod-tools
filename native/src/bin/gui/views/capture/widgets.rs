@@ -1,7 +1,67 @@
 use std::sync::{Arc, Mutex, atomic::AtomicBool};
-use native::patch::{PatcherConfig, CaptureStreak, build_batch_queue};
+use native::patch::{PatcherConfig, build_batch_queue};
 use crate::types::{DemoData, CaptureStudioState};
 use super::{is_patching, set_is_patching};
+use super::payload::{build_capture_streak_payload, StreakFilter};
+
+pub struct DiskEstimate {
+    pub _required_bytes: u64,
+    pub available_bytes: u64,
+    pub required_gb: f64,
+    pub available_gb: f64,
+    pub exceeds_space: bool,
+    pub is_missing_primary_dir: bool,
+}
+
+pub fn compute_disk_estimate(config: &PatcherConfig, selected_count: f32) -> DiskEstimate {
+    let total_sequence_duration = selected_count * (config.pre_roll_seconds + config.post_roll_seconds + 10.0);
+    let w = config.resolution_width;
+    let h = config.resolution_height;
+    let fps = config.capture_fps;
+    let mut required_bytes = native::sys::disk::calculate_raw_sequence_bytes(w, h, fps, total_sequence_duration);
+    if config.separate_hud {
+        required_bytes *= 3;
+    }
+    
+    let is_missing_primary_dir = config.primary_media_dir.is_none();
+    let check_path = config.primary_media_dir.clone().unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+    let available_bytes = if is_missing_primary_dir { 0 } else { native::sys::disk::get_available_bytes(&check_path) };
+    
+    let exceeds_space = required_bytes > available_bytes && available_bytes != u64::MAX;
+    
+    let required_gb = required_bytes as f64 / 1_073_741_824.0;
+    let available_gb = if available_bytes == u64::MAX { 999.9 } else { available_bytes as f64 / 1_073_741_824.0 };
+    
+    DiskEstimate {
+        _required_bytes: required_bytes,
+        available_bytes,
+        required_gb,
+        available_gb,
+        exceeds_space,
+        is_missing_primary_dir,
+    }
+}
+
+pub fn render_disk_estimate_row(ui: &mut egui::Ui, estimate: &DiskEstimate) {
+    ui.horizontal(|ui| {
+        ui.strong("Disk Space Estimate:");
+        if estimate.is_missing_primary_dir {
+            ui.label(format!("Required: {:.1} GB / Available: N/A", estimate.required_gb));
+        } else if estimate.available_bytes == u64::MAX {
+            ui.label(format!("Required: {:.1} GB / Available: Unknown", estimate.required_gb));
+        } else {
+            let color = if estimate.exceeds_space { egui::Color32::RED } else { ui.visuals().text_color() };
+            ui.colored_label(color, format!("Required: {:.1} GB / Available: {:.1} GB", estimate.required_gb, estimate.available_gb));
+        }
+    });
+
+    if estimate.is_missing_primary_dir {
+        ui.colored_label(egui::Color32::YELLOW, "⚠️ Please select a Primary Directory to enable capturing.");
+    } else if estimate.exceeds_space {
+        ui.colored_label(egui::Color32::RED, "⚠️ WARNING: Not enough free disk space on the target drive!");
+    }
+}
+
 
 pub fn render_bulk_actions(
     ui: &mut egui::Ui,
@@ -54,20 +114,7 @@ pub fn render_primary_actions(
         .filter(|s| s.is_selected)
         .count() as f32;
 
-    let total_sequence_duration = selected_streaks_count * (patcher_config.pre_roll_seconds + patcher_config.post_roll_seconds + 10.0);
-    let w = patcher_config.resolution_width;
-    let h = patcher_config.resolution_height;
-    let fps = patcher_config.capture_fps;
-    let mut required_bytes = native::sys::disk::calculate_raw_sequence_bytes(w, h, fps, total_sequence_duration);
-    if patcher_config.separate_hud {
-        required_bytes *= 3;
-    }
-    
-    let is_missing_primary_dir = patcher_config.primary_media_dir.is_none();
-    let check_path = patcher_config.primary_media_dir.clone().unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
-    let available_bytes = if is_missing_primary_dir { 0 } else { native::sys::disk::get_available_bytes(&check_path) };
-    
-    let exceeds_space = required_bytes > available_bytes && available_bytes != u64::MAX;
+    let disk_estimate = compute_disk_estimate(patcher_config, selected_streaks_count);
 
     ui.horizontal(|ui| {
         let can_preview = !is_running && !queued_demos.is_empty();
@@ -75,32 +122,13 @@ pub fn render_primary_actions(
             .on_hover_text("Patches all detected highlights as viewdemo Event List entries into a _preview.dem copy of each demo. No capture is triggered.")
             .clicked()
         {
-            let mut preview_payload = Vec::new();
-            for demo in queued_demos.iter() {
-                let demo_path_str = demo.path.to_string_lossy().to_string();
-                for streak in &demo.streaks {
-                    if demo.is_pov && Some(streak.player_index) != demo.local_player_index {
-                        continue;
-                    }
-                    preview_payload.push(CaptureStreak {
-                        start_tick: streak.start_tick,
-                        end_tick: streak.end_tick,
-                        source_demo: demo_path_str.clone(),
-                        target_player: Some(streak.target_player.clone()),
-                        kill_count: streak.kill_count,
-                        timeline_string: streak.timeline_string.clone(),
-                        duration_string: streak.duration_string.clone(),
-                        player_index: streak.player_index,
-                        kills: streak.kills.clone(),
-                        start_index: streak.start_index,
-                        end_index: streak.end_index,
-                        total_demo_frames: demo.playback_frames,
-                        demo_fps: demo.tickrate,
-                        viewdemo_times: streak.viewdemo_times.clone(),
-                        frame_times: streak.frame_times.clone(),
-                    });
-                }
-            }
+            let preview_payload = build_capture_streak_payload(
+                &queued_demos,
+                StreakFilter {
+                    selected_only: false,
+                    pov_local_only: true,
+                },
+            );
 
             if !preview_payload.is_empty() {
                 use native::patch::build_preview_patch_jobs;
@@ -139,7 +167,7 @@ pub fn render_primary_actions(
         ui.add_space(16.0);
 
         let btn = egui::Button::new("Proceed to Capture ->");
-        if ui.add_enabled(!is_running && !queued_demos.is_empty() && !exceeds_space && !is_missing_primary_dir, btn).clicked() {
+        if ui.add_enabled(!is_running && !queued_demos.is_empty() && !disk_estimate.exceeds_space && !disk_estimate.is_missing_primary_dir, btn).clicked() {
             #[cfg(not(target_arch = "wasm32"))]
             {
                 use sysinfo::{System, SystemExt, DiskExt};
@@ -170,36 +198,13 @@ pub fn render_primary_actions(
             patcher_config.session_id = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
 
             // Build the flat payload from all selected, filter-passing streaks.
-            let mut payload = Vec::new();
-            for demo in queued_demos.iter() {
-                let demo_path_str = demo.path.to_string_lossy().to_string();
-                for streak in &demo.streaks {
-                    if !streak.is_selected {
-                        continue;
-                    }
-                    if demo.is_pov && Some(streak.player_index) != demo.local_player_index {
-                        continue;
-                    }
-
-                    payload.push(CaptureStreak {
-                        start_tick: streak.start_tick,
-                        end_tick: streak.end_tick,
-                        source_demo: demo_path_str.clone(),
-                        target_player: Some(streak.target_player.clone()),
-                        kill_count: streak.kill_count,
-                        timeline_string: streak.timeline_string.clone(),
-                        duration_string: streak.duration_string.clone(),
-                        player_index: streak.player_index,
-                        kills: streak.kills.clone(),
-                        start_index: streak.start_index,
-                        end_index: streak.end_index,
-                        total_demo_frames: demo.playback_frames,
-                        demo_fps: demo.tickrate,
-                        viewdemo_times: streak.viewdemo_times.clone(),
-                        frame_times: streak.frame_times.clone(),
-                    });
-                }
-            }
+            let payload = build_capture_streak_payload(
+                &queued_demos,
+                StreakFilter {
+                    selected_only: true,
+                    pov_local_only: true,
+                },
+            );
 
             if !payload.is_empty() {
                 let cancel_token = Arc::new(AtomicBool::new(false));
@@ -329,3 +334,177 @@ pub fn render_primary_actions(
         }
     });
 }
+
+pub fn render_error_banner(
+    ui: &mut egui::Ui,
+    ctx: &egui::Context,
+    error_message: &mut Option<String>,
+) {
+    if let Some(error) = error_message.clone() {
+        let mut dismiss = false;
+        egui::Frame::NONE
+            .fill(ui.visuals().faint_bg_color)
+            .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(239, 68, 68)))
+            .corner_radius(6.0)
+            .inner_margin(12.0)
+            .show(ui, |ui| {
+                ui.vertical(|ui| {
+                    ui.label(
+                        egui::RichText::new("Configuration Error")
+                            .heading()
+                            .color(egui::Color32::from_rgb(239, 68, 68)),
+                    );
+                    ui.add_space(8.0);
+                    ui.label(&error);
+                    ui.add_space(12.0);
+                    if ui.button("Dismiss").clicked() {
+                        dismiss = true;
+                    }
+                });
+            });
+        if dismiss {
+            *error_message = None;
+            ctx.request_repaint();
+        }
+    }
+}
+
+pub fn render_path_row(
+    ui: &mut egui::Ui,
+    label: &str,
+    value: &mut String,
+    filter_name: &str,
+    filter_exts: &[&str],
+    expected_filename: Option<&str>,
+    error_message: &mut Option<String>,
+) {
+    ui.label(label);
+    ui.horizontal(|ui| {
+        ui.add(egui::TextEdit::singleline(value).desired_width(ui.available_width() - 80.0));
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if ui.button("Browse...").clicked() {
+                let mut dialog = rfd::FileDialog::new();
+                if !filter_exts.is_empty() {
+                    dialog = dialog.add_filter(filter_name, filter_exts);
+                }
+                if let Some(path) = dialog.pick_file() {
+                    if let Some(expected) = expected_filename {
+                        let is_expected = path.file_name()
+                            .and_then(|n| n.to_str())
+                            .map(|s| s.to_lowercase()) == Some(expected.to_lowercase());
+                        if is_expected {
+                            *value = path.to_string_lossy().to_string();
+                        } else {
+                            *error_message = Some(format!("Selected file must be {}", expected));
+                        }
+                    } else {
+                        *value = path.to_string_lossy().to_string();
+                    }
+                }
+            }
+        }
+    });
+}
+
+pub fn render_dir_picker_row(
+    ui: &mut egui::Ui,
+    ctx: &egui::Context,
+    label: &str,
+    picker: &mut egui_file_dialog::FileDialog,
+    current_path: &mut Option<std::path::PathBuf>,
+) -> bool {
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        ui.label(label);
+        if ui.button("📁 Select...").clicked() {
+            picker.pick_directory();
+        }
+        if let Some(path) = current_path {
+            ui.label(path.to_string_lossy());
+        } else {
+            ui.colored_label(egui::Color32::YELLOW, "Warning: Defaulting to OS Drive");
+        }
+    });
+    picker.update(ctx);
+    if let Some(path) = picker.take_picked() {
+        *current_path = Some(path.to_path_buf());
+        changed = true;
+    }
+    changed
+}
+
+pub fn render_command_list(
+    ui: &mut egui::Ui,
+    id_salt: &str,
+    commands: &mut Vec<String>,
+    max_height: f32,
+) {
+    let mut delete_idx = None;
+    
+    egui::ScrollArea::vertical()
+        .max_height(max_height)
+        .id_salt(id_salt)
+        .show(ui, |ui| {
+            for (i, cmd) in commands.iter_mut().enumerate() {
+                ui.horizontal(|ui| {
+                    ui.add(egui::TextEdit::singleline(cmd).desired_width(ui.available_width() - 40.0));
+                    if ui.button("❌").clicked() {
+                        delete_idx = Some(i);
+                    }
+                });
+            }
+        });
+
+    if let Some(i) = delete_idx {
+        commands.remove(i);
+    }
+    if ui.button("➕ Add Command").clicked() {
+        commands.push("".to_string());
+    }
+}
+
+pub fn render_custom_command_list(
+    ui: &mut egui::Ui,
+    id_salt: &str,
+    commands: &mut Vec<native::patch::CustomCommand>,
+    max_height: f32,
+) {
+    let mut delete_idx = None;
+    
+    egui::ScrollArea::vertical()
+        .max_height(max_height)
+        .id_salt(id_salt)
+        .show(ui, |ui| {
+            for (i, cmd) in commands.iter_mut().enumerate() {
+                ui.horizontal(|ui| {
+                    ui.add(egui::TextEdit::singleline(&mut cmd.command).desired_width(120.0));
+                    
+                    let is_after = cmd.relation == native::patch::CommandRelation::After;
+                    if ui.selectable_label(!is_after, "B").on_hover_text("Before Highlight").clicked() {
+                        cmd.relation = native::patch::CommandRelation::Before;
+                    }
+                    if ui.selectable_label(is_after, "A").on_hover_text("After Highlight").clicked() {
+                        cmd.relation = native::patch::CommandRelation::After;
+                    }
+                    
+                    ui.add(egui::DragValue::new(&mut cmd.offset).speed(0.1).range(0.0..=60.0).suffix("s"));
+                    if ui.button("❌").clicked() {
+                        delete_idx = Some(i);
+                    }
+                });
+            }
+        });
+
+    if let Some(i) = delete_idx {
+        commands.remove(i);
+    }
+    if ui.button("➕ Add Default").clicked() {
+        commands.push(native::patch::CustomCommand {
+            command: "".to_string(),
+            offset: 2.0,
+            relation: native::patch::CommandRelation::Before,
+        });
+    }
+}
+

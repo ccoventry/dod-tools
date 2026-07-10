@@ -15,27 +15,14 @@
 //     spawns patch_worker thread, sends GuiMessage::PatchingComplete on completion
 // ============================================================
 
-use std::sync::{Arc, Mutex, atomic::AtomicBool};
-use native::patch::{PatcherConfig, CaptureStreak, build_batch_queue};
+use std::sync::{Arc, Mutex};
+use native::patch::PatcherConfig;
 use crate::types::{DemoData, CaptureStudioState};
-use super::{is_patching, set_is_patching, acquire_lock, widgets};
+use super::{acquire_lock, widgets, panels};
 use super::log_markdown;
 use egui_extras::{TableBuilder, Column};
-use crate::settings::{save_settings, apply_language_setting};
 
-fn create_pinned_file_dialog() -> egui_file_dialog::FileDialog {
-    let mut fd = egui_file_dialog::FileDialog::new();
-    let global = crate::settings::load_settings();
-    if !global.pinned_folders.is_empty() {
-        fd = fd.add_quick_access("Bookmarks", |s| {
-            for path in &global.pinned_folders {
-                let name = path.file_name().unwrap_or_default().to_string_lossy();
-                s.add_path(&name, path.clone());
-            }
-        });
-    }
-    fd
-}
+
 
 pub fn render(
     ui: &mut egui::Ui,
@@ -43,7 +30,7 @@ pub fn render(
     state_ptr: &mut CaptureStudioState,
     tx: std::sync::mpsc::Sender<crate::types::GuiMessage>,
     loading_ptr: &mut bool,
-    rules_mutex: &'static Mutex<native::patch::HighlightRules>,
+    _rules_mutex: &'static Mutex<native::patch::HighlightRules>,
     queued_demos_arc: Arc<Mutex<Arc<Vec<DemoData>>>>,
     patcher_config_mutex: &'static Mutex<PatcherConfig>,
     render_config_mutex: &'static Mutex<native::hlcr::config::RenderConfig>,
@@ -69,8 +56,6 @@ pub fn render(
     };
     let data = &*queued_demos_shared;
 
-    let mut patcher_config = acquire_lock!(patcher_config_mutex);
-
     // ── Step 2 header group ──────────────────────────────────────────────────────
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
     ui.group(|ui| {
@@ -80,15 +65,18 @@ pub fn render(
             ui.label("Enable streaks, adjust patch parameters, and launch patcher.");
             ui.add_space(8.0);
 
-            widgets::render_primary_actions(
-                ui,
-                &mut patcher_config,
-                &mut *state_ptr,
-                &mut *loading_ptr,
-                &tx,
-                &queued_demos_arc,
-                ctx,
-            );
+            {
+                let mut patcher_config = acquire_lock!(patcher_config_mutex);
+                widgets::render_primary_actions(
+                    ui,
+                    &mut patcher_config,
+                    &mut *state_ptr,
+                    &mut *loading_ptr,
+                    &tx,
+                    &queued_demos_arc,
+                    ctx,
+                );
+            }
             ui.add_space(8.0);
 
             if !queued_demos_shared.is_empty() {
@@ -344,550 +332,60 @@ pub fn render(
     ui.add_space(10.0);
 
     // ── Global Paths & Configuration ─────────────────────────────────────────────
-        if let Some(error) = error_message.clone() {
-            let mut dismiss = false;
-            egui::Frame::NONE
-                .fill(ui.visuals().faint_bg_color)
-                .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(239, 68, 68)))
-                .corner_radius(6.0)
-                .inner_margin(12.0)
-                .show(ui, |ui| {
-                    ui.vertical(|ui| {
-                        ui.label(
-                            egui::RichText::new("Configuration Error")
-                                .heading()
-                                .color(egui::Color32::from_rgb(239, 68, 68)),
-                        );
-                        ui.add_space(8.0);
-                        ui.label(&error);
-                        ui.add_space(12.0);
-                        if ui.button("Dismiss").clicked() {
-                            dismiss = true;
-                        }
-                    });
-                });
-            if dismiss {
-                *error_message = None;
-                ctx.request_repaint();
-            }
-        }
+        widgets::render_error_banner(ui, ctx, error_message);
 
+        {
+            let mut patcher_config = acquire_lock!(patcher_config_mutex);
 
             egui::CollapsingHeader::new("Recording Engine Configurations").default_open(true).show(ui, |ui| {
-            ui.add_space(8.0);
-
-            // HLAE Path configuration
-            ui.label("HLAE Path (hlae.exe):");
-            ui.horizontal(|ui| {
-                ui.add(egui::TextEdit::singleline(&mut patcher_config.hlae_path).desired_width(ui.available_width() - 80.0));
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                    if ui.button("Browse...").clicked() {
-                        if let Some(path) = rfd::FileDialog::new()
-                            .add_filter("Executables", &["exe"])
-                            .pick_file()
-                        {
-                            if path.file_name().and_then(|n| n.to_str()).map(|s| s.to_lowercase()) == Some("hlae.exe".to_string()) {
-                                patcher_config.hlae_path = path.to_string_lossy().to_string();
-                            } else {
-                                *error_message = Some("Selected file must be hlae.exe".to_string());
-                            }
-                        }
-                    }
-                }
+                panels::render_engine_config_panel(ui, &mut patcher_config, error_message);
             });
 
             ui.add_space(8.0);
 
-            // DoD Game Path configuration
-            ui.label("DoD Game Path (hl.exe):");
-            ui.horizontal(|ui| {
-                ui.add(egui::TextEdit::singleline(&mut patcher_config.game_path).desired_width(ui.available_width() - 80.0));
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                    if ui.button("Browse...").clicked() {
-                        if let Some(path) = rfd::FileDialog::new()
-                            .add_filter("Executables", &["exe"])
-                            .pick_file()
-                        {
-                            if path.file_name().and_then(|n| n.to_str()).map(|s| s.to_lowercase()) == Some("hl.exe".to_string()) {
-                                patcher_config.game_path = path.to_string_lossy().to_string();
-                            } else {
-                                *error_message = Some("Selected file must be hl.exe".to_string());
-                            }
-                        }
-                    }
-                }
-            });
-
-            ui.add_space(8.0);
-
-            // Custom FFmpeg Path configuration
-            ui.label("Custom FFmpeg Path (Optional):");
-            ui.horizontal(|ui| {
-                let mut path_str = patcher_config.ffmpeg_override_path.clone().unwrap_or_default();
-                if ui.add(egui::TextEdit::singleline(&mut path_str).desired_width(ui.available_width() - 80.0)).changed() {
-                    patcher_config.ffmpeg_override_path = if path_str.trim().is_empty() {
-                        None
-                    } else {
-                        Some(path_str.trim().to_string())
-                    };
-                }
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                    if ui.button("Browse...").clicked() {
-                        if let Some(path) = rfd::FileDialog::new().pick_file() {
-                            patcher_config.ffmpeg_override_path = Some(path.to_string_lossy().to_string());
-                            crate::settings::save_patcher_config(&patcher_config);
-                        }
-                    }
-                }
-            });
-
-            ui.add_space(8.0);
-            ui.separator();
-            ui.add_space(8.0);
-            });
-            ui.add_space(8.0);
             egui::CollapsingHeader::new("Highlight Capture Settings").default_open(true).show(ui, |ui| {
-            ui.add_space(8.0);
-
-            ui.label("Init Commands (startup):");
-            ui.add_space(4.0);
-            ui.vertical(|ui| {
-                let mut delete_idx = None;
-                
-                egui::ScrollArea::vertical()
-                    .max_height(120.0)
-                    .id_salt("init_commands_scroll_select")
-                    .show(ui, |ui| {
-                        for (i, cmd) in patcher_config.init_commands.iter_mut().enumerate() {
-                            ui.horizontal(|ui| {
-                                ui.add(egui::TextEdit::singleline(cmd).desired_width(ui.available_width() - 40.0));
-                                if ui.button("❌").clicked() {
-                                    delete_idx = Some(i);
-                                }
-                            });
-                        }
-                    });
-
-                if let Some(i) = delete_idx {
-                    patcher_config.init_commands.remove(i);
-                }
-                if ui.button("➕ Add Command").clicked() {
-                    patcher_config.init_commands.push("".to_string());
-                }
-            });
-            
-            ui.add_space(8.0);
-            ui.label("Default Custom Commands:");
-            ui.add_space(4.0);
-            ui.vertical(|ui| {
-                let mut delete_idx = None;
-                
-                egui::ScrollArea::vertical()
-                    .max_height(120.0)
-                    .id_salt("default_commands_scroll_select")
-                    .show(ui, |ui| {
-                        for (i, cmd) in patcher_config.custom_commands.iter_mut().enumerate() {
-                            ui.horizontal(|ui| {
-                                ui.add(egui::TextEdit::singleline(&mut cmd.command).desired_width(120.0));
-                                
-                                let is_after = cmd.relation == native::patch::CommandRelation::After;
-                                if ui.selectable_label(!is_after, "B").on_hover_text("Before Highlight").clicked() {
-                                    cmd.relation = native::patch::CommandRelation::Before;
-                                }
-                                if ui.selectable_label(is_after, "A").on_hover_text("After Highlight").clicked() {
-                                    cmd.relation = native::patch::CommandRelation::After;
-                                }
-                                
-                                ui.add(egui::DragValue::new(&mut cmd.offset).speed(0.1).range(0.0..=60.0).suffix("s"));
-                                if ui.button("❌").clicked() {
-                                    delete_idx = Some(i);
-                                }
-                            });
-                        }
-                    });
-
-                if let Some(i) = delete_idx {
-                    patcher_config.custom_commands.remove(i);
-                }
-                if ui.button("➕ Add Default").clicked() {
-                    patcher_config.custom_commands.push(native::patch::CustomCommand {
-                        command: "".to_string(),
-                        offset: 2.0,
-                        relation: native::patch::CommandRelation::Before,
-                    });
-                }
+                panels::render_highlight_settings_panel(
+                    ui,
+                    ctx,
+                    &mut patcher_config,
+                    settings,
+                    draft_settings,
+                    subdir_cache,
+                    tree_demo_cache,
+                );
             });
 
             ui.add_space(8.0);
-            ui.separator();
+
+            egui::CollapsingHeader::new("⚡ Capture Configuration").default_open(true).show(ui, |ui| {
+                panels::render_capture_config_panel(ui, ctx, &mut patcher_config);
+            });
+
             ui.add_space(8.0);
-            ui.strong("Timeline Buffers");
-            ui.add_space(4.0);
 
-            ui.label("Initial Load Delay:");
-            let mut val = patcher_config.initial_delay;
-            if ui.add(egui::Slider::new(&mut val, 0.0..=30.0).step_by(0.5).suffix("s")).changed() {
-                patcher_config.initial_delay = val;
-            }
-
-            ui.label("Fast-Forward Speed:");
-            ui.add_enabled_ui(false, |ui| {
-                let mut val = patcher_config.fast_forward_speed;
-                if ui.add(egui::Slider::new(&mut val, 0.01..=5.0).step_by(0.05)).changed() {
-                    patcher_config.fast_forward_speed = val;
-                }
+            egui::CollapsingHeader::new("🐛 Debugging Settings").default_open(true).show(ui, |ui| {
+                panels::render_debug_panel(ui, &mut patcher_config);
             });
+        }
 
-            ui.label("Pre-Record Buffer:");
-            let mut val = patcher_config.pre_roll_seconds;
-            if ui.add(egui::Slider::new(&mut val, 0.0..=30.0).step_by(0.5).suffix("s")).changed() {
-                patcher_config.pre_roll_seconds = val;
-            }
+        ui.add_space(8.0);
 
-            ui.label("Record Start Lead:");
-            let mut val = patcher_config.record_start_lead;
-            if ui.add(egui::Slider::new(&mut val, 0.0..=10.0).step_by(0.5).suffix("s")).changed() {
-                patcher_config.record_start_lead = val;
-            }
-
-            ui.label("Record Stop Trail:");
-            let mut val = patcher_config.record_stop_trail;
-            if ui.add(egui::Slider::new(&mut val, 0.0..=10.0).step_by(0.5).suffix("s")).changed() {
-                patcher_config.record_stop_trail = val;
-            }
-
-            ui.label("Post-Record Buffer:");
-            let mut val = patcher_config.post_roll_seconds;
-            if ui.add(egui::Slider::new(&mut val, 0.0..=30.0).step_by(0.5).suffix("s")).changed() {
-                patcher_config.post_roll_seconds = val;
-            }
-
-            // ── Mock Execution Timeline Visualizer ─────────────────────
-            ui.add_space(8.0);
-            ui.separator();
-            ui.add_space(8.0);
-            ui.label(egui::RichText::new("Execution Timeline (Mock)").strong());
-            ui.add_space(4.0);
-
-            struct TimelineEvent {
-                time: f32,
-                name: String,
-                is_custom: bool,
-            }
-
-            let mut events = Vec::new();
-            events.push(TimelineEvent {
-                time: 0.0,
-                name: "First Kill (Anchor)".to_string(),
-                is_custom: false,
-            });
-            events.push(TimelineEvent {
-                time: -patcher_config.record_start_lead,
-                name: "Record Start".to_string(),
-                is_custom: false,
-            });
-            events.push(TimelineEvent {
-                time: -patcher_config.record_start_lead - patcher_config.pre_roll_seconds,
-                name: "Pre-Roll (Speed Normal & Audio Flush)".to_string(),
-                is_custom: false,
-            });
-            events.push(TimelineEvent {
-                time: 10.0,
-                name: "Last Kill (Anchor)".to_string(),
-                is_custom: false,
-            });
-            events.push(TimelineEvent {
-                time: 10.0 + patcher_config.record_stop_trail,
-                name: "Record Stop".to_string(),
-                is_custom: false,
-            });
-            events.push(TimelineEvent {
-                time: 10.0 + patcher_config.record_stop_trail + patcher_config.post_roll_seconds,
-                name: "Post-Roll End (Fast Forward)".to_string(),
-                is_custom: false,
-            });
-
-            for custom in &patcher_config.custom_commands {
-                let t = match custom.relation {
-                    native::patch::CommandRelation::Before => -custom.offset,
-                    native::patch::CommandRelation::After => 10.0 + custom.offset,
-                };
-                events.push(TimelineEvent {
-                    time: t,
-                    name: format!("Custom Cmd: {}", custom.command),
-                    is_custom: true,
-                });
-            }
-
-            events.sort_by(|a, b| a.time.partial_cmp(&b.time).unwrap_or(std::cmp::Ordering::Equal));
-
-            TableBuilder::new(ui)
-                .striped(true)
-                .column(Column::exact(100.0))
-                .column(Column::remainder())
-                .header(18.0, |mut header| {
-                    header.col(|ui| { ui.strong("Relative Time"); });
-                    header.col(|ui| { ui.strong("Action/Event"); });
-                })
-                .body(|body| {
-                    body.rows(18.0, events.len(), |mut row| {
-                        let event = &events[row.index()];
-                        row.col(|ui| {
-                            let time_str = if event.time >= 0.0 {
-                                format!("+{:.1} sec", event.time)
-                            } else {
-                                format!("{:.1} sec", event.time)
-                            };
-                            let color = if event.is_custom {
-                                egui::Color32::LIGHT_BLUE
-                            } else {
-                                egui::Color32::GRAY
-                            };
-                            ui.colored_label(color, time_str);
-                        });
-                        row.col(|ui| {
-                            let color = if event.is_custom {
-                                egui::Color32::LIGHT_BLUE
-                            } else {
-                                egui::Color32::GRAY
-                            };
-                            ui.colored_label(color, &event.name);
-                        });
-                    });
-                });
-
-            ui.add_space(16.0);
-            ui.separator();
-            ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                if ui.button("💾 Save Settings").clicked() {
-                    let old_scan = settings.scan_folders_for_demos;
-                    *settings = draft_settings.clone();
-                    apply_language_setting(&settings.language);
-                    save_settings(settings);
-                    
-                    if old_scan != settings.scan_folders_for_demos {
-                        #[cfg(not(target_arch = "wasm32"))]
-                        {
-                            subdir_cache.clear();
-                            tree_demo_cache.clear();
-                        }
-                    }
-                    ctx.request_repaint();
-                }
-                if ui.button("🔄 Revert Settings").clicked() {
-                    *draft_settings = settings.clone();
-                    ctx.request_repaint();
-                }
-            });
+        egui::CollapsingHeader::new("⚡ Export Configuration").default_open(true).show(ui, |ui| {
+            let mut render_config = acquire_lock!(render_config_mutex);
+            panels::render_export_config_panel(ui, ctx, &mut render_config);
         });
 
-    ui.add_space(10.0);
+        ui.add_space(8.0);
 
-    // ── Export Configuration ─────────────────────────────────────────────────────
-    egui::CollapsingHeader::new("⚡ Capture Configuration").default_open(true).show(ui, |ui| {
-        #[cfg(not(target_arch = "wasm32"))]
+        let selected_streaks_count = queued_demos_shared.iter()
+            .flat_map(|d| &d.streaks)
+            .filter(|s| s.is_selected)
+            .count() as f32;
+
         {
-            static CAPTURE_PRIMARY_PICKER: std::sync::OnceLock<Mutex<egui_file_dialog::FileDialog>> = std::sync::OnceLock::new();
-            static CAPTURE_BACKUP_PICKER: std::sync::OnceLock<Mutex<egui_file_dialog::FileDialog>> = std::sync::OnceLock::new();
-            
-            let mut cap_primary_picker = acquire_lock!(CAPTURE_PRIMARY_PICKER.get_or_init(|| Mutex::new(create_pinned_file_dialog())));
-            ui.horizontal(|ui| {
-                ui.label("Primary Capture Directory (Raw BMPs):");
-                if ui.button("📁 Select...").clicked() {
-                    cap_primary_picker.pick_directory();
-                }
-                if let Some(path) = &patcher_config.primary_media_dir {
-                    ui.label(path.to_string_lossy());
-                } else {
-                    ui.colored_label(egui::Color32::YELLOW, "Warning: Defaulting to OS Drive");
-                }
-            });
-            cap_primary_picker.update(ctx);
-            if let Some(path) = cap_primary_picker.take_picked() {
-                patcher_config.primary_media_dir = Some(path.to_path_buf());
-                crate::settings::save_patcher_config(&patcher_config);
-            }
-
-            let mut cap_backup_picker = acquire_lock!(CAPTURE_BACKUP_PICKER.get_or_init(|| Mutex::new(create_pinned_file_dialog())));
-            ui.horizontal(|ui| {
-                ui.label("Backup Capture Directory:");
-                if ui.button("📁 Select...").clicked() {
-                    cap_backup_picker.pick_directory();
-                }
-                if let Some(path) = &patcher_config.backup_media_dir {
-                    ui.label(path.to_string_lossy());
-                }
-            });
-            cap_backup_picker.update(ctx);
-            if let Some(path) = cap_backup_picker.take_picked() {
-                patcher_config.backup_media_dir = Some(path.to_path_buf());
-                crate::settings::save_patcher_config(&patcher_config);
-            }
-        }
-
-        ui.add_space(8.0);
-
-        // Row 4: Resolution & Capture FPS
-        ui.horizontal(|ui| {
-            ui.label("Width:");
-            ui.add(egui::DragValue::new(&mut patcher_config.resolution_width)
-                .range(640..=7680).speed(1));
-            ui.add_space(10.0);
-            ui.label("Height:");
-            ui.add(egui::DragValue::new(&mut patcher_config.resolution_height)
-                .range(480..=4320).speed(1));
-            ui.add_space(10.0);
-            ui.label("Capture FPS:");
-            ui.add(egui::DragValue::new(&mut patcher_config.capture_fps)
-                .range(30..=1000).speed(1));
-        });
-
-        // Row 5: Separate HUD
-        ui.horizontal(|ui| {
-            ui.checkbox(&mut patcher_config.separate_hud, "Separate HUD (Alpha & Color)")
-                .on_hover_text("This toggle acts as the absolute source of truth and will override any separate_hud settings in your movie.cfg.");
-        });
-
-        // Row 5.5: Exit on Finish
-        ui.horizontal(|ui| {
-            ui.checkbox(&mut patcher_config.exit_on_finish, "Auto-Quit Game on Completion")
-                .on_hover_text("If enabled, the game will automatically inject the 'quit' command after the final clip to close the game.");
-        });
-
-        ui.add_space(8.0);
-
-        // Row 5.75: Movie Config
-        ui.horizontal(|ui| {
-            ui.label("Movie Config (Optional):");
-            if ui.add(egui::TextEdit::singleline(&mut patcher_config.movie_config)
-                .hint_text("e.g., movie.cfg")).changed() {
-                
-                // Aggressive sanitization
-                patcher_config.movie_config.retain(|c| !c.is_whitespace());
-                let sanitized = patcher_config.movie_config.trim_start_matches(|c| c == '-' || c == '+').to_string();
-                patcher_config.movie_config = sanitized;
-            }
-        });
-    });
-
-    ui.add_space(8.0);
-
-    egui::CollapsingHeader::new("🐛 Debugging Settings").default_open(true).show(ui, |ui| {
-        // Row 6: Debugging Settings
-        ui.add_space(4.0);
-        
-        ui.horizontal(|ui| {
-            ui.checkbox(&mut patcher_config.add_condebug, "Add Condebug to Launch Commands")
-                .on_hover_text("If enabled, '-condebug' will be added to the launch arguments to generate a qconsole.log file.");
-        });
-        
-        ui.horizontal(|ui| {
-            ui.checkbox(&mut patcher_config.save_local_patched_copy, "Save a copy of patched demo to ./demos/")
-                .on_hover_text("If enabled, a copy of the patched .dem file will be saved to the workspace's demos/ folder for debugging.");
-        });
-    });
-
-    ui.add_space(8.0);
-
-    egui::CollapsingHeader::new("⚡ Export Configuration").default_open(true).show(ui, |ui| {
-        // Row 6: HLCR Routing & Codec
-        let mut render_config = acquire_lock!(render_config_mutex);
-        ui.horizontal(|ui| {
-            ui.label("Render Codec:");
-            egui::ComboBox::from_id_salt("render_codec_combo")
-                .selected_text(format!("{:?}", render_config.target_codec))
-                .show_ui(ui, |ui| {
-                    let mut changed = false;
-                    changed |= ui.selectable_value(&mut render_config.target_codec, native::hlcr::config::RenderCodec::ProRes, "ProRes").changed();
-                    changed |= ui.selectable_value(&mut render_config.target_codec, native::hlcr::config::RenderCodec::NvencH264, "NvencH264").changed();
-                    changed |= ui.selectable_value(&mut render_config.target_codec, native::hlcr::config::RenderCodec::DnxHr, "DnxHr").changed();
-                    if changed {
-                        let _ = native::hlcr::config::save_config(&render_config);
-                    }
-                });
-        });
-
-        static PRIMARY_PICKER: std::sync::OnceLock<Mutex<egui_file_dialog::FileDialog>> = std::sync::OnceLock::new();
-        static BACKUP_PICKER: std::sync::OnceLock<Mutex<egui_file_dialog::FileDialog>> = std::sync::OnceLock::new();
-        
-        let mut primary_picker = acquire_lock!(PRIMARY_PICKER.get_or_init(|| Mutex::new(create_pinned_file_dialog())));
-        ui.horizontal(|ui| {
-            ui.label("Primary Export Directory (Final .mov):");
-            if ui.button("📁 Select...").clicked() {
-                primary_picker.pick_directory();
-            }
-            if let Some(path) = &render_config.primary_export_dir {
-                ui.label(path.to_string_lossy());
-            }
-        });
-        primary_picker.update(ctx);
-        if let Some(path) = primary_picker.take_picked() {
-            render_config.primary_export_dir = Some(path.to_path_buf());
-            let _ = native::hlcr::config::save_config(&render_config);
-        }
-
-        let mut backup_picker = acquire_lock!(BACKUP_PICKER.get_or_init(|| Mutex::new(create_pinned_file_dialog())));
-        ui.horizontal(|ui| {
-            ui.label("Backup Export Directory:");
-            if ui.button("📁 Select...").clicked() {
-                backup_picker.pick_directory();
-            }
-            if let Some(path) = &render_config.backup_export_dir {
-                ui.label(path.to_string_lossy());
-            }
-        });
-        backup_picker.update(ctx);
-        if let Some(path) = backup_picker.take_picked() {
-            render_config.backup_export_dir = Some(path.to_path_buf());
-            let _ = native::hlcr::config::save_config(&render_config);
-        }
-    });
-
-            ui.add_space(8.0);
-
-            let selected_streaks_count = queued_demos_shared.iter()
-                .flat_map(|d| &d.streaks)
-                .filter(|s| s.is_selected)
-                .count() as f32;
-
-            let total_sequence_duration = selected_streaks_count * (patcher_config.pre_roll_seconds + patcher_config.post_roll_seconds + 10.0);
-            let w = patcher_config.resolution_width;
-            let h = patcher_config.resolution_height;
-            let fps = patcher_config.capture_fps;
-            let mut required_bytes = native::sys::disk::calculate_raw_sequence_bytes(w, h, fps, total_sequence_duration);
-            if patcher_config.separate_hud {
-                required_bytes *= 3;
-            }
-            let required_gb = required_bytes as f64 / 1_073_741_824.0;
-            
-            let is_missing_primary_dir = patcher_config.primary_media_dir.is_none();
-            let check_path = patcher_config.primary_media_dir.clone().unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
-            let available_bytes = if is_missing_primary_dir { 0 } else { native::sys::disk::get_available_bytes(&check_path) };
-            let available_gb = if available_bytes == u64::MAX { 999.9 } else { available_bytes as f64 / 1_073_741_824.0 };
-            
-            let exceeds_space = required_bytes > available_bytes && available_bytes != u64::MAX;
-
-            ui.horizontal(|ui| {
-                ui.strong("Disk Space Estimate:");
-                if is_missing_primary_dir {
-                    ui.label(format!("Required: {:.1} GB / Available: N/A", required_gb));
-                } else if available_bytes == u64::MAX {
-                    ui.label(format!("Required: {:.1} GB / Available: Unknown", required_gb));
-                } else {
-                    let color = if exceeds_space { egui::Color32::RED } else { ui.visuals().text_color() };
-                    ui.colored_label(color, format!("Required: {:.1} GB / Available: {:.1} GB", required_gb, available_gb));
-                }
-            });
-
-            if is_missing_primary_dir {
-                ui.colored_label(egui::Color32::YELLOW, "⚠️ Please select a Primary Directory to enable capturing.");
-            } else if exceeds_space {
-                ui.colored_label(egui::Color32::RED, "⚠️ WARNING: Not enough free disk space on the target drive!");
-            }
+            let mut patcher_config = acquire_lock!(patcher_config_mutex);
+            let disk_estimate = widgets::compute_disk_estimate(&patcher_config, selected_streaks_count);
+            widgets::render_disk_estimate_row(ui, &disk_estimate);
 
             ui.add_space(8.0);
 
@@ -901,5 +399,6 @@ pub fn render(
                 &queued_demos_arc,
                 ctx,
             );
+        }
     });
 }
