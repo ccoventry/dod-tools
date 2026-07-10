@@ -1,9 +1,10 @@
 ## Web AI State
-- **Overarching Goal:** Stabilize the `dod-tools` demo capture pipeline by eliminating binary desyncs and engine crashes during HLAE recording.
-- **Last Modified:** `native/src/patch/engine.rs` (Fixed bookmark interleaving), `native/src/patch/builder.rs` (Fixed test alignment).
-- **Compiler Status:** `cargo test` and `cargo check --bin parse_demo` are passing; binary structure is validated frame-for-frame.
-- **Unresolved Bugs:** None; the `svc_bad` crash is confirmed resolved.
+- **Overarching Goal:** Transitioning to creative workflow (DoD movie clips); Infrastructure maintenance complete.
+- **Last Touched Modules:** `builder.rs`, `capture_engine.rs`, `types.rs`, `widgets.rs`, `panels.rs`, `payload.rs`.
+- **Open Issues/Bugs:** None. Infrastructure is stable.
+- **Next Priority:** Feature development (Session Restore).
 
 ## IDE AI State
-- **Goal:** Stream patcher bookmark frame layout corrected, code verified, tests passing, and documentation updated.
-- **Status:** Done. Standing by for further workspace tasks.
+- **Open Documents:** `docs/staging_lessons.md`, `docs/active_sprint_state.md`, `docs/engineering_backlog.md`.
+- **Current Branch:** dev
+- **Status:** All requested refactorings, policy-driven GC changes, Drop trait safety mechanisms, and documentation audits are fully implemented. Standing by.

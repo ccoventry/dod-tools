@@ -2,6 +2,7 @@
 
 ## 📋 General Backlog (Future Roadmap Items)
 - [ ] Refactor: Isolate native engine stream slicing mechanisms behind explicit `target_arch` macro controls.
+- [ ] Feature: Implement "Session Restore" on startup (Detects unclean exits and prompts user to restore state).
 
 ## Immediate Tasks (Next Session)
 - [ ] Review and finalize the Rust `Drop` trait "Garbage Collector" to ensure `DOD_TOOLS_EXIT_TRIGGER` and junction links are safely cleaned up on program exit/panic.
