@@ -6,20 +6,93 @@ use native::log_markdown;
 struct CaptureCleanupGuard {
     exit_trigger: PathBuf,
     session_junction: PathBuf,
+    auto_clear_logs: bool,
+    auto_clear_temp_demos: bool,
+    auto_clear_previews: bool,
+    save_local_patched_copy: bool,
 }
 
 impl CaptureCleanupGuard {
-    fn new(exit_trigger: PathBuf, session_junction: PathBuf) -> Self {
+    fn new(
+        exit_trigger: PathBuf,
+        session_junction: PathBuf,
+        auto_clear_logs: bool,
+        auto_clear_temp_demos: bool,
+        auto_clear_previews: bool,
+        save_local_patched_copy: bool,
+    ) -> Self {
+        let _ = std::fs::remove_file(&exit_trigger);
         let _ = std::fs::remove_dir_all(&exit_trigger);
         let _ = std::fs::remove_dir(&session_junction);
-        Self { exit_trigger, session_junction }
+        Self {
+            exit_trigger,
+            session_junction,
+            auto_clear_logs,
+            auto_clear_temp_demos,
+            auto_clear_previews,
+            save_local_patched_copy,
+        }
     }
 }
 
 impl Drop for CaptureCleanupGuard {
     fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.exit_trigger);
         let _ = std::fs::remove_dir_all(&self.exit_trigger);
         let _ = std::fs::remove_dir(&self.session_junction);
+
+        if let Some(parent) = self.exit_trigger.parent() {
+            let dod_dir = parent.join("dod");
+            
+            if self.auto_clear_logs {
+                let _ = std::fs::remove_file(dod_dir.join("qconsole.log"));
+                let _ = std::fs::remove_file(dod_dir.join("dodtools_helper.cfg"));
+                let _ = std::fs::remove_file(dod_dir.join("dodtools_capture_done.cfg"));
+                let _ = std::fs::remove_file(dod_dir.join("dod_quit.cfg"));
+                if let Ok(entries) = std::fs::read_dir(&dod_dir) {
+                    for entry in entries.flatten() {
+                        let filename = entry.file_name().to_string_lossy().to_string();
+                        if filename.starts_with("dodtools_chain_") && filename.ends_with(".cfg") {
+                            let _ = std::fs::remove_file(entry.path());
+                        }
+                    }
+                }
+            }
+            
+            if self.auto_clear_temp_demos && !self.save_local_patched_copy {
+                let _ = std::fs::remove_file(dod_dir.join("primer.dem"));
+                if let Ok(entries) = std::fs::read_dir(&dod_dir) {
+                    for entry in entries.flatten() {
+                        let filename = entry.file_name().to_string_lossy().to_string();
+                        if filename.starts_with("dodtools_chain_") && filename.ends_with(".dem") {
+                            let _ = std::fs::remove_file(entry.path());
+                        }
+                    }
+                }
+            }
+
+            if self.auto_clear_previews {
+                let scan_dirs = vec![dod_dir.clone(), parent.to_path_buf()];
+                for scan_dir in scan_dirs {
+                    if let Ok(entries) = std::fs::read_dir(scan_dir) {
+                        for entry in entries.flatten() {
+                            let path = entry.path();
+                            if path.is_file() {
+                                if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
+                                    if filename.ends_with("_preview.dem") {
+                                        let sidecar = path.with_extension("dodtools_preview");
+                                        if sidecar.exists() {
+                                            let _ = std::fs::remove_file(&path);
+                                            let _ = std::fs::remove_file(sidecar);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -83,7 +156,14 @@ pub fn spawn_capture_engine(
             let exit_trigger = hl_exe_parent.join("DOD_TOOLS_EXIT_TRIGGER");
             let session_junction = hl_exe_parent.join("dodtools_session");
             
-            let _cleanup_guard = CaptureCleanupGuard::new(exit_trigger.clone(), session_junction.clone());
+            let _cleanup_guard = CaptureCleanupGuard::new(
+                exit_trigger.clone(),
+                session_junction.clone(),
+                config.auto_clear_logs,
+                config.auto_clear_temp_demos,
+                config.auto_clear_previews,
+                config.save_local_patched_copy,
+            );
 
             let active_export_dir = config.primary_media_dir.clone().unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
             let session_dir = if !config.session_id.is_empty() {
@@ -100,6 +180,10 @@ pub fn spawn_capture_engine(
             let _guard = native::patch::WorkspaceGuard {
                 session_junction: session_junction.clone(),
                 exit_trigger: exit_trigger.clone(),
+                auto_clear_logs: config.auto_clear_logs,
+                auto_clear_temp_demos: config.auto_clear_temp_demos,
+                auto_clear_previews: config.auto_clear_previews,
+                save_local_patched_copy: config.save_local_patched_copy,
             };
 
             for job in jobs {

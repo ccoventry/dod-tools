@@ -363,6 +363,21 @@ pub fn render_debug_panel(
         ui.checkbox(&mut config.save_local_patched_copy, "Save a copy of patched demo to ./demos/")
             .on_hover_text("If enabled, a copy of the patched .dem file will be saved to the workspace's demos/ folder for debugging.");
     });
+
+    ui.horizontal(|ui| {
+        ui.checkbox(&mut config.auto_clear_logs, "Auto-Clear Logs & CFGs")
+            .on_hover_text("If enabled, helper config files and log files are deleted automatically on exit.");
+    });
+
+    ui.horizontal(|ui| {
+        ui.checkbox(&mut config.auto_clear_previews, "Auto-Clear Previews")
+            .on_hover_text("If enabled, generated preview demos are deleted automatically on exit.");
+    });
+
+    ui.horizontal(|ui| {
+        ui.checkbox(&mut config.auto_clear_temp_demos, "Auto-Clear Temporary Demos")
+            .on_hover_text("If enabled, transient copy and chained demos from the game folder are deleted automatically on exit.");
+    });
 }
 
 pub fn render_export_config_panel(
