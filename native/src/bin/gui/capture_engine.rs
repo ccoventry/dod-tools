@@ -10,6 +10,7 @@ struct CaptureCleanupGuard {
     auto_clear_temp_demos: bool,
     auto_clear_previews: bool,
     save_local_patched_copy: bool,
+    _wake_lock: Option<keepawake::KeepAwake>,
 }
 
 impl CaptureCleanupGuard {
@@ -42,6 +43,12 @@ impl CaptureCleanupGuard {
             auto_clear_temp_demos,
             auto_clear_previews,
             save_local_patched_copy,
+            _wake_lock: keepawake::Builder::default()
+                .display(false)
+                .idle(true)
+                .sleep(true)
+                .create()
+                .ok(),
         }
     }
 }
