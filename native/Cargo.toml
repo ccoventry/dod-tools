@@ -32,6 +32,7 @@ hl-demo-auditor = { path = "../hl-demo-auditor" }
 rfd = "0.14"
 open = "5.1"
 sysinfo = "0.29"
+keepawake = "0.6"
 
 [[bin]]
 name = "dod-tools-gui"

@@ -58,6 +58,7 @@ pub struct HlcrState {
     pub output_picker: egui_file_dialog::FileDialog,
 
     pub cancel_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    pub wake_lock: Option<keepawake::KeepAwake>,
 }
 
 impl Default for HlcrState {
@@ -88,6 +89,7 @@ impl HlcrState {
             source_picker: egui_file_dialog::FileDialog::default(),
             output_picker: egui_file_dialog::FileDialog::default(),
             cancel_flag,
+            wake_lock: None,
         }
     }
 }
@@ -161,7 +163,7 @@ impl HlcrState {
             }).collect(),
         };
         if let Ok(json) = serde_json::to_string_pretty(&session) {
-            let path = native::shared::paths::get_appdata_dir().join(".render_autosave.json");
+            let path = crate::shared::paths::get_appdata_dir().join(".render_autosave.json");
             if let Err(e) = std::fs::write(&path, &json) {
                 log::warn!("[render_autosave] Failed to write lockfile: {}", e);
             } else {
@@ -169,11 +171,19 @@ impl HlcrState {
             }
         }
         self.render_session = Some(session);
+
+        self.wake_lock = keepawake::Builder::default()
+            .display(false) // We only need the system to stay awake, not the monitors
+            .idle(true)
+            .sleep(true)
+            .create()
+            .ok();
     }
 
     pub fn cancel_all(&mut self) {
         self.is_rendering = false;
         self.status_message = "Render queue cancelled.".to_string();
+        self.wake_lock = None;
 
         for job in &mut self.jobs {
             if job.status == "Rendering" || job.status == "Queued" {
@@ -249,6 +259,7 @@ impl HlcrState {
                     progress: 0,
                     error_log: None,
                     cancel_flag: Arc::new(AtomicBool::new(false)),
+                    resolved_output_path: None,
                 };
                 self.clips.push(clip);
                 self.jobs.push(job);
@@ -329,7 +340,7 @@ impl HlcrState {
                                         rj.output_path = out.clone();
                                     }
                                 }
-                                let path = native::shared::paths::get_appdata_dir()
+                                let path = crate::shared::paths::get_appdata_dir()
                                     .join(".render_autosave.json");
                                 if let Ok(json) = serde_json::to_string_pretty(session) {
                                     let _ = std::fs::write(&path, &json);
@@ -395,7 +406,7 @@ impl HlcrState {
                 self.status_message = "Render queue processing finished.".to_string();
 
                 // ── Clean up render autosave on successful completion ──────────
-                let autosave_path = native::shared::paths::get_appdata_dir()
+                let autosave_path = crate::shared::paths::get_appdata_dir()
                     .join(".render_autosave.json");
                 if let Err(e) = std::fs::remove_file(&autosave_path) {
                     if e.kind() != std::io::ErrorKind::NotFound {
@@ -405,6 +416,7 @@ impl HlcrState {
                     log::info!("[render_autosave] Lockfile removed after clean completion");
                 }
                 self.render_session = None;
+                self.wake_lock = None;
 
                 ctx.request_repaint();
             } else if started_any {
