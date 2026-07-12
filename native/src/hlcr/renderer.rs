@@ -63,15 +63,27 @@ pub async fn run_render_job(
     let clip_type = clip.clip_type.as_str();
     let is_hud = clip_type == "hud_only";
 
-    let mut selected_export_dir = None;
-    if let Some(primary) = &config.primary_export_dir {
-        if crate::sys::disk::get_available_bytes(primary) > 25 * 1024 * 1024 * 1024 {
-            selected_export_dir = Some(primary.clone());
-        } else if let Some(backup) = &config.backup_export_dir {
-            selected_export_dir = Some(backup.clone());
+    // ── JIT export-drive routing ──────────────────────────────────────────────
+    // Iterate the priority pool and select the first directory that has at
+    // least 2 GiB of free space to safely hold the encoded output.
+    const EXPORT_THRESHOLD: u64 = 20 * 1024 * 1024 * 1024; // 20 GiB — safe buffer for 300 FPS ProRes
+    let mut selected_export_dir: Option<PathBuf> = None;
+    for dir in &config.export_directories {
+        if crate::sys::disk::get_available_bytes(dir) > EXPORT_THRESHOLD {
+            selected_export_dir = Some(dir.clone());
+            break;
         }
-    } else if let Some(backup) = &config.backup_export_dir {
-        selected_export_dir = Some(backup.clone());
+    }
+    if selected_export_dir.is_none() && !config.export_directories.is_empty() {
+        let _ = tx.send(RenderUpdate::Finished(
+            job_id.clone(),
+            false,
+            Some(format!(
+                "JIT routing failed: all {} export drive(s) have less than 2 GiB free. Render halted.",
+                config.export_directories.len()
+            )),
+        ));
+        return;
     }
 
     let output_folder = selected_export_dir.unwrap_or_else(|| std::env::current_dir().unwrap_or_default());

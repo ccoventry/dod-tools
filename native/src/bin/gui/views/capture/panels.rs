@@ -1,25 +1,10 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Mutex;
 use egui_extras::{TableBuilder, Column};
 use native::patch::{PatcherConfig, CommandRelation};
 use crate::settings::{AppSettings, save_settings, apply_language_setting};
 use super::widgets;
 use super::acquire_lock;
-
-fn create_pinned_file_dialog() -> egui_file_dialog::FileDialog {
-    let mut fd = egui_file_dialog::FileDialog::new();
-    let global = crate::settings::load_settings();
-    if !global.pinned_folders.is_empty() {
-        fd = fd.add_quick_access("Bookmarks", |s| {
-            for path in &global.pinned_folders {
-                let name = path.file_name().unwrap_or_default().to_string_lossy();
-                s.add_path(&name, path.clone());
-            }
-        });
-    }
-    fd
-}
 
 pub fn render_engine_config_panel(
     ui: &mut egui::Ui,
@@ -372,31 +357,72 @@ pub fn render_export_config_panel(
             });
     });
 
+    ui.add_space(8.0);
+
     #[cfg(not(target_arch = "wasm32"))]
-    {
-        static PRIMARY_PICKER: std::sync::OnceLock<Mutex<egui_file_dialog::FileDialog>> = std::sync::OnceLock::new();
-        static BACKUP_PICKER: std::sync::OnceLock<Mutex<egui_file_dialog::FileDialog>> = std::sync::OnceLock::new();
+    ui.add_enabled_ui(!super::is_patching(), |ui| {
+        use std::sync::Mutex;
+        let mut total_export_free_bytes: u64 = 0;
+        for dir in &render_config.export_directories {
+            let free = native::sys::disk::get_available_bytes(dir);
+            if free != u64::MAX {
+                total_export_free_bytes += free;
+            }
+        }
+        let total_export_free_gb = total_export_free_bytes as f64 / 1_073_741_824.0;
         
-        let mut primary_picker = acquire_lock!(PRIMARY_PICKER.get_or_init(|| Mutex::new(create_pinned_file_dialog())));
-        if widgets::render_dir_picker_row(
-            ui,
-            ctx,
-            "Primary Export Directory (Final .mov):",
-            &mut primary_picker,
-            &mut render_config.primary_export_dir,
-        ) {
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.strong("Total Export Pool Free:");
+            ui.label(format!("{:.1} GB", total_export_free_gb));
+        });
+        ui.add_space(4.0);
+
+        ui.strong("Mapped Export Output Drives (Failover Priority Vector):");
+        ui.add_space(4.0);
+
+        let mut to_remove = None;
+        let mut swap_indices = None;
+        let dirs_len = render_config.export_directories.len();
+        for (idx, dir) in render_config.export_directories.iter().enumerate() {
+            ui.horizontal(|ui| {
+                ui.label(format!("{}:", idx + 1));
+                ui.label(dir.to_string_lossy());
+                if idx > 0 {
+                    if ui.button("⬆").clicked() {
+                        swap_indices = Some((idx, idx - 1));
+                    }
+                }
+                if idx < dirs_len.saturating_sub(1) {
+                    if ui.button("⬇").clicked() {
+                        swap_indices = Some((idx, idx + 1));
+                    }
+                }
+                if ui.button("🗑 Remove").clicked() {
+                    to_remove = Some(idx);
+                }
+            });
+        }
+
+        if let Some((i, j)) = swap_indices {
+            render_config.export_directories.swap(i, j);
+            let _ = native::hlcr::config::save_config(render_config);
+        } else if let Some(idx) = to_remove {
+            render_config.export_directories.remove(idx);
             let _ = native::hlcr::config::save_config(render_config);
         }
 
-        let mut backup_picker = acquire_lock!(BACKUP_PICKER.get_or_init(|| Mutex::new(create_pinned_file_dialog())));
-        if widgets::render_dir_picker_row(
-            ui,
-            ctx,
-            "Backup Export Directory:",
-            &mut backup_picker,
-            &mut render_config.backup_export_dir,
-        ) {
+        static EXPORT_DRIVE_PICKER: std::sync::OnceLock<Mutex<egui_file_dialog::FileDialog>> = std::sync::OnceLock::new();
+        let mut drive_picker = acquire_lock!(EXPORT_DRIVE_PICKER.get_or_init(|| Mutex::new(egui_file_dialog::FileDialog::new())));
+
+        if ui.button("➕ Add Export Drive").clicked() {
+            drive_picker.pick_directory();
+        }
+
+        drive_picker.update(ctx);
+        if let Some(path) = drive_picker.take_picked() {
+            render_config.export_directories.push(path);
             let _ = native::hlcr::config::save_config(render_config);
         }
-    }
+    });
 }
