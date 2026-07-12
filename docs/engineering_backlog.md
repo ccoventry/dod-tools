@@ -5,6 +5,8 @@
 - [ ] Refactor: Isolate native engine stream slicing mechanisms behind explicit `target_arch` macro controls.
 
 ## Immediate Tasks (Next Session)
+- [ ] **Long Demo Validation & Packet Audit:** Verify parsing and slicing stability on extended demo files (>30 mins) to ensure packet index alignments do not drift.
+- [ ] **Global Deprecation & Cruft Purge:** Aggressively identify and delete all legacy fallback paths, unused variables, and historical code workarounds across the UI and patcher crates. *Constraint: Backwards compatibility is not required for the current application lifecycle phase.*
 
 ## Completed
 - [x] Feature: Implement "Session Restore" on startup (Detects unclean exits and prompts user to restore state).

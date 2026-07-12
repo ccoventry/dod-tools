@@ -235,7 +235,10 @@ impl HlcrState {
 
         self.output_picker.update(ctx);
         if let Some(path) = self.output_picker.take_picked() {
-            self.config.primary_export_dir = Some(path.to_path_buf());
+            let pb = path.to_path_buf();
+            if !self.config.export_directories.contains(&pb) {
+                self.config.export_directories.push(pb);
+            }
             let _ = save_config(&self.config);
         }
 
@@ -475,7 +478,21 @@ impl HlcrState {
                 });
             });
 
-            ui.add_space(10.0);
+            let mut total_export_free_bytes: u64 = 0;
+            for dir in &self.config.export_directories {
+                let free = crate::sys::disk::get_available_bytes(dir);
+                if free != u64::MAX {
+                    total_export_free_bytes += free;
+                }
+            }
+            let total_export_free_gb = total_export_free_bytes as f64 / 1_073_741_824.0;
+            
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                ui.strong("Total Export Pool Free:");
+                ui.label(format!("{:.1} GB", total_export_free_gb));
+            });
+            ui.add_space(8.0);
 
             // 2. Control Buttons
             ui.horizontal(|ui| {

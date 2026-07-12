@@ -415,32 +415,7 @@ pub fn render_path_row(
     });
 }
 
-pub fn render_dir_picker_row(
-    ui: &mut egui::Ui,
-    ctx: &egui::Context,
-    label: &str,
-    picker: &mut egui_file_dialog::FileDialog,
-    current_path: &mut Option<std::path::PathBuf>,
-) -> bool {
-    let mut changed = false;
-    ui.horizontal(|ui| {
-        ui.label(label);
-        if ui.button("📁 Select...").clicked() {
-            picker.pick_directory();
-        }
-        if let Some(path) = current_path {
-            ui.label(path.to_string_lossy());
-        } else {
-            ui.colored_label(egui::Color32::YELLOW, "Warning: Defaulting to OS Drive");
-        }
-    });
-    picker.update(ctx);
-    if let Some(path) = picker.take_picked() {
-        *current_path = Some(path.to_path_buf());
-        changed = true;
-    }
-    changed
-}
+
 
 pub fn render_command_list(
     ui: &mut egui::Ui,
