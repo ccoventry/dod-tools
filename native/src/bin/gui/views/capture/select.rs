@@ -80,25 +80,38 @@ pub fn render(
             ui.add_space(8.0);
 
             if !queued_demos_shared.is_empty() {
-                widgets::render_bulk_actions(ui, &queued_demos_arc);
+                if widgets::render_bulk_actions(ui, &queued_demos_arc) {
+                    ctx.data_mut(|d| d.insert_temp(egui::Id::new("dodtools_disk_estimate_dirty"), true));
+                }
                 ui.add_space(4.0);
                 
-                let selected_streaks_count = queued_demos_shared.iter()
-                    .flat_map(|d| &d.streaks)
-                    .filter(|s| s.is_selected)
-                    .count() as f32;
-
                 {
                     let patcher_config = acquire_lock!(patcher_config_mutex);
                     
-                    let total_sequence_duration = selected_streaks_count * patcher_config.calculate_total_capture_duration(10.0);
-                    let w = patcher_config.resolution_width;
-                    let h = patcher_config.resolution_height;
-                    let fps = patcher_config.capture_fps;
-                    let mut required_bytes = native::sys::disk::calculate_raw_sequence_bytes(w, h, fps, total_sequence_duration);
-                    if patcher_config.separate_hud {
-                        required_bytes *= 3;
-                    }
+                    let cache_id = egui::Id::new("dodtools_disk_estimate_cache");
+                    let dirty_id = egui::Id::new("dodtools_disk_estimate_dirty");
+                    let is_dirty: bool = ctx.data(|d| d.get_temp(dirty_id)).unwrap_or(true);
+                    let cached_estimate: Option<u64> = ctx.data(|d| d.get_temp(cache_id));
+
+                    let required_bytes = match cached_estimate {
+                        Some(bytes) if !is_dirty => bytes,
+                        _ => {
+                            let latest_demos = acquire_lock!(queued_demos_arc);
+                            let total_sequence_duration = calculate_merged_duration(&latest_demos, &patcher_config);
+                            let w = patcher_config.resolution_width;
+                            let h = patcher_config.resolution_height;
+                            let fps = patcher_config.capture_fps;
+                            let mut bytes = native::sys::disk::calculate_raw_sequence_bytes(w, h, fps, total_sequence_duration);
+                            if patcher_config.separate_hud {
+                                bytes *= 3;
+                            }
+                            ctx.data_mut(|d| {
+                                d.insert_temp(cache_id, bytes);
+                                d.insert_temp(dirty_id, false);
+                            });
+                            bytes
+                        }
+                    };
                     let required_gb = required_bytes as f64 / 1_073_741_824.0;
 
                     let mut pool_free_bytes: u64 = 0;
@@ -244,6 +257,7 @@ pub fn render(
                                                         let mut guard = acquire_lock!(queued_demos_arc);
                                                         let queued = Arc::make_mut(&mut *guard);
                                                         queued[d_idx].streaks[streak_idx].is_selected = is_selected;
+                                                        ctx.data_mut(|d| d.insert_temp(egui::Id::new("dodtools_disk_estimate_dirty"), true));
                                                     }
                                                 });
 
@@ -287,6 +301,7 @@ pub fn render(
                                                                 sm.start_index = start_idx;
                                                                 sm.end_index   = end_idx;
                                                                 sm.update_visuals();
+                                                                ctx.data_mut(|d| d.insert_temp(egui::Id::new("dodtools_disk_estimate_dirty"), true));
                                                             }
                                                         });
 
@@ -337,6 +352,7 @@ pub fn render(
                     .collect();
                 removals.sort_unstable_by(|a, b| b.cmp(a));
 
+                let mut estimate_changed = false;
                 for action in &actions_to_apply {
                     match action {
                         DemoAction::SelectAll(idx) => {
@@ -350,6 +366,7 @@ pub fn render(
                                     s.is_selected = true;
                                 }
                             }
+                            estimate_changed = true;
                         }
                         DemoAction::DeselectAll(idx) => {
                             let mut guard = acquire_lock!(queued_demos_arc);
@@ -357,6 +374,7 @@ pub fn render(
                             if let Some(demo) = queued.get_mut(*idx) {
                                 for s in &mut demo.streaks { s.is_selected = false; }
                             }
+                            estimate_changed = true;
                         }
                         DemoAction::RemoveDemo(_) => {} // handled below
                     }
@@ -367,6 +385,10 @@ pub fn render(
                     if idx < queued.len() {
                         queued.remove(idx);
                     }
+                    estimate_changed = true;
+                }
+                if estimate_changed {
+                    ctx.data_mut(|d| d.insert_temp(egui::Id::new("dodtools_disk_estimate_dirty"), true));
                 }
 
                 // ── Global bulk-action bar ───────────────────────────────────────────
@@ -392,8 +414,9 @@ pub fn render(
 
             ui.add_space(8.0);
 
+            let mut highlight_changed = false;
             egui::CollapsingHeader::new("Highlight Capture Settings").default_open(true).show(ui, |ui| {
-                panels::render_highlight_settings_panel(
+                highlight_changed = panels::render_highlight_settings_panel(
                     ui,
                     ctx,
                     &mut patcher_config,
@@ -403,6 +426,9 @@ pub fn render(
                     tree_demo_cache,
                 );
             });
+            if highlight_changed {
+                ctx.data_mut(|d| d.insert_temp(egui::Id::new("dodtools_disk_estimate_dirty"), true));
+            }
 
             ui.add_space(8.0);
 
@@ -434,12 +460,15 @@ pub fn render(
                         });
                     }
                     
+                    let mut dir_changed = false;
                     if let Some((i, j)) = swap_indices {
                         patcher_config.capture_directories.swap(i, j);
                         crate::settings::save_patcher_config(&patcher_config);
+                        dir_changed = true;
                     } else if let Some(idx) = to_remove {
                         patcher_config.capture_directories.remove(idx);
                         crate::settings::save_patcher_config(&patcher_config);
+                        dir_changed = true;
                     }
                     
                     static DRIVE_PICKER: std::sync::OnceLock<Mutex<egui_file_dialog::FileDialog>> = std::sync::OnceLock::new();
@@ -453,14 +482,18 @@ pub fn render(
                     if let Some(path) = drive_picker.take_picked() {
                         patcher_config.capture_directories.push(path);
                         crate::settings::save_patcher_config(&patcher_config);
+                        dir_changed = true;
+                    }
+                    
+                    let config_changed = panels::render_capture_config_panel(ui, ctx, &mut patcher_config);
+                    if dir_changed || config_changed {
+                        ctx.data_mut(|d| d.insert_temp(egui::Id::new("dodtools_disk_estimate_dirty"), true));
                     }
                 });
                 
                 ui.add_space(10.0);
                 ui.separator();
                 ui.add_space(6.0);
-
-                panels::render_capture_config_panel(ui, ctx, &mut patcher_config);
             });
 
             ui.add_space(8.0);
@@ -493,4 +526,59 @@ pub fn render(
             );
         }
     });
+}
+
+fn calculate_merged_duration(data: &[DemoData], config: &PatcherConfig) -> f32 {
+    let mut total_duration = 0.0;
+    
+    // Group all selected streaks by demo path and player
+    let mut grouped: std::collections::HashMap<(String, Option<String>), Vec<crate::types::HighlightStreak>> = std::collections::HashMap::new();
+    for demo in data {
+        for streak in &demo.streaks {
+            if streak.is_selected {
+                if !demo.is_pov || Some(streak.player_index) == demo.local_player_index {
+                    grouped.entry((demo.path.to_string_lossy().to_string(), Some(streak.target_player.clone())))
+                           .or_default()
+                           .push(streak.clone());
+                }
+            }
+        }
+    }
+    
+    for (_, mut streaks) in grouped {
+        if streaks.is_empty() {
+            continue;
+        }
+        // Sort by start_tick
+        streaks.sort_by_key(|s| s.start_tick);
+        
+        let engine_tickrate = 100.0;
+        
+        // Merge overlapping streaks
+        let mut merged: Vec<(i32, i32)> = Vec::new();
+        for s in streaks {
+            let start = s.start_tick;
+            let end = s.end_tick;
+            if merged.is_empty() {
+                merged.push((start, end));
+            } else {
+                let dynamic_pre_roll_ticks = (config.pre_roll_seconds * engine_tickrate) as i32;
+                let dynamic_post_roll_ticks = (config.post_roll_seconds * engine_tickrate) as i32;
+                let adjusted_start = (start - dynamic_pre_roll_ticks).max(0);
+                let last = merged.last_mut().unwrap();
+                if adjusted_start <= last.1 + dynamic_post_roll_ticks {
+                    last.1 = last.1.max(end);
+                } else {
+                    merged.push((start, end));
+                }
+            }
+        }
+        
+        for (start, end) in merged {
+            let anchor_duration = ((end - start) as f32) / engine_tickrate;
+            total_duration += config.calculate_total_capture_duration(anchor_duration);
+        }
+    }
+    
+    total_duration
 }
