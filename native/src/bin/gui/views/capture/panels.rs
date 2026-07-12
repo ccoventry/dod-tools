@@ -272,37 +272,9 @@ pub fn render_highlight_settings_panel(
 
 pub fn render_capture_config_panel(
     ui: &mut egui::Ui,
-    ctx: &egui::Context,
+    _ctx: &egui::Context,
     config: &mut PatcherConfig,
 ) {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        static CAPTURE_PRIMARY_PICKER: std::sync::OnceLock<Mutex<egui_file_dialog::FileDialog>> = std::sync::OnceLock::new();
-        static CAPTURE_BACKUP_PICKER: std::sync::OnceLock<Mutex<egui_file_dialog::FileDialog>> = std::sync::OnceLock::new();
-        
-        let mut cap_primary_picker = acquire_lock!(CAPTURE_PRIMARY_PICKER.get_or_init(|| Mutex::new(create_pinned_file_dialog())));
-        if widgets::render_dir_picker_row(
-            ui,
-            ctx,
-            "Primary Capture Directory (Raw BMPs):",
-            &mut cap_primary_picker,
-            &mut config.primary_media_dir,
-        ) {
-            crate::settings::save_patcher_config(config);
-        }
-
-        let mut cap_backup_picker = acquire_lock!(CAPTURE_BACKUP_PICKER.get_or_init(|| Mutex::new(create_pinned_file_dialog())));
-        if widgets::render_dir_picker_row(
-            ui,
-            ctx,
-            "Backup Capture Directory:",
-            &mut cap_backup_picker,
-            &mut config.backup_media_dir,
-        ) {
-            crate::settings::save_patcher_config(config);
-        }
-    }
-
     ui.add_space(8.0);
 
     // Row 4: Resolution & Capture FPS

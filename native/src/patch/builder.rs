@@ -163,20 +163,21 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
         }
     }
     
-    // Remove stale config from output_dir if configured
-    if let Some(ref out_dir) = config.output_dir {
-        let _ = std::fs::remove_file(out_dir.join("dodtools_helper.cfg"));
-        let _ = std::fs::remove_file(out_dir.join("dodtools_capture_done.cfg"));
-        let _ = std::fs::remove_file(out_dir.join("dod_quit.cfg"));
-        
-        if let Ok(entries) = std::fs::read_dir(out_dir) {
-            for entry in entries.flatten() {
-                let filename = entry.file_name().to_string_lossy().to_string();
-                if filename.starts_with("dodtools_chain_") && filename.ends_with(".cfg") {
-                    let _ = std::fs::remove_file(entry.path());
-                }
-            }
-        }
+    // ── AOT disk-space simulation ─────────────────────────────────────────────
+    // Snapshot current free bytes for every configured capture directory so we
+    // can route each clip to the drive with sufficient headroom at build time.
+    const FAILOVER_THRESHOLD: u64 = 15 * 1024 * 1024 * 1024; // 15 GiB
+    let mut drive_free: Vec<u64> = config
+        .capture_directories
+        .iter()
+        .map(|p| crate::sys::disk::get_available_bytes(p))
+        .collect();
+    let mut active_drive_idx: usize = 0;
+    // If no capture directories are configured, fall back to a single sentinel
+    // that has "unlimited" free space so existing single-drive behaviour is
+    // preserved without an error.
+    if drive_free.is_empty() {
+        drive_free.push(u64::MAX);
     }
     
     let active_export_dir = config.primary_media_dir.clone().unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
@@ -213,7 +214,8 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
         let separate_hud_str = if config.separate_hud { "1" } else { "0" };
         primer_init.push(format!("mirv_movie_separate_hud {}", separate_hud_str));
 
-        let primer_out = if let Some(ref out_dir) = config.output_dir {
+        // Primer always lands on drive 0 (the highest-priority pool directory).
+        let primer_out = if let Some(out_dir) = config.capture_directories.first() {
             out_dir.join("primer.dem")
         } else {
             std::path::PathBuf::from("primer.dem")
@@ -251,6 +253,70 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
 
         let demo_fps = streaks.first().map(|s| s.demo_fps).filter(|&fps| fps > 0.0).unwrap_or(30.0);
 
+        let demo_name = format!("chain_{:02}", job_idx + 1);
+        let next_demo_name = format!("chain_{:02}", job_idx + 2);
+        let output_name = format!("{}.dem", demo_name);
+        let path = std::path::Path::new(&source_demo);
+        let mut output_demo = path.with_file_name(&output_name);
+
+        // ── AOT failover routing ──────────────────────────────────────────────
+        // Estimate clip size: raw BMP sequence bytes for this clip's duration.
+        let anchor_duration = {
+            let first_tick = streaks.iter().map(|s| s.start_tick).min().unwrap_or(0);
+            let last_tick  = streaks.iter().map(|s| s.end_tick).max().unwrap_or(0);
+            ((last_tick - first_tick) as f32) / demo_fps.max(1.0)
+        };
+        let clip_duration_secs = config.calculate_total_capture_duration(anchor_duration);
+        let clip_byte_estimate = crate::sys::disk::calculate_raw_sequence_bytes(
+            config.resolution_width,
+            config.resolution_height,
+            config.capture_fps,
+            clip_duration_secs,
+        );
+
+        // Deduct from active drive; advance if below threshold.
+        if drive_free[active_drive_idx] >= clip_byte_estimate {
+            drive_free[active_drive_idx] -= clip_byte_estimate;
+        } else {
+            drive_free[active_drive_idx] = 0;
+        }
+        if drive_free[active_drive_idx] < FAILOVER_THRESHOLD {
+            active_drive_idx += 1;
+            if active_drive_idx >= drive_free.len() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!(
+                        "AOT routing exhausted all {} drive(s) — insufficient space for clip {}.",
+                        config.capture_directories.len(),
+                        job_idx + 1
+                    ),
+                ));
+            }
+        }
+
+        // Resolve physical output path.
+        if let Some(out_dir) = config.capture_directories.get(active_drive_idx) {
+            if !out_dir.exists() {
+                let _ = std::fs::create_dir_all(out_dir);
+            }
+            output_demo = out_dir.join(&output_name);
+        }
+
+        // Short junction name for this clip (avoids GoldSrc Cbuf string limits).
+        let pool_junction_name = format!("dod_pool_{}", active_drive_idx);
+
+        if job_idx < total_jobs - 1 {
+            helper_cfg_content.push_str(&format!("alias {}_next \"playdemo {}\"\n", demo_name, next_demo_name));
+        } else {
+            helper_cfg_content.push_str(&format!("alias {}_next \"sys_capture_done_path\"\n", demo_name));
+        }
+
+        // Bake the pool-relative path instead of an absolute path.
+        helper_cfg_content.push_str(&format!(
+            "alias {}_path \"mirv_movie_filename {}/{}\"\n",
+            demo_name, pool_junction_name, demo_name
+        ));
+
         // Overlap Merge Logic
         let mut merged_streaks: Vec<CaptureStreak> = Vec::new();
         for current in streaks {
@@ -269,28 +335,6 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
                 }
             }
         }
-
-        let demo_name = format!("chain_{:02}", job_idx + 1);
-        let next_demo_name = format!("chain_{:02}", job_idx + 2);
-        let output_name = format!("{}.dem", demo_name);
-        let path = std::path::Path::new(&source_demo);
-        let mut output_demo = path.with_file_name(&output_name);
-
-        if let Some(ref out_dir) = config.output_dir {
-            if !out_dir.exists() {
-                let _ = std::fs::create_dir_all(out_dir);
-            }
-            output_demo = out_dir.join(&output_name);
-        }
-
-
-        if job_idx < total_jobs - 1 {
-            helper_cfg_content.push_str(&format!("alias {}_next \"playdemo {}\"\n", demo_name, next_demo_name));
-        } else {
-            helper_cfg_content.push_str(&format!("alias {}_next \"sys_capture_done_path\"\n", demo_name));
-        }
-        
-        helper_cfg_content.push_str(&format!("alias {}_path \"mirv_movie_filename dodtools_session/{}\"\n", demo_name, demo_name));
 
         // Generate scheduled commands
         let mut scheduled_commands = Vec::new();
@@ -452,6 +496,7 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
 pub struct WorkspaceGuard {
     pub session_junction: std::path::PathBuf,
     pub exit_trigger: std::path::PathBuf,
+    pub pool_junctions: Vec<std::path::PathBuf>,
     pub auto_clear_logs: bool,
     pub auto_clear_temp_demos: bool,
     pub auto_clear_previews: bool,
@@ -464,6 +509,14 @@ impl Drop for WorkspaceGuard {
         if let Err(e) = std::fs::remove_dir(&self.session_junction) {
             if e.kind() != std::io::ErrorKind::NotFound {
                 log::warn!("[WorkspaceGuard::drop] Failed to remove session_junction {:?}: {}", self.session_junction, e);
+            }
+        }
+        // Unlink every dod_pool_N junction created for the failover pool.
+        for junction in &self.pool_junctions {
+            if let Err(e) = std::fs::remove_dir(junction) {
+                if e.kind() != std::io::ErrorKind::NotFound {
+                    log::warn!("[WorkspaceGuard::drop] Failed to remove pool junction {:?}: {}", junction, e);
+                }
             }
         }
         // Signal dirs (DOD_TOOLS_EXIT_TRIGGER) are directories, not files.

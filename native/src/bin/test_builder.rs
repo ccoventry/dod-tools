@@ -17,7 +17,7 @@ fn main() {
             }
 
             let mut config = PatcherConfig::default();
-            config.output_dir = Some(std::path::PathBuf::from("demos"));
+            config.capture_directories = vec![std::path::PathBuf::from("demos")];
             config.fast_forward_speed = 0.05;
 
             let jobs = build_batch_queue(streaks, &config).unwrap();
