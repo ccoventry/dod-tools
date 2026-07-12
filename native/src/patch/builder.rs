@@ -275,31 +275,36 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
         );
 
         // Deduct from active drive; advance if below threshold.
-        if drive_free[active_drive_idx] >= clip_byte_estimate {
-            drive_free[active_drive_idx] -= clip_byte_estimate;
-        } else {
-            drive_free[active_drive_idx] = 0;
-        }
-        if drive_free[active_drive_idx] < FAILOVER_THRESHOLD {
-            active_drive_idx += 1;
-            if active_drive_idx >= drive_free.len() {
+        let mut drives_checked = 0;
+        let num_drives = drive_free.len();
+        loop {
+            if drives_checked >= num_drives {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::Other,
-                    format!(
-                        "AOT routing exhausted all {} drive(s) — insufficient space for clip {}.",
-                        config.capture_directories.len(),
-                        job_idx + 1
-                    ),
+                    "Insufficient space across all mapped drives"
                 ));
+            }
+
+            if drive_free[active_drive_idx] >= clip_byte_estimate + FAILOVER_THRESHOLD {
+                drive_free[active_drive_idx] -= clip_byte_estimate;
+                break;
+            } else {
+                active_drive_idx += 1;
+                if active_drive_idx >= num_drives {
+                    active_drive_idx = 0; // Wrap around if needed, though they are priority ordered
+                }
+                drives_checked += 1;
             }
         }
 
         // Resolve physical output path.
         if let Some(out_dir) = config.capture_directories.get(active_drive_idx) {
-            if !out_dir.exists() {
-                let _ = std::fs::create_dir_all(out_dir);
+            let absolute_drive = std::path::absolute(out_dir)?;
+            let target_dir = absolute_drive.join(&config.session_id);
+            if !target_dir.exists() {
+                let _ = std::fs::create_dir_all(&target_dir);
             }
-            output_demo = out_dir.join(&output_name);
+            output_demo = target_dir.join(&output_name);
         }
 
         // Short junction name for this clip (avoids GoldSrc Cbuf string limits).

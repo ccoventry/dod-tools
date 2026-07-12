@@ -71,7 +71,8 @@ pub fn render_highlight_settings_panel(
     draft_settings: &mut AppSettings,
     subdir_cache: &mut HashMap<PathBuf, Vec<PathBuf>>,
     tree_demo_cache: &mut HashMap<PathBuf, usize>,
-) {
+) -> bool {
+    let mut changed = false;
     ui.label("Init Commands (startup):");
     ui.add_space(4.0);
     widgets::render_command_list(
@@ -101,6 +102,7 @@ pub fn render_highlight_settings_panel(
     let mut val = config.initial_delay;
     if ui.add(egui::Slider::new(&mut val, 0.0..=30.0).step_by(0.5).suffix("s")).changed() {
         config.initial_delay = val;
+        changed = true;
     }
 
     ui.label("Fast-Forward Speed:");
@@ -115,24 +117,28 @@ pub fn render_highlight_settings_panel(
     let mut val = config.pre_roll_seconds;
     if ui.add(egui::Slider::new(&mut val, 0.0..=30.0).step_by(0.5).suffix("s")).changed() {
         config.pre_roll_seconds = val;
+        changed = true;
     }
 
     ui.label("Record Start Lead:");
     let mut val = config.record_start_lead;
     if ui.add(egui::Slider::new(&mut val, 0.0..=10.0).step_by(0.5).suffix("s")).changed() {
         config.record_start_lead = val;
+        changed = true;
     }
 
     ui.label("Record Stop Trail:");
     let mut val = config.record_stop_trail;
     if ui.add(egui::Slider::new(&mut val, 0.0..=10.0).step_by(0.5).suffix("s")).changed() {
         config.record_stop_trail = val;
+        changed = true;
     }
 
     ui.label("Post-Record Buffer:");
     let mut val = config.post_roll_seconds;
     if ui.add(egui::Slider::new(&mut val, 0.0..=30.0).step_by(0.5).suffix("s")).changed() {
         config.post_roll_seconds = val;
+        changed = true;
     }
 
     // ── Mock Execution Timeline Visualizer ─────────────────────
@@ -253,40 +259,47 @@ pub fn render_highlight_settings_panel(
             ctx.request_repaint();
         }
     });
+    changed
 }
 
 pub fn render_capture_config_panel(
     ui: &mut egui::Ui,
     _ctx: &egui::Context,
     config: &mut PatcherConfig,
-) {
+) -> bool {
+    let mut changed = false;
     ui.add_space(8.0);
 
     // Row 4: Resolution & Capture FPS
     ui.horizontal(|ui| {
         ui.label("Width:");
-        ui.add(egui::DragValue::new(&mut config.resolution_width)
+        let r1 = ui.add(egui::DragValue::new(&mut config.resolution_width)
             .range(640..=7680).speed(1));
+        changed |= r1.changed();
         ui.add_space(10.0);
         ui.label("Height:");
-        ui.add(egui::DragValue::new(&mut config.resolution_height)
+        let r2 = ui.add(egui::DragValue::new(&mut config.resolution_height)
             .range(480..=4320).speed(1));
+        changed |= r2.changed();
         ui.add_space(10.0);
         ui.label("Capture FPS:");
-        ui.add(egui::DragValue::new(&mut config.capture_fps)
+        let r3 = ui.add(egui::DragValue::new(&mut config.capture_fps)
             .range(30..=1000).speed(1));
+        changed |= r3.changed();
     });
 
     // Row 5: Separate HUD
     ui.horizontal(|ui| {
-        ui.checkbox(&mut config.separate_hud, "Separate HUD (Alpha & Color)")
+        let r4 = ui.checkbox(&mut config.separate_hud, "Separate HUD (Alpha & Color)")
             .on_hover_text("This toggle acts as the absolute source of truth and will override any separate_hud settings in your movie.cfg.");
+        changed |= r4.changed();
     });
 
     // Row 5.5: Exit on Finish
     ui.horizontal(|ui| {
-        ui.checkbox(&mut config.exit_on_finish, "Auto-Quit Game on Completion")
+        let r5 = ui.checkbox(&mut config.exit_on_finish, "Auto-Quit Game on Completion")
             .on_hover_text("If enabled, the game will automatically inject the 'quit' command after the final clip to close the game.");
+        changed |= r5.changed();
     });
 
     ui.add_space(8.0);
@@ -294,15 +307,18 @@ pub fn render_capture_config_panel(
     // Row 5.75: Movie Config
     ui.horizontal(|ui| {
         ui.label("Movie Config (Optional):");
-        if ui.add(egui::TextEdit::singleline(&mut config.movie_config)
-            .hint_text("e.g., movie.cfg")).changed() {
-            
+        let r6 = ui.add(egui::TextEdit::singleline(&mut config.movie_config)
+            .hint_text("e.g., movie.cfg"));
+        if r6.changed() {
+            changed = true;
             // Aggressive sanitization
             config.movie_config.retain(|c| !c.is_whitespace());
             let sanitized = config.movie_config.trim_start_matches(|c| c == '-' || c == '+').to_string();
             config.movie_config = sanitized;
         }
     });
+
+    changed
 }
 
 pub fn render_debug_panel(

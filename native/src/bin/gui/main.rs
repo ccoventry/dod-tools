@@ -1370,6 +1370,8 @@ impl eframe::App for Gui {
                         }
                         EngineEvent::Error(err_msg) => {
                             self.capture_engine_msg = format!("Error: {}", err_msg);
+                            #[cfg(not(target_arch = "wasm32"))]
+                            crate::views::capture::set_is_patching(false);
                         }
                         EngineEvent::AllCompleted => {
                             self.capture_engine_running = false;

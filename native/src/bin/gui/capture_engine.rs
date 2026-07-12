@@ -198,10 +198,24 @@ pub fn spawn_capture_engine(
                 active_export_dir
             };
 
-            let _ = std::process::Command::new("cmd")
-                .args(&["/C", "mklink", "/J", session_junction.to_str().unwrap(), session_dir.to_str().unwrap()])
-                .output()
-                .ok();
+            let session_junction_str = session_junction.to_str().unwrap_or_default();
+            let session_dir_str = session_dir.to_str().unwrap_or_default();
+            if session_junction_str.is_empty() || session_dir_str.is_empty() {
+                log_crash_abort!(tx, "Invalid UTF-8 in session paths");
+                return;
+            }
+
+            match std::process::Command::new("cmd").args(&["/C", "mklink", "/J", session_junction_str, session_dir_str]).output() {
+                Ok(out) if !out.status.success() => {
+                    log_crash_abort!(tx, format!("mklink failed for session_junction: {}", String::from_utf8_lossy(&out.stderr)));
+                    return;
+                }
+                Err(e) => {
+                    log_crash_abort!(tx, format!("mklink command failed: {}", e));
+                    return;
+                }
+                _ => {}
+            }
 
             // ── Pool junction pre-generation ────────────────────────────────────
             // For each capture_directory, create a short NTFS junction named
@@ -214,12 +228,21 @@ pub fn spawn_capture_engine(
                 // Pre-clean any stale junction from a previous run.
                 let _ = std::fs::remove_dir(&junction_path);
                 // Ensure the target directory exists before linking.
-                let _ = std::fs::create_dir_all(target_dir);
+                if let Err(e) = std::fs::create_dir_all(target_dir) {
+                    log_crash_abort!(tx, format!("Failed to create capture directory {:?}: {}", target_dir, e));
+                    return;
+                }
+                let junction_str = junction_path.to_str().unwrap_or_default();
+                let target_str = target_dir.to_str().unwrap_or_default();
+                if junction_str.is_empty() || target_str.is_empty() {
+                    log_crash_abort!(tx, "Invalid UTF-8 in pool junction paths");
+                    return;
+                }
                 let status = std::process::Command::new("cmd")
                     .args(&[
                         "/C", "mklink", "/J",
-                        junction_path.to_str().unwrap_or_default(),
-                        target_dir.to_str().unwrap_or_default(),
+                        junction_str,
+                        target_str,
                     ])
                     .output();
                 match status {
@@ -228,11 +251,13 @@ pub fn spawn_capture_engine(
                         pool_junctions.push(junction_path);
                     }
                     Ok(out) => {
-                        log::warn!("[pool] mklink failed for dod_pool_{}: {}", idx,
-                            String::from_utf8_lossy(&out.stderr));
+                        let err_msg = String::from_utf8_lossy(&out.stderr);
+                        log_crash_abort!(tx, format!("[pool] mklink failed for dod_pool_{}: {}", idx, err_msg));
+                        return;
                     }
                     Err(e) => {
-                        log::warn!("[pool] Failed to run mklink for dod_pool_{}: {}", idx, e);
+                        log_crash_abort!(tx, format!("[pool] Failed to run mklink for dod_pool_{}: {}", idx, e));
+                        return;
                     }
                 }
             }
