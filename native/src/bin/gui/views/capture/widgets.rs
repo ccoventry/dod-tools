@@ -93,7 +93,20 @@ pub fn render_primary_actions(
                                 Ok(()) => {
                                     super::log_markdown(&format!("[PREVIEW PATCH] ✅ Done: {}", job.output_demo.display()));
                                     let sidecar_path = job.output_demo.with_extension("dodtools_preview");
-                                    let _ = std::fs::write(&sidecar_path, "");
+                                    let _ = (|| -> std::io::Result<()> {
+                                        #[cfg(windows)]
+                                        use std::os::windows::fs::OpenOptionsExt;
+                                        use std::fs::OpenOptions;
+
+                                        let mut options = OpenOptions::new();
+                                        options.write(true).create(true).truncate(true);
+
+                                        #[cfg(windows)]
+                                        options.custom_flags(0x00000002); // FILE_ATTRIBUTE_HIDDEN
+
+                                        let _file = options.open(&sidecar_path)?;
+                                        Ok(())
+                                    })();
                                 }
                                 Err(e) => super::log_markdown(&format!("[PREVIEW PATCH] ❌ Error: {}", e)),
                             }
