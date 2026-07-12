@@ -105,24 +105,6 @@ fn read_next_frame(file: &mut std::fs::File, demo_protocol: i32) -> Option<(Fram
     ))
 }
 
-fn is_injected_cmd(cmd_bytes: &[u8]) -> bool {
-    let s = String::from_utf8_lossy(cmd_bytes).to_string();
-    s.contains("cl_xhair_style")
-        || s.contains("gl_spriteblend")
-        || s.contains("r_decals")
-        || s.contains("hud_deathnotice_time")
-        || s.contains("mirv_")
-        || s.contains("playdemo")
-        || s.contains("sys_")
-        || s.contains("echo ")
-        || s.contains("stopsound")
-}
-
-fn is_injected_netmsg(payload: &[u8]) -> bool {
-    // Search for svc_director (0x33) and stuffing text command
-    payload.contains(&0x33) && (payload.contains(&b'B') || payload.contains(&b'D'))
-}
-
 fn main() {
     let path_a = Path::new("./demos/wsod25-grp_r1-dyelife_gskill_armory_h1.dem");
     let path_b = Path::new("./demos/chain_01.dem");

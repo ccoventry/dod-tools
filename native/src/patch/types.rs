@@ -125,7 +125,7 @@ pub struct PatcherConfig {
     pub initial_delay: f32,
     pub fast_forward_speed: f32,
     pub tickrate: f32,
-    pub output_dir: Option<std::path::PathBuf>,
+    pub capture_directories: Vec<std::path::PathBuf>,
     pub separate_hud: bool,
     pub resolution_width: i32,
     pub resolution_height: i32,
@@ -141,6 +141,12 @@ pub struct PatcherConfig {
     pub auto_clear_logs: bool,
     pub auto_clear_previews: bool,
     pub auto_clear_temp_demos: bool,
+}
+
+impl PatcherConfig {
+    pub fn calculate_total_capture_duration(&self, base_action_secs: f32) -> f32 {
+        self.record_start_lead + base_action_secs + self.record_stop_trail
+    }
 }
 
 impl Default for PatcherConfig {
@@ -159,7 +165,7 @@ impl Default for PatcherConfig {
             initial_delay: 3.0,
             fast_forward_speed: 0.05,
             tickrate: 100.0,
-            output_dir: None,
+            capture_directories: Vec::new(),
             separate_hud: false,
             resolution_width: 1280,
             resolution_height: 720,

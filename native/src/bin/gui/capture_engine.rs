@@ -203,9 +203,44 @@ pub fn spawn_capture_engine(
                 .output()
                 .ok();
 
+            // ── Pool junction pre-generation ────────────────────────────────────
+            // For each capture_directory, create a short NTFS junction named
+            // `dod_pool_N` inside the game's working directory (beside dod/).
+            // This gives the GoldSrc engine a fixed, short path to write BMPs to
+            // without exceeding the 64-byte Cbuf string limit.
+            let mut pool_junctions: Vec<std::path::PathBuf> = Vec::new();
+            for (idx, target_dir) in config.capture_directories.iter().enumerate() {
+                let junction_path = hl_exe_parent.join(format!("dod_pool_{}", idx));
+                // Pre-clean any stale junction from a previous run.
+                let _ = std::fs::remove_dir(&junction_path);
+                // Ensure the target directory exists before linking.
+                let _ = std::fs::create_dir_all(target_dir);
+                let status = std::process::Command::new("cmd")
+                    .args(&[
+                        "/C", "mklink", "/J",
+                        junction_path.to_str().unwrap_or_default(),
+                        target_dir.to_str().unwrap_or_default(),
+                    ])
+                    .output();
+                match status {
+                    Ok(out) if out.status.success() => {
+                        log_markdown(&format!("[pool] Junction created: {:?} -> {:?}", junction_path, target_dir));
+                        pool_junctions.push(junction_path);
+                    }
+                    Ok(out) => {
+                        log::warn!("[pool] mklink failed for dod_pool_{}: {}", idx,
+                            String::from_utf8_lossy(&out.stderr));
+                    }
+                    Err(e) => {
+                        log::warn!("[pool] Failed to run mklink for dod_pool_{}: {}", idx, e);
+                    }
+                }
+            }
+
             let _guard = native::patch::WorkspaceGuard {
                 session_junction: session_junction.clone(),
                 exit_trigger: exit_trigger.clone(),
+                pool_junctions: pool_junctions.clone(),
                 auto_clear_logs: config.auto_clear_logs,
                 auto_clear_temp_demos: config.auto_clear_temp_demos,
                 auto_clear_previews: config.auto_clear_previews,
@@ -467,6 +502,9 @@ pub fn spawn_capture_engine(
                 std::fs::remove_dir_all(&dummy_path).ok();
                 std::fs::remove_dir_all(&exit_trigger).ok();
                 let _ = std::fs::remove_dir(&session_junction);
+                for junction in &pool_junctions {
+                    let _ = std::fs::remove_dir(junction);
+                }
                 let _ = tx.send(EngineEvent::Cancelled);
                 return;
             }
@@ -475,6 +513,9 @@ pub fn spawn_capture_engine(
             std::fs::remove_dir_all(&dummy_path).ok();
             std::fs::remove_dir_all(&exit_trigger).ok();
             let _ = std::fs::remove_dir(&session_junction);
+            for junction in &pool_junctions {
+                let _ = std::fs::remove_dir(junction);
+            }
 
             let _ = tx.send(EngineEvent::Finished("Batch Queue".into()));
 

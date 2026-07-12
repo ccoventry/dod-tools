@@ -4,64 +4,6 @@ use crate::types::{DemoData, CaptureStudioState};
 use super::{is_patching, set_is_patching};
 use super::payload::{build_capture_streak_payload, StreakFilter};
 
-pub struct DiskEstimate {
-    pub _required_bytes: u64,
-    pub available_bytes: u64,
-    pub required_gb: f64,
-    pub available_gb: f64,
-    pub exceeds_space: bool,
-    pub is_missing_primary_dir: bool,
-}
-
-pub fn compute_disk_estimate(config: &PatcherConfig, selected_count: f32) -> DiskEstimate {
-    let total_sequence_duration = selected_count * (config.pre_roll_seconds + config.post_roll_seconds + 10.0);
-    let w = config.resolution_width;
-    let h = config.resolution_height;
-    let fps = config.capture_fps;
-    let mut required_bytes = native::sys::disk::calculate_raw_sequence_bytes(w, h, fps, total_sequence_duration);
-    if config.separate_hud {
-        required_bytes *= 3;
-    }
-    
-    let is_missing_primary_dir = config.primary_media_dir.is_none();
-    let check_path = config.primary_media_dir.clone().unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
-    let available_bytes = if is_missing_primary_dir { 0 } else { native::sys::disk::get_available_bytes(&check_path) };
-    
-    let exceeds_space = required_bytes > available_bytes && available_bytes != u64::MAX;
-    
-    let required_gb = required_bytes as f64 / 1_073_741_824.0;
-    let available_gb = if available_bytes == u64::MAX { 999.9 } else { available_bytes as f64 / 1_073_741_824.0 };
-    
-    DiskEstimate {
-        _required_bytes: required_bytes,
-        available_bytes,
-        required_gb,
-        available_gb,
-        exceeds_space,
-        is_missing_primary_dir,
-    }
-}
-
-pub fn render_disk_estimate_row(ui: &mut egui::Ui, estimate: &DiskEstimate) {
-    ui.horizontal(|ui| {
-        ui.strong("Disk Space Estimate:");
-        if estimate.is_missing_primary_dir {
-            ui.label(format!("Required: {:.1} GB / Available: N/A", estimate.required_gb));
-        } else if estimate.available_bytes == u64::MAX {
-            ui.label(format!("Required: {:.1} GB / Available: Unknown", estimate.required_gb));
-        } else {
-            let color = if estimate.exceeds_space { egui::Color32::RED } else { ui.visuals().text_color() };
-            ui.colored_label(color, format!("Required: {:.1} GB / Available: {:.1} GB", estimate.required_gb, estimate.available_gb));
-        }
-    });
-
-    if estimate.is_missing_primary_dir {
-        ui.colored_label(egui::Color32::YELLOW, "⚠️ Please select a Primary Directory to enable capturing.");
-    } else if estimate.exceeds_space {
-        ui.colored_label(egui::Color32::RED, "⚠️ WARNING: Not enough free disk space on the target drive!");
-    }
-}
-
 
 pub fn render_bulk_actions(
     ui: &mut egui::Ui,
@@ -111,14 +53,6 @@ pub fn render_primary_actions(
 
     let is_running = is_patching();
     let queued_demos = super::acquire_lock!(queued_demos_shared).clone();
-
-    let selected_streaks_count = queued_demos.iter()
-        .flat_map(|d| &d.streaks)
-        .filter(|s| s.is_selected)
-        .count() as f32;
-
-    let disk_estimate = compute_disk_estimate(patcher_config, selected_streaks_count);
-
     ui.horizontal(|ui| {
         let can_preview = !is_running && !queued_demos.is_empty();
         if ui.add_enabled(can_preview, egui::Button::new("🔍 Add Director Events for Previewing"))
@@ -137,7 +71,7 @@ pub fn render_primary_actions(
                 use native::patch::build_preview_patch_jobs;
                 let jobs = build_preview_patch_jobs(
                     preview_payload,
-                    patcher_config.output_dir.as_deref(),
+                    patcher_config.capture_directories.first().map(|p| p.as_path()),
                 );
                 let tx_clone = tx.clone();
                 let ctx_clone = ctx.clone();
@@ -176,7 +110,7 @@ pub fn render_primary_actions(
         if ui.button("🗑️ Clear Previews").clicked() {
             let mut verified_previews = Vec::new();
             let mut dirs_to_scan = std::collections::HashSet::new();
-            if let Some(ref out_dir) = patcher_config.output_dir {
+            if let Some(out_dir) = patcher_config.capture_directories.first() {
                 dirs_to_scan.insert(out_dir.clone());
             }
             for demo in queued_demos.iter() {
@@ -207,7 +141,7 @@ pub fn render_primary_actions(
         ui.add_space(16.0);
 
         let btn = egui::Button::new("Proceed to Capture ->");
-        if ui.add_enabled(!is_running && !queued_demos.is_empty() && !disk_estimate.exceeds_space && !disk_estimate.is_missing_primary_dir, btn).clicked() {
+        if ui.add_enabled(!is_running && !queued_demos.is_empty() && !patcher_config.capture_directories.is_empty(), btn).clicked() {
             #[cfg(not(target_arch = "wasm32"))]
             {
                 use sysinfo::{System, SystemExt, DiskExt};

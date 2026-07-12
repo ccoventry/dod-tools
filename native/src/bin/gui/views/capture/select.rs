@@ -82,6 +82,61 @@ pub fn render(
             if !queued_demos_shared.is_empty() {
                 widgets::render_bulk_actions(ui, &queued_demos_arc);
                 ui.add_space(4.0);
+                
+                let selected_streaks_count = queued_demos_shared.iter()
+                    .flat_map(|d| &d.streaks)
+                    .filter(|s| s.is_selected)
+                    .count() as f32;
+
+                {
+                    let patcher_config = acquire_lock!(patcher_config_mutex);
+                    
+                    let total_sequence_duration = selected_streaks_count * patcher_config.calculate_total_capture_duration(10.0);
+                    let w = patcher_config.resolution_width;
+                    let h = patcher_config.resolution_height;
+                    let fps = patcher_config.capture_fps;
+                    let mut required_bytes = native::sys::disk::calculate_raw_sequence_bytes(w, h, fps, total_sequence_duration);
+                    if patcher_config.separate_hud {
+                        required_bytes *= 3;
+                    }
+                    let required_gb = required_bytes as f64 / 1_073_741_824.0;
+
+                    let mut pool_free_bytes: u64 = 0;
+                    let mut drives_info = Vec::new();
+
+                    for path in &patcher_config.capture_directories {
+                        let free_bytes = native::sys::disk::get_available_bytes(path);
+                        if free_bytes != u64::MAX {
+                            pool_free_bytes += free_bytes;
+                        }
+                        let free_gb = if free_bytes == u64::MAX { 0.0 } else { free_bytes as f64 / 1_073_741_824.0 };
+                        let path_str = path.to_string_lossy().to_string();
+                        let shortened_path = if path_str.len() > 30 {
+                            let head = if path_str.len() >= 3 { &path_str[..3] } else { "" };
+                            format!("{}...{}", head, &path_str[path_str.len() - 24..])
+                        } else {
+                            path_str
+                        };
+                        drives_info.push((shortened_path, free_gb));
+                    }
+                    
+                    let pool_total_gb = pool_free_bytes as f64 / 1_073_741_824.0;
+
+                    ui.horizontal(|ui| {
+                        ui.strong("Disk Space Estimate:");
+                        ui.label(format!("Disk Space Pool: Required: {:.1} GB / Total Free: {:.1} GB", required_gb, pool_total_gb));
+                    });
+
+                    for (shortened_path, free_gb) in &drives_info {
+                        ui.label(format!("  ↳ {} : {:.1} GB Free", shortened_path, free_gb));
+                    }
+
+                    if required_gb > pool_total_gb {
+                        ui.colored_label(egui::Color32::RED, "⚠ WARNING: Not enough total free disk space across the capture pool!");
+                    }
+                }
+                
+                ui.add_space(8.0);
                 ui.strong("Discovered Highlight Streaks");
                 ui.add_space(4.0);
 
@@ -352,6 +407,59 @@ pub fn render(
             ui.add_space(8.0);
 
             egui::CollapsingHeader::new("⚡ Capture Configuration").default_open(true).show(ui, |ui| {
+                ui.add_enabled_ui(!super::is_patching(), |ui| {
+                    ui.strong("Mapped Capture Output Drives (Failover Priority Vector):");
+                    ui.add_space(4.0);
+                    
+                    let mut to_remove = None;
+                    let mut swap_indices = None;
+                    let dirs_len = patcher_config.capture_directories.len();
+                    for (idx, dir) in patcher_config.capture_directories.iter().enumerate() {
+                        ui.horizontal(|ui| {
+                            ui.label(format!("{}:", idx + 1));
+                            ui.label(dir.to_string_lossy());
+                            if idx > 0 {
+                                if ui.button("⬆").clicked() {
+                                    swap_indices = Some((idx, idx - 1));
+                                }
+                            }
+                            if idx < dirs_len.saturating_sub(1) {
+                                if ui.button("⬇").clicked() {
+                                    swap_indices = Some((idx, idx + 1));
+                                }
+                            }
+                            if ui.button("🗑 Remove").clicked() {
+                                to_remove = Some(idx);
+                            }
+                        });
+                    }
+                    
+                    if let Some((i, j)) = swap_indices {
+                        patcher_config.capture_directories.swap(i, j);
+                        crate::settings::save_patcher_config(&patcher_config);
+                    } else if let Some(idx) = to_remove {
+                        patcher_config.capture_directories.remove(idx);
+                        crate::settings::save_patcher_config(&patcher_config);
+                    }
+                    
+                    static DRIVE_PICKER: std::sync::OnceLock<Mutex<egui_file_dialog::FileDialog>> = std::sync::OnceLock::new();
+                    let mut drive_picker = acquire_lock!(DRIVE_PICKER.get_or_init(|| Mutex::new(egui_file_dialog::FileDialog::new())));
+                    
+                    if ui.button("➕ Add Drive").clicked() {
+                        drive_picker.pick_directory();
+                    }
+                    
+                    drive_picker.update(ctx);
+                    if let Some(path) = drive_picker.take_picked() {
+                        patcher_config.capture_directories.push(path);
+                        crate::settings::save_patcher_config(&patcher_config);
+                    }
+                });
+                
+                ui.add_space(10.0);
+                ui.separator();
+                ui.add_space(6.0);
+
                 panels::render_capture_config_panel(ui, ctx, &mut patcher_config);
             });
 
@@ -371,18 +479,8 @@ pub fn render(
 
         ui.add_space(8.0);
 
-        let selected_streaks_count = queued_demos_shared.iter()
-            .flat_map(|d| &d.streaks)
-            .filter(|s| s.is_selected)
-            .count() as f32;
-
         {
             let mut patcher_config = acquire_lock!(patcher_config_mutex);
-            let disk_estimate = widgets::compute_disk_estimate(&patcher_config, selected_streaks_count);
-            widgets::render_disk_estimate_row(ui, &disk_estimate);
-
-            ui.add_space(8.0);
-
             // ── Proceed to Capture Button + async patch_worker ───────────────────
             widgets::render_primary_actions(
                 ui,
