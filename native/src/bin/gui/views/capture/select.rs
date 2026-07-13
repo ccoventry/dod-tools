@@ -207,13 +207,13 @@ pub fn render(
                                          .striped(true)
                                          .vscroll(false)
                                          .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-                                         .column(Column::initial(30.0))   // [Row Number]
-                                         .column(Column::auto())          // [Checkbox]
-                                         .column(Column::exact(140.0))    // [Kill Range]
-                                         .column(Column::exact(40.0))     // [Kills]
-                                         .column(Column::initial(70.0).resizable(true)) // [Timestamp]
-                                         .column(Column::exact(50.0))     // [Duration]
-                                         .column(Column::remainder())     // [Details]
+                                         .column(Column::initial(30.0))     // [Row Number]
+                                         .column(Column::auto())            // [Checkbox]
+                                         .column(Column::exact(140.0))      // [Kill Range]
+                                         .column(Column::exact(40.0))       // [Kills]
+                                         .column(Column::initial(70.0))     // [Timestamp]
+                                         .column(Column::exact(50.0))       // [Duration]
+                                         .column(Column::remainder())       // [Details]
                                          .header(20.0, |mut header| {
                                              header.col(|ui| { ui.strong("Row #"); });
                                              header.col(|ui| { ui.strong("Sel"); });

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use egui_extras::{TableBuilder, Column};
-use native::patch::{PatcherConfig, CommandRelation};
+use native::patch::{PatcherConfig, CommandRelation, DriveAllocationStrategy};
 use crate::settings::{AppSettings, save_settings, apply_language_setting};
 use super::widgets;
 use super::acquire_lock;
@@ -316,6 +316,23 @@ pub fn render_capture_config_panel(
             let sanitized = config.movie_config.trim_start_matches(|c| c == '-' || c == '+').to_string();
             config.movie_config = sanitized;
         }
+    });
+
+    ui.add_space(8.0);
+
+    // Row 5.8: Drive Allocation Strategy
+    ui.horizontal(|ui| {
+        ui.label("Drive Allocation Strategy:");
+        egui::ComboBox::from_id_salt("drive_allocation_strategy_combo")
+            .selected_text(match config.allocation_strategy {
+                DriveAllocationStrategy::MaximizeSpace => "Maximize Space (First Fit)",
+                DriveAllocationStrategy::Chronological => "Chronological (Next Fit)",
+            })
+            .show_ui(ui, |ui| {
+                let r1 = ui.selectable_value(&mut config.allocation_strategy, DriveAllocationStrategy::MaximizeSpace, "Maximize Space (First Fit)");
+                let r2 = ui.selectable_value(&mut config.allocation_strategy, DriveAllocationStrategy::Chronological, "Chronological (Next Fit)");
+                changed |= r1.changed() || r2.changed();
+            });
     });
 
     changed

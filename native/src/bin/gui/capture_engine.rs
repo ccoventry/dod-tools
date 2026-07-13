@@ -191,7 +191,10 @@ pub fn spawn_capture_engine(
                 config.save_local_patched_copy,
             );
 
-            let active_export_dir = config.primary_media_dir.clone().unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+            let active_export_dir = config.primary_media_dir.clone().unwrap_or_else(|| {
+                let exe_path = std::env::current_exe().expect("Failed to resolve absolute exe path");
+                exe_path.parent().expect("Exe has no parent directory").to_path_buf()
+            });
             let session_dir = if !config.session_id.is_empty() {
                 active_export_dir.join(&config.session_id)
             } else {
@@ -396,8 +399,11 @@ pub fn spawn_capture_engine(
                 if config.save_local_patched_copy {
                     #[cfg(not(target_arch = "wasm32"))]
                     {
-                        let _ = std::fs::create_dir_all("demos");
-                        let local_dest = std::path::Path::new("demos").join(&demo_filename);
+                        let exe_path = std::env::current_exe().expect("Failed to resolve absolute exe path");
+                        let base_dir = exe_path.parent().expect("Exe has no parent directory").to_path_buf();
+                        let demos_dir = base_dir.join("demos");
+                        let _ = std::fs::create_dir_all(&demos_dir);
+                        let local_dest = demos_dir.join(&demo_filename);
                         match std::fs::copy(&job.patched_demo_path, &local_dest) {
                             Ok(_) => log_markdown(&format!("- [IO] Saved local copy to demos/{}", demo_filename)),
                             Err(e) => log::warn!("Failed to save local patched copy to {:?}: {}", local_dest, e),
@@ -422,7 +428,10 @@ pub fn spawn_capture_engine(
                 return;
             }
 
-            let active_export_dir = config.primary_media_dir.clone().unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+            let active_export_dir = config.primary_media_dir.clone().unwrap_or_else(|| {
+                let exe_path = std::env::current_exe().expect("Failed to resolve absolute exe path");
+                exe_path.parent().expect("Exe has no parent directory").to_path_buf()
+            });
 
             #[cfg(not(target_arch = "wasm32"))]
             {
@@ -456,7 +465,10 @@ pub fn spawn_capture_engine(
                 condebug_flag, width_str, height_str
             );
 
-            let primary_dir = config.primary_media_dir.clone().unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+            let primary_dir = config.primary_media_dir.clone().unwrap_or_else(|| {
+                let exe_path = std::env::current_exe().expect("Failed to resolve absolute exe path");
+                exe_path.parent().expect("Exe has no parent directory").to_path_buf()
+            });
             let dummy_path = primary_dir.join("DOD_BATCH_DONE");
             let _ = std::fs::remove_dir_all(&dummy_path);
 
