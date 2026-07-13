@@ -15,6 +15,8 @@
 - **Filesystem Semantics:** `remove_dir_all` is the correct operation for signal folders (`DOD_TOOLS_EXIT_TRIGGER`, `DOD_BATCH_DONE`) created by HLAE/Engine, even if they serve as trigger mechanisms. Use `remove_file` only for persistent static files or config artifacts.
 - **GC Architecture:** Always decouple GC *Policy* (Configuration) from GC *Mechanism* (Execution). This allows the `Drop` trait to remain lightweight and configuration-aware.
 - **Watermarking Pattern:** 1:1 sidecar files (`.dodtools_preview`) are safer than master lists for tracking generated assets because they ensure atomic cleanup and file-system renaming resilience.
+- **GoldSrc Engine Limitations:** The HLAE overlap algorithm fuses rapid, sequential kills into a single, continuous recording block. Mid-block routing is impossible; therefore, the application must ensure a single contiguous block can fit entirely on one drive.
+- **Junctions over Absolute Paths:** Using `mklink /J` to map target session directories is the cleanest workaround for the engine's 63-character console limit and `.vdm` file path-escaping complexities.
 
 
 ## Workflow & AI Protocols

@@ -20,3 +20,13 @@
 ## 🛑 Architectural Non-Goals
 - No support for native engine multi-threading layers operating inside immediate-mode UI thread blocks.
 - No direct architectural support for alternative Source/GoldSrc modifications outside of Day of Defeat 1.3.
+
+## 🏗️ Recent Architectural Changes
+- **Dynamic Per-Block Drive Routing:** The AOT simulation (`build_batch_queue`) now evaluates capacity and allocates target drives on a per-block basis rather than per-demo.
+- **Dual-Allocation Strategies:** Implemented `DriveAllocationStrategy` enum allowing users to choose between `MaximizeSpace` (First Fit algorithm) and `Chronological` (Next Fit algorithm) via the UI.
+- **Junction-Based Pathing:** Bypassed GoldSrc string limit and escape constraints by generating temporary OS-level directory junctions (`_route_N`) in the game directory.
+- **Alias Injection:** The VDM generation now maps `mirv_movie_filename` commands to the generated junctions via aliases in `dodtools_helper.cfg`.
+- **UI State Fixes:** 
+  - Surfaced background thread capacity errors to the UI by storing them in the `egui` temporary context.
+  - State-gated the error banner to strictly render only when `current_state == CaptureStudioState::Select`.
+  - Changed default scanner initialization so `CaptureStreak` is unchecked (`is_selected: false`) to support an opt-in workflow.

@@ -291,7 +291,7 @@ pub(crate) fn spawn_ingestion_thread(
                                     end_tick: s.end_tick,
                                     kill_count: s.kill_count,
                                     target_player,
-                                    is_selected: true,
+                                    is_selected: false,
                                     display_text,
                                     timeline_string: s.timeline_string,
                                     duration_string: s.duration_string,

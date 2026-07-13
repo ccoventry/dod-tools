@@ -106,6 +106,19 @@ pub struct PatchJob {
     /// (tick, label) pairs — each becomes a named `svc_director` STUFFTEXT event
     /// in the `viewdemo` Event List labelled "<N> kills: <timeline_string>".
     pub director_events: Vec<(i32, String)>,
+    pub block_routes: Vec<(i32, i32, usize)>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum DriveAllocationStrategy {
+    MaximizeSpace,
+    Chronological,
+}
+
+impl Default for DriveAllocationStrategy {
+    fn default() -> Self {
+        Self::MaximizeSpace
+    }
 }
 
 // ── Patcher configuration ─────────────────────────────────────────────────────
@@ -141,6 +154,8 @@ pub struct PatcherConfig {
     pub auto_clear_logs: bool,
     pub auto_clear_previews: bool,
     pub auto_clear_temp_demos: bool,
+    #[serde(default)]
+    pub allocation_strategy: DriveAllocationStrategy,
 }
 
 impl PatcherConfig {
@@ -181,6 +196,7 @@ impl Default for PatcherConfig {
             auto_clear_logs: false,
             auto_clear_previews: false,
             auto_clear_temp_demos: false,
+            allocation_strategy: DriveAllocationStrategy::MaximizeSpace,
         }
     }
 }

@@ -351,6 +351,14 @@ pub fn render_primary_actions(
             let progress_msg = ctx.data(|d| d.get_temp::<String>(egui::Id::new("dodtools_patch_progress"))).unwrap_or_else(|| "Patching Demos... Please wait for a few minutes now.".to_string());
             ui.label(progress_msg);
         }
+
+        let current_state = *state_ptr;
+        if current_state == CaptureStudioState::Select {
+            if let Some(err) = ctx.data(|d| d.get_temp::<String>(egui::Id::new("dodtools_patch_error"))) {
+                ui.add_space(4.0);
+                ui.colored_label(egui::Color32::RED, format!("⚠ {}", err));
+            }
+        }
     });
 
     if let Some(ref list) = clear_previews_list {

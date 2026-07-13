@@ -1,8 +1,9 @@
 ## Web AI State
 - **Overarching Goal:** Transitioning to creative workflow (DoD movie clips); Infrastructure maintenance complete.
 - **Last Touched Modules:** `builder.rs`, `capture_engine.rs`, `types.rs`, `widgets.rs`, `panels.rs`, `payload.rs`.
-- **Open Issues/Bugs:** None. Infrastructure is stable.
-- **Next Priority:** Long Demo Validation & Packet Audit.
+- **Completed:** Capture Studio Pipeline (Dynamic Routing, Capacity Simulation, VDM Generation).
+- **Next Active Phase:** Render View Multi-Folder Registry (Phase 1).
+- **Upcoming Tasks:** Transition the Render view UI from a single `source_folder` input to a `queued_folders: Vec<PathBuf>` collection to support reading from the newly generated multi-drive routing paths. Update the backend scanner hook to accept and iterate through this vector.
 
 ## Active Epics
 - **Dynamic Drive Failover:** COMPLETED

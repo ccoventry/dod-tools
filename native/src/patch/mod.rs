@@ -34,6 +34,7 @@ pub use types::{
     PatchJob,
     PatcherConfig,
     HighlightRules,
+    DriveAllocationStrategy,
 };
 
 #[cfg(not(target_arch = "wasm32"))]

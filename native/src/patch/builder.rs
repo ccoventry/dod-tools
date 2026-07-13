@@ -5,7 +5,7 @@
 use std::sync::{Arc, atomic::AtomicBool};
 use crate::patch::types::{
     CaptureStreak, PatchJob, PatcherConfig, CommandRelation,
-    CaptureWorker, PatchEvent,
+    CaptureWorker, PatchEvent, DriveAllocationStrategy,
 };
 use crate::patch::engine::StreamPatcher;
 
@@ -180,7 +180,10 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
         drive_free.push(u64::MAX);
     }
     
-    let active_export_dir = config.primary_media_dir.clone().unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+    let active_export_dir = config.primary_media_dir.clone().unwrap_or_else(|| {
+        let exe_path = std::env::current_exe().expect("Failed to resolve absolute exe path");
+        exe_path.parent().expect("Exe has no parent directory").to_path_buf()
+    });
     let session_dir = if !config.session_id.is_empty() {
         active_export_dir.join(&config.session_id)
     } else {
@@ -236,10 +239,13 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
             init_commands: primer_init,
             scheduled_commands: primer_scheduled,
             director_events: Vec::new(),
+            block_routes: Vec::new(),
         });
     }
 
     // 2. Chained Jobs
+    let mut utilized_drives = std::collections::HashSet::new();
+    let mut chronological_drive_idx = 0;
     for (job_idx, ((source_demo, target_player), mut streaks)) in sorted_groups.into_iter().enumerate() {
         // Sort by start_tick in ascending order
         streaks.sort_by_key(|s| s.start_tick);
@@ -259,69 +265,8 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
         let path = std::path::Path::new(&source_demo);
         let mut output_demo = path.with_file_name(&output_name);
 
-        // ── AOT failover routing ──────────────────────────────────────────────
-        // Estimate clip size: raw BMP sequence bytes for this clip's duration.
-        let anchor_duration = {
-            let first_tick = streaks.iter().map(|s| s.start_tick).min().unwrap_or(0);
-            let last_tick  = streaks.iter().map(|s| s.end_tick).max().unwrap_or(0);
-            ((last_tick - first_tick) as f32) / demo_fps.max(1.0)
-        };
-        let clip_duration_secs = config.calculate_total_capture_duration(anchor_duration);
-        let clip_byte_estimate = crate::sys::disk::calculate_raw_sequence_bytes(
-            config.resolution_width,
-            config.resolution_height,
-            config.capture_fps,
-            clip_duration_secs,
-        );
-
-        // Deduct from active drive; advance if below threshold.
-        let mut drives_checked = 0;
-        let num_drives = drive_free.len();
-        loop {
-            if drives_checked >= num_drives {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "Insufficient space across all mapped drives"
-                ));
-            }
-
-            if drive_free[active_drive_idx] >= clip_byte_estimate + FAILOVER_THRESHOLD {
-                drive_free[active_drive_idx] -= clip_byte_estimate;
-                break;
-            } else {
-                active_drive_idx += 1;
-                if active_drive_idx >= num_drives {
-                    active_drive_idx = 0; // Wrap around if needed, though they are priority ordered
-                }
-                drives_checked += 1;
-            }
-        }
-
-        // Resolve physical output path.
-        if let Some(out_dir) = config.capture_directories.get(active_drive_idx) {
-            let absolute_drive = std::path::absolute(out_dir)?;
-            let target_dir = absolute_drive.join(&config.session_id);
-            if !target_dir.exists() {
-                let _ = std::fs::create_dir_all(&target_dir);
-            }
-            output_demo = target_dir.join(&output_name);
-        }
-
-        // Short junction name for this clip (avoids GoldSrc Cbuf string limits).
-        let pool_junction_name = format!("dod_pool_{}", active_drive_idx);
-
-        if job_idx < total_jobs - 1 {
-            helper_cfg_content.push_str(&format!("alias {}_next \"playdemo {}\"\n", demo_name, next_demo_name));
-        } else {
-            helper_cfg_content.push_str(&format!("alias {}_next \"sys_capture_done_path\"\n", demo_name));
-        }
-
-        // Bake the pool-relative path instead of an absolute path.
-        helper_cfg_content.push_str(&format!(
-            "alias {}_path \"mirv_movie_filename {}/{}\"\n",
-            demo_name, pool_junction_name, demo_name
-        ));
-
+        // ── AOT failover routing (Per-Block) ───────────────────────────────────
+        
         // Overlap Merge Logic
         let mut merged_streaks: Vec<CaptureStreak> = Vec::new();
         for current in streaks {
@@ -341,9 +286,104 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
             }
         }
 
+        let mut block_routes = Vec::new();
+        let num_drives = drive_free.len();
+
+        for (block_index, streak) in merged_streaks.iter().enumerate() {
+            let anchor_duration = ((streak.end_tick - streak.start_tick) as f32) / demo_fps.max(1.0);
+            let clip_duration_secs = config.calculate_total_capture_duration(anchor_duration);
+            let clip_byte_estimate = crate::sys::disk::calculate_raw_sequence_bytes(
+                config.resolution_width,
+                config.resolution_height,
+                config.capture_fps,
+                clip_duration_secs,
+            );
+
+            let mut allocated = false;
+            
+            match config.allocation_strategy {
+                DriveAllocationStrategy::MaximizeSpace => {
+                    let mut drives_checked = 0;
+                    let mut current_drive_idx = active_drive_idx;
+                    loop {
+                        if drives_checked >= num_drives {
+                            break;
+                        }
+
+                        if drive_free[current_drive_idx] >= clip_byte_estimate + FAILOVER_THRESHOLD {
+                            drive_free[current_drive_idx] -= clip_byte_estimate;
+                            
+                            block_routes.push((streak.start_tick, streak.end_tick, current_drive_idx));
+                            utilized_drives.insert(current_drive_idx);
+                            allocated = true;
+                            active_drive_idx = current_drive_idx; // Bias next allocation to this drive
+                            
+                            // Route alias for this specific block.
+                            helper_cfg_content.push_str(&format!(
+                                "alias {}_route_{} \"mirv_movie_filename _route_{}/{}_b{}\"\n",
+                                demo_name, block_index, current_drive_idx, demo_name, block_index
+                            ));
+                            
+                            break;
+                        } else {
+                            current_drive_idx = (current_drive_idx + 1) % num_drives;
+                            drives_checked += 1;
+                        }
+                    }
+                }
+                DriveAllocationStrategy::Chronological => {
+                    loop {
+                        if chronological_drive_idx >= num_drives {
+                            break;
+                        }
+
+                        if drive_free[chronological_drive_idx] >= clip_byte_estimate + FAILOVER_THRESHOLD {
+                            drive_free[chronological_drive_idx] -= clip_byte_estimate;
+                            
+                            block_routes.push((streak.start_tick, streak.end_tick, chronological_drive_idx));
+                            utilized_drives.insert(chronological_drive_idx);
+                            allocated = true;
+                            
+                            // Route alias for this specific block.
+                            helper_cfg_content.push_str(&format!(
+                                "alias {}_route_{} \"mirv_movie_filename _route_{}/{}_b{}\"\n",
+                                demo_name, block_index, chronological_drive_idx, demo_name, block_index
+                            ));
+                            
+                            break;
+                        } else {
+                            chronological_drive_idx += 1;
+                        }
+                    }
+                }
+            }
+
+            if !allocated {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    "Insufficient space across all mapped drives to allocate a block"
+                ));
+            }
+        }
+
+        // Resolve physical output path for the demo file itself (always use primary/first drive).
+        if let Some(out_dir) = config.capture_directories.first() {
+            let absolute_drive = std::path::absolute(out_dir)?;
+            let target_dir = absolute_drive.join(&config.session_id);
+            if !target_dir.exists() {
+                let _ = std::fs::create_dir_all(&target_dir);
+            }
+            output_demo = target_dir.join(&output_name);
+        }
+
+        if job_idx < total_jobs - 1 {
+            helper_cfg_content.push_str(&format!("alias {}_next \"playdemo {}\"\n", demo_name, next_demo_name));
+        } else {
+            helper_cfg_content.push_str(&format!("alias {}_next \"sys_capture_done_path\"\n", demo_name));
+        }
+
         // Generate scheduled commands
         let mut scheduled_commands = Vec::new();
-        scheduled_commands.push((0, format!("{}_path", demo_name)));
         
         // Initialize Engine Speed after Initial Load Delay
         let initial_delay_ticks = (config.initial_delay * demo_fps) as i32;
@@ -422,6 +462,7 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
             }
 
             // At Start Frame (Stage 2)
+            scheduled_commands.push((record_start_tick, format!("{}_route_{}", demo_name, i)));
             scheduled_commands.push((record_start_tick, "sys_record_start".to_string()));
             for (t, echo_cmd) in build_safe_echos(record_start_tick, &format!("START_RECORD - Tick {}", record_start_tick)) {
                 scheduled_commands.push((t, echo_cmd));
@@ -485,9 +526,40 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
             init_commands: final_init_commands,
             scheduled_commands,
             director_events,
+            block_routes,
         });
     }
     
+    // Create directory junctions for utilized drives
+    let game_path_buf = std::path::PathBuf::from(&config.game_path);
+    let hl_exe_parent = game_path_buf.parent().unwrap_or(std::path::Path::new(""));
+    for drive_idx in utilized_drives {
+        if let Some(out_dir) = config.capture_directories.get(drive_idx) {
+            let absolute_drive = std::path::absolute(out_dir)?;
+            let session_dir = if !config.session_id.is_empty() {
+                absolute_drive.join(&config.session_id)
+            } else {
+                absolute_drive
+            };
+            
+            if !session_dir.exists() {
+                let _ = std::fs::create_dir_all(&session_dir);
+            }
+            
+            let junction_path = hl_exe_parent.join(format!("_route_{}", drive_idx));
+            let _ = std::fs::remove_dir(&junction_path);
+            
+            let junction_str = junction_path.to_str().unwrap_or_default();
+            let target_str = session_dir.to_str().unwrap_or_default();
+            
+            if !junction_str.is_empty() && !target_str.is_empty() {
+                let _ = std::process::Command::new("cmd")
+                    .args(&["/C", "mklink", "/J", junction_str, target_str])
+                    .output();
+            }
+        }
+    }
+
     // Write dodtools_helper.cfg to dod_dir
     if !dod_dir.exists() {
         std::fs::create_dir_all(&dod_dir)?;
@@ -699,6 +771,7 @@ pub fn build_preview_patch_jobs(
             // No scheduled capture commands — preview only.
             scheduled_commands: Vec::new(),
             director_events,
+            block_routes: Vec::new(),
         });
     }
 

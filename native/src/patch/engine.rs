@@ -514,6 +514,7 @@ mod tests {
             init_commands: vec!["host_framerate 0".to_string()],
             scheduled_commands: vec![(10, "some_command".to_string())],
             director_events: Vec::new(),
+            block_routes: Vec::new(),
         };
 
         let config = PatcherConfig {
@@ -609,6 +610,7 @@ mod tests {
             init_commands: vec!["host_framerate 0".to_string()],
             scheduled_commands: vec![(10, "some_command".to_string())],
             director_events: Vec::new(),
+            block_routes: Vec::new(),
         };
 
         let config = PatcherConfig {
