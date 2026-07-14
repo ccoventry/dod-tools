@@ -74,9 +74,11 @@ pub fn render_primary_actions(
 
             if !preview_payload.is_empty() {
                 use native::patch::build_preview_patch_jobs;
+                let game_path_buf = std::path::PathBuf::from(&patcher_config.game_path);
+                let dod_dir = game_path_buf.parent().unwrap_or(std::path::Path::new("")).join("dod");
                 let jobs = build_preview_patch_jobs(
                     preview_payload,
-                    patcher_config.capture_directories.first().map(|p| p.as_path()),
+                    Some(dod_dir.as_path()),
                 );
                 let tx_clone = tx.clone();
                 let ctx_clone = ctx.clone();
@@ -128,14 +130,9 @@ pub fn render_primary_actions(
         if ui.button("🗑️ Clear Previews").clicked() {
             let mut verified_previews = Vec::new();
             let mut dirs_to_scan = std::collections::HashSet::new();
-            if let Some(out_dir) = patcher_config.capture_directories.first() {
-                dirs_to_scan.insert(out_dir.clone());
-            }
-            for demo in queued_demos.iter() {
-                if let Some(parent) = demo.path.parent() {
-                    dirs_to_scan.insert(parent.to_path_buf());
-                }
-            }
+            let game_path_buf = std::path::PathBuf::from(&patcher_config.game_path);
+            let dod_dir = game_path_buf.parent().unwrap_or(std::path::Path::new("")).join("dod");
+            dirs_to_scan.insert(dod_dir);
             for dir in dirs_to_scan {
                 if let Ok(entries) = std::fs::read_dir(dir) {
                     for entry in entries.flatten() {

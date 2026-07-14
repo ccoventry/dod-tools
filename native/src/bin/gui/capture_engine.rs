@@ -141,14 +141,14 @@ pub fn spawn_capture_engine(
                         log::error!("{}", $msg);
                         use std::io::Write;
                         let _ = (|| -> Result<(), Box<dyn std::error::Error>> {
-                            let log_dir = native::shared::paths::get_appdata_dir().join("logs");
-                            std::fs::create_dir_all(&log_dir)?;
-                            let log_path = log_dir.join("crash_log.md");
+                            let macro_docs_session_dir = dirs::document_dir().unwrap().join("dod-tools").join("Capture_Sessions").join(&config.session_id);
+                            std::fs::create_dir_all(&macro_docs_session_dir)?;
+                            let log_path = macro_docs_session_dir.join("session_log.txt");
                             let mut file = std::fs::OpenOptions::new().create(true).append(true).open(&log_path)?;
                             writeln!(file, "{}", $msg)?;
                             Ok(())
                         })();
-                        let _ = $tx.send(EngineEvent::Error("Capture Engine Aborted - Check AppData/logs/crash_log.md".to_string()));
+                        let _ = $tx.send(EngineEvent::Error("Capture Engine Aborted - Check Capture_Sessions/session_log.txt".to_string()));
                     }
                 };
             }
@@ -200,6 +200,10 @@ pub fn spawn_capture_engine(
             } else {
                 active_export_dir
             };
+            let docs_session_dir = dirs::document_dir().unwrap().join("dod-tools").join("Capture_Sessions").join(&config.session_id);
+            let _ = std::fs::create_dir_all(&docs_session_dir);
+            let manifest_payload = format!("Session ID: {}\nQueued Demos: {}", config.session_id, jobs.len());
+            let _ = std::fs::write(docs_session_dir.join("manifest.txt"), manifest_payload);
 
             let session_junction_str = session_junction.to_str().unwrap_or_default();
             let session_dir_str = session_dir.to_str().unwrap_or_default();
@@ -400,13 +404,24 @@ pub fn spawn_capture_engine(
                 if config.save_local_patched_copy {
                     #[cfg(not(target_arch = "wasm32"))]
                     {
-                        let exe_path = std::env::current_exe().expect("Failed to resolve absolute exe path");
-                        let base_dir = exe_path.parent().expect("Exe has no parent directory").to_path_buf();
-                        let demos_dir = base_dir.join("demos");
-                        let _ = std::fs::create_dir_all(&demos_dir);
-                        let local_dest = demos_dir.join(&demo_filename);
+                        let is_chain = demo_filename.starts_with("chain_");
+                        let local_dest = if is_chain {
+                            docs_session_dir.join(&demo_filename)
+                        } else {
+                            let exe_path = std::env::current_exe().expect("Failed to resolve absolute exe path");
+                            let base_dir = exe_path.parent().expect("Exe has no parent directory").to_path_buf();
+                            let demos_dir = base_dir.join("demos");
+                            let _ = std::fs::create_dir_all(&demos_dir);
+                            demos_dir.join(&demo_filename)
+                        };
                         match std::fs::copy(&job.patched_demo_path, &local_dest) {
-                            Ok(_) => log_markdown(&format!("- [IO] Saved local copy to demos/{}", demo_filename)),
+                            Ok(_) => {
+                                if is_chain {
+                                    log_markdown(&format!("- [IO] Routed chain copy to session folder: {}", demo_filename));
+                                } else {
+                                    log_markdown(&format!("- [IO] Saved local copy to demos/{}", demo_filename));
+                                }
+                            }
                             Err(e) => log::warn!("Failed to save local patched copy to {:?}: {}", local_dest, e),
                         }
                     }
@@ -543,6 +558,12 @@ pub fn spawn_capture_engine(
                 for junction in &pool_junctions {
                     let _ = std::fs::remove_dir(junction);
                 }
+                if let Ok(mut entries) = std::fs::read_dir(&session_dir) {
+                    if entries.next().is_none() {
+                        let _ = std::fs::remove_dir(&session_dir);
+                        let _ = std::fs::remove_dir_all(&docs_session_dir);
+                    }
+                }
                 let _ = tx.send(EngineEvent::Cancelled);
                 return;
             }
@@ -578,6 +599,12 @@ pub fn spawn_capture_engine(
                 }
             } else {
                 log::info!("[autosave] Lockfile removed after clean completion");
+            }
+            if let Ok(mut entries) = std::fs::read_dir(&session_dir) {
+                if entries.next().is_none() {
+                    let _ = std::fs::remove_dir(&session_dir);
+                    let _ = std::fs::remove_dir_all(&docs_session_dir);
+                }
             }
 
             let _ = tx.send(EngineEvent::AllCompleted);
