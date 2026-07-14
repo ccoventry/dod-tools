@@ -114,6 +114,9 @@ pub struct DemoInfo {
     /// Playback time of the demo in seconds.
     pub playback_time: f32,
 
+    /// Total frames in the demo playback.
+    pub playback_frames: i32,
+
     /// Game directory / mod name.
     pub game_directory: String,
 
@@ -145,9 +148,16 @@ impl From<Demo> for DemoInfo {
         let playback_time = value
             .directory
             .entries
-            .first()
+            .iter()
             .map(|e| e.track_time)
-            .unwrap_or(0.0);
+            .sum::<f32>();
+
+        let playback_frames = value
+            .directory
+            .entries
+            .iter()
+            .map(|e| e.frame_count)
+            .sum::<i32>();
 
         let mut is_hltv = false;
         'outer: for entry in &value.directory.entries {
@@ -180,6 +190,7 @@ impl From<Demo> for DemoInfo {
             map_name,
             network_protocol: value.header.network_protocol,
             playback_time,
+            playback_frames,
             game_directory,
             demo_type,
             map_checksum: value.header.map_checksum,

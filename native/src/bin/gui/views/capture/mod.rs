@@ -17,6 +17,9 @@
 pub mod scan;
 pub mod select;
 pub mod capture;
+pub mod widgets;
+pub mod payload;
+pub mod panels;
 
 use std::sync::{Arc, Mutex, OnceLock, atomic::{AtomicBool, Ordering}};
 use std::path::PathBuf;
@@ -46,7 +49,7 @@ use crate::types::{
 
 // ── Live atomic: gates the "Proceed to Capture" button and drives the spinner ──
 
-static IS_PATCHING: AtomicBool = AtomicBool::new(false);
+pub(crate) static IS_PATCHING: AtomicBool = AtomicBool::new(false);
 
 pub(crate) fn is_patching() -> bool {
     IS_PATCHING.load(Ordering::SeqCst)
@@ -104,28 +107,7 @@ fn get_capture_state() -> &'static Mutex<CaptureState> {
 
 pub(crate) fn get_patcher_config() -> &'static Mutex<PatcherConfig> {
     PATCHER_CONFIG.get_or_init(|| {
-        let global = crate::settings::load_settings();
-        Mutex::new(PatcherConfig {
-            pre_roll_ticks: 200,
-            post_roll_ticks: 60,
-            capture_fps: 300,
-            exit_on_finish: true,
-            init_commands: vec!["host_framerate 0".to_string()],
-            custom_commands: global.custom_commands.clone(),
-            pre_roll_seconds: global.capture_pre_record_buffer,
-            post_roll_seconds: global.post_record_buffer,
-            record_start_lead: global.capture_record_start_lead,
-            record_stop_trail: global.capture_record_stop_trail,
-            initial_delay: global.capture_initial_delay,
-            fast_forward_speed: global.capture_fast_forward_speed,
-            tickrate: 100.0,
-            output_dir: std::path::Path::new(&global.game_path).parent().map(|p| p.join("dod")),
-            separate_hud: false,
-            resolution_width: 1280,
-            resolution_height: 720,
-            primary_media_dir: global.primary_media_dir.clone().map(PathBuf::from),
-            backup_media_dir: global.backup_media_dir.clone().map(PathBuf::from),
-        })
+        Mutex::new(crate::settings::load_patcher_config())
     })
 }
 
@@ -149,9 +131,12 @@ pub fn render_patch_ui(
     state_ptr: &mut CaptureStudioState,
     tx: std::sync::mpsc::Sender<crate::types::GuiMessage>,
     loading_ptr: &mut bool,
-    hide_non_pov: &mut bool,
     // Fields forwarded exclusively to the Capture step renderer:
     settings: &mut crate::settings::AppSettings,
+    draft_settings: &mut crate::settings::AppSettings,
+    error_message: &mut Option<String>,
+    subdir_cache: &mut std::collections::HashMap<std::path::PathBuf, Vec<std::path::PathBuf>>,
+    tree_demo_cache: &mut std::collections::HashMap<std::path::PathBuf, usize>,
     capture_engine_running: &mut bool,
     engine_msg: &str,
     engine_progress: f32,
@@ -190,23 +175,27 @@ pub fn render_patch_ui(
         }
         CaptureStudioState::Select => {
             select::render(
-                ui, ctx, state_ptr, tx, loading_ptr, hide_non_pov,
+                ui, ctx, state_ptr, tx, loading_ptr,
+                get_highlight_rules(),
                 get_queued_demos(),
                 get_patcher_config(),
                 get_render_config(),
+                settings,
+                draft_settings,
+                error_message,
+                subdir_cache,
+                tree_demo_cache,
             );
         }
         CaptureStudioState::Capture => {
             capture::render(
                 ui,
                 ctx,
-                settings,
                 capture_engine_running,
                 engine_msg,
                 engine_progress,
                 engine_jobs_done,
                 engine_jobs_total,
-                *hide_non_pov,
                 tx,
                 state_ptr,
                 cancel_token,
@@ -250,7 +239,9 @@ pub(crate) fn spawn_ingestion_thread(
                         if path.is_dir() {
                             dir_stack.push(path);
                         } else if path.is_file() && path.extension().map(|ext| ext == "dem").unwrap_or(false) {
-                            list.push(path);
+                            let insert_idx = list.binary_search_by(|p: &PathBuf| p.file_name().unwrap_or_default().cmp(&path.file_name().unwrap_or_default()))
+                                .unwrap_or_else(|pos| pos);
+                            list.insert(insert_idx, path);
                         }
                     }
 
@@ -264,7 +255,9 @@ pub(crate) fn spawn_ingestion_thread(
                                 } else if path.is_file()
                                     && path.extension().map(|ext| ext == "dem").unwrap_or(false)
                                 {
-                                    list.push(path);
+                                    let insert_idx = list.binary_search_by(|p: &PathBuf| p.file_name().unwrap_or_default().cmp(&path.file_name().unwrap_or_default()))
+                                        .unwrap_or_else(|pos| pos);
+                                    list.insert(insert_idx, path);
                                 }
                             }
                         }
@@ -283,10 +276,8 @@ pub(crate) fn spawn_ingestion_thread(
 
                 log_markdown(&format!("Attempting Demo {}: {:?}", index + 1, file.file_name().unwrap_or_default()));
 
-                println!("-> Parsing: {:?}", file.file_name().unwrap_or_default());
                 match scan_demo_for_highlights(&file, &rules) {
-                    Ok((tickrate, streaks, is_pov, local_player_index)) => {
-                        println!("<- Success: {:?}", file.file_name().unwrap_or_default());
+                    Ok((tickrate, streaks, is_pov, local_player_index, playback_frames)) => {
                         let selectable: Vec<HighlightStreak> = streaks
                             .into_iter()
                             .map(|s| {
@@ -300,7 +291,7 @@ pub(crate) fn spawn_ingestion_thread(
                                     end_tick: s.end_tick,
                                     kill_count: s.kill_count,
                                     target_player,
-                                    is_selected: true,
+                                    is_selected: false,
                                     display_text,
                                     timeline_string: s.timeline_string,
                                     duration_string: s.duration_string,
@@ -308,20 +299,31 @@ pub(crate) fn spawn_ingestion_thread(
                                     kills: s.kills,
                                     start_index: s.start_index,
                                     end_index: s.end_index,
+                                    viewdemo_times: s.viewdemo_times,
+                                    frame_times: s.frame_times,
                                 }
                             })
                             .collect();
 
                         if !selectable.is_empty() {
                             let demo_name = file.file_name().unwrap_or_default().to_string_lossy().into_owned();
-                            let item = DemoData {
+                            let mut item = DemoData {
                                 demo_name,
                                 path: file.to_path_buf(),
                                 streaks: selectable,
                                 tickrate,
                                 is_pov,
                                 local_player_index,
+                                playback_frames,
                             };
+
+                            if item.is_pov {
+                                for streak in &mut item.streaks {
+                                    if Some(streak.player_index) != item.local_player_index {
+                                        streak.is_selected = false;
+                                    }
+                                }
+                            }
 
                             // Lock is dropped immediately after modifying the collection.
                             let _added = {
@@ -330,7 +332,9 @@ pub(crate) fn spawn_ingestion_thread(
                                 log::info!("Ingestion thread acquired lock to push: {:?}", item.path);
                                 if !queued_guard.iter().any(|d| d.path == item.path) {
                                     let queued = Arc::make_mut(&mut *queued_guard);
-                                    queued.push(item);
+                                    let insert_idx = queued.binary_search_by(|d| d.demo_name.cmp(&item.demo_name))
+                                        .unwrap_or_else(|pos| pos);
+                                    queued.insert(insert_idx, item);
                                     true
                                 } else {
                                     false
@@ -340,9 +344,9 @@ pub(crate) fn spawn_ingestion_thread(
                     }
                     Err(err) => {
                         if err == "Unsupported HLTV proxy demo format" {
-                            eprintln!("ℹ Skipping HLTV proxy: {:?}", file.file_name().unwrap_or_default());
+                            log_markdown(&format!("- **[WARNING]** Skipped HLTV proxy demo: {:?}", file.file_name().unwrap_or_default()));
                         } else {
-                            eprintln!("⚠ Skipped corrupted demo {:?}: {}", file.file_name().unwrap_or_default(), err);
+                            log_markdown(&format!("- **[WARNING]** Skipped corrupted demo {:?}: {}", file.file_name().unwrap_or_default(), err));
                         }
                     }
                 }

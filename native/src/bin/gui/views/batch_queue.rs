@@ -7,7 +7,6 @@ use analysis::Analysis;
 #[allow(dead_code)]
 pub fn batch_queue_ui(
     export_queue: &mut Vec<QueuedStreakExport>,
-    settings: &mut crate::AppSettings,
     cache: &mut crate::PlayerDetailsCache,
     analyses: &HashMap<String, (FileInfo, Analysis)>,
     ui: &mut Ui,
@@ -15,14 +14,15 @@ pub fn batch_queue_ui(
     ui.vertical(|ui| {
 
 
+        let config = crate::views::capture::get_patcher_config().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         // Path existence checks
-        let hlae_exists = !settings.hlae_path.is_empty() && std::path::Path::new(&settings.hlae_path).exists();
-        let game_exists = !settings.game_path.is_empty() && std::path::Path::new(&settings.game_path).exists();
+        let hlae_exists = !config.hlae_path.is_empty() && std::path::Path::new(&config.hlae_path).exists();
+        let game_exists = !config.game_path.is_empty() && std::path::Path::new(&config.game_path).exists();
 
-        if !settings.hlae_path.is_empty() && !hlae_exists {
-            ui.colored_label(Color32::from_rgb(239, 68, 68), "⚠ HLAE path does not exist on disk.");
+        if !config.hlae_path.is_empty() && !hlae_exists {
+            ui.colored_label(Color32::from_rgb(239, 68, 68), "⚠ HLAE path (hlae.exe) does not exist on disk.");
         }
-        if !settings.game_path.is_empty() && !game_exists {
+        if !config.game_path.is_empty() && !game_exists {
             ui.colored_label(Color32::from_rgb(239, 68, 68), "⚠ Game path (hl.exe) does not exist on disk.");
         }
 
@@ -146,7 +146,7 @@ pub fn batch_queue_ui(
 
                                     let mut file_exists_in_game = false;
                                     if game_exists {
-                                        if let Some(game_dir) = std::path::Path::new(&settings.game_path).parent() {
+                                        if let Some(game_dir) = std::path::Path::new(&config.game_path).parent() {
                                             let dod_path = game_dir.join("dod").join(&item.output_name);
                                             if dod_path.exists() {
                                                 file_exists_in_game = true;
@@ -266,7 +266,23 @@ pub fn batch_queue_ui(
                                         ui.end_row();
 
                                         ui.label("Init Commands:");
-                                        ui.text_edit_multiline(&mut item.init_commands);
+                                        ui.vertical(|ui| {
+                                            let mut delete_cmd_idx = None;
+                                            for (c_idx, cmd) in item.init_commands.iter_mut().enumerate() {
+                                                ui.horizontal(|ui| {
+                                                    ui.add(egui::TextEdit::singleline(cmd).desired_width(ui.available_width() - 40.0));
+                                                    if ui.button("❌").clicked() {
+                                                        delete_cmd_idx = Some(c_idx);
+                                                    }
+                                                });
+                                            }
+                                            if let Some(c_idx) = delete_cmd_idx {
+                                                item.init_commands.remove(c_idx);
+                                            }
+                                            if ui.button("➕ Add Command").clicked() {
+                                                item.init_commands.push("".to_string());
+                                            }
+                                        });
                                         ui.end_row();
 
                                         ui.label("Custom Timed Commands:");
@@ -310,15 +326,16 @@ pub fn batch_queue_ui(
 
                                 ui.add_space(4.0);
                                 if ui.button("Reset to Defaults").on_hover_text("Reset all fields of this highlight item to match global preferences").clicked() {
+                                    let config = crate::views::capture::get_patcher_config().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
                                     item.exit_on_finish = true;
-                                    item.init_commands = settings.capture_init_commands.clone();
-                                    item.custom_commands = settings.custom_commands.clone();
-                                    item.fast_forward_speed = settings.capture_fast_forward_speed;
-                                    item.initial_delay = settings.capture_initial_delay;
-                                    item.pre_record_buffer = settings.capture_pre_record_buffer;
-                                    item.record_start_lead = settings.capture_record_start_lead;
-                                    item.record_stop_trail = settings.capture_record_stop_trail;
-                                    item.post_record_buffer = settings.post_record_buffer;
+                                    item.init_commands = config.init_commands.clone();
+                                    item.custom_commands = config.custom_commands.clone();
+                                    item.fast_forward_speed = config.fast_forward_speed;
+                                    item.initial_delay = config.initial_delay;
+                                    item.pre_record_buffer = config.pre_roll_seconds;
+                                    item.record_start_lead = config.record_start_lead;
+                                    item.record_stop_trail = config.record_stop_trail;
+                                    item.post_record_buffer = config.post_roll_seconds;
                                 }
                             });
                     });

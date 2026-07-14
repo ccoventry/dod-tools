@@ -54,6 +54,12 @@ pub struct CaptureStreak {
     pub kills: Vec<(i32, f32, String)>,
     pub start_index: usize,
     pub end_index: usize,
+    pub total_demo_frames: i32,
+    pub demo_fps: f32,
+    #[serde(default)]
+    pub viewdemo_times: Vec<f32>,
+    #[serde(skip, default)]
+    pub frame_times: Arc<Vec<f32>>,
 }
 
 impl CaptureStreak {
@@ -97,11 +103,27 @@ pub struct PatchJob {
     pub target_player: Option<String>,
     pub init_commands: Vec<String>,
     pub scheduled_commands: Vec<(i32, String)>,
+    /// (tick, label) pairs — each becomes a named `svc_director` STUFFTEXT event
+    /// in the `viewdemo` Event List labelled "<N> kills: <timeline_string>".
+    pub director_events: Vec<(i32, String)>,
+    pub block_routes: Vec<(i32, i32, usize)>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum DriveAllocationStrategy {
+    MaximizeSpace,
+    Chronological,
+}
+
+impl Default for DriveAllocationStrategy {
+    fn default() -> Self {
+        Self::MaximizeSpace
+    }
 }
 
 // ── Patcher configuration ─────────────────────────────────────────────────────
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PatcherConfig {
     pub pre_roll_ticks: i32,
     pub post_roll_ticks: i32,
@@ -116,12 +138,30 @@ pub struct PatcherConfig {
     pub initial_delay: f32,
     pub fast_forward_speed: f32,
     pub tickrate: f32,
-    pub output_dir: Option<std::path::PathBuf>,
+    pub capture_directories: Vec<std::path::PathBuf>,
     pub separate_hud: bool,
     pub resolution_width: i32,
     pub resolution_height: i32,
     pub primary_media_dir: Option<std::path::PathBuf>,
     pub backup_media_dir: Option<std::path::PathBuf>,
+    pub movie_config: String,
+    pub save_local_patched_copy: bool,
+    pub add_condebug: bool,
+    pub session_id: String,
+    pub hlae_path: String,
+    pub game_path: String,
+    pub ffmpeg_override_path: Option<String>,
+    pub auto_clear_logs: bool,
+    pub auto_clear_previews: bool,
+    pub auto_clear_temp_demos: bool,
+    #[serde(default)]
+    pub allocation_strategy: DriveAllocationStrategy,
+}
+
+impl PatcherConfig {
+    pub fn calculate_total_capture_duration(&self, base_action_secs: f32) -> f32 {
+        self.record_start_lead + base_action_secs + self.record_stop_trail
+    }
 }
 
 impl Default for PatcherConfig {
@@ -131,21 +171,32 @@ impl Default for PatcherConfig {
             post_roll_ticks: 60,
             capture_fps: 300,
             exit_on_finish: true,
-            init_commands: vec!["host_framerate 0".to_string()],
+            init_commands: Vec::new(),
             custom_commands: Vec::new(),
             pre_roll_seconds: 2.0,
             post_roll_seconds: 0.6,
             record_start_lead: 0.0,
             record_stop_trail: 0.0,
             initial_delay: 3.0,
-            fast_forward_speed: 0.2,
+            fast_forward_speed: 0.05,
             tickrate: 100.0,
-            output_dir: None,
+            capture_directories: Vec::new(),
             separate_hud: false,
             resolution_width: 1280,
             resolution_height: 720,
             primary_media_dir: None,
             backup_media_dir: None,
+            movie_config: String::new(),
+            save_local_patched_copy: false,
+            add_condebug: true,
+            session_id: String::new(),
+            hlae_path: String::new(),
+            game_path: String::new(),
+            ffmpeg_override_path: None,
+            auto_clear_logs: false,
+            auto_clear_previews: false,
+            auto_clear_temp_demos: false,
+            allocation_strategy: DriveAllocationStrategy::MaximizeSpace,
         }
     }
 }

@@ -95,7 +95,7 @@ pub struct QueuedStreakExport {
     pub output_name: String,
     pub enabled: bool,
     pub exit_on_finish: bool,
-    pub init_commands: String,
+    pub init_commands: Vec<String>,
     pub custom_commands: Vec<native::patch::CustomCommand>,
     pub fast_forward_speed: f32,
     pub hltv_spec_player: Option<String>,
@@ -242,6 +242,10 @@ pub struct HighlightStreak {
     pub kills: Vec<(i32, f32, String)>,
     pub start_index: usize,
     pub end_index: usize,
+    #[serde(default)]
+    pub viewdemo_times: Vec<f32>,
+    #[serde(skip, default)]
+    pub frame_times: std::sync::Arc<Vec<f32>>,
 }
 
 impl HighlightStreak {
@@ -285,6 +289,7 @@ pub struct DemoData {
     pub tickrate: f32,
     pub is_pov: bool,
     pub local_player_index: Option<usize>,
+    pub playback_frames: i32,
 }
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct CaptureJob {
@@ -303,4 +308,15 @@ pub enum EngineEvent {
     /// Posted when the cancellation token is raised mid-batch.
     /// Signals the GUI to reset the running flag and show a cancelled message.
     Cancelled,
+}
+
+/// Controls whether a recovery modal is shown on startup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StartupState {
+    /// Normal startup — no autosave lockfile detected.
+    Normal,
+    /// An `.autosave.json` lockfile was found; prompt the user before loading.
+    PendingRecovery,
+    /// A `.render_autosave.json` lockfile was found (render batch interrupted).
+    PendingRenderRecovery,
 }

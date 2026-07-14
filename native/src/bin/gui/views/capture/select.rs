@@ -15,26 +15,14 @@
 //     spawns patch_worker thread, sends GuiMessage::PatchingComplete on completion
 // ============================================================
 
-use std::sync::{Arc, Mutex, atomic::AtomicBool};
-use native::patch::{PatcherConfig, CaptureStreak, build_batch_queue};
+use std::sync::{Arc, Mutex};
+use native::patch::PatcherConfig;
 use crate::types::{DemoData, CaptureStudioState};
-use super::{is_patching, set_is_patching, acquire_lock};
+use super::{acquire_lock, widgets, panels};
 use super::log_markdown;
 use egui_extras::{TableBuilder, Column};
 
-fn create_pinned_file_dialog() -> egui_file_dialog::FileDialog {
-    let mut fd = egui_file_dialog::FileDialog::new();
-    let global = crate::settings::load_settings();
-    if !global.pinned_folders.is_empty() {
-        fd = fd.add_quick_access("Bookmarks", |s| {
-            for path in &global.pinned_folders {
-                let name = path.file_name().unwrap_or_default().to_string_lossy();
-                s.add_path(&name, path.clone());
-            }
-        });
-    }
-    fd
-}
+
 
 pub fn render(
     ui: &mut egui::Ui,
@@ -42,10 +30,15 @@ pub fn render(
     state_ptr: &mut CaptureStudioState,
     tx: std::sync::mpsc::Sender<crate::types::GuiMessage>,
     loading_ptr: &mut bool,
-    hide_non_pov: &mut bool,
+    _rules_mutex: &'static Mutex<native::patch::HighlightRules>,
     queued_demos_arc: Arc<Mutex<Arc<Vec<DemoData>>>>,
     patcher_config_mutex: &'static Mutex<PatcherConfig>,
     render_config_mutex: &'static Mutex<native::hlcr::config::RenderConfig>,
+    settings: &mut crate::settings::AppSettings,
+    draft_settings: &mut crate::settings::AppSettings,
+    error_message: &mut Option<String>,
+    subdir_cache: &mut std::collections::HashMap<std::path::PathBuf, Vec<std::path::PathBuf>>,
+    tree_demo_cache: &mut std::collections::HashMap<std::path::PathBuf, usize>,
 ) {
     // Loading guard: ingestion thread may still be finishing its final write.
     if *loading_ptr {
@@ -63,9 +56,8 @@ pub fn render(
     };
     let data = &*queued_demos_shared;
 
-    let mut patcher_config = acquire_lock!(patcher_config_mutex);
-
     // ── Step 2 header group ──────────────────────────────────────────────────────
+    egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
     ui.group(|ui| {
         ui.vertical(|ui| {
             ui.heading("📂 Step 2: Select Highlights & Patch");
@@ -73,10 +65,91 @@ pub fn render(
             ui.label("Enable streaks, adjust patch parameters, and launch patcher.");
             ui.add_space(8.0);
 
-            ui.checkbox(hide_non_pov, "Hide Non-Recording Players in POV Demos");
+            {
+                let mut patcher_config = acquire_lock!(patcher_config_mutex);
+                widgets::render_primary_actions(
+                    ui,
+                    &mut patcher_config,
+                    &mut *state_ptr,
+                    &mut *loading_ptr,
+                    &tx,
+                    &queued_demos_arc,
+                    ctx,
+                );
+            }
             ui.add_space(8.0);
 
             if !queued_demos_shared.is_empty() {
+                if widgets::render_bulk_actions(ui, &queued_demos_arc) {
+                    ctx.data_mut(|d| d.insert_temp(egui::Id::new("dodtools_disk_estimate_dirty"), true));
+                }
+                ui.add_space(4.0);
+                
+                {
+                    let patcher_config = acquire_lock!(patcher_config_mutex);
+                    
+                    let cache_id = egui::Id::new("dodtools_disk_estimate_cache");
+                    let dirty_id = egui::Id::new("dodtools_disk_estimate_dirty");
+                    let is_dirty: bool = ctx.data(|d| d.get_temp(dirty_id)).unwrap_or(true);
+                    let cached_estimate: Option<u64> = ctx.data(|d| d.get_temp(cache_id));
+
+                    let required_bytes = match cached_estimate {
+                        Some(bytes) if !is_dirty => bytes,
+                        _ => {
+                            let latest_demos = acquire_lock!(queued_demos_arc);
+                            let total_sequence_duration = calculate_merged_duration(&latest_demos, &patcher_config);
+                            let w = patcher_config.resolution_width;
+                            let h = patcher_config.resolution_height;
+                            let fps = patcher_config.capture_fps;
+                            let mut bytes = native::sys::disk::calculate_raw_sequence_bytes(w, h, fps, total_sequence_duration);
+                            if patcher_config.separate_hud {
+                                bytes *= 3;
+                            }
+                            ctx.data_mut(|d| {
+                                d.insert_temp(cache_id, bytes);
+                                d.insert_temp(dirty_id, false);
+                            });
+                            bytes
+                        }
+                    };
+                    let required_gb = required_bytes as f64 / 1_073_741_824.0;
+
+                    let mut pool_free_bytes: u64 = 0;
+                    let mut drives_info = Vec::new();
+
+                    for path in &patcher_config.capture_directories {
+                        let free_bytes = native::sys::disk::get_available_bytes(path);
+                        if free_bytes != u64::MAX {
+                            pool_free_bytes += free_bytes;
+                        }
+                        let free_gb = if free_bytes == u64::MAX { 0.0 } else { free_bytes as f64 / 1_073_741_824.0 };
+                        let path_str = path.to_string_lossy().to_string();
+                        let shortened_path = if path_str.len() > 30 {
+                            let head = if path_str.len() >= 3 { &path_str[..3] } else { "" };
+                            format!("{}...{}", head, &path_str[path_str.len() - 24..])
+                        } else {
+                            path_str
+                        };
+                        drives_info.push((shortened_path, free_gb));
+                    }
+                    
+                    let pool_total_gb = pool_free_bytes as f64 / 1_073_741_824.0;
+
+                    ui.horizontal(|ui| {
+                        ui.strong("Disk Space Estimate:");
+                        ui.label(format!("Disk Space Pool: Required: {:.1} GB / Total Free: {:.1} GB", required_gb, pool_total_gb));
+                    });
+
+                    for (shortened_path, free_gb) in &drives_info {
+                        ui.label(format!("  ↳ {} : {:.1} GB Free", shortened_path, free_gb));
+                    }
+
+                    if required_gb > pool_total_gb {
+                        ui.colored_label(egui::Color32::RED, "⚠ WARNING: Not enough total free disk space across the capture pool!");
+                    }
+                }
+                
+                ui.add_space(8.0);
                 ui.strong("Discovered Highlight Streaks");
                 ui.add_space(4.0);
 
@@ -101,10 +174,16 @@ pub fn render(
                                 }
 
                                 let col_ui = &mut columns[d_idx % 2];
-                                egui::Frame::group(col_ui.style()).show(col_ui, |ui| {
+                                col_ui.push_id(&demo.demo_name, |ui| {
+                                    egui::Frame::group(ui.style()).show(ui, |ui| {
                                     // ── Per-demo header row with bulk controls ───────
                                     ui.horizontal(|ui| {
-                                        ui.strong(&demo.demo_name);
+                                        let player_name = demo.streaks.iter()
+                                            .find(|s| Some(s.player_index) == demo.local_player_index)
+                                            .map(|s| s.target_player.as_str())
+                                            .unwrap_or("Unknown");
+                                        let header_text = format!("{} - Player: {}", demo.demo_name, player_name);
+                                        ui.strong(header_text);
                                         ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                                             if ui.button("Select All").clicked() {
                                                 actions_to_apply.push(DemoAction::SelectAll(d_idx));
@@ -124,37 +203,48 @@ pub fn render(
                                     ui.add_space(2.0);
 
                                     TableBuilder::new(ui)
-                                        .striped(true)
-                                        .vscroll(false)
-                                        .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-                                        .column(Column::auto())          // [Checkbox]
-                                        .column(Column::auto())          // [Player Name]
-                                        .column(Column::exact(140.0))    // [Kill Range]
-                                        .column(Column::exact(50.0))     // [Duration]
-                                        .column(Column::remainder())     // [Details]
-                                        .header(20.0, |mut header| {
-                                            header.col(|ui| { ui.strong("Sel"); });
-                                            header.col(|ui| { ui.strong("Player"); });
-                                            header.col(|ui| { ui.strong("Kill Range"); });
-                                            header.col(|ui| { ui.strong("Dur."); });
-                                            header.col(|ui| { ui.strong("Details"); });
-                                        })
+                                         .id_salt(format!("{}_table", demo.demo_name))
+                                         .striped(true)
+                                         .vscroll(false)
+                                         .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                                         .column(Column::initial(30.0))     // [Row Number]
+                                         .column(Column::auto())            // [Checkbox]
+                                         .column(Column::exact(140.0))      // [Kill Range]
+                                         .column(Column::exact(40.0))       // [Kills]
+                                         .column(Column::initial(70.0))     // [Timestamp]
+                                         .column(Column::exact(50.0))       // [Duration]
+                                         .column(Column::remainder())       // [Details]
+                                         .header(20.0, |mut header| {
+                                             header.col(|ui| { ui.strong("Row #"); });
+                                             header.col(|ui| { ui.strong("Sel"); });
+                                             header.col(|ui| { ui.strong("Kill Range"); });
+                                             header.col(|ui| { ui.strong("Kills"); });
+                                             header.col(|ui| { ui.strong("Timestamp"); });
+                                             header.col(|ui| { ui.strong("Dur."); });
+                                             header.col(|ui| { ui.strong("Details"); });
+                                         })
                                         .body(|body| {
                                             let filtered_indices: Vec<usize> = (0..demo.streaks.len())
                                                 .filter(|&idx| {
                                                     let streak = &demo.streaks[idx];
-                                                    if demo.is_pov && *hide_non_pov {
-                                                        Some(streak.player_index) == demo.local_player_index
+                                                    if demo.is_pov && Some(streak.player_index) != demo.local_player_index {
+                                                        false
                                                     } else {
                                                         true
                                                     }
                                                 })
                                                 .collect();
 
+
                                             body.rows(20.0, filtered_indices.len(), |mut row| {
                                                 let row_idx = row.index();
                                                 let streak_idx = filtered_indices[row_idx];
                                                 let streak = &demo.streaks[streak_idx];
+
+                                                // ── [Row Number] ──────────────────────
+                                                row.col(|ui| {
+                                                    ui.label(format!("{}", row_idx + 1));
+                                                });
 
                                                 // ── [Checkbox] ────────────────────────
                                                 row.col(|ui| {
@@ -167,11 +257,9 @@ pub fn render(
                                                         let mut guard = acquire_lock!(queued_demos_arc);
                                                         let queued = Arc::make_mut(&mut *guard);
                                                         queued[d_idx].streaks[streak_idx].is_selected = is_selected;
+                                                        ctx.data_mut(|d| d.insert_temp(egui::Id::new("dodtools_disk_estimate_dirty"), true));
                                                     }
                                                 });
-
-                                                // ── [Player Name] ──────────────────────
-                                                row.col(|ui| { ui.label(&streak.target_player); });
 
                                                 // ── [Kill Range] ───────────────────────
                                                 row.col(|ui| {
@@ -213,6 +301,7 @@ pub fn render(
                                                                 sm.start_index = start_idx;
                                                                 sm.end_index   = end_idx;
                                                                 sm.update_visuals();
+                                                                ctx.data_mut(|d| d.insert_temp(egui::Id::new("dodtools_disk_estimate_dirty"), true));
                                                             }
                                                         });
 
@@ -231,6 +320,16 @@ pub fn render(
                                                     });
                                                 });
 
+                                                // ── [Kills] ───────────────────────────
+                                                row.col(|ui| { ui.label(streak.kill_count.to_string()); });
+
+                                                // ── [Timestamp] ───────────────────────
+                                                row.col(|ui| {
+                                                    let absolute_timestamp = streak.viewdemo_times.get(streak.start_index).copied().unwrap_or(0.0);
+                                                    let ts_secs = absolute_timestamp.round() as i32;
+                                                    ui.label(format!("{}:{:02}", ts_secs / 60, ts_secs % 60));
+                                                });                                        
+
                                                 // ── [Duration] ────────────────────────
                                                 row.col(|ui| { ui.label(&streak.duration_string); });
 
@@ -238,6 +337,7 @@ pub fn render(
                                                 row.col(|ui| { ui.label(&streak.timeline_string); });
                                             });
                                         });
+                                    });
                                 });
                                 col_ui.add_space(4.0);
                             }
@@ -252,14 +352,21 @@ pub fn render(
                     .collect();
                 removals.sort_unstable_by(|a, b| b.cmp(a));
 
+                let mut estimate_changed = false;
                 for action in &actions_to_apply {
                     match action {
                         DemoAction::SelectAll(idx) => {
                             let mut guard = acquire_lock!(queued_demos_arc);
                             let queued = Arc::make_mut(&mut *guard);
                             if let Some(demo) = queued.get_mut(*idx) {
-                                for s in &mut demo.streaks { s.is_selected = true; }
+                                for s in &mut demo.streaks {
+                                    if demo.is_pov && Some(s.player_index) != demo.local_player_index {
+                                        continue;
+                                    }
+                                    s.is_selected = true;
+                                }
                             }
+                            estimate_changed = true;
                         }
                         DemoAction::DeselectAll(idx) => {
                             let mut guard = acquire_lock!(queued_demos_arc);
@@ -267,6 +374,7 @@ pub fn render(
                             if let Some(demo) = queued.get_mut(*idx) {
                                 for s in &mut demo.streaks { s.is_selected = false; }
                             }
+                            estimate_changed = true;
                         }
                         DemoAction::RemoveDemo(_) => {} // handled below
                     }
@@ -277,31 +385,15 @@ pub fn render(
                     if idx < queued.len() {
                         queued.remove(idx);
                     }
+                    estimate_changed = true;
+                }
+                if estimate_changed {
+                    ctx.data_mut(|d| d.insert_temp(egui::Id::new("dodtools_disk_estimate_dirty"), true));
                 }
 
                 // ── Global bulk-action bar ───────────────────────────────────────────
                 ui.add_space(6.0);
-                ui.horizontal(|ui| {
-                    if ui.button("Clear All Discovered").clicked() {
-                        let mut guard = acquire_lock!(queued_demos_arc);
-                        let queued = Arc::make_mut(&mut *guard);
-                        queued.clear();
-                    }
-                    if ui.button("Select All").clicked() {
-                        let mut guard = acquire_lock!(queued_demos_arc);
-                        let queued = Arc::make_mut(&mut *guard);
-                        for d in queued.iter_mut() {
-                            for s in &mut d.streaks { s.is_selected = true; }
-                        }
-                    }
-                    if ui.button("Deselect All").clicked() {
-                        let mut guard = acquire_lock!(queued_demos_arc);
-                        let queued = Arc::make_mut(&mut *guard);
-                        for d in queued.iter_mut() {
-                            for s in &mut d.streaks { s.is_selected = false; }
-                        }
-                    }
-                });
+                widgets::render_bulk_actions(ui, &queued_demos_arc);
             } else {
                 ui.weak("No discovered highlight streaks. Go back to Scan and add demo files.");
             }
@@ -310,298 +402,183 @@ pub fn render(
 
     ui.add_space(10.0);
 
-    // ── Export Configuration ─────────────────────────────────────────────────────
-    ui.group(|ui| {
-        ui.vertical(|ui| {
-            ui.heading("⚡ Capture Configuration");
-            ui.add_space(4.0);
+    // ── Global Paths & Configuration ─────────────────────────────────────────────
+        widgets::render_error_banner(ui, ctx, error_message);
 
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                static CAPTURE_PRIMARY_PICKER: std::sync::OnceLock<Mutex<egui_file_dialog::FileDialog>> = std::sync::OnceLock::new();
-                static CAPTURE_BACKUP_PICKER: std::sync::OnceLock<Mutex<egui_file_dialog::FileDialog>> = std::sync::OnceLock::new();
-                
-                let mut cap_primary_picker = acquire_lock!(CAPTURE_PRIMARY_PICKER.get_or_init(|| Mutex::new(create_pinned_file_dialog())));
-                ui.horizontal(|ui| {
-                    ui.label("Primary Capture Directory (Raw BMPs):");
-                    if ui.button("📁 Select...").clicked() {
-                        cap_primary_picker.pick_directory();
-                    }
-                    if let Some(path) = &patcher_config.primary_media_dir {
-                        ui.label(path.to_string_lossy());
-                    } else {
-                        ui.colored_label(egui::Color32::YELLOW, "Warning: Defaulting to OS Drive");
-                    }
-                });
-                cap_primary_picker.update(ctx);
-                if let Some(path) = cap_primary_picker.take_picked() {
-                    patcher_config.primary_media_dir = Some(path.to_path_buf());
-                    let mut global = crate::settings::load_settings();
-                    global.primary_media_dir = Some(path.to_string_lossy().into_owned());
-                    crate::settings::save_settings(&global);
-                }
+        {
+            let mut patcher_config = acquire_lock!(patcher_config_mutex);
 
-                let mut cap_backup_picker = acquire_lock!(CAPTURE_BACKUP_PICKER.get_or_init(|| Mutex::new(create_pinned_file_dialog())));
-                ui.horizontal(|ui| {
-                    ui.label("Backup Capture Directory:");
-                    if ui.button("📁 Select...").clicked() {
-                        cap_backup_picker.pick_directory();
-                    }
-                    if let Some(path) = &patcher_config.backup_media_dir {
-                        ui.label(path.to_string_lossy());
-                    }
-                });
-                cap_backup_picker.update(ctx);
-                if let Some(path) = cap_backup_picker.take_picked() {
-                    patcher_config.backup_media_dir = Some(path.to_path_buf());
-                    let mut global = crate::settings::load_settings();
-                    global.backup_media_dir = Some(path.to_string_lossy().into_owned());
-                    crate::settings::save_settings(&global);
-                }
-            }
-
-            ui.add_space(8.0);
-
-            // Row 1: Pre-roll / Post-roll
-            ui.horizontal(|ui| {
-                ui.label("Pre-roll (sec):");
-                ui.add(egui::DragValue::new(&mut patcher_config.pre_roll_seconds)
-                    .range(0.0..=10.0).speed(0.1));
-                ui.add_space(10.0);
-                ui.label("Post-roll (sec):");
-                ui.add(egui::DragValue::new(&mut patcher_config.post_roll_seconds)
-                    .range(0.0..=10.0).speed(0.1));
-            });
-
-            // Row 2: Record Start Lead / Record Stop Trail
-            ui.horizontal(|ui| {
-                ui.label("Record Start Lead (sec):");
-                ui.add(egui::DragValue::new(&mut patcher_config.record_start_lead)
-                    .range(0.0..=10.0).speed(0.1));
-                ui.add_space(10.0);
-                ui.label("Record Stop Trail (sec):");
-                ui.add(egui::DragValue::new(&mut patcher_config.record_stop_trail)
-                    .range(0.0..=10.0).speed(0.1));
-            });
-
-            // Row 3: Initial Load Delay / Fast Forward Speed
-            ui.horizontal(|ui| {
-                ui.label("Initial Load Delay (sec):");
-                ui.add(egui::DragValue::new(&mut patcher_config.initial_delay)
-                    .range(0.0..=10.0).speed(0.1));
-                ui.add_space(10.0);
-                ui.label("Fast Forward Speed:");
-                ui.add(egui::DragValue::new(&mut patcher_config.fast_forward_speed)
-                    .range(0.01..=10.0).speed(0.01));
-            });
-
-            // Row 4: Capture FPS
-            ui.horizontal(|ui| {
-                ui.label("Capture FPS:");
-                ui.add(egui::DragValue::new(&mut patcher_config.capture_fps)
-                    .range(30..=1000).speed(1));
-            });
-
-            // Row 5: Separate HUD
-            ui.horizontal(|ui| {
-                ui.checkbox(&mut patcher_config.separate_hud, "Separate HUD (Alpha & Color)")
-                    .on_hover_text("This toggle acts as the absolute source of truth and will override any separate_hud settings in your movie.cfg.");
+            egui::CollapsingHeader::new("Recording Engine Configurations").default_open(true).show(ui, |ui| {
+                panels::render_engine_config_panel(ui, &mut patcher_config, error_message);
             });
 
             ui.add_space(8.0);
 
-            ui.heading("⚡ Export Configuration");
-
-            // Row 6: HLCR Routing & Codec
-            let mut render_config = acquire_lock!(render_config_mutex);
-            ui.horizontal(|ui| {
-                ui.label("Render Codec:");
-                egui::ComboBox::from_id_salt("render_codec_combo")
-                    .selected_text(format!("{:?}", render_config.target_codec))
-                    .show_ui(ui, |ui| {
-                        let mut changed = false;
-                        changed |= ui.selectable_value(&mut render_config.target_codec, native::hlcr::config::RenderCodec::ProRes, "ProRes").changed();
-                        changed |= ui.selectable_value(&mut render_config.target_codec, native::hlcr::config::RenderCodec::NvencH264, "NvencH264").changed();
-                        changed |= ui.selectable_value(&mut render_config.target_codec, native::hlcr::config::RenderCodec::DnxHr, "DnxHr").changed();
-                        if changed {
-                            let _ = native::hlcr::config::save_config(&render_config);
-                        }
-                    });
+            let mut highlight_changed = false;
+            egui::CollapsingHeader::new("Highlight Capture Settings").default_open(true).show(ui, |ui| {
+                highlight_changed = panels::render_highlight_settings_panel(
+                    ui,
+                    ctx,
+                    &mut patcher_config,
+                    settings,
+                    draft_settings,
+                    subdir_cache,
+                    tree_demo_cache,
+                );
             });
-
-            static PRIMARY_PICKER: std::sync::OnceLock<Mutex<egui_file_dialog::FileDialog>> = std::sync::OnceLock::new();
-            static BACKUP_PICKER: std::sync::OnceLock<Mutex<egui_file_dialog::FileDialog>> = std::sync::OnceLock::new();
-            
-            let mut primary_picker = acquire_lock!(PRIMARY_PICKER.get_or_init(|| Mutex::new(create_pinned_file_dialog())));
-            ui.horizontal(|ui| {
-                ui.label("Primary Export Directory (Final .mov):");
-                if ui.button("📁 Select...").clicked() {
-                    primary_picker.pick_directory();
-                }
-                if let Some(path) = &render_config.primary_export_dir {
-                    ui.label(path.to_string_lossy());
-                }
-            });
-            primary_picker.update(ctx);
-            if let Some(path) = primary_picker.take_picked() {
-                render_config.primary_export_dir = Some(path.to_path_buf());
-                let _ = native::hlcr::config::save_config(&render_config);
-            }
-
-            let mut backup_picker = acquire_lock!(BACKUP_PICKER.get_or_init(|| Mutex::new(create_pinned_file_dialog())));
-            ui.horizontal(|ui| {
-                ui.label("Backup Export Directory:");
-                if ui.button("📁 Select...").clicked() {
-                    backup_picker.pick_directory();
-                }
-                if let Some(path) = &render_config.backup_export_dir {
-                    ui.label(path.to_string_lossy());
-                }
-            });
-            backup_picker.update(ctx);
-            if let Some(path) = backup_picker.take_picked() {
-                render_config.backup_export_dir = Some(path.to_path_buf());
-                let _ = native::hlcr::config::save_config(&render_config);
+            if highlight_changed {
+                ctx.data_mut(|d| d.insert_temp(egui::Id::new("dodtools_disk_estimate_dirty"), true));
             }
 
             ui.add_space(8.0);
 
-            let selected_streaks_count = queued_demos_shared.iter()
-                .flat_map(|d| &d.streaks)
-                .filter(|s| s.is_selected)
-                .count() as f32;
-
-            let total_sequence_duration = selected_streaks_count * (patcher_config.pre_roll_seconds + patcher_config.post_roll_seconds + 10.0);
-            let w = patcher_config.resolution_width;
-            let h = patcher_config.resolution_height;
-            let fps = patcher_config.capture_fps;
-            let mut required_bytes = native::sys::disk::calculate_raw_sequence_bytes(w, h, fps, total_sequence_duration);
-            if patcher_config.separate_hud {
-                required_bytes *= 3;
-            }
-            let required_gb = required_bytes as f64 / 1_073_741_824.0;
-            
-            let is_missing_primary_dir = patcher_config.primary_media_dir.is_none();
-            let check_path = patcher_config.primary_media_dir.clone().unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
-            let available_bytes = if is_missing_primary_dir { 0 } else { native::sys::disk::get_available_bytes(&check_path) };
-            let available_gb = if available_bytes == u64::MAX { 999.9 } else { available_bytes as f64 / 1_073_741_824.0 };
-            
-            let exceeds_space = required_bytes > available_bytes && available_bytes != u64::MAX;
-
-            ui.horizontal(|ui| {
-                ui.strong("Disk Space Estimate:");
-                if is_missing_primary_dir {
-                    ui.label(format!("Required: {:.1} GB / Available: N/A", required_gb));
-                } else if available_bytes == u64::MAX {
-                    ui.label(format!("Required: {:.1} GB / Available: Unknown", required_gb));
-                } else {
-                    let color = if exceeds_space { egui::Color32::RED } else { ui.visuals().text_color() };
-                    ui.colored_label(color, format!("Required: {:.1} GB / Available: {:.1} GB", required_gb, available_gb));
-                }
-            });
-
-            if is_missing_primary_dir {
-                ui.colored_label(egui::Color32::YELLOW, "⚠️ Please select a Primary Directory to enable capturing.");
-            } else if exceeds_space {
-                ui.colored_label(egui::Color32::RED, "⚠️ WARNING: Not enough free disk space on the target drive!");
-            }
-
-            ui.add_space(8.0);
-
-            // ── Proceed to Capture Button + async patch_worker ───────────────────
-            let is_running = is_patching();
-
-            ui.horizontal(|ui| {
-                let btn = egui::Button::new("Proceed to Capture ->");
-                if ui.add_enabled(!is_running && !queued_demos_shared.is_empty() && !exceeds_space && !is_missing_primary_dir, btn).clicked() {
-                    #[cfg(not(target_arch = "wasm32"))]
-                    {
-                        use sysinfo::{System, SystemExt, DiskExt};
-                        let mut sys = System::new_all();
-                        sys.refresh_disks_list();
-                        
-                        let active_export_dir = patcher_config.primary_media_dir.clone().unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
-                        let mut available_space = u64::MAX;
-                        let mut disk_found = false;
-                        for disk in sys.disks() {
-                            if active_export_dir.starts_with(disk.mount_point()) {
-                                available_space = disk.available_space();
-                                disk_found = true;
-                                break;
-                            }
-                        }
-
-                        if disk_found && available_space < 15_u64 * 1024 * 1024 * 1024 {
-                            log::warn!("Capture aborted: Target drive has less than 15GB free space.");
-                            return;
-                        }
-                    }
-
-                    set_is_patching(true);
-
-                    // Build the flat payload from all selected, filter-passing streaks.
-                    let mut payload = Vec::new();
-                    for demo in queued_demos_shared.iter() {
-                        let demo_path_str = demo.path.to_string_lossy().to_string();
-                        for streak in &demo.streaks {
-                            if !streak.is_selected {
-                                continue;
-                            }
-                            if demo.is_pov && *hide_non_pov
-                                && Some(streak.player_index) != demo.local_player_index
-                            {
-                                continue;
-                            }
-                            payload.push(CaptureStreak {
-                                start_tick: streak.start_tick,
-                                end_tick: streak.end_tick,
-                                source_demo: demo_path_str.clone(),
-                                target_player: Some(streak.target_player.clone()),
-                                kill_count: streak.kill_count,
-                                timeline_string: streak.timeline_string.clone(),
-                                duration_string: streak.duration_string.clone(),
-                                player_index: streak.player_index,
-                                kills: streak.kills.clone(),
-                                start_index: streak.start_index,
-                                end_index: streak.end_index,
-                            });
-                        }
-                    }
-
-                    if !payload.is_empty() {
-                        let cancel_token = Arc::new(AtomicBool::new(false));
-                        let jobs = build_batch_queue(payload, &patcher_config);
-                        let tx_clone = tx.clone();
-                        let ctx_clone = ctx.clone();
-                        let config_clone = patcher_config.clone();
-
-                        std::thread::Builder::new()
-                            .name("patch_worker".into())
-                            .spawn(move || {
-                                for job in jobs {
-                                    let patcher = native::patch::StreamPatcher::new(
-                                        &job.source_demo,
-                                        &job.output_demo,
-                                    );
-                                    let _ = patcher.patch(&job, &config_clone, &cancel_token);
+            egui::CollapsingHeader::new("⚡ Capture Configuration").default_open(true).show(ui, |ui| {
+                ui.add_enabled_ui(!super::is_patching(), |ui| {
+                    ui.strong("Mapped Capture Output Drives (Failover Priority Vector):");
+                    ui.add_space(4.0);
+                    
+                    let mut to_remove = None;
+                    let mut swap_indices = None;
+                    let dirs_len = patcher_config.capture_directories.len();
+                    for (idx, dir) in patcher_config.capture_directories.iter().enumerate() {
+                        ui.horizontal(|ui| {
+                            ui.label(format!("{}:", idx + 1));
+                            ui.label(dir.to_string_lossy());
+                            if idx > 0 {
+                                if ui.button("⬆").clicked() {
+                                    swap_indices = Some((idx, idx - 1));
                                 }
-                                let _ = tx_clone.send(crate::types::GuiMessage::PatchingComplete);
-                                ctx_clone.request_repaint();
-                            })
-                            .unwrap();
-                    } else {
-                        // No selectable payload — skip patching and jump straight to Capture.
-                        set_is_patching(false);
-                        *state_ptr = CaptureStudioState::Capture;
+                            }
+                            if idx < dirs_len.saturating_sub(1) {
+                                if ui.button("⬇").clicked() {
+                                    swap_indices = Some((idx, idx + 1));
+                                }
+                            }
+                            if ui.button("🗑 Remove").clicked() {
+                                to_remove = Some(idx);
+                            }
+                        });
                     }
-                }
-
-                if is_running {
-                    ui.add_space(10.0);
-                    ui.spinner();
-                    ui.label("Patching Demos... Please wait.");
-                }
+                    
+                    let mut dir_changed = false;
+                    if let Some((i, j)) = swap_indices {
+                        patcher_config.capture_directories.swap(i, j);
+                        crate::settings::save_patcher_config(&patcher_config);
+                        dir_changed = true;
+                    } else if let Some(idx) = to_remove {
+                        patcher_config.capture_directories.remove(idx);
+                        crate::settings::save_patcher_config(&patcher_config);
+                        dir_changed = true;
+                    }
+                    
+                    static DRIVE_PICKER: std::sync::OnceLock<Mutex<egui_file_dialog::FileDialog>> = std::sync::OnceLock::new();
+                    let mut drive_picker = acquire_lock!(DRIVE_PICKER.get_or_init(|| Mutex::new(egui_file_dialog::FileDialog::new())));
+                    
+                    if ui.button("➕ Add Drive").clicked() {
+                        drive_picker.pick_directory();
+                    }
+                    
+                    drive_picker.update(ctx);
+                    if let Some(path) = drive_picker.take_picked() {
+                        patcher_config.capture_directories.push(path);
+                        crate::settings::save_patcher_config(&patcher_config);
+                        dir_changed = true;
+                    }
+                    
+                    let config_changed = panels::render_capture_config_panel(ui, ctx, &mut patcher_config);
+                    if dir_changed || config_changed {
+                        ctx.data_mut(|d| d.insert_temp(egui::Id::new("dodtools_disk_estimate_dirty"), true));
+                    }
+                });
+                
+                ui.add_space(10.0);
+                ui.separator();
+                ui.add_space(6.0);
             });
+
+            ui.add_space(8.0);
+
+            egui::CollapsingHeader::new("🐛 Debugging Settings").default_open(true).show(ui, |ui| {
+                panels::render_debug_panel(ui, &mut patcher_config);
+            });
+        }
+
+        ui.add_space(8.0);
+
+        egui::CollapsingHeader::new("⚡ Export Configuration").default_open(true).show(ui, |ui| {
+            let mut render_config = acquire_lock!(render_config_mutex);
+            panels::render_export_config_panel(ui, ctx, &mut render_config);
         });
+
+        ui.add_space(8.0);
+
+        {
+            let mut patcher_config = acquire_lock!(patcher_config_mutex);
+            // ── Proceed to Capture Button + async patch_worker ───────────────────
+            widgets::render_primary_actions(
+                ui,
+                &mut patcher_config,
+                &mut *state_ptr,
+                &mut *loading_ptr,
+                &tx,
+                &queued_demos_arc,
+                ctx,
+            );
+        }
     });
+}
+
+fn calculate_merged_duration(data: &[DemoData], config: &PatcherConfig) -> f32 {
+    let mut total_duration = 0.0;
+    
+    // Group all selected streaks by demo path and player
+    let mut grouped: std::collections::HashMap<(String, Option<String>), Vec<crate::types::HighlightStreak>> = std::collections::HashMap::new();
+    for demo in data {
+        for streak in &demo.streaks {
+            if streak.is_selected {
+                if !demo.is_pov || Some(streak.player_index) == demo.local_player_index {
+                    grouped.entry((demo.path.to_string_lossy().to_string(), Some(streak.target_player.clone())))
+                           .or_default()
+                           .push(streak.clone());
+                }
+            }
+        }
+    }
+    
+    for (_, mut streaks) in grouped {
+        if streaks.is_empty() {
+            continue;
+        }
+        // Sort by start_tick
+        streaks.sort_by_key(|s| s.start_tick);
+        
+        let engine_tickrate = 100.0;
+        
+        // Merge overlapping streaks
+        let mut merged: Vec<(i32, i32)> = Vec::new();
+        for s in streaks {
+            let start = s.start_tick;
+            let end = s.end_tick;
+            if merged.is_empty() {
+                merged.push((start, end));
+            } else {
+                let dynamic_pre_roll_ticks = (config.pre_roll_seconds * engine_tickrate) as i32;
+                let dynamic_post_roll_ticks = (config.post_roll_seconds * engine_tickrate) as i32;
+                let adjusted_start = (start - dynamic_pre_roll_ticks).max(0);
+                let last = merged.last_mut().unwrap();
+                if adjusted_start <= last.1 + dynamic_post_roll_ticks {
+                    last.1 = last.1.max(end);
+                } else {
+                    merged.push((start, end));
+                }
+            }
+        }
+        
+        for (start, end) in merged {
+            let anchor_duration = ((end - start) as f32) / engine_tickrate;
+            total_duration += config.calculate_total_capture_duration(anchor_duration);
+        }
+    }
+    
+    total_duration
 }

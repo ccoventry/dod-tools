@@ -11,6 +11,7 @@ pub mod worker;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod pipeline;
 pub mod capture_engine;
+pub mod session;
 
 use analysis::Analysis;
 use clap::Parser;
@@ -28,7 +29,7 @@ use views::{PlayerHighlighting, report_ui, t};
 use types::{
     SortColumn, ScoreboardCache, ChatFilterState, ChatCache,
     CapturePhase, CaptureStudioState, QueuedStreakExport, PlayerDetailsCache, SidebarTab,
-    GuiMessage,
+    GuiMessage, StartupState,
 };
 #[cfg(not(target_arch = "wasm32"))]
 use types::{AuditorState, PendingStreakExport, BrowserView};
@@ -71,8 +72,13 @@ async fn main() {
         &title,
         options,
         Box::new(|_cc| {
+            let args: Vec<PathBuf> = std::env::args()
+                .skip(1)
+                .map(PathBuf::from)
+                .filter(|path| path.extension().unwrap_or_default() == "dem")
+                .collect();
             Ok(Box::new(
-                Gui::default().with_initial_files(Args::parse().demo_paths),
+                Gui::default().with_initial_files(args),
             ))
         }),
     )
@@ -240,7 +246,10 @@ pub(crate) struct Gui {
     pub(crate) capture_cancel_token: std::sync::Arc<std::sync::atomic::AtomicBool>,
     pub(crate) capture_studio_loading: bool,
     pub(crate) last_capture_studio_state: Option<CaptureStudioState>,
-    pub(crate) hide_non_pov: bool,
+    /// Autosave recovery state: set to PendingRecovery on startup when
+    /// `.autosave.json` is present (indicates an unclean prior exit).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) startup_state: StartupState,
 }
 
 
@@ -360,7 +369,8 @@ impl Gui {
         #[cfg(not(target_arch = "wasm32"))]
         {
             if let Ok(content) = serde_json::to_string_pretty(&self.cache) {
-                let _ = std::fs::write(".dod-tools-cache.json", content);
+                let cache_path = native::shared::paths::get_appdata_dir().join(".dod-tools-cache.json");
+                let _ = std::fs::write(cache_path, content);
             }
         }
         #[cfg(target_arch = "wasm32")]
@@ -518,9 +528,9 @@ impl Default for Gui {
 
         #[cfg(not(target_arch = "wasm32"))]
         let cache = {
-            let cache_path = std::path::Path::new(".dod-tools-cache.json");
+            let cache_path = native::shared::paths::get_appdata_dir().join(".dod-tools-cache.json");
             if cache_path.exists() {
-                std::fs::read_to_string(cache_path)
+                std::fs::read_to_string(&cache_path)
                     .ok()
                     .and_then(|content| serde_json::from_str::<DemoCache>(&content).ok())
                     .unwrap_or_default()
@@ -645,7 +655,20 @@ impl Default for Gui {
             capture_cancel_token: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             capture_studio_loading: false,
             last_capture_studio_state: None,
-            hide_non_pov: true,
+            #[cfg(not(target_arch = "wasm32"))]
+            startup_state: {
+                let capture_autosave = native::shared::paths::get_appdata_dir().join(".autosave.json");
+                let render_autosave = native::shared::paths::get_appdata_dir().join(".render_autosave.json");
+                if capture_autosave.exists() {
+                    log::warn!("[Startup] .autosave.json detected — capture recovery pending");
+                    StartupState::PendingRecovery
+                } else if render_autosave.exists() {
+                    log::warn!("[Startup] .render_autosave.json detected — render recovery pending");
+                    StartupState::PendingRenderRecovery
+                } else {
+                    StartupState::Normal
+                }
+            },
         }
     }
 }
@@ -669,6 +692,211 @@ impl eframe::App for Gui {
         }
 
         let modal_open = self.show_about_window;
+
+        // ── Unclean-exit recovery modal ───────────────────────────────────────────
+        // Rendered first so it can intercept the frame before any other panel
+        // attempts to draw.  The modal is native-only; wasm has no lockfile I/O.
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.startup_state == StartupState::PendingRecovery {
+            let mut recover_clicked = false;
+            let mut discard_clicked = false;
+
+            egui::Window::new("⚠ Unclean Exit Detected")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                .show(ctx, |ui| {
+                    ui.add_space(4.0);
+                    ui.label("The previous session did not exit cleanly.");
+                    ui.label("An autosave of the capture queue was found (.autosave.json).");
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        if ui.button("🔄 Recover Session").clicked() {
+                            recover_clicked = true;
+                        }
+                        ui.add_space(8.0);
+                        if ui.button("🗑 Discard & Clean Up").clicked() {
+                            discard_clicked = true;
+                        }
+                    });
+                    ui.add_space(4.0);
+                });
+
+            if recover_clicked {
+                // Deserialize the lockfile and feed it into the existing import pipeline.
+                let autosave_path = native::shared::paths::get_appdata_dir().join(".autosave.json");
+                if let Ok(json) = std::fs::read_to_string(&autosave_path) {
+                    if let Ok(session_data) = serde_json::from_str::<crate::session::SessionData>(&json) {
+                        self.capture_studio_loading = true;
+                        self.active_sidebar_tab = SidebarTab::CaptureStudio;
+                        self.capture_studio_state = CaptureStudioState::Scan;
+                        let rules = crate::views::capture::get_highlight_rules_clone();
+                        let tx_clone = self.tx.clone();
+                        let ctx_clone = ctx.clone();
+                        let paths: Vec<std::path::PathBuf> = session_data.entries
+                            .iter()
+                            .map(|e| e.path.clone())
+                            .collect();
+                        crate::views::capture::spawn_ingestion_thread(
+                            crate::views::capture::IngestionInput::Batch(paths),
+                            rules,
+                            ctx_clone,
+                            tx_clone,
+                        );
+                    }
+                }
+                let _ = std::fs::remove_file(&autosave_path);
+                self.startup_state = StartupState::Normal;
+            }
+
+            if discard_clicked {
+                // GC sweep: remove any stale signal dirs and junction from a crashed batch.
+                // Use the same semantics as CaptureCleanupGuard::drop.
+                let config = crate::views::capture::get_patcher_config()
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner());
+                if !config.game_path.is_empty() {
+                    if let Some(hl_parent) = std::path::Path::new(&config.game_path).parent() {
+                        let exit_trigger = hl_parent.join("DOD_TOOLS_EXIT_TRIGGER");
+                        let session_junction = hl_parent.join("dodtools_session");
+                        if let Err(e) = std::fs::remove_dir_all(&exit_trigger) {
+                            if e.kind() != std::io::ErrorKind::NotFound {
+                                log::warn!("[GC::discard] remove exit_trigger {:?}: {}", exit_trigger, e);
+                            }
+                        }
+                        if let Err(e) = std::fs::remove_dir(&session_junction) {
+                            if e.kind() != std::io::ErrorKind::NotFound {
+                                log::warn!("[GC::discard] remove session_junction {:?}: {}", session_junction, e);
+                            }
+                        }
+                    }
+                }
+                let autosave_path = native::shared::paths::get_appdata_dir().join(".autosave.json");
+                let _ = std::fs::remove_file(&autosave_path);
+                self.startup_state = StartupState::Normal;
+            }
+
+            // Do not render the rest of the UI while the modal is active.
+            return;
+        }
+
+        // ── Render batch recovery modal ───────────────────────────────────────
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.startup_state == StartupState::PendingRenderRecovery {
+            let render_autosave_path = native::shared::paths::get_appdata_dir()
+                .join(".render_autosave.json");
+
+            let mut recover_clicked = false;
+            let mut discard_clicked = false;
+
+            // Read metadata for display while we still hold the path.
+            let (pending_count, completed_count, source_folder) = {
+                std::fs::read_to_string(&render_autosave_path)
+                    .ok()
+                    .and_then(|json| {
+                        serde_json::from_str::<native::hlcr::RenderSessionData>(&json).ok()
+                    })
+                    .map(|s| {
+                        let pending = s.jobs.iter()
+                            .filter(|j| j.status == native::hlcr::RenderJobStatus::Pending)
+                            .count();
+                        let completed = s.jobs.iter()
+                            .filter(|j| j.status == native::hlcr::RenderJobStatus::Completed)
+                            .count();
+                        (pending, completed, s.source_folder.clone())
+                    })
+                    .unwrap_or((0, 0, String::new()))
+            };
+
+            egui::Window::new("🎬 Render Batch Interrupted")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                .show(ctx, |ui| {
+                    ui.add_space(4.0);
+                    ui.label("A render batch did not complete cleanly.");
+                    ui.label(format!("Source: {}", source_folder));
+                    ui.add_space(6.0);
+                    ui.label(format!("✅ Completed: {}   ⏳ Pending: {}", completed_count, pending_count));
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        if ui.button("🔄 Recover Render Batch").clicked() {
+                            recover_clicked = true;
+                        }
+                        ui.add_space(8.0);
+                        if ui.button("🗑 Discard").clicked() {
+                            discard_clicked = true;
+                        }
+                    });
+                    ui.add_space(4.0);
+                });
+
+            if recover_clicked {
+                if let Ok(json) = std::fs::read_to_string(&render_autosave_path) {
+                    if let Ok(session) = serde_json::from_str::<native::hlcr::RenderSessionData>(&json) {
+                        use std::sync::Arc;
+                        use std::sync::atomic::AtomicBool;
+
+                        // Populate HlcrState from the saved session.
+                        // Only Pending jobs are set to "Queued"; Completed ones
+                        // display as "Finished" in the render table.
+                        self.hlcr_state.config.source_folder = session.source_folder.clone();
+                        self.hlcr_state.jobs.clear();
+                        self.hlcr_state.clips.clear();
+
+                        for (i, rj) in session.jobs.iter().enumerate() {
+                            let (status_str, progress) = if rj.status == native::hlcr::RenderJobStatus::Completed {
+                                ("Finished".to_string(), 100u32)
+                            } else {
+                                ("Queued".to_string(), 0u32)
+                            };
+                            self.hlcr_state.jobs.push(native::hlcr::ui::RenderJobState {
+                                id: i.to_string(),
+                                name: rj.name.clone(),
+                                stream: String::new(),
+                                frames: 0,
+                                date: String::new(),
+                                status: status_str,
+                                speed: String::new(),
+                                progress,
+                                error_log: None,
+                                cancel_flag: Arc::new(AtomicBool::new(false)),
+                                resolved_output_path: if rj.output_path.is_empty() {
+                                    None
+                                } else {
+                                    Some(rj.output_path.clone())
+                                },
+                            });
+                            // Push a stub ClipData so index alignment is preserved.
+                            self.hlcr_state.clips.push(native::hlcr::scanner::ClipData {
+                                take_folder: rj.take_folder.clone(),
+                                clip_type: "single".to_string(),
+                                img_folder: String::new(),
+                                wav_file: "sound.wav".to_string(),
+                                base_name: rj.name.clone(),
+                                frame_count: 0,
+                                date: String::new(),
+                            });
+                        }
+                        self.hlcr_state.render_session = Some(session);
+                        self.hlcr_state.status_message =
+                            format!("Recovered: {} pending, {} completed.",
+                                pending_count, completed_count);
+                        self.active_sidebar_tab = SidebarTab::CaptureStudio;
+                        self.capture_studio_state = CaptureStudioState::Render;
+                    }
+                }
+                let _ = std::fs::remove_file(&render_autosave_path);
+                self.startup_state = StartupState::Normal;
+            }
+
+            if discard_clicked {
+                let _ = std::fs::remove_file(&render_autosave_path);
+                self.startup_state = StartupState::Normal;
+            }
+
+            return;
+        }
 
         if self.loading_path.is_some() {
             ctx.request_repaint();
@@ -727,11 +955,11 @@ impl eframe::App for Gui {
                     }
 
                     ui.add_space(8.0);
-                    
+
                     let settings_active = self.active_sidebar_tab == SidebarTab::Settings;
                     let settings_btn = egui::Button::new(egui::RichText::new("⚙").size(18.0))
                         .selected(settings_active);
-                    if ui.add(settings_btn).on_hover_text("Application Settings").clicked() {
+                    if ui.add(settings_btn).on_hover_text("Settings").clicked() {
                         self.active_sidebar_tab = SidebarTab::Settings;
                     }
                 });
@@ -780,17 +1008,18 @@ impl eframe::App for Gui {
                                 vec![]
                             };
 
+                            let config = crate::views::capture::get_patcher_config().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
                             let options = native::patch::PatchOptions {
                                 exit_on_finish: false,
-                                init_commands: self.settings.capture_init_commands.lines().map(String::from).collect(),
-                                custom_commands: self.settings.custom_commands.clone(),
-                                fast_forward_speed: Some(self.settings.capture_fast_forward_speed),
+                                init_commands: config.init_commands.clone(),
+                                custom_commands: config.custom_commands.clone(),
+                                fast_forward_speed: Some(config.fast_forward_speed),
                                 hltv_spec_player,
-                                initial_delay: Some(self.settings.capture_initial_delay),
-                                pre_record_buffer: Some(self.settings.capture_pre_record_buffer),
-                                record_start_lead: Some(self.settings.capture_record_start_lead),
-                                record_stop_trail: Some(self.settings.capture_record_stop_trail),
-                                post_record_buffer: Some(self.settings.post_record_buffer),
+                                initial_delay: Some(config.initial_delay),
+                                pre_record_buffer: Some(config.pre_roll_seconds),
+                                record_start_lead: Some(config.record_start_lead),
+                                record_stop_trail: Some(config.record_stop_trail),
+                                post_record_buffer: Some(config.post_roll_seconds),
                                 player_deaths: Some(player_deaths),
                             };
                             let intervals = &[(export_info.start_time, export_info.stop_time)];
@@ -853,7 +1082,7 @@ impl eframe::App for Gui {
 
                                 let options = native::patch::PatchOptions {
                                     exit_on_finish: item.exit_on_finish,
-                                    init_commands: item.init_commands.lines().map(String::from).collect(),
+                                    init_commands: item.init_commands.clone(),
                                     custom_commands: item.custom_commands.clone(),
                                     fast_forward_speed: Some(item.fast_forward_speed),
                                     hltv_spec_player: item.hltv_spec_player.clone(),
@@ -907,7 +1136,8 @@ impl eframe::App for Gui {
                         }
 
                         let queue_py_path = dest_dir.join("capture_queue.py");
-                        let py_script = generate_python_queue_sequencer(&self.settings.hlae_path, &self.settings.game_path);
+                        let config = crate::views::capture::get_patcher_config().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                        let py_script = generate_python_queue_sequencer(&config.hlae_path, &config.game_path);
                         if let Err(e) = std::fs::write(&queue_py_path, py_script) {
                             self.error_message = Some(format!("Failed to write capture_queue.py: {}", e));
                         }
@@ -1088,11 +1318,30 @@ impl eframe::App for Gui {
                 #[cfg(not(target_arch = "wasm32"))]
                 GuiMessage::CaptureStudioFinished => {
                     self.capture_studio_state = CaptureStudioState::Render;
-                    if let Some(game_dir) = std::path::Path::new(&self.settings.game_path).parent() {
-                        let capt_dir = game_dir.join("dod").join("hlcr_captures");
-                        self.hlcr_state.config.source_folder = capt_dir.to_string_lossy().to_string();
-                        let _ = native::hlcr::config::save_config(&self.hlcr_state.config);
+                    let mut session_dir = std::path::PathBuf::new();
+                    
+                    let config_guard = crate::views::capture::get_patcher_config().lock();
+                    let mut game_path = String::new();
+                    if let Ok(config) = config_guard {
+                        game_path = config.game_path.clone();
+                        if let Some(primary) = &config.primary_media_dir {
+                            session_dir = if config.session_id.is_empty() {
+                                primary.clone()
+                            } else {
+                                primary.join(&config.session_id)
+                            };
+                        }
                     }
+
+                    if session_dir.as_os_str().is_empty() {
+                        if let Some(game_dir) = std::path::Path::new(&game_path).parent() {
+                            session_dir = game_dir.join("dod").join("hlcr_captures");
+                        }
+                    }
+
+                    self.hlcr_state.config.source_folder = session_dir.to_string_lossy().to_string();
+                    let _ = native::hlcr::config::save_config(&self.hlcr_state.config);
+
                     self.hlcr_state.auto_render = true;
                     self.hlcr_state.start_scan();
                 }
@@ -1121,6 +1370,8 @@ impl eframe::App for Gui {
                         }
                         EngineEvent::Error(err_msg) => {
                             self.capture_engine_msg = format!("Error: {}", err_msg);
+                            #[cfg(not(target_arch = "wasm32"))]
+                            crate::views::capture::set_is_patching(false);
                         }
                         EngineEvent::AllCompleted => {
                             self.capture_engine_running = false;
@@ -2032,7 +2283,7 @@ impl eframe::App for Gui {
             // Error modal — floats above the UI so the user can dismiss it
             // without losing access to any tab or current content.
             if let Some(ref error_text) = self.error_message.clone() {
-                if self.active_sidebar_tab != SidebarTab::Settings {
+                {
                     let mut open = true;
                     egui::Window::new(t("#app_error_heading"))
                         .collapsible(false)
@@ -2106,11 +2357,7 @@ impl eframe::App for Gui {
                         self.capture_studio_ui(ui, ctx);
                     }
                     SidebarTab::Settings => {
-                        ScrollArea::vertical()
-                            .id_salt("settings_scroll_area")
-                            .show(ui, |ui| {
-                                self.render_settings_ui(ui, ctx);
-                            });
+                        self.render_settings_ui(ui, ctx);
                     }
                     #[cfg(not(target_arch = "wasm32"))]
                     SidebarTab::Auditor => {}
@@ -2238,13 +2485,14 @@ impl eframe::App for Gui {
                     }
 
                     self.cancel_flag.store(false, std::sync::atomic::Ordering::Relaxed);
+                    let config = crate::views::capture::get_patcher_config().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
                     start_capture_pipeline(
                         ctx.clone(),
                         self.tx.clone(),
                         enabled_items,
                         player_deaths_map,
-                        self.settings.game_path.clone(),
-                        self.settings.hlae_path.clone(),
+                        config.game_path.clone(),
+                        config.hlae_path.clone(),
                         self.cancel_flag.clone(),
                     );
                 }
@@ -2316,27 +2564,28 @@ impl eframe::App for Gui {
                     let new_id = format!("{}_{}_{}", active_path_str, player_id, req.streak_idx);
 
                     if !self.export_queue.iter().any(|item| item.id == new_id) {
-                        self.export_queue.push(QueuedStreakExport {
-                            id: new_id,
-                            input_path,
-                            player_id,
-                            player_name,
-                            start_time: req.start_time,
-                            stop_time: req.stop_time,
-                            streak_idx: req.streak_idx,
-                            kills_count: req.kills_count,
-                            output_name: default_name,
-                            enabled: true,
-                            exit_on_finish: true,
-                            init_commands: self.settings.capture_init_commands.clone(),
-                            custom_commands: self.settings.custom_commands.clone(),
-                            fast_forward_speed: self.settings.capture_fast_forward_speed,
-                            hltv_spec_player,
-                            initial_delay: self.settings.capture_initial_delay,
-                            pre_record_buffer: self.settings.capture_pre_record_buffer,
-                            record_start_lead: self.settings.capture_record_start_lead,
-                            record_stop_trail: self.settings.capture_record_stop_trail,
-                            post_record_buffer: self.settings.post_record_buffer,
+                            let config = crate::views::capture::get_patcher_config().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                            self.export_queue.push(QueuedStreakExport {
+                                id: new_id,
+                                input_path,
+                                player_id,
+                                player_name,
+                                start_time: req.start_time,
+                                stop_time: req.stop_time,
+                                streak_idx: req.streak_idx,
+                                kills_count: req.kills_count,
+                                output_name: default_name,
+                                enabled: true,
+                                exit_on_finish: true,
+                                init_commands: config.init_commands.clone(),
+                                custom_commands: config.custom_commands.clone(),
+                                fast_forward_speed: config.fast_forward_speed,
+                                hltv_spec_player,
+                                initial_delay: config.initial_delay,
+                                pre_record_buffer: config.pre_roll_seconds,
+                                record_start_lead: config.record_start_lead,
+                                record_stop_trail: config.record_stop_trail,
+                                post_record_buffer: config.post_roll_seconds,
                             status: CapturePhase::ReviewQueue,
                             error_message: None,
                             sub_status: None,

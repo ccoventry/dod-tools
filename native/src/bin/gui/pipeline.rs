@@ -141,7 +141,7 @@ def main():
         
         # Launch HLAE
         hook_dll = os.path.join(os.path.dirname(hlae), "AfxHookGoldSrc.dll")
-        cmd_line = f"-game dod -insecure -windowed -w 1280 -h 720 +playdemo {{demo_name_no_ext}}"
+        cmd_line = f"-game dod -demoedit -condebug -insecure -windowed -w 1280 -h 720 +playdemo {{demo_name_no_ext}}"
         cmd = [
             hlae,
             "-customLoader",
@@ -257,7 +257,7 @@ pub fn start_capture_pipeline(
             let player_deaths = player_deaths_map.get(&item.id).cloned().unwrap_or_default();
             let options = native::patch::PatchOptions {
                 exit_on_finish: item.exit_on_finish,
-                init_commands: item.init_commands.lines().map(String::from).collect(),
+                init_commands: item.init_commands.clone(),
                 custom_commands,
                 fast_forward_speed: Some(item.fast_forward_speed),
                 hltv_spec_player: item.hltv_spec_player.clone(),
@@ -411,7 +411,7 @@ pub fn start_capture_pipeline(
             let hook_dll = hlae_dir.join("AfxHookGoldSrc.dll");
             let hook_dll_str = hook_dll.to_string_lossy().to_string();
 
-            let args_str = format!("-game dod -insecure -windowed -w 1280 -h 720 +playdemo {}", demo_name_no_ext);
+            let args_str = format!("-game dod -demoedit -condebug -insecure -windowed -w 1280 -h 720 +exec dodtools_helper.cfg +playdemo {}", demo_name_no_ext);
             let mut cmd = tokio::process::Command::new(&hlae_path);
             cmd.kill_on_drop(true);
             cmd.env("SteamAppId", "30");

@@ -13,7 +13,7 @@ impl Gui {
                 ui.separator();
 
                 let phase = self.capture_studio_state;
-                let is_wasm = cfg!(target_arch = "wasm32");
+                let _is_wasm = cfg!(target_arch = "wasm32");
 
                 let step1_active = phase == CaptureStudioState::Scan;
                 let step1_btn = ui.selectable_label(step1_active, "1. Scan");
@@ -81,9 +81,12 @@ impl Gui {
                             &mut self.capture_studio_state,
                             self.tx.clone(),
                             &mut self.capture_studio_loading,
-                            &mut self.hide_non_pov,
                             // Capture step fields:
                             &mut self.settings,
+                            &mut self.draft_settings,
+                            &mut self.error_message,
+                            &mut self.subdir_cache,
+                            &mut self.tree_demo_cache,
                             &mut self.capture_engine_running,
                             &self.capture_engine_msg,
                             self.capture_engine_progress,
@@ -100,6 +103,13 @@ impl Gui {
                 CaptureStudioState::Render => {
                     #[cfg(not(target_arch = "wasm32"))]
                     {
+                        let config_guard = match crate::views::capture::get_patcher_config().lock() {
+                            Ok(guard) => guard,
+                            Err(poisoned) => poisoned.into_inner(),
+                        };
+                        if let Ok(resolved_path) = crate::settings::resolve_ffmpeg_path(config_guard.ffmpeg_override_path.as_ref()) {
+                            self.hlcr_state.config.ffmpeg_path = resolved_path.to_string_lossy().to_string();
+                        }
                         self.hlcr_state.draw_ui(ui, ctx);
                     }
                     #[cfg(target_arch = "wasm32")]
