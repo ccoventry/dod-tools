@@ -2,7 +2,7 @@
 // Life-bounded highlight scanner and HLTV detection.
 // All three functions perform std::fs I/O — native-only.
 
-use crate::patch::types::{HighlightRules, CaptureStreak};
+use crate::patch::types::{HighlightRules, CaptureStreak, HighlightStatus};
 
 // ── HLTV guard ────────────────────────────────────────────────────────────────
 
@@ -155,6 +155,7 @@ pub fn scan_demo_for_highlights(
                 total_demo_frames: analysis.demo_info.playback_frames,
                 demo_fps: tickrate,
                 frame_times: frame_times_arc.clone(),
+                status: HighlightStatus::None,
             };
             streak.update_visuals();
             streaks.push(streak);

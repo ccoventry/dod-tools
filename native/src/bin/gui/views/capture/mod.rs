@@ -429,7 +429,7 @@ pub(crate) fn spawn_ingestion_thread(
                                     end_index: s.end_index,
                                     viewdemo_times: s.viewdemo_times,
                                     frame_times: s.frame_times,
-                                    status: crate::session::HighlightStatus::None,
+                                    status: native::patch::HighlightStatus::None,
                                 }
                             })
                             .collect();

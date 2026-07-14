@@ -4,14 +4,7 @@ use std::collections::HashMap;
 use native::utils::demo_hasher::calculate_demo_key;
 use walkdir::WalkDir;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
-pub enum HighlightStatus {
-    #[default]
-    None,
-    Pending,
-    Captured,
-    Rendered,
-}
+use native::patch::HighlightStatus;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct HighlightMetadata {

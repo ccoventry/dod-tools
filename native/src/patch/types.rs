@@ -39,6 +39,15 @@ pub struct PatchOptions {
 
 // ── Capture result types ──────────────────────────────────────────────────────
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum HighlightStatus {
+    #[default]
+    None,
+    Pending,
+    Captured,
+    Rendered,
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CaptureStreak {
     pub start_tick: i32,
@@ -60,6 +69,8 @@ pub struct CaptureStreak {
     pub viewdemo_times: Vec<f32>,
     #[serde(skip, default)]
     pub frame_times: Arc<Vec<f32>>,
+    #[serde(default)]
+    pub status: HighlightStatus,
 }
 
 impl CaptureStreak {
