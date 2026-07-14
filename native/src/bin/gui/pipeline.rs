@@ -538,7 +538,6 @@ pub fn start_capture_pipeline(
         }
 
         // Notify that the entire queue has completed HLAE capture
-        let _ = tx.send(GuiMessage::CaptureStudioFinished);
         ctx.request_repaint();
     });
 }
