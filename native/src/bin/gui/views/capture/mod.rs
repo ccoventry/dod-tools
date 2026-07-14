@@ -26,6 +26,16 @@ use std::path::PathBuf;
 
 pub use native::log_markdown;
 
+fn get_default_projects_dir() -> Option<std::path::PathBuf> {
+    dirs::document_dir().map(|mut p| {
+        p.push("dod-tools");
+        p.push("projects");
+        // Ensure the directory exists before the dialog tries to open it
+        let _ = std::fs::create_dir_all(&p);
+        p
+    })
+}
+
 macro_rules! acquire_lock {
     ($mutex:expr) => {
         match $mutex.lock() {
@@ -57,6 +67,20 @@ pub(crate) fn is_patching() -> bool {
 
 pub(crate) fn set_is_patching(val: bool) {
     IS_PATCHING.store(val, Ordering::SeqCst);
+}
+
+pub static ACTIVE_PROJECT_PATH: std::sync::OnceLock<std::sync::Mutex<Option<std::path::PathBuf>>> = std::sync::OnceLock::new();
+
+pub fn get_active_project_path() -> Option<std::path::PathBuf> {
+    let mutex = ACTIVE_PROJECT_PATH.get_or_init(|| std::sync::Mutex::new(None));
+    let guard = acquire_lock!(mutex);
+    guard.clone()
+}
+
+pub fn set_active_project_path(path: Option<std::path::PathBuf>) {
+    let mutex = ACTIVE_PROJECT_PATH.get_or_init(|| std::sync::Mutex::new(None));
+    let mut guard = acquire_lock!(mutex);
+    *guard = path;
 }
 
 // ── Wizard field string state — only min_kills remains (max_time_gap removed) ──
@@ -162,6 +186,110 @@ pub fn render_patch_ui(
             return;
         }
     }
+
+    // Project controls header
+    ui.horizontal(|ui| {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui.button("📂 Load Project").clicked() {
+                *loading_ptr = true;
+                let ctx_clone = ctx.clone();
+                let rules_clone = get_highlight_rules_clone();
+                let tx_clone = tx.clone();
+                let queued_demos_clone = get_queued_demos();
+                std::thread::Builder::new()
+                    .name("rfd_dialog_load_project".into())
+                    .stack_size(8 * 1024 * 1024)
+                    .spawn(move || {
+                        let mut dialog = rfd::FileDialog::new().add_filter("JSON", &["json"]);
+                        if let Some(dir) = get_default_projects_dir() {
+                            dialog = dialog.set_directory(&dir);
+                        }
+                        if let Some(json_path) = dialog.pick_file() {
+                            set_active_project_path(Some(json_path.clone()));
+                            if let Ok(json) = std::fs::read_to_string(&json_path) {
+                                if let Ok(session_data) = serde_json::from_str::<crate::session::SessionData>(&json) {
+                                    if let Some(base_dir) = rfd::FileDialog::new().pick_folder() {
+                                        let rt = tokio::runtime::Runtime::new().unwrap();
+                                        let resolved = rt.block_on(crate::session::import_session_async(base_dir, session_data.entries));
+                                        if !resolved.is_empty() {
+                                            let mut paths_to_ingest = Vec::new();
+                                            {
+                                                let mut guard = acquire_lock!(queued_demos_clone);
+                                                let queued = Arc::make_mut(&mut *guard);
+                                                for (path, metas) in resolved {
+                                                    if let Some(demo) = queued.iter_mut().find(|d| d.path == path) {
+                                                        for (streak, meta) in demo.streaks.iter_mut().zip(metas) {
+                                                            streak.is_selected = meta.is_selected;
+                                                            streak.start_index = meta.start_kill as usize;
+                                                            streak.end_index = meta.end_kill as usize;
+                                                            streak.status = meta.status;
+                                                            streak.update_visuals();
+                                                        }
+                                                    } else {
+                                                        paths_to_ingest.push(path);
+                                                    }
+                                                }
+                                            }
+                                            if !paths_to_ingest.is_empty() {
+                                                spawn_ingestion_thread(
+                                                    IngestionInput::Batch(paths_to_ingest),
+                                                    rules_clone,
+                                                    ctx_clone,
+                                                    tx_clone,
+                                                );
+                                                return;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        let _ = tx_clone.send(crate::types::GuiMessage::IngestionFinished);
+                    })
+                    .unwrap();
+            }
+
+            let queued_demos_shared = {
+                let arc = get_queued_demos();
+                let guard = acquire_lock!(arc);
+                guard.clone()
+            };
+            let data = &*queued_demos_shared;
+
+            if ui.button("💾 Save").clicked() {
+                if let Some(path) = get_active_project_path() {
+                    let _ = serialize_and_save_project(&path, data);
+                } else {
+                    let mut dialog = rfd::FileDialog::new().add_filter("JSON", &["json"]);
+                    if let Some(dir) = get_default_projects_dir() {
+                        dialog = dialog.set_directory(&dir);
+                    }
+                    if let Some(path) = dialog.save_file() {
+                        if let Ok(()) = serialize_and_save_project(&path, data) {
+                            set_active_project_path(Some(path));
+                        }
+                    }
+                }
+            }
+
+            if ui.button("💾 Save As...").clicked() {
+                let mut dialog = rfd::FileDialog::new().add_filter("JSON", &["json"]);
+                if let Some(dir) = get_default_projects_dir() {
+                    dialog = dialog.set_directory(&dir);
+                }
+                if let Some(path) = dialog.save_file() {
+                    if let Ok(()) = serialize_and_save_project(&path, data) {
+                        set_active_project_path(Some(path));
+                    }
+                }
+            }
+
+            if let Some(path) = get_active_project_path() {
+                ui.weak(format!("Active: {}", path.display()));
+            }
+        });
+    });
+    ui.add_space(4.0);
 
     match current_state {
         CaptureStudioState::Scan => {
@@ -301,6 +429,7 @@ pub(crate) fn spawn_ingestion_thread(
                                     end_index: s.end_index,
                                     viewdemo_times: s.viewdemo_times,
                                     frame_times: s.frame_times,
+                                    status: crate::session::HighlightStatus::None,
                                 }
                             })
                             .collect();
@@ -369,4 +498,26 @@ pub(crate) fn spawn_ingestion_thread(
             ctx.request_repaint();
         })
         .unwrap();
+}
+
+pub fn serialize_and_save_project(path: &std::path::Path, data: &[crate::types::DemoData]) -> Result<(), String> {
+    let entries = data.iter().map(|d| {
+        let highlights = d.streaks.iter().map(|s| {
+            crate::session::HighlightMetadata {
+                is_selected: s.is_selected,
+                start_kill: s.start_index as i32,
+                end_kill: s.end_index as i32,
+                status: s.status,
+            }
+        }).collect();
+        crate::session::DemoEntry {
+            path: d.path.clone(),
+            key: native::utils::demo_hasher::calculate_demo_key(&d.path),
+            highlights,
+        }
+    }).collect();
+    let session_data = crate::session::SessionData { entries };
+    let json = serde_json::to_string_pretty(&session_data).map_err(|e| e.to_string())?;
+    std::fs::write(path, json).map_err(|e| e.to_string())?;
+    Ok(())
 }

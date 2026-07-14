@@ -290,6 +290,7 @@ pub fn spawn_capture_engine(
                         is_selected: s.is_selected,
                         start_kill: s.start_index as i32,
                         end_kill: s.end_index as i32,
+                        status: crate::session::HighlightStatus::None
                     }).collect();
                     crate::session::DemoEntry {
                         path: d.path.clone(),

@@ -3,6 +3,10 @@
 ## 📋 General Backlog (Future Roadmap Items)
 - [ ] Feature: Add match start and demo end director events in `native/src/patch/builder.rs` for each demo (requires piping `match_start_tick` from `AnalyzerState` to `DemoData`).
 - [ ] Refactor: Isolate native engine stream slicing mechanisms behind explicit `target_arch` macro controls.
+- [ ] Epic: Capture Studio Master-Detail Refactor — Pivot the GUI from a linear wizard to a unified Master-Detail layout (mirroring the Demo Analyzer). 
+    - Phase 1: Deprecate `target_player` and `min_kills` legacy pre-scan filters. Merge `CaptureStudioState::Scan` and `Select` into a single `Workspace` enum.
+    - Phase 2: Build the top-pane Master List (`egui_extras::TableBuilder`) for directory routing and demo file tracking.
+    - Phase 3: Build the bottom-pane Detail View to conditionally render highlight checkboxes based on the active Master List selection.
 
 ## Immediate Tasks (Next Session)
 - [ ] **Long Demo Validation & Packet Audit:** Verify parsing and slicing stability on extended demo files (>30 mins) to ensure packet index alignments do not drift.

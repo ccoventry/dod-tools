@@ -4,11 +4,22 @@ use std::collections::HashMap;
 use native::utils::demo_hasher::calculate_demo_key;
 use walkdir::WalkDir;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum HighlightStatus {
+    #[default]
+    None,
+    Pending,
+    Captured,
+    Rendered,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct HighlightMetadata {
     pub is_selected: bool,
     pub start_kill: i32,
     pub end_kill: i32,
+    #[serde(default)]
+    pub status: HighlightStatus,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

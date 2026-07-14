@@ -26,12 +26,11 @@ pub fn render(
     tx: std::sync::mpsc::Sender<crate::types::GuiMessage>,
     loading_ptr: &mut bool,
     rules_mutex: &'static Mutex<HighlightRules>,
-    min_kills_str_mutex: &'static Mutex<String>,
+    _min_kills_str_mutex: &'static Mutex<String>,
     capture_state_mutex: &'static Mutex<CaptureState>,
     queued_demos_arc: Arc<Mutex<Arc<Vec<DemoData>>>>,
 ) {
-    let mut rules = acquire_lock!(rules_mutex);
-    let mut min_kills_str = acquire_lock!(min_kills_str_mutex);
+    let rules = acquire_lock!(rules_mutex);
 
     ui.group(|ui| {
         ui.vertical(|ui| {
@@ -40,7 +39,8 @@ pub fn render(
             ui.label("Configure highlight rules and scan files/folders to discover streaks dynamically.");
             ui.add_space(8.0);
 
-            // ── Rule Configuration ───────────────────────────────────────────────
+            // ── Rule Configuration (Legacy Pre-Scan Filters Hidden) ───────────────────────────────
+            /*
             ui.horizontal(|ui| {
                 ui.label("Min Kills:");
                 if ui.text_edit_singleline(&mut *min_kills_str).changed() {
@@ -65,6 +65,7 @@ pub fn render(
                         .collect();
                 }
             });
+            */
 
             ui.add_space(8.0);
 
