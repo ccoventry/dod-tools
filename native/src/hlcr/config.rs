@@ -14,8 +14,8 @@ pub enum RenderCodec {
 pub struct RenderConfig {
     pub ffmpeg_path: String,
     pub source_folder: String,
-    pub primary_export_dir: Option<PathBuf>,
-    pub backup_export_dir: Option<PathBuf>,
+    #[serde(default)]
+    pub export_directories: Vec<PathBuf>,
     pub fps: u32,
     pub target_codec: RenderCodec,
     pub max_concurrent_renders: usize,
@@ -26,8 +26,7 @@ impl Default for RenderConfig {
         Self {
             ffmpeg_path: "ffmpeg".to_string(),
             source_folder: "".to_string(),
-            primary_export_dir: None,
-            backup_export_dir: None,
+            export_directories: Vec::new(),
             fps: 300,
             target_codec: RenderCodec::ProRes,
             max_concurrent_renders: 2,

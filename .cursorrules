@@ -1,0 +1,29 @@
+# SYSTEM GUARDRAILS (STRICT COMPLIANCE)
+- CONTEXT: Rely strictly on active chat window code and docs/ folder. Strictly ignore any open files residing in hidden directories (e.g., .ai_prompts/) to prevent meta-instruction contamination. Do not read documentation files unless explicitly requested.
+- BEHAVIOR: Be concise. No conversational filler, apologies, or requirement summaries.
+- CODE CHANGES: Output ONLY minimal unified diffs (e.g., // ... existing code ...). Never rewrite entire files or unchanged lines.
+- CONSTRAINTS: Do not introduce new dependencies, patterns, or abstractions. Match existing naming and style exactly.
+- LOCKED FILES: Do not modify build/deployment configs, environment files, lint rules, or public APIs unless explicitly requested.
+- AMBIGUITY: State critical assumptions once and proceed. Do not guess silently. Fail loudly on blockers.
+- CHAIN OF THOUGHT: Keep internal reasoning focused exclusively on technical logic. Skip all conversational filler.
+- QUALITY BAR: Prefer clarity over cleverness. Prefer explicit logic over magic behavior.
+- OUTCOME PRIORITY: 1. Correctness, 2. Maintainability, 3. Performance (only when relevant).
+
+# TERMINAL & RUNTIME COMMANDS
+- DIAGNOSTICS: Never echo raw compiler output or verbose tool failure logs. Provide concise, single-sentence failure summaries and propose direct mechanical fixes.
+- SHELL MANIPULATION: Multi-step shell actions must be collapsed into a single, chained sequence using semicolons (;). 
+- PIPELINE RUNS: DO NOT run 'cargo check' or 'cargo run' internally; output the exact command piped to tuf (e.g., 'cmd 2>&1 | tuf') for manual user execution. When reading tuf output logs, restrict ingestion to the final 30 lines or grep specifically for error signatures to conserve context.
+- DRY-RUN DEFAULT: Configurations targeting batch processing workflows must verify a clean dry-run mode before enabling live external process executions.
+- TASK COMPLETION REPORT: When your assigned task is fully complete or you hit a blocker requiring Web AI review, you must output a SINGLE markdown code block titled "### 📡 Return Payload for Web AI: {Prompt Title that was given to you last}". Inside this block, provide a mechanical, point-form list of: 1) Files modified, 2) Exact logic changes made, 3) Final terminal/compiler status. Suppress all other conversational filler outside this block so the user can one-click copy your report.
+- SEARCH EXCLUSIONS: System searches and file queries are strictly prohibited from indexing the `target/` directory, the `demos/` folder, and `Cargo.lock`. Massive asset maps inside the `localizations/` folder must use line-clamped lookups (e.g., grep -m 5).
+
+# RUST, WASM & CONCURRENCY CONSTRAINTS
+- TERMINOLOGY: Strictly preserve the "HLAE Game Capture" naming convention; never revert to "Native Game Capture".
+- WASM TARGETS: The GUI compiles to wasm32-unknown-unknown. Isolate native multi-threading, direct file system structures (std::fs), and external commands (std::process::Command) behind strict #[cfg(not(target_arch = "wasm32"))] macros.
+- THREADING & I/O: The main UI thread must not block. Offload all long-running disk I/O, binary stream patches, and process management to dedicated background threads using std::thread::Builder.
+- LOCK-FREE UI PARITY: Treat existing atomic debouncers, RwLock architectures, and channel structures as immutable patterns. Do not introduce blocking mutexes on the UI thread. Wrap highly accessed catalogs in std::sync::RwLock.
+- TELEMETRY THROTTLING: Background progress telemetry must debounce updates using an Arc<AtomicU32> framework to throttle channel traffic to ~30fps (33ms). This prevents ctx.request_repaint() event loop flooding.
+- PROCESS LIFECYCLES: External processes require interruptible polling (child.try_wait()) matched with a ~16ms thread sleep. Verify an Arc<AtomicBool> cancellation token on every cycle. Headless wrappers must explicitly chain .kill_on_drop(true).
+- MEMORY SAFETY: Never use fixed-size stack buffers ([u8; N]) for binary stream slicing. Use heap-allocated Vec<u8> gated by explicit 2MB payload limits.
+- EGUI PERFORMANCE: Enforce zero-allocation render loops (no format!(), .clone(), or string concatenation inside the update loop). Never nest dynamic elements (like CollapsingHeader) inside virtualized show_rows structures. Use flat egui_extras::TableBuilder hierarchies.
+- PATHING: Bind configuration parameters to absolute paths derived from std::env::current_exe(). Dynamically generated Rust paths targeting HLAE must replace forward slashes with double-escaped backslashes (.replace("/", "\\\\")).

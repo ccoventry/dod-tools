@@ -63,15 +63,27 @@ pub async fn run_render_job(
     let clip_type = clip.clip_type.as_str();
     let is_hud = clip_type == "hud_only";
 
-    let mut selected_export_dir = None;
-    if let Some(primary) = &config.primary_export_dir {
-        if crate::sys::disk::get_available_bytes(primary) > 25 * 1024 * 1024 * 1024 {
-            selected_export_dir = Some(primary.clone());
-        } else if let Some(backup) = &config.backup_export_dir {
-            selected_export_dir = Some(backup.clone());
+    // ── JIT export-drive routing ──────────────────────────────────────────────
+    // Iterate the priority pool and select the first directory that has at
+    // least 2 GiB of free space to safely hold the encoded output.
+    const EXPORT_THRESHOLD: u64 = 20 * 1024 * 1024 * 1024; // 20 GiB — safe buffer for 300 FPS ProRes
+    let mut selected_export_dir: Option<PathBuf> = None;
+    for dir in &config.export_directories {
+        if crate::sys::disk::get_available_bytes(dir) > EXPORT_THRESHOLD {
+            selected_export_dir = Some(dir.clone());
+            break;
         }
-    } else if let Some(backup) = &config.backup_export_dir {
-        selected_export_dir = Some(backup.clone());
+    }
+    if selected_export_dir.is_none() && !config.export_directories.is_empty() {
+        let _ = tx.send(RenderUpdate::Finished(
+            job_id.clone(),
+            false,
+            Some(format!(
+                "JIT routing failed: all {} export drive(s) have less than 2 GiB free. Render halted.",
+                config.export_directories.len()
+            )),
+        ));
+        return;
     }
 
     let output_folder = selected_export_dir.unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
@@ -125,8 +137,12 @@ pub async fn run_render_job(
 
     if clip_type == "hud_only" {
         cmd_args.extend(vec![
+            // Skip probe/analyze on known BMP sequences; add read-ahead buffering.
+            "-probesize", "32", "-analyzeduration", "0", "-thread_queue_size", "512",
             "-framerate", &fps, "-i", "hudcolor/%05d.bmp",
+            "-probesize", "32", "-analyzeduration", "0", "-thread_queue_size", "512",
             "-framerate", &fps, "-i", "hudalpha/%05d.bmp",
+            "-thread_queue_size", "512",
             "-i", &clip.wav_file,
             "-filter_complex", "[1:v]extractplanes=r[alpha];[0:v][alpha]alphamerge[hud]",
             "-map", "[hud]", "-map", "2:a",
@@ -134,8 +150,11 @@ pub async fn run_render_job(
     } else {
         img_input = format!("{}/%05d.bmp", clip.img_folder);
         cmd_args.extend(vec![
+            // Skip probe/analyze on known BMP sequences; add read-ahead buffering.
+            "-probesize", "32", "-analyzeduration", "0", "-thread_queue_size", "512",
             "-framerate", &fps,
             "-i", &img_input,
+            "-thread_queue_size", "512",
             "-i", &clip.wav_file,
         ]);
     }
@@ -146,7 +165,9 @@ pub async fn run_render_job(
 
     cmd_args.extend(vec![
         "-threads", &threads_str,
-        "-c:a", "pcm_s16le", "-shortest", "-movflags", "+faststart",
+        // +faststart is only needed for HTTP streaming; omitting it avoids the
+        // post-render moov-atom rewrite pass on what can be multi-GB files.
+        "-c:a", "pcm_s16le", "-shortest",
         "-progress", "pipe:1", "-loglevel", "error",
         &out_file_str,
     ]);
@@ -165,10 +186,15 @@ pub async fn run_render_job(
     let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => {
+            let error_msg = if e.kind() == std::io::ErrorKind::NotFound {
+                "FFmpeg not found. Please install FFmpeg or set a custom path in Settings.".to_string()
+            } else {
+                format!("Failed to spawn FFmpeg process: {}", e)
+            };
             let _ = tx.send(RenderUpdate::Finished(
                 job_id.clone(),
                 false,
-                Some(format!("Failed to spawn FFmpeg process: {}", e)),
+                Some(error_msg),
             ));
             return;
         }

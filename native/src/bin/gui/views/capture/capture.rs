@@ -13,20 +13,17 @@
 /// - `settings`              — mutable ref to `Gui.settings` (game_path, hlae_path, save_settings)
 /// - `capture_engine_running` — read to gate Launch/Proceed; written eagerly before spawn
 /// - `engine_msg/progress/done/total` — display-only progress fields
-/// - `hide_non_pov`          — streak filter flag (read-only)
 /// - `tx`                    — GuiMessage sender for the relay thread
 /// - `studio_state`          — written to CaptureStudioState::Render on Proceed
 #[cfg(not(target_arch = "wasm32"))]
 pub fn render(
     ui: &mut egui::Ui,
     ctx: &egui::Context,
-    settings: &mut crate::settings::AppSettings,
     capture_engine_running: &mut bool,
     engine_msg: &str,
     _engine_progress: f32,
     engine_jobs_done: usize,
     engine_jobs_total: usize,
-    hide_non_pov: bool,
     tx: std::sync::mpsc::Sender<crate::types::GuiMessage>,
     studio_state: &mut crate::types::CaptureStudioState,
     cancel_token: std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -39,59 +36,62 @@ pub fn render(
         // ── Paths configuration ──────────────────────────────────────────────
         ui.group(|ui| {
             ui.strong("Paths Configuration");
+            let mut config = crate::views::capture::get_patcher_config().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            
             ui.add_space(4.0);
 
-            ui.horizontal(|ui| {
-                ui.label("hl.exe Path:");
-                // Draft-only update on keystroke — no disk write.
-                ui.text_edit_singleline(&mut settings.game_path);
-                if ui.button("Browse...").clicked() {
-                    if let Some(path) = rfd::FileDialog::new()
-                        .add_filter("hl.exe", &["exe"])
-                        .pick_file()
-                    {
-                        settings.game_path = path.to_string_lossy().to_string();
-                        // Save only on explicit Browse dialog confirmation.
-                        crate::settings::save_settings(settings);
-                    }
-                }
-            });
+            let mut dummy_error = None;
+            let old_game = config.game_path.clone();
+            crate::views::capture::widgets::render_path_row(
+                ui,
+                "hl.exe Path:",
+                &mut config.game_path,
+                "hl.exe",
+                &["exe"],
+                None,
+                &mut dummy_error,
+            );
+            if old_game != config.game_path {
+                crate::settings::save_patcher_config(&config);
+            }
 
-            ui.horizontal(|ui| {
-                ui.label("hlae.exe Path:");
-                // Draft-only update on keystroke — no disk write.
-                ui.text_edit_singleline(&mut settings.hlae_path);
-                if ui.button("Browse...").clicked() {
-                    if let Some(path) = rfd::FileDialog::new()
-                        .add_filter("hlae.exe", &["exe"])
-                        .pick_file()
-                    {
-                        settings.hlae_path = path.to_string_lossy().to_string();
-                        // Save only on explicit Browse dialog confirmation.
-                        crate::settings::save_settings(settings);
-                    }
-                }
-            });
+            let old_hlae = config.hlae_path.clone();
+            crate::views::capture::widgets::render_path_row(
+                ui,
+                "hlae.exe Path:",
+                &mut config.hlae_path,
+                "hlae.exe",
+                &["exe"],
+                None,
+                &mut dummy_error,
+            );
+            if old_hlae != config.hlae_path {
+                crate::settings::save_patcher_config(&config);
+            }
         });
+
+        let (hlae_path_str, game_path_str) = {
+            let config = crate::views::capture::get_patcher_config().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            (config.hlae_path.clone(), config.game_path.clone())
+        };
 
         ui.add_space(12.0);
 
         // ── Launch controls ──────────────────────────────────────────────────
-        let hl_exists = !settings.game_path.is_empty()
-            && std::path::Path::new(&settings.game_path).exists();
-        let hlae_exists = !settings.hlae_path.is_empty()
-            && std::path::Path::new(&settings.hlae_path).exists();
+        let hl_exists = !game_path_str.is_empty()
+            && std::path::Path::new(&game_path_str).exists();
+        let hlae_exists = !hlae_path_str.is_empty()
+            && std::path::Path::new(&hlae_path_str).exists();
         let can_launch = hl_exists && hlae_exists && !*capture_engine_running;
 
         ui.horizontal(|ui| {
             if ui.add_enabled(can_launch, egui::Button::new("🎬 Launch Capture Engine")).clicked() {
-                let hlae_path = std::sync::Arc::new(std::path::PathBuf::from(&settings.hlae_path));
-                let hl_path = std::sync::Arc::new(std::path::PathBuf::from(&settings.game_path));
+                let hlae_path = std::sync::Arc::new(std::path::PathBuf::from(&hlae_path_str));
+                let hl_path = std::sync::Arc::new(std::path::PathBuf::from(&game_path_str));
                 let dod_dir = hl_path.parent().unwrap().join("dod");
 
                 // Build raw streak list from the shared queued demos mutex.
-                let mut raw_streaks = Vec::new();
-                {
+                let raw_streaks = {
                     let queued_demos_arc = crate::views::capture::get_queued_demos();
                     let queued_demos = match queued_demos_arc.lock() {
                         Ok(guard) => guard,
@@ -100,33 +100,14 @@ pub fn render(
                             poisoned.into_inner()
                         }
                     };
-                    for demo in queued_demos.iter() {
-                        let demo_path_str = demo.path.to_string_lossy().to_string();
-                        for streak in &demo.streaks {
-                            if streak.is_selected {
-                                if hide_non_pov
-                                    && demo.is_pov
-                                    && Some(streak.player_index) != demo.local_player_index
-                                {
-                                    continue;
-                                }
-                                raw_streaks.push(native::patch::CaptureStreak {
-                                    start_tick: streak.start_tick,
-                                    end_tick: streak.end_tick,
-                                    source_demo: demo_path_str.clone(),
-                                    target_player: Some(streak.target_player.clone()),
-                                    kill_count: streak.kill_count,
-                                    timeline_string: streak.timeline_string.clone(),
-                                    duration_string: streak.duration_string.clone(),
-                                    player_index: streak.player_index,
-                                    kills: streak.kills.clone(),
-                                    start_index: streak.start_index,
-                                    end_index: streak.end_index,
-                                });
-                            }
-                        }
-                    }
-                }
+                    crate::views::capture::payload::build_capture_streak_payload(
+                        &queued_demos,
+                        crate::views::capture::payload::StreakFilter {
+                            selected_only: true,
+                            pov_local_only: true,
+                        },
+                    )
+                };
 
                 // Resolve patcher config and convert seconds → ticks.
                 let patcher_config_mutex = crate::views::capture::get_patcher_config();
@@ -141,7 +122,14 @@ pub fn render(
                 patcher_config.pre_roll_ticks = (patcher_config.pre_roll_seconds * 100.0) as i32;
                 patcher_config.post_roll_ticks = (patcher_config.post_roll_seconds * 100.0) as i32;
 
-                let patch_jobs = native::patch::build_batch_queue(raw_streaks, &patcher_config);
+                let patch_jobs = match native::patch::build_batch_queue(raw_streaks, &patcher_config) {
+                    Ok(jobs) => jobs,
+                    Err(e) => {
+                        log::error!("Failed to write helper config: {}", e);
+                        let _ = tx.send(crate::types::GuiMessage::CaptureEngineEvent(crate::types::EngineEvent::Error(format!("Failed to write helper config: {}", e))));
+                        return;
+                    }
+                };
 
                 let mut capture_jobs = Vec::new();
                 for job in patch_jobs {
@@ -259,7 +247,6 @@ pub fn render(
     _engine_progress: f32,
     _engine_jobs_done: usize,
     _engine_jobs_total: usize,
-    _hide_non_pov: bool,
     _tx: std::sync::mpsc::Sender<crate::types::GuiMessage>,
     _studio_state: &mut crate::types::CaptureStudioState,
     _cancel_token: std::sync::Arc<std::sync::atomic::AtomicBool>,

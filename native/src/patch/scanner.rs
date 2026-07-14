@@ -1,82 +1,8 @@
 // patch/scanner.rs
 // Life-bounded highlight scanner and HLTV detection.
 // All three functions perform std::fs I/O — native-only.
-// calculate_demo_tickrate is private to this module (used only by scan_demo_for_highlights).
 
 use crate::patch::types::{HighlightRules, CaptureStreak};
-
-// ── Tickrate auto-detection ───────────────────────────────────────────────────
-// Walks the frame header stream from raw bytes to derive ticks-per-second.
-// Private — only called by scan_demo_for_highlights.
-
-fn calculate_demo_tickrate(bytes: &[u8]) -> Option<f32> {
-    if bytes.len() < 544 {
-        return None;
-    }
-    let original_offset = i32::from_le_bytes(bytes.get(540..544)?.try_into().ok()?) as usize;
-    if original_offset > bytes.len() {
-        return None;
-    }
-
-    let mut first_hdr = None;
-    let mut last_hdr = None;
-    let mut offset: usize = 544;
-
-    while offset.checked_add(9)? <= original_offset {
-        let type_byte = *bytes.get(offset)?;
-        let time = f32::from_le_bytes(bytes.get(offset + 1..offset + 5)?.try_into().ok()?);
-        let tick = i32::from_le_bytes(bytes.get(offset + 5..offset + 9)?.try_into().ok()?);
-
-        if first_hdr.is_none() {
-            first_hdr = Some((time, tick));
-        }
-        last_hdr = Some((time, tick));
-
-        let next_offset = offset.checked_add(9)?;
-        match type_byte {
-            2 => {
-                offset = next_offset;
-            }
-            3 => {
-                offset = next_offset.checked_add(64)?;
-            }
-            4 => {
-                offset = next_offset.checked_add(32)?;
-            }
-            5 => {
-                break;
-            }
-            6 => {
-                offset = next_offset.checked_add(84)?;
-            }
-            7 => {
-                offset = next_offset.checked_add(8)?;
-            }
-            8 => {
-                if next_offset.checked_add(8)? > original_offset { break; }
-                let sample_len = u32::from_le_bytes(bytes.get(next_offset + 4..next_offset + 8)?.try_into().ok()?) as usize;
-                offset = next_offset.checked_add(8)?.checked_add(sample_len)?.checked_add(16)?;
-            }
-            9 => {
-                if next_offset.checked_add(4)? > original_offset { break; }
-                let buffer_len = u32::from_le_bytes(bytes.get(next_offset..next_offset + 4)?.try_into().ok()?) as usize;
-                offset = next_offset.checked_add(4)?.checked_add(buffer_len)?;
-            }
-            _ => {
-                if next_offset.checked_add(468)? > original_offset { break; }
-                let msg_len = u32::from_le_bytes(bytes.get(next_offset + 464..next_offset + 468)?.try_into().ok()?) as usize;
-                offset = next_offset.checked_add(468)?.checked_add(msg_len)?;
-            }
-        }
-    }
-
-    if let (Some((t1, tk1)), Some((t2, tk2))) = (first_hdr, last_hdr) {
-        if t2 > t1 && tk2 > tk1 {
-            return Some((tk2 - tk1) as f32 / (t2 - t1));
-        }
-    }
-    None
-}
 
 // ── HLTV guard ────────────────────────────────────────────────────────────────
 
@@ -86,9 +12,13 @@ pub fn is_hltv_demo(path: &std::path::Path) -> Result<bool, std::io::Error> {
     let mut header = vec![0u8; 512];
     file.read_exact(&mut header)?;
 
-    let contains_hltv = header.windows(4).any(|window| window == b"HLTV");
-    drop(file);
-    Ok(contains_hltv)
+    if header.len() >= 512 {
+        let hltv_proxy_name = b"HLTV Proxy";
+        if header.windows(hltv_proxy_name.len()).any(|window| window == hltv_proxy_name) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 // ── Life-bounded highlight scanner ───────────────────────────────────────────
@@ -100,7 +30,7 @@ pub fn is_hltv_demo(path: &std::path::Path) -> Result<bool, std::io::Error> {
 pub fn scan_demo_for_highlights(
     path: &std::path::Path,
     rules: &HighlightRules,
-) -> Result<(f32, Vec<CaptureStreak>, bool, Option<usize>), String> {
+) -> Result<(f32, Vec<CaptureStreak>, bool, Option<usize>, i32), String> {
     match is_hltv_demo(path) {
         Ok(true) => return Err("Unsupported HLTV proxy demo format".to_string()),
         Err(e) => return Err(format!("Failed to read demo header: {}", e)),
@@ -108,10 +38,62 @@ pub fn scan_demo_for_highlights(
     }
 
     let bytes = std::fs::read(path).map_err(|e| format!("Failed to read file: {}", e))?;
-    let tickrate = calculate_demo_tickrate(&bytes).unwrap_or(100.0);
 
     let analysis = analysis::Analysis::try_from_bytes(&bytes)
         .map_err(|e| format!("Failed to parse demo: {}", e))?;
+
+    let mut frame_times: Vec<f32> = Vec::with_capacity(analysis.demo_info.playback_frames as usize);
+    if bytes.len() >= 544 {
+        let directory_offset = i32::from_le_bytes(bytes[540..544].try_into().unwrap()) as usize;
+        let mut pos = 544;
+        let end = if directory_offset > 0 && directory_offset <= bytes.len() { directory_offset } else { bytes.len() };
+        while pos + 9 <= end {
+            let type_byte = bytes[pos];
+            if type_byte > 9 && type_byte != 255 {
+                break;
+            }
+            if type_byte != 5 && type_byte != 255 {
+                let time = f32::from_le_bytes(bytes[pos+1..pos+5].try_into().unwrap());
+                frame_times.push(time);
+            }
+            pos += 9;
+            match type_byte {
+                0 | 1 => {
+                    if pos + 468 > end { break; }
+                    let len = i32::from_le_bytes(bytes[pos+464..pos+468].try_into().unwrap()) as usize;
+                    pos += 468 + len;
+                },
+                2 | 5 | 255 => {},
+                3 => pos += 64,
+                4 => pos += 32,
+                6 => pos += 84,
+                7 => pos += 8,
+                8 => {
+                    if pos + 8 > end { break; }
+                    let len = u32::from_le_bytes(bytes[pos+4..pos+8].try_into().unwrap()) as usize;
+                    pos += 24 + len;
+                },
+                9 => {
+                    if pos + 4 > end { break; }
+                    let len = u32::from_le_bytes(bytes[pos..pos+4].try_into().unwrap()) as usize;
+                    pos += 4 + len;
+                },
+                _ => break,
+            }
+        }
+    }
+    let frame_times_arc = std::sync::Arc::new(frame_times);
+
+    let mut tickrate = if analysis.demo_info.playback_time > 0.0 {
+        analysis.demo_info.playback_frames as f32 / analysis.demo_info.playback_time
+    } else {
+        100.0
+    };
+    
+    // Fallback if the demo header has garbage values
+    if !tickrate.is_normal() || tickrate < 10.0 || tickrate > 1000.0 {
+        tickrate = 100.0;
+    }
 
     let min_kills = rules.min_kills.unwrap_or(1);
     let mut streaks: Vec<CaptureStreak> = Vec::new();
@@ -146,10 +128,14 @@ pub fn scan_demo_for_highlights(
             // real_offset: wall-clock Duration used by update_visuals for timeline strings.
             let kills_raw: Vec<(i32, f32, String)> = kill_streak.kills.iter()
                 .map(|(time, weapon, _victim)| {
-                    let tick = time.frame_index as i32;
                     let abs_time = time.real_offset.as_secs_f32();
+                    let tick = time.frame_index as i32;
                     (tick, abs_time, format!("{:?}", weapon))
                 })
+                .collect();
+
+            let viewdemo_times: Vec<f32> = kill_streak.kills.iter()
+                .map(|(time, _, _)| time.viewdemo_offset.as_secs_f32())
                 .collect();
 
             let end_index = kills_raw.len().saturating_sub(1);
@@ -163,16 +149,25 @@ pub fn scan_demo_for_highlights(
                 duration_string: String::new(),
                 player_index,
                 kills: kills_raw,
+                viewdemo_times,
                 start_index: 0,
                 end_index,
+                total_demo_frames: analysis.demo_info.playback_frames,
+                demo_fps: tickrate,
+                frame_times: frame_times_arc.clone(),
             };
             streak.update_visuals();
             streaks.push(streak);
         }
     }
 
-    let is_pov = analysis.demo_info.demo_type == "POV";
     let local_player_index = analysis.state.pov_player_index.map(|idx| idx as usize);
 
-    Ok((tickrate, streaks, is_pov, local_player_index))
+    Ok((
+        tickrate,
+        streaks,
+        analysis.demo_info.demo_type == "POV",
+        local_player_index,
+        analysis.demo_info.playback_frames,
+    ))
 }

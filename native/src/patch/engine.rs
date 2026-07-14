@@ -11,6 +11,27 @@ use crate::patch::types::{PatchJob, PatcherConfig};
 fn write_console_cmd(writer: &mut std::io::BufWriter<std::fs::File>, time: f32, tick: i32, cmd: &str) -> std::io::Result<i32> {
     use std::io::Write;
     log::debug!("Injecting Command: {} at tick: {}", cmd, tick);
+    let command_string = cmd;
+    if command_string.len() >= 64 {
+        let msg = format!(
+            "FATAL: GoldSrc Cbuf Overflow (64-byte limit breached). Command: '{}', Length: {}",
+            command_string,
+            command_string.len()
+        );
+        log::error!("{}", msg);
+        use std::io::Write as _;
+        let _ = (|| -> Result<(), Box<dyn std::error::Error>> {
+            let exe_path = std::env::current_exe()?;
+            let exe_dir = exe_path.parent().ok_or("Failed to get exe parent")?;
+            let local_dir = exe_dir.join("local");
+            std::fs::create_dir_all(&local_dir)?;
+            let log_path = local_dir.join("crash_log.md");
+            let mut file = std::fs::OpenOptions::new().create(true).append(true).open(&log_path)?;
+            writeln!(file, "{}", msg)?;
+            Ok(())
+        })();
+        panic!("{}", msg);
+    }
     writer.write_all(&[3_u8])?;
     writer.write_all(&time.to_le_bytes())?;
     writer.write_all(&tick.to_le_bytes())?;
@@ -20,6 +41,44 @@ fn write_console_cmd(writer: &mut std::io::BufWriter<std::fs::File>, time: f32, 
     payload[..len].copy_from_slice(&cmd_bytes[..len]);
     writer.write_all(&payload)?;
     Ok(73)
+}
+
+fn write_director_event_payload(
+    writer: &mut std::io::BufWriter<std::fs::File>,
+    time: f32,
+    tick: i32,
+    info_block: &[u8],
+    command: &str,
+) -> std::io::Result<i32> {
+    use std::io::Write;
+    
+    // svc_director STUFFTEXT payload_len is a u8; silently clamp to 253 bytes.
+    // (64-byte panic is for ConsoleCommand frames, not for director payloads.)
+    let command = if command.len() > 253 { &command[..253] } else { command };
+
+    let cmd_bytes = command.as_bytes();
+    let cmd_len = cmd_bytes.len();
+    let payload_len = (1 + cmd_len + 1) as u8;
+    
+    let mut payload = Vec::with_capacity(3 + cmd_len + 1);
+    payload.push(0x33);         // svc_director
+    payload.push(payload_len);
+    payload.push(0x0A);         // DRC_CMD_STUFFTEXT
+    payload.extend_from_slice(cmd_bytes);
+    payload.push(0x00);         // null terminator
+
+    writer.write_all(&[1_u8])?; // type (NetworkMessage)
+    writer.write_all(&time.to_le_bytes())?;
+    writer.write_all(&tick.to_le_bytes())?;
+    writer.write_all(info_block)?;
+    
+    let msg_len = (payload.len() + 1) as u32;
+    writer.write_all(&msg_len.to_le_bytes())?;
+    writer.write_all(&payload)?;
+    writer.write_all(&[1_u8])?; // svc_nop
+    
+    let total_bytes = 9 + 464 + 4 + payload.len() + 1;
+    Ok(total_bytes as i32)
 }
 
 // ── Stream patcher ────────────────────────────────────────────────────────────
@@ -75,6 +134,11 @@ impl StreamPatcher {
         let mut bytes_injected: i32 = 0;
         let mut is_first_frame = true;
         let mut playback_started = false;
+        let mut director_queue: std::collections::VecDeque<(i32, String)> = {
+            let mut b = job.director_events.clone();
+            b.sort_unstable_by_key(|(tick, _)| *tick);
+            b.into()
+        };
         let mut scheduled_queue: std::collections::VecDeque<(i32, String)> = job.scheduled_commands.iter().cloned().collect();
 
         // Step 2.5: Pre-read the directory to map entry boundaries
@@ -121,6 +185,7 @@ impl StreamPatcher {
 
         // Step 3: Zero-Allocation Copy Loop
         let mut scratch_buf = Vec::new();
+        let mut frame_counter = 0i32;
 
         loop {
             if cancel_token.load(Ordering::Relaxed) {
@@ -140,22 +205,26 @@ impl StreamPatcher {
                 return Err(e);
             }
 
+            frame_counter += 1;
+
             let type_byte = frame_hdr[0];
             let time = f32::from_le_bytes(frame_hdr[1..5].try_into().unwrap());
-            let tick = i32::from_le_bytes(frame_hdr[5..9].try_into().unwrap());
+            let file_tick = i32::from_le_bytes(frame_hdr[5..9].try_into().unwrap());
 
             if type_byte == 2 && is_first_frame {
                 playback_started = true;
                 writer.write_all(&frame_hdr)?;
                 for cmd in &job.init_commands {
-                    let b = write_console_cmd(&mut writer, time, tick, cmd)?;
+                    let b = write_console_cmd(&mut writer, time, file_tick, cmd)?;
                     update_injection(pos, b, 1);
                     bytes_injected += b;
                 }
+                
                 while let Some((target_tick, _cmd)) = scheduled_queue.front() {
-                    if playback_started && tick >= *target_tick {
+                    let actual_target = *target_tick;
+                    if playback_started && frame_counter >= actual_target {
                         let (_, cmd) = scheduled_queue.pop_front().unwrap();
-                        let b = write_console_cmd(&mut writer, time, tick, &cmd)?;
+                        let b = write_console_cmd(&mut writer, time, file_tick, &cmd)?;
                         update_injection(pos, b, 1);
                         bytes_injected += b;
                     } else {
@@ -167,51 +236,57 @@ impl StreamPatcher {
             }
 
             while let Some((target_tick, _cmd)) = scheduled_queue.front() {
-                if playback_started && tick >= *target_tick {
+                let actual_target = *target_tick;
+                if playback_started && frame_counter >= actual_target {
                     let (_, cmd) = scheduled_queue.pop_front().unwrap();
-                    let b = write_console_cmd(&mut writer, time, tick, &cmd)?;
+                    let b = write_console_cmd(&mut writer, time, file_tick, &cmd)?;
                     update_injection(pos, b, 1);
                     bytes_injected += b;
                 } else {
                     break;
                 }
             }
-            writer.write_all(&frame_hdr)?;
-
-            // Determine payload size to read/write
+            // Determine payload size to read/write and write frame header where appropriate
             match type_byte {
                 2 => {
                     // DemoStart (0 bytes)
+                    writer.write_all(&frame_hdr)?;
                 }
                 3 => {
                     // ConsoleCommand (64 bytes)
+                    writer.write_all(&frame_hdr)?;
                     scratch_buf.resize(64, 0);
                     read_exact(&mut reader, &mut scratch_buf, "ConsoleCommand")?;
                     writer.write_all(&scratch_buf)?;
                 }
                 4 => {
                     // ClientData (32 bytes)
+                    writer.write_all(&frame_hdr)?;
                     scratch_buf.resize(32, 0);
                     read_exact(&mut reader, &mut scratch_buf, "ClientData")?;
                     writer.write_all(&scratch_buf)?;
                 }
                 5 => {
                     // NextSection (0 bytes)
+                    writer.write_all(&frame_hdr)?;
                 }
                 6 => {
                     // Event (84 bytes)
+                    writer.write_all(&frame_hdr)?;
                     scratch_buf.resize(84, 0);
                     read_exact(&mut reader, &mut scratch_buf, "Event")?;
                     writer.write_all(&scratch_buf)?;
                 }
                 7 => {
                     // WeaponAnimation (8 bytes)
+                    writer.write_all(&frame_hdr)?;
                     scratch_buf.resize(8, 0);
                     read_exact(&mut reader, &mut scratch_buf, "WeaponAnimation")?;
                     writer.write_all(&scratch_buf)?;
                 }
                 8 => {
                     // Sound (24 bytes + sample_length)
+                    writer.write_all(&frame_hdr)?;
                     let mut prefix = [0u8; 8];
                     read_exact(&mut reader, &mut prefix, "Sound Prefix")?;
                     writer.write_all(&prefix)?;
@@ -230,6 +305,7 @@ impl StreamPatcher {
                 }
                 9 => {
                     // DemoBuffer (4 bytes + buffer_length)
+                    writer.write_all(&frame_hdr)?;
                     let mut prefix = [0u8; 4];
                     read_exact(&mut reader, &mut prefix, "DemoBuffer Prefix")?;
                     writer.write_all(&prefix)?;
@@ -250,6 +326,21 @@ impl StreamPatcher {
                     // NetworkMessage (468 bytes + message_length)
                     scratch_buf.resize(464, 0);
                     read_exact(&mut reader, &mut scratch_buf, "NetworkMessage Info")?;
+
+                    // Inject svc_director STUFFTEXT events at highlight start ticks
+                    while let Some((target_tick, _)) = director_queue.front() {
+                        if playback_started && frame_counter >= *target_tick {
+                            let (_, label) = director_queue.pop_front().unwrap();
+                            let b = write_director_event_payload(&mut writer, time, file_tick, &scratch_buf, &label)?;
+                            update_injection(pos, b, 1);
+                            bytes_injected += b;
+                        } else {
+                            break;
+                        }
+                    }
+
+                    // Write original frame header and info block
+                    writer.write_all(&frame_hdr)?;
                     writer.write_all(&scratch_buf)?;
 
                     let mut len_buf = [0u8; 4];
@@ -270,6 +361,7 @@ impl StreamPatcher {
                 }
             }
         }
+
 
         // [STEP 4] Directory Offset Rewrite (EOF Handling)
         // 4b: Copy the remaining directory entries from the input to the output.
@@ -412,11 +504,17 @@ mod tests {
                     kills: Vec::new(),
                     start_index: 0,
                     end_index: 0,
+                    total_demo_frames: 3000,
+                    demo_fps: 100.0,
+                    viewdemo_times: Vec::new(),
+                    frame_times: std::sync::Arc::new(Vec::new()),
                 }
             ],
             target_player: None,
             init_commands: vec!["host_framerate 0".to_string()],
             scheduled_commands: vec![(10, "some_command".to_string())],
+            director_events: Vec::new(),
+            block_routes: Vec::new(),
         };
 
         let config = PatcherConfig {
@@ -502,11 +600,17 @@ mod tests {
                     kills: Vec::new(),
                     start_index: 0,
                     end_index: 0,
+                    total_demo_frames: 3000,
+                    demo_fps: 100.0,
+                    viewdemo_times: Vec::new(),
+                    frame_times: std::sync::Arc::new(Vec::new()),
                 }
             ],
             target_player: None,
             init_commands: vec!["host_framerate 0".to_string()],
             scheduled_commands: vec![(10, "some_command".to_string())],
+            director_events: Vec::new(),
+            block_routes: Vec::new(),
         };
 
         let config = PatcherConfig {

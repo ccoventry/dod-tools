@@ -3,14 +3,13 @@
 
 # === Temporary Debug / Scratch Files ===
 scratch/
+!scratch/debug.rs
 
 # === Project Configuration & Caches ===
 .dod-tools-cache.json
 settings.json
 hlcr_config.json
-/recent_commits.txt
 /demo_deduplication_report.md
-/README_detailed.md
 
 # === Dependencies & Local Binaries ===
 /demos/
@@ -34,3 +33,10 @@ Desktop.ini
 # === Local / Personal Files ===
 /local/
 
+bootstrap_payload.md
+primer.dem
+patcher_config.json
+patcher_config.json
+native/local/crash_log.md
+patcher_config.json
+primer.dem

@@ -23,6 +23,7 @@ chrono = "0.4.45"
 web-time = { workspace = true }
 nom = { workspace = true }
 log = "0.4"
+dirs = "5.0"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "process", "fs", "sync", "io-util", "time"] }
@@ -31,6 +32,7 @@ hl-demo-auditor = { path = "../hl-demo-auditor" }
 rfd = "0.14"
 open = "5.1"
 sysinfo = "0.29"
+keepawake = "0.6"
 
 [[bin]]
 name = "dod-tools-gui"
@@ -49,12 +51,13 @@ name = "dod-tools-inspect"
 path = "src/bin/inspect.rs"
 
 [[bin]]
+name = "frame_inspector"
+path = "src/bin/frame_inspector.rs"
+
+[[bin]]
 name = "inspect_reconnect"
 path = "src/bin/inspect_reconnect.rs"
 
-[[bin]]
-name = "debug_script"
-path = "../scratch/debug.rs"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2.100"
