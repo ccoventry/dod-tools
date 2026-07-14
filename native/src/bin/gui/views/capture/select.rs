@@ -16,6 +16,8 @@
 // ============================================================
 
 use std::sync::{Arc, Mutex};
+#[cfg(not(target_arch = "wasm32"))]
+use sysinfo::ProcessExt;
 use native::patch::PatcherConfig;
 use crate::types::{DemoData, CaptureStudioState};
 use super::{acquire_lock, widgets, panels};
@@ -205,6 +207,89 @@ pub fn render(
                                                             }
                                                             if ui.button("Deselect All").clicked() {
                                                                 actions_to_apply.push(DemoAction::DeselectAll(d_idx));
+                                                            }
+                                                            ui.add_space(4.0);
+                                                            if ui.button("▶ Preview").clicked() {
+                                                                let target_path = demo.path.clone();
+                                                                let target_name = demo.demo_name.clone();
+                                                                
+                                                                let patcher_config = acquire_lock!(patcher_config_mutex);
+                                                                let hl_exe_path = std::path::PathBuf::from(&patcher_config.game_path);
+                                                                let hl_exe_parent = hl_exe_path.parent().unwrap_or(std::path::Path::new(""));
+                                                                
+                                                                let name_without_ext = std::path::Path::new(&demo.demo_name)
+                                                                    .file_stem()
+                                                                    .and_then(|s| s.to_str())
+                                                                    .unwrap_or(&demo.demo_name);
+                                                                
+                                                                let expected_preview_path = hl_exe_parent.join("dod").join(format!("{}_preview.dem", name_without_ext));
+                                                                
+                                                                if !expected_preview_path.exists() {
+                                                                    let preview_payload = super::payload::build_capture_streak_payload(
+                                                                        &[demo.clone()],
+                                                                        super::payload::StreakFilter {
+                                                                            selected_only: false,
+                                                                            pov_local_only: true,
+                                                                        },
+                                                                    );
+                                                                    use native::patch::build_preview_patch_jobs;
+                                                                    let jobs = build_preview_patch_jobs(
+                                                                        preview_payload,
+                                                                        Some(hl_exe_parent.join("dod").as_path()),
+                                                                    );
+                                                                    if let Some(job) = jobs.first() {
+                                                                        let patcher = native::patch::StreamPatcher::new(
+                                                                            &job.source_demo,
+                                                                            &job.output_demo,
+                                                                        );
+                                                                        let cancel_token = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                                                                        if let Err(e) = patcher.patch(job, &native::patch::PatcherConfig::default(), &cancel_token) {
+                                                                            log::error!("On-the-fly preview generation failed: {}", e);
+                                                                        } else {
+                                                                            let sidecar_path = job.output_demo.with_extension("dodtools_preview");
+                                                                            let _ = (|| -> std::io::Result<()> {
+                                                                                #[cfg(windows)]
+                                                                                use std::os::windows::fs::OpenOptionsExt;
+                                                                                use std::fs::OpenOptions;
+
+                                                                                let mut options = OpenOptions::new();
+                                                                                options.write(true).create(true).truncate(true);
+
+                                                                                #[cfg(windows)]
+                                                                                options.custom_flags(0x00000002); // FILE_ATTRIBUTE_HIDDEN
+
+                                                                                let _file = options.open(&sidecar_path)?;
+                                                                                Ok(())
+                                                                            })();
+                                                                        }
+                                                                    }
+                                                                }
+
+                                                                let running = {
+                                                                    #[cfg(not(target_arch = "wasm32"))]
+                                                                    {
+                                                                        use sysinfo::{System, SystemExt};
+                                                                        let mut sys = System::new_all();
+                                                                        sys.refresh_processes();
+                                                                        sys.processes().values().any(|p| {
+                                                                            let name = p.name().to_lowercase();
+                                                                            name == "hl.exe" || name == "hlae.exe"
+                                                                        })
+                                                                    }
+                                                                    #[cfg(target_arch = "wasm32")]
+                                                                    false
+                                                                };
+
+                                                                if running {
+                                                                    ctx.data_mut(|d| {
+                                                                        d.insert_temp(egui::Id::new("dodtools_preview_target_demo_path"), target_path);
+                                                                        d.insert_temp(egui::Id::new("dodtools_preview_target_demo_name"), target_name);
+                                                                        d.insert_temp(egui::Id::new("dodtools_preview_copied_confirmation"), false);
+                                                                        d.insert_temp(egui::Id::new("dodtools_preview_modal_open"), true);
+                                                                    });
+                                                                } else {
+                                                                    launch_preview(&target_path, &target_name, &patcher_config);
+                                                                }
                                                             }
                                                             ui.add_space(4.0);
                                                             if ui.button("🗑 Remove Demo")
@@ -589,6 +674,57 @@ pub fn render(
                     }
                 }
             });
+        // Smart Preview Modal
+        let modal_open_id = egui::Id::new("dodtools_preview_modal_open");
+        let modal_open = ctx.data(|d| d.get_temp::<bool>(modal_open_id)).unwrap_or(false);
+        
+        if modal_open {
+            let mut open = true;
+            egui::Window::new("Half-Life Preview Detector")
+                .open(&mut open)
+                .resizable(false)
+                .collapsible(false)
+                .show(ctx, |ui| {
+                    ui.label("Half-Life is already running. How would you like to proceed?");
+                    ui.add_space(8.0);
+
+                    let demo_path: std::path::PathBuf = ctx.data(|d| d.get_temp(egui::Id::new("dodtools_preview_target_demo_path"))).unwrap_or_default();
+                    let demo_name: String = ctx.data(|d| d.get_temp(egui::Id::new("dodtools_preview_target_demo_name"))).unwrap_or_default();
+
+                    ui.horizontal(|ui| {
+                        if ui.button("Force Relaunch").clicked() {
+                            let _ = std::process::Command::new("taskkill").args(&["/F", "/IM", "hl.exe"]).output();
+                            let _ = std::process::Command::new("taskkill").args(&["/F", "/IM", "hlae.exe"]).output();
+                            std::thread::sleep(std::time::Duration::from_millis(500));
+
+                            let patcher_config = acquire_lock!(patcher_config_mutex);
+                            launch_preview(&demo_path, &demo_name, &patcher_config);
+
+                            ctx.data_mut(|d| d.insert_temp(modal_open_id, false));
+                        }
+
+                        if ui.button("Copy View Command").clicked() {
+                            let name_without_ext = std::path::Path::new(&demo_name)
+                                .file_stem()
+                                .and_then(|s| s.to_str())
+                                .unwrap_or(&demo_name);
+                            let cmd_str = format!("viewdemo {}_preview", name_without_ext);
+                            ui.ctx().copy_text(cmd_str);
+                            ctx.data_mut(|d| d.insert_temp(egui::Id::new("dodtools_preview_copied_confirmation"), true));
+                        }
+                    });
+
+                    if ctx.data(|d| d.get_temp::<bool>(egui::Id::new("dodtools_preview_copied_confirmation"))).unwrap_or(false) {
+                        ui.add_space(4.0);
+                        ui.colored_label(egui::Color32::GREEN, "Command copied to clipboard!");
+                    }
+                });
+            
+            if !open {
+                ctx.data_mut(|d| d.insert_temp(modal_open_id, false));
+                ctx.data_mut(|d| d.insert_temp(egui::Id::new("dodtools_preview_copied_confirmation"), false));
+            }
+        }
     });
 }
 
@@ -645,5 +781,64 @@ fn calculate_merged_duration(data: &[DemoData], config: &PatcherConfig) -> f32 {
     }
     
     total_duration
+}
+
+fn launch_preview(
+    demo_path: &std::path::Path,
+    demo_name: &str,
+    patcher_config: &PatcherConfig,
+) {
+    let name_without_ext = std::path::Path::new(demo_name)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(demo_name);
+
+    let game_path_buf = std::path::PathBuf::from(&patcher_config.game_path);
+    let dod_dir = match game_path_buf.parent() {
+        Some(parent) => parent.join("dod"),
+        None => std::path::PathBuf::from("dod"),
+    };
+
+    let primer_out = dod_dir.join("primer_preview.dem");
+    
+    let mut primer_init = patcher_config.init_commands.clone();
+    let separate_hud_str = if patcher_config.separate_hud { "1" } else { "0" };
+    primer_init.push(format!("mirv_movie_separate_hud {}", separate_hud_str));
+
+    let mut primer_scheduled = Vec::new();
+    primer_scheduled.push((500, format!("viewdemo {}_preview", name_without_ext)));
+
+    let job = native::patch::PatchJob {
+        source_demo: demo_path.to_string_lossy().to_string(),
+        output_demo: primer_out,
+        streaks: Vec::new(),
+        target_player: None,
+        init_commands: primer_init,
+        scheduled_commands: primer_scheduled,
+        director_events: Vec::new(),
+        block_routes: Vec::new(),
+    };
+
+    let cancel_token = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let patcher = native::patch::StreamPatcher::new(&job.source_demo, &job.output_demo);
+    if let Err(e) = patcher.patch(&job, patcher_config, &cancel_token) {
+        log::error!("Failed to generate primer_preview: {}", e);
+        return;
+    }
+
+    let hl_exe = &patcher_config.game_path;
+
+    let mut cmd = std::process::Command::new(hl_exe);
+    cmd.arg("-game").arg("dod")
+       .arg("+playdemo").arg("primer_preview");
+    
+    if let Some(parent) = std::path::Path::new(hl_exe).parent() {
+        cmd.current_dir(parent);
+    }
+
+    match cmd.spawn() {
+        Ok(_) => log::info!("Successfully launched hl.exe with primer_preview"),
+        Err(e) => log::error!("Failed to launch hl.exe: {}", e),
+    }
 }
 

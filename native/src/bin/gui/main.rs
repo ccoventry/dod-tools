@@ -1204,6 +1204,10 @@ impl eframe::App for Gui {
                     crate::views::capture::set_is_patching(false);
                     self.capture_studio_state = CaptureStudioState::Capture;
                 }
+                GuiMessage::PreviewPatchingComplete => {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    crate::views::capture::set_is_patching(false);
+                }
                 GuiMessage::AnalyzerStart { .. } => {}
                 GuiMessage::AnalyzerProgress {
                     file_info,
