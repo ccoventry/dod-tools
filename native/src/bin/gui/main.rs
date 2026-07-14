@@ -2289,15 +2289,22 @@ impl eframe::App for Gui {
             if let Some(ref error_text) = self.error_message.clone() {
                 {
                     let mut open = true;
-                    egui::Window::new(t("#app_error_heading"))
+                    let is_success = error_text.contains("copied to clipboard");
+                    let title = if is_success { "Success" } else { &t("#app_error_heading") };
+                    egui::Window::new(title)
                         .collapsible(false)
                         .resizable(false)
                         .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                         .open(&mut open)
                         .show(ctx, |ui| {
+                            let text_color = if is_success {
+                                egui::Color32::from_rgb(34, 197, 94) // Green
+                            } else {
+                                egui::Color32::from_rgb(239, 68, 68) // Red
+                            };
                             ui.label(
-                                egui::RichText::new(t("#app_error_heading"))
-                                    .color(egui::Color32::from_rgb(239, 68, 68))
+                                egui::RichText::new(title)
+                                    .color(text_color)
                                     .heading(),
                             );
                             ui.add_space(8.0);
