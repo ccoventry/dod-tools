@@ -346,7 +346,7 @@ pub fn render(
                                                                         .selected_text(format!("{:?}", status))
                                                                         .show_ui(ui, |ui| {
                                                                             let mut changed = false;
-                                                                            for &val in &[crate::session::HighlightStatus::None, crate::session::HighlightStatus::Pending, crate::session::HighlightStatus::Captured, crate::session::HighlightStatus::Rendered] {
+                                                                            for &val in &[native::patch::HighlightStatus::None, native::patch::HighlightStatus::Pending, native::patch::HighlightStatus::Captured, native::patch::HighlightStatus::Rendered] {
                                                                                 changed |= ui.selectable_value(&mut status, val, format!("{:?}", val)).changed();
                                                                             }
                                                                             changed

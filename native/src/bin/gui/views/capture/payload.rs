@@ -36,6 +36,7 @@ pub fn build_capture_streak_payload(
                 demo_fps: demo.tickrate,
                 viewdemo_times: streak.viewdemo_times.clone(),
                 frame_times: streak.frame_times.clone(),
+                status: streak.status,
             });
         }
     }
