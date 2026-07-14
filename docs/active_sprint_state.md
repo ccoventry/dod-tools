@@ -1,9 +1,9 @@
 ## Web AI State
-- **Overarching Goal:** Transitioning to creative workflow (DoD movie clips); Infrastructure maintenance complete.
-- **Last Touched Modules:** `builder.rs`, `capture_engine.rs`, `types.rs`, `widgets.rs`, `panels.rs`, `payload.rs`.
-- **Completed:** Capture Studio Pipeline (Dynamic Routing, Capacity Simulation, VDM Generation).
-- **Next Active Phase:** Render View Multi-Folder Registry (Phase 1).
-- **Upcoming Tasks:** Transition the Render view UI from a single `source_folder` input to a `queued_folders: Vec<PathBuf>` collection to support reading from the newly generated multi-drive routing paths. Update the backend scanner hook to accept and iterate through this vector.
+- **Overarching Goal:** Transitioning to creative workflow (DoD movie clips).
+- **Last Touched Modules:** Workspace root (Git branch reversion).
+- **Completed:** Tauri UI Migration suspended and parked. Stable `dev` branch restored. 
+- **Next Active Phase:** Engineering Backlog - Pipeline Enhancement (Director Events Injection).
+- **Upcoming Tasks:** Pipe `match_start_tick` from `AnalyzerState` to `DemoData` and inject `[dod-tools] MATCH_START` and `[dod-tools] DEMO_END` director events in `native/src/patch/builder.rs`.
 
 ## Active Epics
 - **Dynamic Drive Failover:** COMPLETED
@@ -13,6 +13,6 @@
   - **UI/UX Polish:** Integrated dynamic vector list reordering (⬆/⬇ swap controls), removed deprecated individual directory pickers, and mounted a global "Total Export Pool Free" indicator on the Render view.
 
 ## IDE AI State
-- **Open Documents:** `docs/staging_lessons.md`, `docs/active_sprint_state.md`, `docs/engineering_backlog.md`.
-- **Current Branch:** dev
-- **Status:** All requested refactorings, policy-driven GC changes, Drop trait safety mechanisms, and documentation audits are fully implemented. Standing by.
+- **Open Documents:** `desktop-studio/src/main.js`, `desktop-studio/index.html`, `desktop-studio/src-tauri/src/render_manager.rs`, `desktop-studio/src-tauri/src/capture_manager.rs`, `native/src/hlcr/scanner.rs`.
+- **Current Branch:** feature/tauri-migration
+- **Status:** Phase 9-13 (Export Config UI, Parity Audit, Multi-Folder Render Ingestion, Render Studio UI, Render Batch Execution & Telemetry) completed. Workspace clean and local commits finalized. Standing by.
