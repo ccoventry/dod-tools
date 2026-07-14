@@ -48,7 +48,7 @@ pub fn render_primary_actions(
     ui: &mut egui::Ui,
     patcher_config: &mut PatcherConfig,
     state_ptr: &mut CaptureStudioState,
-    loading_ptr: &mut bool,
+    _loading_ptr: &mut bool,
     tx: &std::sync::mpsc::Sender<crate::types::GuiMessage>,
     queued_demos_shared: &Arc<Mutex<Arc<Vec<DemoData>>>>,
     ctx: &egui::Context,
@@ -269,81 +269,6 @@ pub fn render_primary_actions(
             }
         });
 
-        if ui.button("💾 Export Session").clicked() {
-            let entries = queued_demos.iter().map(|d| {
-                let highlights = d.streaks.iter().map(|s| {
-                    crate::session::HighlightMetadata {
-                        is_selected: s.is_selected,
-                        start_kill: s.start_index as i32,
-                        end_kill: s.end_index as i32,
-                    }
-                }).collect();
-                crate::session::DemoEntry {
-                    path: d.path.clone(),
-                    key: native::utils::demo_hasher::calculate_demo_key(&d.path),
-                    highlights,
-                }
-            }).collect();
-            let session_data = crate::session::SessionData { entries };
-            if let Some(path) = rfd::FileDialog::new().add_filter("JSON", &["json"]).save_file() {
-                if let Ok(json) = serde_json::to_string_pretty(&session_data) {
-                    let _ = std::fs::write(path, json);
-                }
-            }
-        }
-
-        if ui.button("📂 Import Session").clicked() {
-            *loading_ptr = true;
-            let ctx_clone = ctx.clone();
-            let rules_clone = super::get_highlight_rules_clone();
-            let tx_clone = tx.clone();
-            let queued_demos_clone = queued_demos_shared.clone();
-            std::thread::Builder::new()
-                .name("rfd_dialog_import".into())
-                .stack_size(8 * 1024 * 1024)
-                .spawn(move || {
-                    if let Some(json_path) = rfd::FileDialog::new().add_filter("JSON", &["json"]).pick_file() {
-                        if let Ok(json) = std::fs::read_to_string(&json_path) {
-                            if let Ok(session_data) = serde_json::from_str::<crate::session::SessionData>(&json) {
-                                if let Some(base_dir) = rfd::FileDialog::new().pick_folder() {
-                                    let rt = tokio::runtime::Runtime::new().unwrap();
-                                    let resolved = rt.block_on(crate::session::import_session_async(base_dir, session_data.entries));
-                                    if !resolved.is_empty() {
-                                        let mut paths_to_ingest = Vec::new();
-                                        {
-                                            let mut guard = super::acquire_lock!(queued_demos_clone);
-                                            let queued = Arc::make_mut(&mut *guard);
-                                            for (path, metas) in resolved {
-                                                if let Some(demo) = queued.iter_mut().find(|d| d.path == path) {
-                                                    for (streak, meta) in demo.streaks.iter_mut().zip(metas) {
-                                                        streak.is_selected = meta.is_selected;
-                                                        streak.start_index = meta.start_kill as usize;
-                                                        streak.end_index = meta.end_kill as usize;
-                                                        streak.update_visuals();
-                                                    }
-                                                } else {
-                                                    paths_to_ingest.push(path);
-                                                }
-                                            }
-                                        }
-                                        if !paths_to_ingest.is_empty() {
-                                            super::spawn_ingestion_thread(
-                                                super::IngestionInput::Batch(paths_to_ingest),
-                                                rules_clone,
-                                                ctx_clone,
-                                                tx_clone,
-                                            );
-                                            return;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    let _ = tx_clone.send(crate::types::GuiMessage::IngestionFinished);
-                })
-                .unwrap();
-        }
 
         if is_running {
             ui.add_space(10.0);

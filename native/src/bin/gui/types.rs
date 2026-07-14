@@ -246,6 +246,8 @@ pub struct HighlightStreak {
     pub viewdemo_times: Vec<f32>,
     #[serde(skip, default)]
     pub frame_times: std::sync::Arc<Vec<f32>>,
+    #[serde(default)]
+    pub status: crate::session::HighlightStatus,
 }
 
 impl HighlightStreak {
