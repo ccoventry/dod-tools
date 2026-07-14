@@ -73,14 +73,7 @@ pub fn default_capture_phase() -> CapturePhase {
     CapturePhase::ReviewQueue
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum CaptureStudioState {
-    Scan,
-    Select,
-    Capture,
-    Render,
-    Finish,
-}
+
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct QueuedStreakExport {
@@ -187,7 +180,7 @@ pub enum GuiMessage {
         elapsed_sec: f32,
         eta_sec: Option<f32>,
     },
-    PatchingComplete,
+
     #[cfg(not(target_arch = "wasm32"))]
     DirScanComplete {
         dir: PathBuf,
@@ -214,10 +207,7 @@ pub enum GuiMessage {
         debug_command: Option<String>,
         error: Option<String>,
     },
-    #[cfg(not(target_arch = "wasm32"))]
-    CaptureStudioFinished,
     CaptureEngineEvent(EngineEvent),
-    IngestionFinished,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -291,32 +281,13 @@ pub struct DemoData {
     pub local_player_index: Option<usize>,
     pub playback_frames: i32,
 }
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub struct CaptureJob {
-    pub patched_demo_path: std::path::PathBuf,
-    pub expected_take_folder: std::path::PathBuf,
-}
-
-#[derive(Clone, Debug)]
-pub enum EngineEvent {
-    Starting(usize),
-    Launching(String),
-    Finished(String),
-    Verified(String),
-    Error(String),
-    AllCompleted,
-    /// Posted when the cancellation token is raised mid-batch.
-    /// Signals the GUI to reset the running flag and show a cancelled message.
-    Cancelled,
-}
+pub use native::capture_engine::{CaptureJob, EngineEvent};
 
 /// Controls whether a recovery modal is shown on startup.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StartupState {
     /// Normal startup — no autosave lockfile detected.
     Normal,
-    /// An `.autosave.json` lockfile was found; prompt the user before loading.
-    PendingRecovery,
     /// A `.render_autosave.json` lockfile was found (render batch interrupted).
     PendingRenderRecovery,
 }

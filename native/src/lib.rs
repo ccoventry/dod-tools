@@ -23,6 +23,9 @@ pub mod sys;
 pub mod utils;
 pub mod shared;
 
+#[cfg(not(target_arch = "wasm32"))]
+pub mod capture_engine;
+
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct FileInfo {
     pub created_at: SystemTime,
