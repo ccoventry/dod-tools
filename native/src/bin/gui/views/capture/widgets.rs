@@ -60,10 +60,12 @@ pub fn render_primary_actions(
     let queued_demos = super::acquire_lock!(queued_demos_shared).clone();
     ui.horizontal(|ui| {
         let can_preview = !is_running && !queued_demos.is_empty();
-        if ui.add_enabled(can_preview, egui::Button::new("🔍 Add Director Events for Previewing"))
+        let show_preview_success: bool = ctx.data(|d| d.get_temp(egui::Id::new("dodtools_preview_success_msg")).unwrap_or(false));
+        if ui.add_enabled(can_preview, egui::Button::new("🔍 Create Previews for all loaded demos"))
             .on_hover_text("Patches all detected highlights as viewdemo Event List entries into a _preview.dem copy of each demo. No capture is triggered.")
             .clicked()
         {
+            ctx.data_mut(|d| d.insert_temp(egui::Id::new("dodtools_preview_success_msg"), false));
             let preview_payload = build_capture_streak_payload(
                 &queued_demos,
                 StreakFilter {
@@ -118,7 +120,8 @@ pub fn render_primary_actions(
                                 Err(e) => super::log_markdown(&format!("[PREVIEW PATCH] ❌ Error: {}", e)),
                             }
                         }
-                        let _ = tx_clone.send(crate::types::GuiMessage::PatchingComplete);
+                        ctx_clone.data_mut(|d| d.insert_temp(egui::Id::new("dodtools_preview_success_msg"), true));
+                        let _ = tx_clone.send(crate::types::GuiMessage::PreviewPatchingComplete);
                         ctx_clone.request_repaint();
                     })
                     .unwrap();
@@ -126,6 +129,11 @@ pub fn render_primary_actions(
         }
 
         ui.add_space(8.0);
+
+        if show_preview_success {
+            ui.weak("Previews Generated. Click [▶ Preview] on a demo row, or manually load the _preview.dem files in-game.");
+            ui.add_space(8.0);
+        }
 
         if ui.button("🗑️ Clear Previews").clicked() {
             let mut verified_previews = Vec::new();
