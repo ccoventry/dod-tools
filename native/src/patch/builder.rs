@@ -252,10 +252,22 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
 
         // One svc_director STUFFTEXT event per streak — label mirrors the highlight table:
         // "#<row>: <kill_count> kills: <timeline_string>"
-        let director_events: Vec<(i32, String)> = streaks.iter().enumerate().map(|(i, s)| {
+        let mut director_events: Vec<(i32, String)> = streaks.iter().enumerate().map(|(i, s)| {
             let label = format!("#{}: {} kills: {}", i + 1, s.kill_count, s.timeline_string);
             (s.start_tick, label)
         }).collect();
+
+        if let Some(first_streak) = streaks.first() {
+            if let Some(match_tick) = first_streak.match_start_tick {
+                director_events.push((match_tick, "[dod-tools] MATCH_START".to_string()));
+            }
+            let end_tick = if first_streak.total_demo_frames > 0 {
+                first_streak.total_demo_frames
+            } else {
+                streaks.iter().map(|s| s.end_tick).max().unwrap_or(0)
+            };
+            director_events.push((end_tick, "[dod-tools] DEMO_END".to_string()));
+        }
 
         let demo_fps = streaks.first().map(|s| s.demo_fps).filter(|&fps| fps > 0.0).unwrap_or(30.0);
 

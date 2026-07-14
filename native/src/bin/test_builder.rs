@@ -10,7 +10,7 @@ fn main() {
         max_time_gap: None,
     };
     match scan_demo_for_highlights(path, &rules) {
-        Ok((_tickrate, mut streaks, _is_pov, _pov_idx, _frames)) => {
+        Ok((_tickrate, mut streaks, _is_pov, _pov_idx, _frames, _match_start_tick)) => {
             streaks.retain(|s| s.target_player.as_deref().unwrap_or("") == "dicE[: :]DyeL!fe[dd]");
             for (i, streak) in streaks.iter().enumerate() {
                 println!("Streak {}: start_tick = {}, end_tick = {}, kills = {}", i, streak.start_tick, streak.end_tick, streak.kill_count);
