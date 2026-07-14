@@ -2,6 +2,9 @@
 *Temporary holding zone for newly harvested rules. Review entries here before manually moving them into quirks or architecture files.*
 
 ## 📥 Unsorted Gotchas (Pending Review)
+- **PowerShell Execution Policies:** Local dev environments on Windows may block node scripts like `npm install` due to default execution policies. Use `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` to unblock toolchains.
+- **Tauri IPC Silent Failures:** Asynchronous Tauri `invoke` commands without explicit `.catch()` handlers and UI loading states will silently swallow Rust-side errors or long-running I/O blocks, leading to perceived UI deadlocks. Always enforce `.catch((err) => ...)` on IPC boundaries.
+- **Path Escaping Risks:** Manually typing Windows absolute paths into HTML inputs introduces severe string escaping risks. Always mandate native OS folder pickers (e.g., Tauri Dialog API) for filesystem routing to prevent backend deserialization failures.
 - **UI vs. Data Initialization Desync:** Applying data filters exclusively at the immediate-mode UI rendering layer causes reactive components (like real-time disk space calculators or batch-action iterators) to silently process visually hidden data. Data filtering constraints (like POV exclusions) must be applied directly to the struct defaults during the asynchronous backend ingestion phase *before* the payload is passed to the active UI state blocks.
 - **GoldSrc Engine quirk:** The 'exec' command is hard-locked during demo playback as a security measure.
 - **GoldSrc Engine quirk:** Demo file injection is subject to a strict 64-byte 'Cbuf' buffer limit, causing crashes when paths are long or contain spaces.
