@@ -405,7 +405,7 @@ pub(crate) fn spawn_ingestion_thread(
                 log_markdown(&format!("Attempting Demo {}: {:?}", index + 1, file.file_name().unwrap_or_default()));
 
                 match scan_demo_for_highlights(&file, &rules) {
-                    Ok((tickrate, streaks, is_pov, local_player_index, playback_frames)) => {
+                    Ok((tickrate, streaks, is_pov, local_player_index, playback_frames, match_start_tick)) => {
                         let selectable: Vec<HighlightStreak> = streaks
                             .into_iter()
                             .map(|s| {
@@ -444,6 +444,7 @@ pub(crate) fn spawn_ingestion_thread(
                                 is_pov,
                                 local_player_index,
                                 playback_frames,
+                                match_start_tick,
                             };
 
                             if item.is_pov {

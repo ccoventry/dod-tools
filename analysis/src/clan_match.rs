@@ -93,6 +93,7 @@ pub fn use_clan_match_detection_updates(
             // The scoreboard-zeroing Reset→Start sequence is the definitive
             // signal that a clan match just went live.
             state.match_start_witnessed = true;
+            state.match_start_tick = Some(state.current_time.frame_index as i32);
             state.clan_match_detected = true;
             state.clan_match_detection = ClanMatchDetection::MatchIsLive;
         }

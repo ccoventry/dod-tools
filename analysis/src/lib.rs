@@ -79,6 +79,7 @@ pub struct AnalyzerState {
     /// demos recorded *after* the match went live still report correctly.
     pub clan_match_detected: bool,
     pub match_start_witnessed: bool,
+    pub match_start_tick: Option<i32>,
     pub started_late: bool,
     pub ended_early: bool,
     pub first_time_left: Option<std::time::Duration>,
@@ -1609,6 +1610,7 @@ mod tests {
         );
 
         assert_eq!(left.match_start_witnessed, right.match_start_witnessed);
+        assert_eq!(left.match_start_tick, right.match_start_tick);
         assert_eq!(left.started_late, right.started_late);
         assert_eq!(left.ended_early, right.ended_early);
         assert_eq!(left.first_time_left, right.first_time_left);

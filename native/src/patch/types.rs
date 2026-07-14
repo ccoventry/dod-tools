@@ -71,6 +71,8 @@ pub struct CaptureStreak {
     pub frame_times: Arc<Vec<f32>>,
     #[serde(default)]
     pub status: HighlightStatus,
+    #[serde(default)]
+    pub match_start_tick: Option<i32>,
 }
 
 impl CaptureStreak {
