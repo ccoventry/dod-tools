@@ -65,17 +65,25 @@ window.addEventListener("DOMContentLoaded", () => {
   let currentScannedDemos = [];
   let currentRenderJobs = [];
 
-  document.querySelector('#scan-dir-btn').addEventListener('click', () => {
+  const scanBtn = document.querySelector('#scan-dir-btn');
+  const scanStatusEl = document.querySelector('#scan-status');
+
+  scanBtn.addEventListener('click', () => {
     if (scanPaths.length === 0) {
       console.warn("Please add at least one folder path.");
       return;
     }
+    
+    scanBtn.disabled = true;
+    scanStatusEl.textContent = "Status: Scanning directories... (This may take a moment)";
+    scanStatusEl.style.color = "inherit";
     
     console.log(`Scanning directories:`, scanPaths);
     invoke("scan_directory", { paths: scanPaths })
       .then((demos) => {
         console.log("Scan complete. Serialized demos received:", demos);
         currentScannedDemos = demos;
+        scanStatusEl.textContent = "Status: Scan complete";
         
         const container = document.querySelector('#demo-list-container');
         container.innerHTML = '';
@@ -104,6 +112,11 @@ window.addEventListener("DOMContentLoaded", () => {
       })
       .catch((err) => {
         console.error("Error scanning directories:", err);
+        scanStatusEl.textContent = "Error: " + err;
+        scanStatusEl.style.color = "red";
+      })
+      .finally(() => {
+        scanBtn.disabled = false;
       });
   });
 
