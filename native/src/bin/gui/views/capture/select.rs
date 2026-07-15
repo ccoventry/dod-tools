@@ -194,119 +194,119 @@ pub fn render(
                                             let col_ui = &mut columns[d_idx % 2];
                                             col_ui.push_id(&demo.demo_name, |ui| {
                                                 egui::Frame::group(ui.style()).show(ui, |ui| {
+                                                    let player_name = demo.streaks.iter()
+                                                        .find(|s| Some(s.player_index) == demo.local_player_index)
+                                                        .map(|s| s.target_player.as_str())
+                                                        .unwrap_or("Unknown");
+                                                    let header_text = format!("{} - Player: {}", demo.demo_name, player_name);
+                                                    ui.strong(header_text);
+                                                    ui.add_space(4.0);
+
                                                     ui.horizontal(|ui| {
-                                                        let player_name = demo.streaks.iter()
-                                                            .find(|s| Some(s.player_index) == demo.local_player_index)
-                                                            .map(|s| s.target_player.as_str())
-                                                            .unwrap_or("Unknown");
-                                                        let header_text = format!("{} - Player: {}", demo.demo_name, player_name);
-                                                        ui.strong(header_text);
-                                                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                                            if ui.button("Select All").clicked() {
-                                                                actions_to_apply.push(DemoAction::SelectAll(d_idx));
-                                                            }
-                                                            if ui.button("Deselect All").clicked() {
-                                                                actions_to_apply.push(DemoAction::DeselectAll(d_idx));
-                                                            if ui.button("▶ Preview").clicked() {
-                                                                let target_path = demo.path.clone();
-                                                                let target_name = demo.demo_name.clone();
-                                                                let demo_clone = demo.clone();
-                                                                let patcher_config = acquire_lock!(patcher_config_mutex).clone();
-                                                                let ctx_clone = ctx.clone();
+                                                        if ui.button("Select All").clicked() {
+                                                            actions_to_apply.push(DemoAction::SelectAll(d_idx));
+                                                        }
+                                                        if ui.button("Deselect All").clicked() {
+                                                            actions_to_apply.push(DemoAction::DeselectAll(d_idx));
+                                                        }
+                                                        if ui.button("▶ Preview").clicked() {
+                                                            let target_path = demo.path.clone();
+                                                            let target_name = demo.demo_name.clone();
+                                                            let demo_clone = demo.clone();
+                                                            let patcher_config = acquire_lock!(patcher_config_mutex).clone();
+                                                            let ctx_clone = ctx.clone();
 
-                                                                let running = {
-                                                                    #[cfg(not(target_arch = "wasm32"))]
-                                                                    {
-                                                                        use sysinfo::{System, SystemExt};
-                                                                        let mut sys = System::new_all();
-                                                                        sys.refresh_processes();
-                                                                        sys.processes().values().any(|p| {
-                                                                            let name = p.name().to_lowercase();
-                                                                            name == "hl.exe" || name == "hlae.exe"
-                                                                        })
-                                                                    }
-                                                                    #[cfg(target_arch = "wasm32")]
-                                                                    false
-                                                                };
+                                                            let running = {
+                                                                #[cfg(not(target_arch = "wasm32"))]
+                                                                {
+                                                                    use sysinfo::{System, SystemExt};
+                                                                    let mut sys = System::new_all();
+                                                                    sys.refresh_processes();
+                                                                    sys.processes().values().any(|p| {
+                                                                        let name = p.name().to_lowercase();
+                                                                        name == "hl.exe" || name == "hlae.exe"
+                                                                    })
+                                                                }
+                                                                #[cfg(target_arch = "wasm32")]
+                                                                false
+                                                            };
 
-                                                                if running {
-                                                                    ctx.data_mut(|d| {
-                                                                        d.insert_temp(egui::Id::new("dodtools_preview_target_demo_path"), target_path);
-                                                                        d.insert_temp(egui::Id::new("dodtools_preview_target_demo_name"), target_name);
-                                                                        d.insert_temp(egui::Id::new("dodtools_preview_copied_confirmation"), false);
-                                                                        d.insert_temp(egui::Id::new("dodtools_preview_modal_open"), true);
-                                                                    });
-                                                                } else {
-                                                                    widgets::set_is_patching(true);
-                                                                    std::thread::spawn(move || {
-                                                                        let hl_exe_path = std::path::PathBuf::from(&patcher_config.game_path);
-                                                                        let hl_exe_parent = hl_exe_path.parent().unwrap_or(std::path::Path::new(""));
-                                                                        let name_without_ext = std::path::Path::new(&target_name)
-                                                                            .file_stem()
-                                                                            .and_then(|s| s.to_str())
-                                                                            .unwrap_or(&target_name);
+                                                            if running {
+                                                                ctx.data_mut(|d| {
+                                                                    d.insert_temp(egui::Id::new("dodtools_preview_target_demo_path"), target_path);
+                                                                    d.insert_temp(egui::Id::new("dodtools_preview_target_demo_name"), target_name);
+                                                                    d.insert_temp(egui::Id::new("dodtools_preview_copied_confirmation"), false);
+                                                                    d.insert_temp(egui::Id::new("dodtools_preview_modal_open"), true);
+                                                                });
+                                                            } else {
+                                                                crate::views::capture::set_is_patching(true);
+                                                                std::thread::spawn(move || {
+                                                                    let hl_exe_path = std::path::PathBuf::from(&patcher_config.game_path);
+                                                                    let hl_exe_parent = hl_exe_path.parent().unwrap_or(std::path::Path::new(""));
+                                                                    let name_without_ext = std::path::Path::new(&target_name)
+                                                                        .file_stem()
+                                                                        .and_then(|s| s.to_str())
+                                                                        .unwrap_or(&target_name);
 
-                                                                        let expected_preview_path = hl_exe_parent.join("dod").join(format!("{}_preview.dem", name_without_ext));
+                                                                    let expected_preview_path = hl_exe_parent.join("dod").join(format!("{}_preview.dem", name_without_ext));
 
-                                                                        if !expected_preview_path.exists() {
-                                                                            let preview_payload = super::payload::build_capture_streak_payload(
-                                                                                &[demo_clone],
-                                                                                super::payload::StreakFilter {
-                                                                                    selected_only: false,
-                                                                                    pov_local_only: true,
-                                                                                },
+                                                                    if !expected_preview_path.exists() {
+                                                                        let preview_payload = super::payload::build_capture_streak_payload(
+                                                                            &[demo_clone],
+                                                                            super::payload::StreakFilter {
+                                                                                selected_only: false,
+                                                                                pov_local_only: true,
+                                                                            },
+                                                                        );
+                                                                        use native::patch::build_preview_patch_jobs;
+                                                                        let jobs = build_preview_patch_jobs(
+                                                                            preview_payload,
+                                                                            Some(hl_exe_parent.join("dod").as_path()),
+                                                                        );
+                                                                        if let Some(job) = jobs.first() {
+                                                                            let patcher = native::patch::StreamPatcher::new(
+                                                                                &job.source_demo,
+                                                                                &job.output_demo,
                                                                             );
-                                                                            use native::patch::build_preview_patch_jobs;
-                                                                            let jobs = build_preview_patch_jobs(
-                                                                                preview_payload,
-                                                                                Some(hl_exe_parent.join("dod").as_path()),
-                                                                            );
-                                                                            if let Some(job) = jobs.first() {
-                                                                                let patcher = native::patch::StreamPatcher::new(
-                                                                                    &job.source_demo,
-                                                                                    &job.output_demo,
-                                                                                );
-                                                                                let cancel_token = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-                                                                                if let Err(e) = patcher.patch(job, &native::patch::PatcherConfig::default(), &cancel_token) {
-                                                                                    log::error!("On-the-fly preview generation failed: {}", e);
-                                                                                } else {
-                                                                                    let sidecar_path = job.output_demo.with_extension("dodtools_preview");
-                                                                                    let _ = (|| -> std::io::Result<()> {
-                                                                                        #[cfg(windows)]
-                                                                                        use std::os::windows::fs::OpenOptionsExt;
-                                                                                        use std::fs::OpenOptions;
+                                                                            let cancel_token = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                                                                            if let Err(e) = patcher.patch(job, &native::patch::PatcherConfig::default(), &cancel_token) {
+                                                                                log::error!("On-the-fly preview generation failed: {}", e);
+                                                                            } else {
+                                                                                let sidecar_path = job.output_demo.with_extension("dodtools_preview");
+                                                                                let _ = (|| -> std::io::Result<()> {
+                                                                                    #[cfg(windows)]
+                                                                                    use std::os::windows::fs::OpenOptionsExt;
+                                                                                    use std::fs::OpenOptions;
 
-                                                                                        let mut options = OpenOptions::new();
-                                                                                        options.write(true).create(true).truncate(true);
+                                                                                    let mut options = OpenOptions::new();
+                                                                                    options.write(true).create(true).truncate(true);
 
-                                                                                        #[cfg(windows)]
-                                                                                        options.custom_flags(0x00000002); // FILE_ATTRIBUTE_HIDDEN
+                                                                                    #[cfg(windows)]
+                                                                                    options.custom_flags(0x00000002); // FILE_ATTRIBUTE_HIDDEN
 
-                                                                                        let _file = options.open(&sidecar_path)?;
-                                                                                        Ok(())
-                                                                                    })();
-                                                                                }
+                                                                                    let _file = options.open(&sidecar_path)?;
+                                                                                    Ok(())
+                                                                                })();
                                                                             }
                                                                         }
+                                                                    }
 
-                                                                        launch_preview(target_path, target_name, patcher_config);
+                                                                    launch_preview(target_path, target_name, patcher_config);
 
-                                                                        widgets::set_is_patching(false);
-                                                                        ctx_clone.request_repaint();
-                                                                    });
-                                                                }
+                                                                    crate::views::capture::set_is_patching(false);
+                                                                    ctx_clone.request_repaint();
+                                                                });
                                                             }
-                                                            ui.add_space(4.0);
-                                                            if ui.button("🗑 Remove Demo")
-                                                                .on_hover_text("Remove this demo from the queue")
-                                                                .clicked()
-                                                            {
-                                                                actions_to_apply.push(DemoAction::RemoveDemo(d_idx));
-                                                            }
-                                                        });
+                                                        }
+                                                        ui.add_space(4.0);
+                                                        if ui.button("🗑 Remove Demo")
+                                                            .on_hover_text("Remove this demo from the queue")
+                                                            .clicked()
+                                                        {
+                                                            actions_to_apply.push(DemoAction::RemoveDemo(d_idx));
+                                                        }
                                                     });
-                                                    ui.add_space(2.0);
-
+                                                    ui.add_space(4.0);
                                                     TableBuilder::new(ui)
                                                         .id_salt(format!("{}_table", demo.demo_name))
                                                         .striped(true)
@@ -686,7 +686,7 @@ pub fn render(
         if modal_open {
             let mut open = true;
             
-            ctx.painter().rect_filled(ctx.screen_rect(), 0.0, egui::Color32::from_black_alpha(170));
+            ui.painter().rect_filled(ctx.screen_rect(), 0.0, egui::Color32::from_black_alpha(170));
             
             egui::Window::new("Half-Life Preview Detector")
                 .open(&mut open)
@@ -709,7 +709,7 @@ pub fn render(
 
                             ctx.data_mut(|d| d.insert_temp(modal_open_id, false));
 
-                            widgets::set_is_patching(true);
+                            crate::views::capture::set_is_patching(true);
                             std::thread::spawn(move || {
                                 let _ = std::process::Command::new("taskkill").args(&["/F", "/IM", "hl.exe"]).output();
                                 let _ = std::process::Command::new("taskkill").args(&["/F", "/IM", "hlae.exe"]).output();
@@ -717,7 +717,7 @@ pub fn render(
 
                                 launch_preview(demo_path_clone, demo_name_clone, patcher_config_clone);
 
-                                widgets::set_is_patching(false);
+                                crate::views::capture::set_is_patching(false);
                                 ctx_clone.request_repaint();
                             });
                         }
