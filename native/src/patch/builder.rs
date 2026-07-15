@@ -259,14 +259,14 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
 
         if let Some(first_streak) = streaks.first() {
             if let Some(match_tick) = first_streak.match_start_tick {
-                director_events.push((match_tick, "[dod-tools] MATCH_START".to_string()));
+                director_events.push((match_tick, "echo [dod-tools] MATCH_START".to_string()));
             }
             let end_tick = if first_streak.total_demo_frames > 0 {
                 first_streak.total_demo_frames
             } else {
                 streaks.iter().map(|s| s.end_tick).max().unwrap_or(0)
             };
-            director_events.push((end_tick, "[dod-tools] DEMO_END".to_string()));
+            director_events.push((end_tick, "echo [dod-tools] DEMO_END".to_string()));
         }
 
         let demo_fps = streaks.first().map(|s| s.demo_fps).filter(|&fps| fps > 0.0).unwrap_or(30.0);
@@ -754,11 +754,23 @@ pub fn build_preview_patch_jobs(
         streaks.sort_by_key(|s| s.start_tick);
 
         // Build (tick, label) for each streak — same format as the highlight table.
-        let director_events: Vec<(i32, String)> = streaks.iter().enumerate().map(|(i, s)| {
+        let mut director_events: Vec<(i32, String)> = streaks.iter().enumerate().map(|(i, s)| {
             let label = format!("#{}/{}: {} kills: {}", i + 1,streaks.len(), s.kill_count, s.timeline_string);
             let preview_tick = find_tick_backwards(s.start_tick as usize, 3.0, &s.frame_times);
             (preview_tick, label)
         }).collect();
+
+        if let Some(first_streak) = streaks.first() {
+            if let Some(match_tick) = first_streak.match_start_tick {
+                director_events.push((match_tick, "echo [dod-tools] MATCH_START".to_string()));
+            }
+            let end_tick = if first_streak.total_demo_frames > 0 {
+                first_streak.total_demo_frames
+            } else {
+                streaks.iter().map(|s| s.end_tick).max().unwrap_or(0)
+            };
+            director_events.push((end_tick, "echo [dod-tools] DEMO_END".to_string()));
+        }
 
         // Resolve output path: "<stem>_preview.dem" beside original, or in output_dir.
         let source_path = std::path::PathBuf::from(&source_demo);
