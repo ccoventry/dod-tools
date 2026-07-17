@@ -19,7 +19,8 @@ fn find_tick_backwards(start_frame: usize, gap_seconds: f32, frame_times: &[f32]
     if frame_times.is_empty() || gap_seconds <= 0.0 {
         return start_frame as i32;
     }
-    let anchor_time = frame_times.get(start_frame).copied().unwrap_or(0.0);
+    let start_frame = start_frame.min(frame_times.len().saturating_sub(1));
+    let anchor_time = frame_times[start_frame];
     let target_time = anchor_time - gap_seconds;
     // Walk backwards until we cross target_time
     let mut frame = start_frame;
@@ -40,7 +41,8 @@ fn find_tick_forwards(start_frame: usize, gap_seconds: f32, frame_times: &[f32])
     if frame_times.is_empty() || gap_seconds <= 0.0 {
         return start_frame as i32;
     }
-    let anchor_time = frame_times.get(start_frame).copied().unwrap_or(0.0);
+    let start_frame = start_frame.min(frame_times.len().saturating_sub(1));
+    let anchor_time = frame_times[start_frame];
     let target_time = anchor_time + gap_seconds;
     let last = frame_times.len().saturating_sub(1);
     let mut frame = start_frame;
@@ -260,11 +262,7 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
         if let Some(first_streak) = streaks.first() {
             let match_tick = first_streak.match_start_tick.unwrap_or(0);
             director_events.push((match_tick, "echo [dod-tools] MATCH_START".to_string()));
-            let end_tick = if first_streak.total_demo_frames > 0 {
-                first_streak.total_demo_frames.saturating_sub(5)
-            } else {
-                streaks.iter().map(|s| s.end_tick).max().unwrap_or(0).saturating_sub(5)
-            };
+            let end_tick = first_streak.frame_times.len().saturating_sub(1) as i32;
             director_events.push((end_tick, "echo [dod-tools] DEMO_END".to_string()));
         }
         director_events.sort_by_key(|e| e.0);
@@ -761,13 +759,9 @@ pub fn build_preview_patch_jobs(
         }).collect();
 
         if let Some(first_streak) = streaks.first() {
-            let match_tick = first_streak.match_start_tick.unwrap_or(0);
-            director_events.push((match_tick, "echo [dod-tools] MATCH_START".to_string()));
-            let end_tick = if first_streak.total_demo_frames > 0 {
-                first_streak.total_demo_frames.saturating_sub(5)
-            } else {
-                streaks.iter().map(|s| s.end_tick).max().unwrap_or(0).saturating_sub(5)
-            };
+            let match_frame_idx = 0; // Float time unavailable for match start
+            director_events.push((match_frame_idx, "echo [dod-tools] MATCH_START".to_string()));
+            let end_tick = first_streak.frame_times.len().saturating_sub(1) as i32;
             director_events.push((end_tick, "echo [dod-tools] DEMO_END".to_string()));
         }
         director_events.sort_by_key(|e| e.0);
