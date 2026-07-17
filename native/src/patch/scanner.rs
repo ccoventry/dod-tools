@@ -119,6 +119,10 @@ pub fn scan_demo_for_highlights(
                 })
                 .collect();
 
+            if kills_raw.is_empty() {
+                continue;
+            }
+
             let viewdemo_times: Vec<f32> = kill_streak.kills.iter()
                 .map(|(time, _, _)| time.viewdemo_offset.as_secs_f32())
                 .collect();
