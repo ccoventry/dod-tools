@@ -2,7 +2,7 @@
 // Life-bounded highlight scanner and HLTV detection.
 // All three functions perform std::fs I/O — native-only.
 
-use crate::patch::types::{HighlightRules, CaptureStreak, HighlightStatus};
+use crate::patch::types::{CaptureStreak, HighlightStatus};
 
 // ── HLTV guard ────────────────────────────────────────────────────────────────
 
