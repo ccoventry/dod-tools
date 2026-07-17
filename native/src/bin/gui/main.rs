@@ -686,6 +686,7 @@ impl eframe::App for Gui {
         let mut trigger_save_as = false;
         let mut trigger_new = false;
         let mut trigger_close = false;
+        let mut trigger_open = false;
 
         ctx.input_mut(|i| {
             if i.consume_key(egui::Modifiers::CTRL, egui::Key::S) {
@@ -694,6 +695,9 @@ impl eframe::App for Gui {
                 } else {
                     trigger_save = true;
                 }
+            }
+            if i.consume_key(egui::Modifiers::CTRL, egui::Key::O) {
+                trigger_open = true;
             }
             if i.consume_key(egui::Modifiers::CTRL, egui::Key::N) {
                 trigger_new = true;
@@ -705,6 +709,63 @@ impl eframe::App for Gui {
 
         #[cfg(not(target_arch = "wasm32"))]
         {
+            if trigger_open {
+                self.capture_studio_loading = true;
+                self.active_sidebar_tab = SidebarTab::CaptureStudio;
+                self.capture_studio_state = CaptureStudioState::Workspace;
+                let ctx_clone = ctx.clone();
+                let rules_clone = crate::views::capture::get_highlight_rules_clone();
+                let tx_clone = self.tx.clone();
+                let queued_demos_clone = crate::views::capture::get_queued_demos();
+
+                std::thread::Builder::new()
+                    .name("rfd_dialog_load_project".into())
+                    .stack_size(8 * 1024 * 1024)
+                    .spawn(move || {
+                        let mut dialog = rfd::FileDialog::new().add_filter("JSON", &["json"]);
+                        if let Some(dir) = crate::views::capture::get_default_projects_dir() {
+                            dialog = dialog.set_directory(&dir);
+                        }
+                        if let Some(json_path) = dialog.pick_file() {
+                            crate::views::capture::set_active_project_path(Some(json_path.clone()));
+                            if let Ok(json) = std::fs::read_to_string(&json_path) {
+                                if let Ok(session_data) = serde_json::from_str::<crate::session::SessionData>(&json) {
+                                    if let Some(base_dir) = rfd::FileDialog::new().pick_folder() {
+                                        let rt = tokio::runtime::Runtime::new().unwrap();
+                                        let resolved = rt.block_on(crate::session::import_session_async(base_dir, session_data.entries));
+                                        if !resolved.is_empty() {
+                                            let mut paths_to_ingest = Vec::new();
+                                            {
+                                                let guard = match queued_demos_clone.lock() {
+                                                    Ok(g) => g,
+                                                    Err(p) => p.into_inner(),
+                                                };
+                                                for (path, _) in &resolved {
+                                                    if !guard.iter().any(|d| &d.path == path) {
+                                                        paths_to_ingest.push(path.clone());
+                                                    }
+                                                }
+                                            }
+                                            let _ = tx_clone.send(crate::types::GuiMessage::ProjectLoaded(resolved));
+                                            if !paths_to_ingest.is_empty() {
+                                                crate::views::capture::spawn_ingestion_thread(
+                                                    crate::views::capture::IngestionInput::Batch(paths_to_ingest),
+                                                    rules_clone,
+                                                    ctx_clone,
+                                                    tx_clone,
+                                                );
+                                                return;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        let _ = tx_clone.send(crate::types::GuiMessage::IngestionFinished);
+                    })
+                    .unwrap();
+            }
+
             if trigger_save || trigger_save_as {
                 let arc = crate::views::capture::get_queued_demos();
                 let data = match arc.lock() { Ok(g) => g, Err(p) => p.into_inner() }.clone();
