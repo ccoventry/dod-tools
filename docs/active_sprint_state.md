@@ -1,8 +1,7 @@
 ## Web AI State
-- **Overarching Goal:** Pipeline Enhancement - Director Events Injection (Phase 1).
-- **Last Touched Modules:** `main.rs`, `workspace.rs`, `mod.rs` (Capture View).
-- **Current Status:** Non-destructive path resolution logic and Master List UI sync bugs are fully resolved. Build is compiling successfully.
-- **Next Action:** Extend `DemoData` struct (in `native/src/bin/gui/types.rs`) with `match_start_tick` and `demo_end_tick`, and update the ingestion scanner (`native/src/patch/scanner.rs`) to capture these events.
+* **Current Goal:** Resolve timeline hydration desync and demo truncation bugs to restore accurate highlight capture sequences.
+* **Last Edited Component:** `native/src/patch/builder.rs` (`build_batch_queue`).
+* **Unresolved Bugs:** The capture engine starts at Tick 3 because it reads UI kill indices as physical frames. Playback truncates at ~15 frames because `DEMO_END` is bound to the localized streak array instead of `total_demo_frames`.
 
 ## Active Epics
 - **Dynamic Drive Failover:** COMPLETED
@@ -12,7 +11,7 @@
   - **UI/UX Polish:** Integrated dynamic vector list reordering (⬆/⬇ swap controls), removed deprecated individual directory pickers, and mounted a global "Total Export Pool Free" indicator on the Render view.
 
 ## IDE AI State
-- **Open Documents:** `native/src/bin/gui/main.rs`, `native/src/bin/gui/views/capture/workspace.rs`.
-- **Current Branch:** dev
-- **Status:** Handed off from resolving egui deprecation warning. Prepared to begin Phase 1 of Director Events Injection pipeline.
-- **Next Intended Command:** `cargo run -r --bin dod-tools-gui`
+* **Overarching Goal:** Resolve timeline hydration desync and demo truncation bugs by mapping float times to physical frames using a linear search on `frame_times`.
+* **Last Edited File:** `native/src/patch/builder.rs`.
+* **Next Intended Edit:** `native/src/patch/builder.rs` to implement the linear search mapping for float times.
+* **Status:** Restored builder.rs to native bounds. Ready to implement proper float-time mapping for timeline anchors.
