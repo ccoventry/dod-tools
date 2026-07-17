@@ -218,9 +218,7 @@ impl Default for PatcherConfig {
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct HighlightRules {
-    pub min_kills: Option<usize>,
     pub max_time_gap: Option<f32>,
-    pub target_players: Vec<String>,
 }
 
 // ── Worker event channel types (native-only: require std threading) ───────────

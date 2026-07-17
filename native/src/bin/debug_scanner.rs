@@ -11,8 +11,6 @@ fn main() {
     
     let path = std::path::Path::new(&args[1]);
     let rules = HighlightRules {
-        min_kills: Some(1),
-        target_players: vec![],
         max_time_gap: None,
     };
     

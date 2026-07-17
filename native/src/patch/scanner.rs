@@ -95,21 +95,10 @@ pub fn scan_demo_for_highlights(
         tickrate = 100.0;
     }
 
-    let min_kills = rules.min_kills.unwrap_or(1);
     let mut streaks: Vec<CaptureStreak> = Vec::new();
-    let target_players_lower: Vec<String> = rules.target_players.iter()
-        .map(|s| s.to_lowercase())
-        .collect();
 
-    // ── Per-player life-bounded streak iteration ──────────────────────────────
+    // ── Per-player life-bounded streak iteration ────────────────────────────────────────────
     for player in &analysis.state.players {
-        // Phase D — target player filter applied at the player level, not per-kill.
-        if !target_players_lower.is_empty() {
-            let name_lower = player.name.to_lowercase();
-            if !target_players_lower.iter().any(|t| name_lower.contains(t)) {
-                continue;
-            }
-        }
 
         // Skip players that are not (or are no longer) in a connected slot.
         // Disconnected entries have no valid client_id to anchor the patcher.
@@ -119,9 +108,6 @@ pub fn scan_demo_for_highlights(
         };
 
         for kill_streak in &player.kill_streaks {
-            if kill_streak.kills.len() < min_kills {
-                continue;
-            }
 
             // Phase B — resolve tick and abs_time directly from GameTime.
             // frame_index: the 1-based frame counter captured during use_timing_updates.
