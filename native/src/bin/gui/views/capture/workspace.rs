@@ -1,29 +1,20 @@
 // ============================================================
-// views/capture/select.rs
-// Renders CaptureStudioState::Select — Step 2 of the Capture Studio wizard.
+// views/capture/workspace.rs
+// Unified Master-Detail Workspace view (Phase 4).
 //
 // Responsibilities:
-//   - POV filtering checkbox
-//   - 2-wide column grid of per-demo streak tables (TableBuilder)
-//   - Per-streak: selection checkbox, player name, kill-range DragValues
-//     with orange colouring + reset button, duration, timeline string
-//   - Deferred action dispatch (SelectAll / DeselectAll / RemoveDemo) applied
-//     post-loop to satisfy the anti-crash / anti-simultaneous-mutation protocol
-//   - Global bulk-action bar (Clear All / Select All / Deselect All)
-//   - Export Configuration panel: all 6 DragValue sliders wired to PatcherConfig
-//   - Async "Proceed to Capture ->" button: builds payload, calls build_batch_queue,
-//     spawns patch_worker thread, sends GuiMessage::PatchingComplete on completion
+//   - Top pane Master List (formerly scan.rs) with file selection tracking.
+//   - Central pane Detail View (formerly select.rs) containing highlights / config tabs.
+//   - Bottom Control Center panel (formerly in select.rs).
 // ============================================================
 
 use std::sync::{Arc, Mutex};
 #[cfg(not(target_arch = "wasm32"))]
 use sysinfo::ProcessExt;
-use native::patch::PatcherConfig;
+use native::patch::{PatcherConfig, HighlightRules};
 use crate::types::{DemoData, CaptureStudioState};
-use super::{widgets, panels};
-use super::log_markdown;
+use super::{widgets, panels, CaptureState, IngestionInput, spawn_ingestion_thread, log_markdown};
 use egui_extras::{TableBuilder, Column};
-
 
 #[derive(PartialEq, Clone, Copy)]
 enum SelectTab {
@@ -38,7 +29,8 @@ pub fn render(
     state_ptr: &mut CaptureStudioState,
     tx: std::sync::mpsc::Sender<crate::types::GuiMessage>,
     loading_ptr: &mut bool,
-    _rules_mutex: &'static Mutex<native::patch::HighlightRules>,
+    rules_mutex: &'static Mutex<HighlightRules>,
+    capture_state_mutex: &'static Mutex<CaptureState>,
     queued_demos_arc: Arc<Mutex<Arc<Vec<DemoData>>>>,
     patcher_config_mutex: &'static Mutex<PatcherConfig>,
     render_config_mutex: &'static Mutex<native::hlcr::config::RenderConfig>,
@@ -48,7 +40,15 @@ pub fn render(
     subdir_cache: &mut std::collections::HashMap<std::path::PathBuf, Vec<std::path::PathBuf>>,
     tree_demo_cache: &mut std::collections::HashMap<std::path::PathBuf, usize>,
 ) {
-    // Loading guard: ingestion thread may still be finishing its final write.
+    // 1. Loading guard: ingestion thread may still be finishing its final write.
+    if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+        let mut guard = match super::get_active_demo_selection().lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        *guard = None;
+    }
+
     if *loading_ptr {
         log::info!("UI: State is in Loading");
         ui.label("Loading...");
@@ -57,7 +57,6 @@ pub fn render(
         log::info!("UI: State transition to DisplayList");
     }
 
-    // O(1) Arc pointer clone — does not deep-copy the underlying Vec.
     let queued_demos_shared = {
         let guard = match queued_demos_arc.lock() {
             Ok(g) => g,
@@ -104,6 +103,7 @@ pub fn render(
     }
 
     // ── [STEP 3] Pinned Action Footer Panel ──────────────────────────────────────────
+    // This draws the Control Center at the bottom of the interface.
     egui::TopBottomPanel::bottom("select_action_footer").show_inside(ui, |ui| {
         ui.vertical(|ui| {
             // Error banner & disk space warning
@@ -128,8 +128,6 @@ pub fn render(
 
             ui.add_space(4.0);
 
-
-
             // Primary process dispatch buttons (Proceed to Capture, Build Payload)
             {
                 let mut patcher_config = match patcher_config_mutex.lock() {
@@ -149,7 +147,173 @@ pub fn render(
         });
     });
 
-    // ── [STEP 4] Tab Navigation Header & Content Central Panel ─────────────────────
+    // ── [STEP 1] Master List Table (Top Panel) ──────────────────────────────────────
+    egui::TopBottomPanel::top("master_list_panel")
+        .resizable(true)
+        .min_height(150.0)
+        .show_inside(ui, |ui| {
+            ui.vertical(|ui| {
+                ui.heading("📂 Master List: Scan & Discover Highlights");
+                ui.add_space(4.0);
+
+                // Import buttons (RFD)
+                ui.horizontal(|ui| {
+                    let ingesting = matches!(
+                        *match capture_state_mutex.lock() {
+                            Ok(g) => g,
+                            Err(p) => p.into_inner(),
+                        },
+                        CaptureState::Scanning(_)
+                    );
+
+                    let rules = match rules_mutex.lock() {
+                        Ok(g) => g,
+                        Err(p) => p.into_inner(),
+                    };
+
+                    if ui.add_enabled(!ingesting, egui::Button::new("➕ Add Demo Files")).clicked() {
+                        *loading_ptr = true;
+                        let ctx_clone = ctx.clone();
+                        let rules_clone = rules.clone();
+                        let tx_clone = tx.clone();
+                        std::thread::Builder::new()
+                            .name("rfd_dialog".into())
+                            .stack_size(8 * 1024 * 1024)
+                            .spawn(move || {
+                                if let Some(files) = rfd::FileDialog::new()
+                                    .add_filter("Demo files", &["dem"])
+                                    .pick_files()
+                                {
+                                    spawn_ingestion_thread(
+                                        IngestionInput::Batch(files),
+                                        rules_clone,
+                                        ctx_clone,
+                                        tx_clone,
+                                    );
+                                } else {
+                                    let _ = tx_clone.send(crate::types::GuiMessage::IngestionFinished);
+                                }
+                            })
+                            .unwrap();
+                    }
+
+                    if ui.add_enabled(!ingesting, egui::Button::new("📂 Add Folder")).clicked() {
+                        *loading_ptr = true;
+                        let ctx_clone = ctx.clone();
+                        let rules_clone = rules.clone();
+                        let tx_clone = tx.clone();
+                        std::thread::Builder::new()
+                            .name("rfd_dialog".into())
+                            .stack_size(8 * 1024 * 1024)
+                            .spawn(move || {
+                                if let Some(folder) = rfd::FileDialog::new().pick_folder() {
+                                    spawn_ingestion_thread(
+                                        IngestionInput::Batch(vec![folder]),
+                                        rules_clone,
+                                        ctx_clone,
+                                        tx_clone,
+                                    );
+                                } else {
+                                    let _ = tx_clone.send(crate::types::GuiMessage::IngestionFinished);
+                                }
+                            })
+                            .unwrap();
+                    }
+
+                    if ingesting {
+                        ui.spinner();
+                        ui.weak("Scanning files... (App is responsive)");
+                    }
+                });
+
+                ui.add_space(4.0);
+
+                // Master List Table
+                let mut pending_demo_to_remove: Option<usize> = None;
+                {
+                    if !data.is_empty() {
+                        let active_idx = *super::get_active_demo_selection().lock().unwrap();
+                        let mut clicked_idx: Option<usize> = None;
+
+                        egui_extras::TableBuilder::new(ui)
+                            .striped(true)
+                            .resizable(true)
+                            .sense(egui::Sense::click())
+                            .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                            .column(egui_extras::Column::remainder()) // Demo File
+                            .column(egui_extras::Column::initial(80.0)) // Yield
+                            .column(egui_extras::Column::initial(100.0)) // Status
+                            .header(20.0, |mut header| {
+                                header.col(|ui| { ui.strong("Demo File"); });
+                                header.col(|ui| { ui.strong("Yield"); });
+                                header.col(|ui| { ui.strong("Status"); });
+                            })
+                            .body(|mut body| {
+                                for (index, demo) in data.iter().enumerate() {
+                                    let is_selected = active_idx == Some(index);
+                                    
+                                    body.row(24.0, |mut row| {
+                                        if is_selected {
+                                            row.set_selected(true);
+                                        }
+                                        
+                                        row.col(|ui| {
+                                            ui.label(&demo.demo_name);
+                                        });
+                                        row.col(|ui| {
+                                            ui.label(format!("{} streaks", demo.streaks.len()));
+                                        });
+                                        row.col(|ui| {
+                                            ui.horizontal(|ui| {
+                                                ui.label("Scanned");
+                                                if ui.button("🗑").clicked() {
+                                                    pending_demo_to_remove = Some(index);
+                                                }
+                                            });
+                                        });
+                                        
+                                        if row.response().clicked() {
+                                            clicked_idx = Some(index);
+                                        }
+                                    });
+                                }
+                            });
+
+                        if let Some(idx) = clicked_idx {
+                            if let Ok(mut lock) = super::get_active_demo_selection().lock() {
+                                *lock = Some(idx);
+                            }
+                        }
+                    } else {
+                        ui.weak("No demos loaded. Use the import buttons above or drag & drop files to scan.");
+                    }
+                }
+
+                // Apply deferred removal outside the read-lock scope.
+                if let Some(idx) = pending_demo_to_remove {
+                    let mut queued_guard = match queued_demos_arc.lock() {
+                        Ok(g) => g,
+                        Err(p) => p.into_inner(),
+                    };
+                    let queued = Arc::make_mut(&mut *queued_guard);
+                    if idx < queued.len() {
+                        queued.remove(idx);
+                    }
+                    // Reset selection if the removed item was selected
+                    if let Ok(mut lock) = super::get_active_demo_selection().lock() {
+                        if *lock == Some(idx) {
+                            *lock = None;
+                        } else if let Some(selected) = *lock {
+                            if selected > idx {
+                                *lock = Some(selected - 1);
+                            }
+                        }
+                    }
+                }
+            });
+        });
+
+    // ── [STEP 2] Detail View Central Panel ──────────────────────────────────────────
     egui::CentralPanel::default().show_inside(ui, |ui| {
         let mut tab_changed = false;
         ui.horizontal(|ui| {
@@ -172,39 +336,46 @@ pub fn render(
             .show(ui, |ui| {
                 match active_tab {
                     SelectTab::Highlights => {
-                        ui.heading("📂 Step 2: Select Highlights");
+                        ui.heading("🎬 Step 2: Detail View & Selection");
                         ui.add_space(4.0);
-                        ui.label("Enable streaks for capture and adjust start/end kill markers.");
+                        ui.label("Review and tweak target play events for the active demo file.");
                         ui.add_space(8.0);
 
-                        if !data.is_empty() {
-                            if widgets::render_bulk_actions(ui, &queued_demos_arc) {
-                                ctx.data_mut(|d| d.insert_temp(egui::Id::new("dodtools_disk_estimate_dirty"), true));
-                            }
-                            ui.add_space(4.0);
+                        let active_demo_idx = match super::get_active_demo_selection().lock() {
+                            Ok(g) => *g,
+                            Err(p) => *p.into_inner(),
+                        };
 
-                            ui.strong("Discovered Highlight Streaks");
-                            ui.add_space(4.0);
+                        if active_demo_idx.is_none() {
+                            ui.add_space(32.0);
+                            ui.vertical_centered(|ui| {
+                                ui.heading("Select a demo from the Master List to view highlights.");
+                            });
+                        }
 
-                            enum DemoAction {
-                                RemoveDemo(usize),
-                                SelectAll(usize),
-                                DeselectAll(usize),
-                            }
-                            let mut actions_to_apply: Vec<DemoAction> = Vec::new();
+                        enum DemoAction {
+                            RemoveDemo(usize),
+                            SelectAll(usize),
+                            DeselectAll(usize),
+                        }
+                        let mut actions_to_apply: Vec<DemoAction> = Vec::new();
 
-                            egui::ScrollArea::vertical()
-                                .min_scrolled_height(ui.available_height() - 100.0)
-                                .id_salt("discovered_streaks_scroll_tables")
-                                .show(ui, |ui| {
-                                    ui.columns(2, |columns| {
-                                        for (d_idx, demo) in data.iter().enumerate() {
-                                            if demo.streaks.is_empty() {
-                                                continue;
-                                            }
+                        if let Some(d_idx) = active_demo_idx {
+                            if let Some(demo) = data.get(d_idx) {
+                                if !demo.streaks.is_empty() {
+                                    if widgets::render_bulk_actions(ui, &queued_demos_arc) {
+                                        ctx.data_mut(|d| d.insert_temp(egui::Id::new("dodtools_disk_estimate_dirty"), true));
+                                    }
+                                    ui.add_space(4.0);
 
-                                            let col_ui = &mut columns[d_idx % 2];
-                                            col_ui.push_id(&demo.demo_name, |ui| {
+                                    ui.strong("Discovered Highlight Streaks");
+                                    ui.add_space(4.0);
+
+                                    egui::ScrollArea::vertical()
+                                        .min_scrolled_height(ui.available_height() - 100.0)
+                                        .id_salt("discovered_streaks_scroll_tables")
+                                        .show(ui, |ui| {
+                                            ui.push_id(&demo.demo_name, |ui| {
                                                 egui::Frame::group(ui.style()).show(ui, |ui| {
                                                     let player_name = demo.streaks.iter()
                                                         .find(|s| Some(s.player_index) == demo.local_player_index)
@@ -212,6 +383,7 @@ pub fn render(
                                                         .unwrap_or("Unknown");
                                                     let header_text = format!("{} - Player: {}", demo.demo_name, player_name);
                                                     ui.strong(header_text);
+
                                                     ui.add_space(4.0);
 
                                                     ui.horizontal(|ui| {
@@ -496,66 +668,63 @@ pub fn render(
                                                         });
                                                 });
                                             });
-                                            col_ui.add_space(4.0);
-                                        }
-                                    });
-                                });
+                                        });
+                                }
+                            }
+                        }
 
-                            let mut removals: Vec<usize> = actions_to_apply
-                                .iter()
-                                .filter_map(|a| if let DemoAction::RemoveDemo(i) = a { Some(*i) } else { None })
-                                .collect();
-                            removals.sort_unstable_by(|a, b| b.cmp(a));
+                        let mut removals: Vec<usize> = actions_to_apply
+                            .iter()
+                            .filter_map(|a| if let DemoAction::RemoveDemo(i) = a { Some(*i) } else { None })
+                            .collect();
+                        removals.sort_unstable_by(|a, b| b.cmp(a));
 
-                            let mut estimate_changed = false;
-                            for action in &actions_to_apply {
-                                match action {
-                                    DemoAction::SelectAll(idx) => {
-                                        let mut guard = match queued_demos_arc.lock() {
-                                            Ok(g) => g,
-                                            Err(p) => p.into_inner(),
-                                        };
-                                        let queued = Arc::make_mut(&mut *guard);
-                                        if let Some(demo) = queued.get_mut(*idx) {
-                                            for s in &mut demo.streaks {
-                                                if demo.is_pov && Some(s.player_index) != demo.local_player_index {
-                                                    continue;
-                                                }
-                                                s.is_selected = true;
+                        let mut estimate_changed = false;
+                        for action in &actions_to_apply {
+                            match action {
+                                DemoAction::SelectAll(idx) => {
+                                    let mut guard = match queued_demos_arc.lock() {
+                                        Ok(g) => g,
+                                        Err(p) => p.into_inner(),
+                                    };
+                                    let queued = Arc::make_mut(&mut *guard);
+                                    if let Some(demo) = queued.get_mut(*idx) {
+                                        for s in &mut demo.streaks {
+                                            if demo.is_pov && Some(s.player_index) != demo.local_player_index {
+                                                continue;
                                             }
+                                            s.is_selected = true;
                                         }
-                                        estimate_changed = true;
                                     }
-                                    DemoAction::DeselectAll(idx) => {
-                                        let mut guard = match queued_demos_arc.lock() {
-                                            Ok(g) => g,
-                                            Err(p) => p.into_inner(),
-                                        };
-                                        let queued = Arc::make_mut(&mut *guard);
-                                        if let Some(demo) = queued.get_mut(*idx) {
-                                            for s in &mut demo.streaks { s.is_selected = false; }
-                                        }
-                                        estimate_changed = true;
+                                    estimate_changed = true;
+                                }
+                                DemoAction::DeselectAll(idx) => {
+                                    let mut guard = match queued_demos_arc.lock() {
+                                        Ok(g) => g,
+                                        Err(p) => p.into_inner(),
+                                    };
+                                    let queued = Arc::make_mut(&mut *guard);
+                                    if let Some(demo) = queued.get_mut(*idx) {
+                                        for s in &mut demo.streaks { s.is_selected = false; }
                                     }
-                                    DemoAction::RemoveDemo(_) => {}
+                                    estimate_changed = true;
                                 }
+                                DemoAction::RemoveDemo(_) => {}
                             }
-                            for idx in removals {
-                                let mut guard = match queued_demos_arc.lock() {
-                                    Ok(g) => g,
-                                    Err(p) => p.into_inner(),
-                                };
-                                let queued = Arc::make_mut(&mut *guard);
-                                if idx < queued.len() {
-                                    queued.remove(idx);
-                                }
-                                estimate_changed = true;
+                        }
+                        for idx in removals {
+                            let mut guard = match queued_demos_arc.lock() {
+                                Ok(g) => g,
+                                Err(p) => p.into_inner(),
+                            };
+                            let queued = Arc::make_mut(&mut *guard);
+                            if idx < queued.len() {
+                                queued.remove(idx);
                             }
-                            if estimate_changed {
-                                ctx.data_mut(|d| d.insert_temp(egui::Id::new("dodtools_disk_estimate_dirty"), true));
-                            }
-                        } else {
-                            ui.weak("No discovered highlight streaks. Go back to Scan and add demo files.");
+                            estimate_changed = true;
+                        }
+                        if estimate_changed {
+                            ctx.data_mut(|d| d.insert_temp(egui::Id::new("dodtools_disk_estimate_dirty"), true));
                         }
                     }
                     SelectTab::Configuration => {
@@ -719,7 +888,7 @@ pub fn render(
                             Err(p) => p.into_inner(),
                         };
 
-                        // Render highlight buffers, scripting events and timelines
+                        // Highlight buffers, scripting events, etc.
                         let highlight_changed = panels::render_highlight_settings_panel(
                             ui,
                             ctx,
@@ -737,78 +906,79 @@ pub fn render(
                         ui.separator();
                         ui.add_space(8.0);
 
-                        // Debugging Settings
+                        // Debugging settings
                         ui.strong("🐛 Debugging Settings");
                         ui.add_space(4.0);
                         panels::render_debug_panel(ui, &mut patcher_config);
                     }
                 }
             });
-        // Smart Preview Modal
-        let modal_open_id = egui::Id::new("dodtools_preview_modal_open");
-        let modal_open = ctx.data(|d| d.get_temp::<bool>(modal_open_id)).unwrap_or(false);
-        
-        if modal_open {
-            let mut open = true;
-            
-            ui.painter().rect_filled(ctx.screen_rect(), 0.0, egui::Color32::from_black_alpha(170));
-            
-            egui::Window::new("Half-Life Preview Detector")
-                .open(&mut open)
-                .resizable(false)
-                .collapsible(false)
-                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
-                .show(ctx, |ui| {
-                    ui.label("Half-Life is already running. How would you like to proceed?");
-                    ui.add_space(8.0);
-
-                    let demo_path: std::path::PathBuf = ctx.data(|d| d.get_temp(egui::Id::new("dodtools_preview_target_demo_path"))).unwrap_or_default();
-                    let demo_name: String = ctx.data(|d| d.get_temp(egui::Id::new("dodtools_preview_target_demo_name"))).unwrap_or_default();
-
-                    ui.horizontal(|ui| {
-                        if ui.button("Force Relaunch").clicked() {
-                            let demo_path_clone = demo_path.clone();
-                            let demo_name_clone = demo_name.clone();
-                            let patcher_config_clone = match patcher_config_mutex.lock() {
-                                Ok(g) => g,
-                                Err(p) => p.into_inner(),
-                            }.clone();
-                            let ctx_clone = ctx.clone();
-
-                            ctx.data_mut(|d| d.insert_temp(modal_open_id, false));
-
-                            crate::views::capture::set_is_patching(true);
-                            std::thread::spawn(move || {
-                                let _ = std::process::Command::new("taskkill").args(&["/F", "/IM", "hl.exe"]).output();
-                                let _ = std::process::Command::new("taskkill").args(&["/F", "/IM", "hlae.exe"]).output();
-                                std::thread::sleep(std::time::Duration::from_millis(500));
-
-                                launch_preview(demo_path_clone, demo_name_clone, patcher_config_clone);
-
-                                crate::views::capture::set_is_patching(false);
-                                ctx_clone.request_repaint();
-                            });
-                        }
-
-                        if ui.button("Copy View Command").clicked() {
-                            let name_without_ext = std::path::Path::new(&demo_name)
-                                .file_stem()
-                                .and_then(|s| s.to_str())
-                                .unwrap_or(&demo_name);
-                            let cmd_str = format!("viewdemo {}_preview", name_without_ext);
-                            ui.ctx().copy_text(cmd_str);
-                            
-                            ctx.data_mut(|d| d.insert_temp(modal_open_id, false));
-                            *error_message = Some("Command copied to clipboard! Alt+Tab to game and paste.".to_string());
-                        }
-                    });
-                });
-            
-            if !open {
-                ctx.data_mut(|d| d.insert_temp(modal_open_id, false));
-            }
-        }
     });
+
+    // Smart Preview Modal
+    let modal_open_id = egui::Id::new("dodtools_preview_modal_open");
+    let modal_open = ctx.data(|d| d.get_temp::<bool>(modal_open_id)).unwrap_or(false);
+
+    if modal_open {
+        let mut open = true;
+
+        ui.painter().rect_filled(ctx.screen_rect(), 0.0, egui::Color32::from_black_alpha(170));
+
+        egui::Window::new("Half-Life Preview Detector")
+            .open(&mut open)
+            .resizable(false)
+            .collapsible(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .show(ctx, |ui| {
+                ui.label("Half-Life is already running. How would you like to proceed?");
+                ui.add_space(8.0);
+
+                let demo_path: std::path::PathBuf = ctx.data(|d| d.get_temp(egui::Id::new("dodtools_preview_target_demo_path"))).unwrap_or_default();
+                let demo_name: String = ctx.data(|d| d.get_temp(egui::Id::new("dodtools_preview_target_demo_name"))).unwrap_or_default();
+
+                ui.horizontal(|ui| {
+                    if ui.button("Force Relaunch").clicked() {
+                        let demo_path_clone = demo_path.clone();
+                        let demo_name_clone = demo_name.clone();
+                        let patcher_config_clone = match patcher_config_mutex.lock() {
+                            Ok(g) => g,
+                            Err(p) => p.into_inner(),
+                        }.clone();
+                        let ctx_clone = ctx.clone();
+
+                        ctx.data_mut(|d| d.insert_temp(modal_open_id, false));
+
+                        crate::views::capture::set_is_patching(true);
+                        std::thread::spawn(move || {
+                            let _ = std::process::Command::new("taskkill").args(&["/F", "/IM", "hl.exe"]).output();
+                            let _ = std::process::Command::new("taskkill").args(&["/F", "/IM", "hlae.exe"]).output();
+                            std::thread::sleep(std::time::Duration::from_millis(500));
+
+                            launch_preview(demo_path_clone, demo_name_clone, patcher_config_clone);
+
+                            crate::views::capture::set_is_patching(false);
+                            ctx_clone.request_repaint();
+                        });
+                    }
+
+                    if ui.button("Copy View Command").clicked() {
+                        let name_without_ext = std::path::Path::new(&demo_name)
+                            .file_stem()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or(&demo_name);
+                        let cmd_str = format!("viewdemo {}_preview", name_without_ext);
+                        ui.ctx().copy_text(cmd_str);
+
+                        ctx.data_mut(|d| d.insert_temp(modal_open_id, false));
+                        *error_message = Some("Command copied to clipboard! Alt+Tab to game and paste.".to_string());
+                    }
+                });
+            });
+
+        if !open {
+            ctx.data_mut(|d| d.insert_temp(modal_open_id, false));
+        }
+    }
 }
 
 fn calculate_merged_duration(data: &[DemoData], config: &PatcherConfig) -> f32 {
@@ -924,4 +1094,3 @@ fn launch_preview(
         Err(e) => log::error!("Failed to launch hl.exe: {}", e),
     }
 }
-
