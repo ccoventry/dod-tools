@@ -84,9 +84,9 @@ fn build_safe_echos(tick: i32, message: &str) -> Vec<(i32, String)> {
         
         let full_string = format!("{}{}", prefix, test_message);
         
-        if full_string.len() > 55 {
+        if full_string.len() > crate::patch::MAX_ECHO_CHUNK_SIZE {
             if current_chunk.is_empty() {
-                let limit = 55_usize.saturating_sub(prefix.len());
+                let limit = crate::patch::MAX_ECHO_CHUNK_SIZE.saturating_sub(prefix.len());
                 let (part1, part2) = word.split_at(limit.min(word.len()));
                 
                 let cmd = format!("echo \"{}{}\"", prefix, part1);
@@ -229,7 +229,7 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
         let mut primer_scheduled = Vec::new();
         helper_cfg_content.push_str("# Demo specific next demos\n");
         helper_cfg_content.push_str("alias primer_next \"playdemo chain_01\"\n");
-        primer_scheduled.push((500, "primer_next".to_string()));
+        primer_scheduled.push((crate::patch::PRIMER_DELAY_TICKS, "primer_next".to_string()));
 
         jobs.push(PatchJob {
             source_demo: first_source.clone(),
@@ -453,7 +453,7 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
                     scheduled_commands.push((t, echo_cmd));
                 }
                 let cmd_len = custom.command.len();
-                if cmd_len > 60 {
+                if cmd_len > crate::patch::CUSTOM_CMD_WARN_LIMIT {
                     crate::log_markdown(&format!("⚠️ **WARNING:** Custom command exceeds 60 bytes and will likely be dropped by the GoldSrc Cbuf: {}", custom.command));
                 }
                 scheduled_commands.push((target_tick, custom.command.clone()));
@@ -517,7 +517,7 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
                 step, 
                 format!("echo \"[dod-tools] BREADCRUMB - Tick {}\"", step)
             ));
-            step += 5000;
+            step += crate::patch::BREADCRUMB_INTERVAL_TICKS;
         }
 
         // Sort scheduled_commands by tick

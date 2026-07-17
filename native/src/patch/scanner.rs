@@ -9,10 +9,10 @@ use crate::patch::types::{CaptureStreak, HighlightStatus, MAX_PAYLOAD_SIZE};
 pub fn is_hltv_demo(path: &std::path::Path) -> Result<bool, std::io::Error> {
     use std::io::Read;
     let mut file = std::fs::File::open(path)?;
-    let mut header = vec![0u8; 512];
+    let mut header = vec![0u8; crate::patch::HLTV_HEADER_SIZE];
     file.read_exact(&mut header)?;
 
-    if header.len() >= 512 {
+    if header.len() >= crate::patch::HLTV_HEADER_SIZE {
         let hltv_proxy_name = b"HLTV Proxy";
         if header.windows(hltv_proxy_name.len()).any(|window| window == hltv_proxy_name) {
             return Ok(true);
@@ -42,11 +42,11 @@ pub fn scan_demo_for_highlights(
         .map_err(|e| format!("Failed to parse demo: {}", e))?;
 
     let mut frame_times: Vec<f32> = Vec::with_capacity(analysis.demo_info.playback_frames as usize);
-    if bytes.len() >= 544 {
-        let directory_offset = i32::from_le_bytes(bytes[540..544].try_into().unwrap()) as usize;
-        let mut pos = 544;
+    if bytes.len() >= crate::patch::DEMO_HEADER_SIZE {
+        let directory_offset = i32::from_le_bytes(bytes[crate::patch::DIRECTORY_OFFSET_POS..crate::patch::DEMO_HEADER_SIZE].try_into().unwrap()) as usize;
+        let mut pos = crate::patch::DEMO_HEADER_SIZE;
         let end = if directory_offset > 0 && directory_offset <= bytes.len() { directory_offset } else { bytes.len() };
-        while pos + 9 <= end {
+        while pos + crate::patch::FRAME_HEADER_SIZE <= end {
             let type_byte = bytes[pos];
             if type_byte > 9 && type_byte != 255 {
                 break;
@@ -58,20 +58,21 @@ pub fn scan_demo_for_highlights(
                 let time = f32::from_le_bytes(bytes[pos+1..pos+5].try_into().unwrap());
                 frame_times.push(time);
             }
-            pos += 9;
+            pos += crate::patch::FRAME_HEADER_SIZE;
             match type_byte {
                 0 | 1 => {
-                    if pos + 468 > end { break; }
-                    let len = i32::from_le_bytes(bytes[pos+464..pos+468].try_into().unwrap()) as usize;
+                    let total_fixed_size = crate::patch::NETMSG_INFO_SIZE + 4;
+                    if pos + total_fixed_size > end { break; }
+                    let len = i32::from_le_bytes(bytes[pos+crate::patch::NETMSG_INFO_SIZE..pos+total_fixed_size].try_into().unwrap()) as usize;
                     if len > MAX_PAYLOAD_SIZE {
                         return Err(format!("Scanner alignment lost! Read impossible packet size: {} bytes at pos {}", len, pos));
                     }
-                    pos += 468 + len;
+                    pos += total_fixed_size + len;
                 },
                 2 | 255 => {},
-                3 => pos += 64,
-                4 => pos += 32,
-                6 => pos += 84,
+                3 => pos += crate::patch::CMD_FRAME_SIZE,
+                4 => pos += crate::patch::CLIENT_DATA_FRAME_SIZE,
+                6 => pos += crate::patch::EVENT_FRAME_SIZE,
                 7 => pos += 8,
                 8 => {
                     if pos + 8 > end { break; }
