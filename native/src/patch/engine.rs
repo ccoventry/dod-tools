@@ -12,7 +12,7 @@ fn write_console_cmd(writer: &mut std::io::BufWriter<std::fs::File>, time: f32, 
     use std::io::Write;
     log::debug!("Injecting Command: {} at tick: {}", cmd, tick);
     let command_string = cmd;
-    if command_string.len() >= 64 {
+    if command_string.len() >= crate::patch::MAX_CONSOLE_CMD_LEN {
         let msg = format!(
             "FATAL: GoldSrc Cbuf Overflow (64-byte limit breached). Command: '{}', Length: {}",
             command_string,
@@ -35,9 +35,9 @@ fn write_console_cmd(writer: &mut std::io::BufWriter<std::fs::File>, time: f32, 
     writer.write_all(&[3_u8])?;
     writer.write_all(&time.to_le_bytes())?;
     writer.write_all(&tick.to_le_bytes())?;
-    let mut payload = vec![0_u8; 64];
+    let mut payload = vec![0_u8; crate::patch::MAX_CONSOLE_CMD_LEN];
     let cmd_bytes = cmd.as_bytes();
-    let len = cmd_bytes.len().min(63);
+    let len = cmd_bytes.len().min(crate::patch::MAX_CONSOLE_CMD_SAFE_LEN);
     payload[..len].copy_from_slice(&cmd_bytes[..len]);
     writer.write_all(&payload)?;
     Ok(73)
@@ -54,7 +54,7 @@ fn write_director_event_payload(
     
     // svc_director STUFFTEXT payload_len is a u8; silently clamp to 253 bytes.
     // (64-byte panic is for ConsoleCommand frames, not for director payloads.)
-    let command = if command.len() > 253 { &command[..253] } else { command };
+    let command = if command.len() > crate::patch::MAX_DIRECTOR_STUFFTEXT_LEN { &command[..crate::patch::MAX_DIRECTOR_STUFFTEXT_LEN] } else { command };
 
     let cmd_bytes = command.as_bytes();
     let cmd_len = cmd_bytes.len();
@@ -102,8 +102,8 @@ impl StreamPatcher {
         let input_file = std::fs::File::open(&job.source_demo)?;
         let output_file = std::fs::File::create(&job.output_demo)?;
 
-        let mut reader = BufReader::with_capacity(256 * 1024, input_file);
-        let mut writer = BufWriter::with_capacity(256 * 1024, output_file);
+        let mut reader = BufReader::with_capacity(crate::patch::IO_BUFFER_CAPACITY, input_file);
+        let mut writer = BufWriter::with_capacity(crate::patch::IO_BUFFER_CAPACITY, output_file);
 
         let read_exact = |reader: &mut BufReader<std::fs::File>, buf: &mut [u8], label: &str| -> Result<(), std::io::Error> {
             let expected_size = buf.len();
@@ -123,11 +123,11 @@ impl StreamPatcher {
         };
 
         // Step 2: Parse and Clone the Header
-        let mut header = vec![0u8; 544];
+        let mut header = vec![0u8; crate::patch::DEMO_HEADER_SIZE];
         read_exact(&mut reader, &mut header, "Header")?;
 
         // Extract directory offset (i32 is at offset 540..544)
-        let original_offset = i32::from_le_bytes(header[540..544].try_into().unwrap());
+        let original_offset = i32::from_le_bytes(header[crate::patch::DIRECTORY_OFFSET_POS..crate::patch::DEMO_HEADER_SIZE].try_into().unwrap());
 
         writer.write_all(&header)?;
 
@@ -149,7 +149,7 @@ impl StreamPatcher {
             if reader.read_exact(&mut dir_count_buf).is_ok() {
                 let dir_count = i32::from_le_bytes(dir_count_buf);
                 for _ in 0..dir_count {
-                    let mut entry = [0u8; 92];
+                    let mut entry = [0u8; crate::patch::DIR_ENTRY_SIZE];
                     if reader.read_exact(&mut entry).is_ok() {
                         let offset = i32::from_le_bytes(entry[84..88].try_into().unwrap());
                         let file_length = i32::from_le_bytes(entry[88..92].try_into().unwrap());
@@ -157,7 +157,7 @@ impl StreamPatcher {
                     }
                 }
             }
-            reader.seek(SeekFrom::Start(544))?;
+            reader.seek(SeekFrom::Start(crate::patch::DEMO_HEADER_SIZE as u64))?;
         }
 
         let mut injected_per_entry = vec![0i32; dir_entries.len().max(1)];
@@ -197,7 +197,7 @@ impl StreamPatcher {
                 break;
             }
 
-            let mut frame_hdr = [0u8; 9];
+            let mut frame_hdr = [0u8; crate::patch::FRAME_HEADER_SIZE];
             if let Err(e) = read_exact(&mut reader, &mut frame_hdr, "Frame Header") {
                 if e.kind() == std::io::ErrorKind::UnexpectedEof {
                     break;
@@ -255,14 +255,14 @@ impl StreamPatcher {
                 3 => {
                     // ConsoleCommand (64 bytes)
                     writer.write_all(&frame_hdr)?;
-                    scratch_buf.resize(64, 0);
+                    scratch_buf.resize(crate::patch::CMD_FRAME_SIZE, 0);
                     read_exact(&mut reader, &mut scratch_buf, "ConsoleCommand")?;
                     writer.write_all(&scratch_buf)?;
                 }
                 4 => {
                     // ClientData (32 bytes)
                     writer.write_all(&frame_hdr)?;
-                    scratch_buf.resize(32, 0);
+                    scratch_buf.resize(crate::patch::CLIENT_DATA_FRAME_SIZE, 0);
                     read_exact(&mut reader, &mut scratch_buf, "ClientData")?;
                     writer.write_all(&scratch_buf)?;
                 }
@@ -273,7 +273,7 @@ impl StreamPatcher {
                 6 => {
                     // Event (84 bytes)
                     writer.write_all(&frame_hdr)?;
-                    scratch_buf.resize(84, 0);
+                    scratch_buf.resize(crate::patch::EVENT_FRAME_SIZE, 0);
                     read_exact(&mut reader, &mut scratch_buf, "Event")?;
                     writer.write_all(&scratch_buf)?;
                 }
@@ -324,7 +324,7 @@ impl StreamPatcher {
                 }
                 _ => {
                     // NetworkMessage (468 bytes + message_length)
-                    scratch_buf.resize(464, 0);
+                    scratch_buf.resize(crate::patch::NETMSG_INFO_SIZE, 0);
                     read_exact(&mut reader, &mut scratch_buf, "NetworkMessage Info")?;
 
                     // Inject svc_director STUFFTEXT events at highlight start ticks
@@ -404,7 +404,7 @@ impl StreamPatcher {
 
         // 4d: Seek back to the exact byte position of the directory_offset in the output file's header (usually offset 540).
         let mut out_file = writer.into_inner()?;
-        out_file.seek(SeekFrom::Start(540))?;
+        out_file.seek(SeekFrom::Start(crate::patch::DIRECTORY_OFFSET_POS as u64))?;
 
         // 4e: Calculate new offset.
         let new_offset = original_offset + bytes_injected;
