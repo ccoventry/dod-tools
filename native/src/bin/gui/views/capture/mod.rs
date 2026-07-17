@@ -90,6 +90,11 @@ static HIGHLIGHT_RULES: OnceLock<Mutex<HighlightRules>> = OnceLock::new();
 static QUEUED_DEMOS: OnceLock<Arc<Mutex<Arc<Vec<DemoData>>>>> = OnceLock::new();
 static CAPTURE_STATE: OnceLock<Mutex<CaptureState>> = OnceLock::new();
 static PATCHER_CONFIG: OnceLock<Mutex<PatcherConfig>> = OnceLock::new();
+static ACTIVE_DEMO_SELECTION: std::sync::OnceLock<std::sync::Mutex<Option<usize>>> = std::sync::OnceLock::new();
+
+pub(crate) fn get_active_demo_selection() -> &'static std::sync::Mutex<Option<usize>> {
+    ACTIVE_DEMO_SELECTION.get_or_init(|| std::sync::Mutex::new(None))
+}
 
 fn get_highlight_rules() -> &'static Mutex<HighlightRules> {
     HIGHLIGHT_RULES.get_or_init(|| Mutex::new(HighlightRules {
