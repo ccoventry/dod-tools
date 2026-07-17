@@ -331,9 +331,8 @@ pub fn render(
         ui.separator();
         ui.add_space(4.0);
 
-        egui::ScrollArea::vertical()
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
+        {
+            let ui = ui;
                 match active_tab {
                     SelectTab::Highlights => {
                         ui.heading("🎬 Step 2: Detail View & Selection");
@@ -907,7 +906,7 @@ pub fn render(
                         panels::render_debug_panel(ui, &mut patcher_config);
                     }
                 }
-            });
+            }
     });
 
     // Smart Preview Modal
