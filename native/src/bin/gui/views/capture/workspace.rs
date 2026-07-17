@@ -114,16 +114,70 @@ pub fn render(
 
             ui.add_space(4.0);
 
-            // Engine paths (HLAE / hl.exe)
+            // Disk Space Estimate
             {
-                let mut patcher_config = match patcher_config_mutex.lock() {
+                let patcher_config = match patcher_config_mutex.lock() {
                     Ok(g) => g,
                     Err(p) => p.into_inner(),
                 };
+                let cache_id = egui::Id::new("dodtools_disk_estimate_cache");
+                let dirty_id = egui::Id::new("dodtools_disk_estimate_dirty");
+                let is_dirty: bool = ctx.data(|d| d.get_temp(dirty_id)).unwrap_or(true);
+                let cached_estimate: Option<u64> = ctx.data(|d| d.get_temp(cache_id));
+
+                let required_bytes = match cached_estimate {
+                    Some(bytes) if !is_dirty => bytes,
+                    _ => {
+                        let latest_demos = match queued_demos_arc.lock() {
+                            Ok(g) => g,
+                            Err(p) => p.into_inner(),
+                        };
+                        let total_sequence_duration = calculate_merged_duration(&latest_demos, &patcher_config);
+                        let w = patcher_config.resolution_width;
+                        let h = patcher_config.resolution_height;
+                        let fps = patcher_config.capture_fps;
+                        let mut bytes = native::sys::disk::calculate_raw_sequence_bytes(w, h, fps, total_sequence_duration);
+                        if patcher_config.separate_hud {
+                            bytes *= 3;
+                        }
+                        ctx.data_mut(|d| {
+                            d.insert_temp(cache_id, bytes);
+                            d.insert_temp(dirty_id, false);
+                        });
+                        bytes
+                    }
+                };
+                let required_gb = required_bytes as f64 / 1_073_741_824.0;
+
+                let mut pool_free_bytes: u64 = 0;
+                let mut drives_info = Vec::new();
+
+                for path in &patcher_config.capture_directories {
+                    let free_bytes = native::sys::disk::get_available_bytes(path);
+                    if free_bytes != u64::MAX {
+                        pool_free_bytes += free_bytes;
+                    }
+                    let free_gb = if free_bytes == u64::MAX { 0.0 } else { free_bytes as f64 / 1_073_741_824.0 };
+                    let path_str = path.to_string_lossy().to_string();
+                    let shortened_path = if path_str.len() > 30 {
+                        let head = if path_str.len() >= 3 { &path_str[..3] } else { "" };
+                        format!("{}...{}", head, &path_str[path_str.len() - 24..])
+                    } else {
+                        path_str
+                    };
+                    drives_info.push((shortened_path, free_gb));
+                }
+
+                let pool_total_gb = pool_free_bytes as f64 / 1_073_741_824.0;
+
                 ui.horizontal(|ui| {
-                    ui.strong("Recording Engine Paths:");
+                    ui.strong("Disk Space Estimate:");
+                    ui.label(format!("Disk Space Pool: Required: {:.1} GB / Total Free: {:.1} GB", required_gb, pool_total_gb));
                 });
-                panels::render_engine_config_panel(ui, &mut patcher_config, error_message);
+
+                for (shortened_path, free_gb) in &drives_info {
+                    ui.label(format!("  ↳ {} : {:.1} GB Free", shortened_path, free_gb));
+                }
             }
 
             ui.add_space(4.0);
@@ -254,10 +308,16 @@ pub fn render(
                             .column(egui_extras::Column::remainder()) // Demo File
                             .column(egui_extras::Column::initial(80.0)) // Yield
                             .column(egui_extras::Column::initial(100.0)) // Status
+                            .column(egui_extras::Column::initial(70.0)) // Pending
+                            .column(egui_extras::Column::initial(70.0)) // Captured
+                            .column(egui_extras::Column::initial(70.0)) // Rendered
                             .header(20.0, |mut header| {
                                 header.col(|ui| { ui.strong("Demo File"); });
                                 header.col(|ui| { ui.strong("Yield"); });
                                 header.col(|ui| { ui.strong("Status"); });
+                                header.col(|ui| { ui.strong("Pending"); });
+                                header.col(|ui| { ui.strong("Captured"); });
+                                header.col(|ui| { ui.strong("Rendered"); });
                             })
                             .body(|body| {
                                 body.rows(24.0, data.len(), |mut row| {
@@ -285,6 +345,10 @@ pub fn render(
                                     );
                                     let path_exists = resolved_path.exists();
 
+                                    let pending_count = demo.streaks.iter().filter(|s| s.status == native::patch::HighlightStatus::Pending).count();
+                                    let captured_count = demo.streaks.iter().filter(|s| s.status == native::patch::HighlightStatus::Captured).count();
+                                    let rendered_count = demo.streaks.iter().filter(|s| s.status == native::patch::HighlightStatus::Rendered).count();
+
                                     row.col(|ui| {
                                         if path_exists {
                                             ui.label(&demo.demo_name);
@@ -303,6 +367,15 @@ pub fn render(
                                                 pending_demo_to_remove = Some(index);
                                             }
                                         });
+                                    });
+                                    row.col(|ui| {
+                                        ui.label(pending_count.to_string());
+                                    });
+                                    row.col(|ui| {
+                                        ui.label(captured_count.to_string());
+                                    });
+                                    row.col(|ui| {
+                                        ui.label(rendered_count.to_string());
                                     });
                                     
                                     if row.response().clicked() {
@@ -764,66 +837,12 @@ pub fn render(
                             Err(p) => p.into_inner(),
                         };
 
-                        // Disk Space Estimate
+                        // Engine paths (HLAE / hl.exe)
                         {
-                            let cache_id = egui::Id::new("dodtools_disk_estimate_cache");
-                            let dirty_id = egui::Id::new("dodtools_disk_estimate_dirty");
-                            let is_dirty: bool = ctx.data(|d| d.get_temp(dirty_id)).unwrap_or(true);
-                            let cached_estimate: Option<u64> = ctx.data(|d| d.get_temp(cache_id));
-
-                            let required_bytes = match cached_estimate {
-                                Some(bytes) if !is_dirty => bytes,
-                                _ => {
-                                    let latest_demos = match queued_demos_arc.lock() {
-                                        Ok(g) => g,
-                                        Err(p) => p.into_inner(),
-                                    };
-                                    let total_sequence_duration = calculate_merged_duration(&latest_demos, &patcher_config);
-                                    let w = patcher_config.resolution_width;
-                                    let h = patcher_config.resolution_height;
-                                    let fps = patcher_config.capture_fps;
-                                    let mut bytes = native::sys::disk::calculate_raw_sequence_bytes(w, h, fps, total_sequence_duration);
-                                    if patcher_config.separate_hud {
-                                        bytes *= 3;
-                                    }
-                                    ctx.data_mut(|d| {
-                                        d.insert_temp(cache_id, bytes);
-                                        d.insert_temp(dirty_id, false);
-                                    });
-                                    bytes
-                                }
-                            };
-                            let required_gb = required_bytes as f64 / 1_073_741_824.0;
-
-                            let mut pool_free_bytes: u64 = 0;
-                            let mut drives_info = Vec::new();
-
-                            for path in &patcher_config.capture_directories {
-                                let free_bytes = native::sys::disk::get_available_bytes(path);
-                                if free_bytes != u64::MAX {
-                                    pool_free_bytes += free_bytes;
-                                }
-                                let free_gb = if free_bytes == u64::MAX { 0.0 } else { free_bytes as f64 / 1_073_741_824.0 };
-                                let path_str = path.to_string_lossy().to_string();
-                                let shortened_path = if path_str.len() > 30 {
-                                    let head = if path_str.len() >= 3 { &path_str[..3] } else { "" };
-                                    format!("{}...{}", head, &path_str[path_str.len() - 24..])
-                                } else {
-                                    path_str
-                                };
-                                drives_info.push((shortened_path, free_gb));
-                            }
-
-                            let pool_total_gb = pool_free_bytes as f64 / 1_073_741_824.0;
-
                             ui.horizontal(|ui| {
-                                ui.strong("Disk Space Estimate:");
-                                ui.label(format!("Disk Space Pool: Required: {:.1} GB / Total Free: {:.1} GB", required_gb, pool_total_gb));
+                                ui.strong("Recording Engine Paths:");
                             });
-
-                            for (shortened_path, free_gb) in &drives_info {
-                                ui.label(format!("  ↳ {} : {:.1} GB Free", shortened_path, free_gb));
-                            }
+                            panels::render_engine_config_panel(ui, &mut patcher_config, error_message);
                         }
 
                         ui.add_space(8.0);
