@@ -325,7 +325,7 @@ pub enum IngestionInput {
 
 pub(crate) fn spawn_ingestion_thread(
     input: IngestionInput,
-    rules: HighlightRules,
+    _rules: HighlightRules,
     ctx: egui::Context,
     tx: std::sync::mpsc::Sender<crate::types::GuiMessage>,
 ) {
@@ -394,7 +394,7 @@ pub(crate) fn spawn_ingestion_thread(
 
                 log_markdown(&format!("Attempting Demo {}: {:?}", index + 1, file.file_name().unwrap_or_default()));
 
-                match scan_demo_for_highlights(&file, &rules) {
+                match scan_demo_for_highlights(&file) {
                     Ok((tickrate, streaks, is_pov, local_player_index, playback_frames, match_start_tick)) => {
                         let selectable: Vec<HighlightStreak> = streaks
                             .into_iter()

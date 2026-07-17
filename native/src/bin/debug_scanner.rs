@@ -10,11 +10,11 @@ fn main() {
     }
     
     let path = std::path::Path::new(&args[1]);
-    let rules = HighlightRules {
+    let _rules = HighlightRules {
         max_time_gap: None,
     };
     
-    match scan_demo_for_highlights(path, &rules) {
+    match scan_demo_for_highlights(path) {
         Ok((tickrate, streaks, _is_pov, _pov_idx, _frames, _match_start_tick)) => {
             println!("Tickrate: {}", tickrate);
             for s in streaks {

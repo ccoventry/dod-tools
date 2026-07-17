@@ -4,10 +4,10 @@ use native::patch::{build_batch_queue, StreamPatcher};
 
 fn main() {
     let path = std::path::Path::new("demos/wsod25-grp_r1-dyelife_gskill_armory_h1.dem");
-    let rules = HighlightRules {
+    let _rules = HighlightRules {
         max_time_gap: None,
     };
-    match scan_demo_for_highlights(path, &rules) {
+    match scan_demo_for_highlights(path) {
         Ok((_tickrate, mut streaks, _is_pov, _pov_idx, _frames, _match_start_tick)) => {
             streaks.retain(|s| s.target_player.as_deref().unwrap_or("") == "dicE[: :]DyeL!fe[dd]");
             for (i, streak) in streaks.iter().enumerate() {

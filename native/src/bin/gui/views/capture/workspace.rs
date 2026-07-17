@@ -371,11 +371,7 @@ pub fn render(
                                     ui.strong("Discovered Highlight Streaks");
                                     ui.add_space(4.0);
 
-                                    egui::ScrollArea::vertical()
-                                        .min_scrolled_height(ui.available_height() - 100.0)
-                                        .id_salt("discovered_streaks_scroll_tables")
-                                        .show(ui, |ui| {
-                                            ui.push_id(&demo.demo_name, |ui| {
+                                    ui.push_id(&demo.demo_name, |ui| {
                                                 egui::Frame::group(ui.style()).show(ui, |ui| {
                                                     let player_name = demo.streaks.iter()
                                                         .find(|s| Some(s.player_index) == demo.local_player_index)
@@ -668,7 +664,6 @@ pub fn render(
                                                         });
                                                 });
                                             });
-                                        });
                                 }
                             }
                         }
