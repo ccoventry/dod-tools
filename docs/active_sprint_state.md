@@ -1,9 +1,8 @@
 ## Web AI State
-- **Overarching Goal:** Transitioning to creative workflow (DoD movie clips).
-- **Last Touched Modules:** Workspace root (Git branch reversion).
-- **Completed:** Tauri UI Migration suspended and parked. Stable `dev` branch restored. 
-- **Next Active Phase:** Engineering Backlog - Pipeline Enhancement (Director Events Injection).
-- **Upcoming Tasks:** Pipe `match_start_tick` from `AnalyzerState` to `DemoData` and inject `[dod-tools] MATCH_START` and `[dod-tools] DEMO_END` director events in `native/src/patch/builder.rs`.
+- **Overarching Goal:** Pipeline Enhancement - Director Events Injection (Phase 1).
+- **Last Touched Modules:** `main.rs`, `workspace.rs`, `mod.rs` (Capture View).
+- **Current Status:** Non-destructive path resolution logic and Master List UI sync bugs are fully resolved. Build is compiling successfully.
+- **Next Action:** Extend `DemoData` struct (in `native/src/bin/gui/types.rs`) with `match_start_tick` and `demo_end_tick`, and update the ingestion scanner (`native/src/patch/scanner.rs`) to capture these events.
 
 ## Active Epics
 - **Dynamic Drive Failover:** COMPLETED
@@ -13,6 +12,7 @@
   - **UI/UX Polish:** Integrated dynamic vector list reordering (⬆/⬇ swap controls), removed deprecated individual directory pickers, and mounted a global "Total Export Pool Free" indicator on the Render view.
 
 ## IDE AI State
-- **Open Documents:** `desktop-studio/src/main.js`, `desktop-studio/index.html`, `desktop-studio/src-tauri/src/render_manager.rs`, `desktop-studio/src-tauri/src/capture_manager.rs`, `native/src/hlcr/scanner.rs`.
-- **Current Branch:** feature/tauri-migration
-- **Status:** Phase 9-13 (Export Config UI, Parity Audit, Multi-Folder Render Ingestion, Render Studio UI, Render Batch Execution & Telemetry) completed. Workspace clean and local commits finalized. Standing by.
+- **Open Documents:** `native/src/bin/gui/main.rs`, `native/src/bin/gui/views/capture/workspace.rs`.
+- **Current Branch:** dev
+- **Status:** Handed off from resolving egui deprecation warning. Prepared to begin Phase 1 of Director Events Injection pipeline.
+- **Next Intended Command:** `cargo run -r --bin dod-tools-gui`

@@ -20,6 +20,8 @@
 - **Watermarking Pattern:** 1:1 sidecar files (`.dodtools_preview`) are safer than master lists for tracking generated assets because they ensure atomic cleanup and file-system renaming resilience.
 - **GoldSrc Engine Limitations:** The HLAE overlap algorithm fuses rapid, sequential kills into a single, continuous recording block. Mid-block routing is impossible; therefore, the application must ensure a single contiguous block can fit entirely on one drive.
 - **Junctions over Absolute Paths:** Using `mklink /J` to map target session directories is the cleanest workaround for the engine's 63-character console limit and `.vdm` file path-escaping complexities.
+- **Data Portability (Non-Destructive Resolution):** Never overwrite saved JSON paths with locally resolved absolute paths during deserialization, as this destroys project portability. Path resolution (Saved Path -> Project Root -> Last Used Directory -> Game Directory) must strictly be computed dynamically in-memory for UI rendering and ingestion pipelines.
+- **Immediate-Mode GUI State Sync:** When handling data ingestion events like `GuiMessage::ProjectLoaded`, the application's previous master list state must be explicitly cleared (e.g., `queued.clear()`) and `ctx.request_repaint()` must be called immediately. Failing to clear stale state results in UI desynchronization where the app shows an active project but renders an empty list.
 
 
 ## Workflow & AI Protocols
