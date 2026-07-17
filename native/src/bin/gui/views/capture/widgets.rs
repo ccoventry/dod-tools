@@ -12,13 +12,19 @@ pub fn render_bulk_actions(
     let mut clicked = false;
     ui.horizontal(|ui| {
         if ui.button("Clear All Discovered").clicked() {
-            let mut guard = super::acquire_lock!(queued_demos_shared);
+            let mut guard = match queued_demos_shared.lock() {
+                Ok(g) => g,
+                Err(p) => p.into_inner(),
+            };
             let queued = Arc::make_mut(&mut *guard);
             queued.clear();
             clicked = true;
         }
         if ui.button("Select All").clicked() {
-            let mut guard = super::acquire_lock!(queued_demos_shared);
+            let mut guard = match queued_demos_shared.lock() {
+                Ok(g) => g,
+                Err(p) => p.into_inner(),
+            };
             let queued = Arc::make_mut(&mut *guard);
             for d in queued.iter_mut() {
                 for s in &mut d.streaks {
@@ -31,7 +37,10 @@ pub fn render_bulk_actions(
             clicked = true;
         }
         if ui.button("Deselect All").clicked() {
-            let mut guard = super::acquire_lock!(queued_demos_shared);
+            let mut guard = match queued_demos_shared.lock() {
+                Ok(g) => g,
+                Err(p) => p.into_inner(),
+            };
             let queued = Arc::make_mut(&mut *guard);
             for d in queued.iter_mut() {
                 for s in &mut d.streaks {
@@ -57,7 +66,10 @@ pub fn render_primary_actions(
     let clear_previews_list: Option<Vec<std::path::PathBuf>> = ctx.data(|d| d.get_temp(temp_id));
 
     let is_running = is_patching();
-    let queued_demos = super::acquire_lock!(queued_demos_shared).clone();
+    let queued_demos = match queued_demos_shared.lock() {
+        Ok(g) => g,
+        Err(p) => p.into_inner(),
+    }.clone();
     ui.horizontal(|ui| {
         let can_preview = !is_running && !queued_demos.is_empty();
         let show_preview_success: bool = ctx.data(|d| d.get_temp(egui::Id::new("dodtools_preview_success_msg")).unwrap_or(false));

@@ -16,7 +16,7 @@
 use std::sync::{Arc, Mutex};
 use native::patch::HighlightRules;
 use crate::types::{DemoData, CaptureStudioState};
-use super::{CaptureState, IngestionInput, spawn_ingestion_thread, acquire_lock};
+use super::{CaptureState, IngestionInput, spawn_ingestion_thread};
 use super::log_markdown;
 
 pub fn render(
@@ -30,7 +30,10 @@ pub fn render(
     capture_state_mutex: &'static Mutex<CaptureState>,
     queued_demos_arc: Arc<Mutex<Arc<Vec<DemoData>>>>,
 ) {
-    let rules = acquire_lock!(rules_mutex);
+    let rules = match rules_mutex.lock() {
+        Ok(g) => g,
+        Err(p) => p.into_inner(),
+    };
 
     ui.group(|ui| {
         ui.vertical(|ui| {
@@ -72,7 +75,10 @@ pub fn render(
             // ── Import Buttons (RFD, spawned on background thread) ───────────────
             ui.horizontal(|ui| {
                 let ingesting = matches!(
-                    *acquire_lock!(capture_state_mutex),
+                    *match capture_state_mutex.lock() {
+                        Ok(g) => g,
+                        Err(p) => p.into_inner(),
+                    },
                     CaptureState::Scanning(_)
                 );
 
@@ -135,7 +141,10 @@ pub fn render(
             // ── Queued Demo List ─────────────────────────────────────────────────
             let mut pending_demo_to_remove: Option<usize> = None;
             {
-                let queued_guard = acquire_lock!(queued_demos_arc);
+                let queued_guard = match queued_demos_arc.lock() {
+                    Ok(g) => g,
+                    Err(p) => p.into_inner(),
+                };
                 if !queued_guard.is_empty() {
                     ui.add_space(16.0);
                     ui.strong(format!("Queued Demos ({})", queued_guard.len()));
@@ -155,7 +164,10 @@ pub fn render(
 
             // Apply deferred removal outside the read-lock scope.
             if let Some(idx) = pending_demo_to_remove {
-                let mut queued_guard = acquire_lock!(queued_demos_arc);
+                let mut queued_guard = match queued_demos_arc.lock() {
+                    Ok(g) => g,
+                    Err(p) => p.into_inner(),
+                };
                 let queued = Arc::make_mut(&mut *queued_guard);
                 if idx < queued.len() {
                     queued.remove(idx);
@@ -167,7 +179,10 @@ pub fn render(
             ui.horizontal(|ui| {
                 if ui.button("Proceed to Selection ->").clicked() {
                     log_markdown("UI Interaction: Clicked Proceed to Selection");
-                    let queued_guard = acquire_lock!(queued_demos_arc);
+                    let queued_guard = match queued_demos_arc.lock() {
+                        Ok(g) => g,
+                        Err(p) => p.into_inner(),
+                    };
                     let msg = format!("Transitioning with {} items", queued_guard.len());
                     log::info!("{}", msg);
                     log_markdown(&msg);

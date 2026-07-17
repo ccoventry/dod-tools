@@ -36,20 +36,6 @@ fn get_default_projects_dir() -> Option<std::path::PathBuf> {
     })
 }
 
-macro_rules! acquire_lock {
-    ($mutex:expr) => {
-        match $mutex.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => {
-                log::error!("Mutex poisoned, attempting recovery...");
-                poisoned.into_inner()
-            }
-        }
-    };
-}
-// Export the macro so sub-modules can use it without re-declaring it.
-pub(super) use acquire_lock;
-
 use native::patch::{
     PatcherConfig, HighlightRules, scan_demo_for_highlights,
 };
@@ -73,13 +59,19 @@ pub static ACTIVE_PROJECT_PATH: std::sync::OnceLock<std::sync::Mutex<Option<std:
 
 pub fn get_active_project_path() -> Option<std::path::PathBuf> {
     let mutex = ACTIVE_PROJECT_PATH.get_or_init(|| std::sync::Mutex::new(None));
-    let guard = acquire_lock!(mutex);
+    let guard = match mutex.lock() {
+        Ok(g) => g,
+        Err(p) => p.into_inner(),
+    };
     guard.clone()
 }
 
 pub fn set_active_project_path(path: Option<std::path::PathBuf>) {
     let mutex = ACTIVE_PROJECT_PATH.get_or_init(|| std::sync::Mutex::new(None));
-    let mut guard = acquire_lock!(mutex);
+    let mut guard = match mutex.lock() {
+        Ok(g) => g,
+        Err(p) => p.into_inner(),
+    };
     *guard = path;
 }
 
@@ -118,7 +110,10 @@ fn get_highlight_rules() -> &'static Mutex<HighlightRules> {
 /// Returns a snapshot clone of the current highlight rules.
 /// Used by main.rs drag-drop routing to pass rules to the ingestion thread.
 pub(crate) fn get_highlight_rules_clone() -> HighlightRules {
-    acquire_lock!(get_highlight_rules()).clone()
+    match get_highlight_rules().lock() {
+        Ok(g) => g,
+        Err(p) => p.into_inner(),
+    }.clone()
 }
 
 pub(crate) fn get_queued_demos() -> Arc<Mutex<Arc<Vec<DemoData>>>> {
@@ -171,7 +166,10 @@ pub fn render_patch_ui(
     // If the ingestion worker is actively scanning, show a blocking spinner and
     // return early — no other UI should be interactive during file I/O.
     {
-        let state = acquire_lock!(get_capture_state()).clone();
+        let state = match get_capture_state().lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        }.clone();
         if let CaptureState::Scanning(msg) = state {
             ui.group(|ui| {
                 ui.vertical(|ui| {
@@ -251,7 +249,10 @@ pub fn render_patch_ui(
 
             let queued_demos_shared = {
                 let arc = get_queued_demos();
-                let guard = acquire_lock!(arc);
+                let guard = match arc.lock() {
+                    Ok(g) => g,
+                    Err(p) => p.into_inner(),
+                };
                 guard.clone()
             };
             let data = &*queued_demos_shared;
@@ -346,7 +347,10 @@ pub(crate) fn spawn_ingestion_thread(
     tx: std::sync::mpsc::Sender<crate::types::GuiMessage>,
 ) {
     {
-        let mut state = acquire_lock!(get_capture_state());
+        let mut state = match get_capture_state().lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
         *state = CaptureState::Scanning("Scanning files".to_string());
     }
 
@@ -397,7 +401,10 @@ pub(crate) fn spawn_ingestion_thread(
             let total_files = files.len();
             for (index, file) in files.into_iter().enumerate() {
                 {
-                    let mut state = acquire_lock!(get_capture_state());
+                    let mut state = match get_capture_state().lock() {
+                        Ok(g) => g,
+                        Err(p) => p.into_inner(),
+                    };
                     *state = CaptureState::Scanning(format!("demo {} of {}", index + 1, total_files));
                 }
                 ctx.request_repaint();
@@ -458,7 +465,10 @@ pub(crate) fn spawn_ingestion_thread(
                             // Lock is dropped immediately after modifying the collection.
                             let _added = {
                                 let queued_arc = get_queued_demos();
-                                let mut queued_guard = acquire_lock!(queued_arc);
+                                let mut queued_guard = match queued_arc.lock() {
+                                    Ok(g) => g,
+                                    Err(p) => p.into_inner(),
+                                };
                                 log::info!("Ingestion thread acquired lock to push: {:?}", item.path);
                                 if !queued_guard.iter().any(|d| d.path == item.path) {
                                     let queued = Arc::make_mut(&mut *queued_guard);
@@ -491,7 +501,10 @@ pub(crate) fn spawn_ingestion_thread(
             }
 
             {
-                let mut state = acquire_lock!(get_capture_state());
+                let mut state = match get_capture_state().lock() {
+                    Ok(g) => g,
+                    Err(p) => p.into_inner(),
+                };
                 *state = CaptureState::Ready;
             }
             // Signal the main event loop to clear the loading flag.
