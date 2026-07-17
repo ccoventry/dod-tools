@@ -108,7 +108,7 @@ pub fn render(
                 }
             });
 
-            // ── Queued Demo List ─────────────────────────────────────────────────
+            // ── Master List ──────────────────────────────────────────────────────
             let mut pending_demo_to_remove: Option<usize> = None;
             {
                 let queued_guard = match queued_demos_arc.lock() {
@@ -119,16 +119,59 @@ pub fn render(
                     ui.add_space(16.0);
                     ui.strong(format!("Queued Demos ({})", queued_guard.len()));
                     ui.add_space(4.0);
-                    egui::ScrollArea::vertical().max_height(400.0).show(ui, |ui| {
-                        for (index, demo) in queued_guard.iter().enumerate() {
-                            ui.horizontal(|ui| {
-                                if ui.button("🗑").clicked() {
-                                    pending_demo_to_remove = Some(index);
-                                }
-                                ui.label(&demo.demo_name);
-                            });
+                    
+                    let active_idx = *super::get_active_demo_selection().lock().unwrap();
+                    let mut clicked_idx: Option<usize> = None;
+
+                    egui_extras::TableBuilder::new(ui)
+                        .striped(true)
+                        .resizable(true)
+                        .sense(egui::Sense::click())
+                        .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                        .column(egui_extras::Column::remainder()) // Demo File
+                        .column(egui_extras::Column::initial(80.0)) // Yield
+                        .column(egui_extras::Column::initial(100.0)) // Status
+                        .header(20.0, |mut header| {
+                            header.col(|ui| { ui.strong("Demo File"); });
+                            header.col(|ui| { ui.strong("Yield"); });
+                            header.col(|ui| { ui.strong("Status"); });
+                        })
+                        .body(|mut body| {
+                            for (index, demo) in queued_guard.iter().enumerate() {
+                                let is_selected = active_idx == Some(index);
+                                
+                                body.row(24.0, |mut row| {
+                                    if is_selected {
+                                        row.set_selected(true);
+                                    }
+                                    
+                                    row.col(|ui| {
+                                        ui.label(&demo.demo_name);
+                                    });
+                                    row.col(|ui| {
+                                        ui.label(format!("{} streaks", demo.streaks.len()));
+                                    });
+                                    row.col(|ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.label("Scanned");
+                                            if ui.button("🗑").clicked() {
+                                                pending_demo_to_remove = Some(index);
+                                            }
+                                        });
+                                    });
+                                    
+                                    if row.response().clicked() {
+                                        clicked_idx = Some(index);
+                                    }
+                                });
+                            }
+                        });
+
+                    if let Some(idx) = clicked_idx {
+                        if let Ok(mut lock) = super::get_active_demo_selection().lock() {
+                            *lock = Some(idx);
                         }
-                    });
+                    }
                 }
             }
 
