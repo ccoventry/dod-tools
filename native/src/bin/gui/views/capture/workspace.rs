@@ -509,7 +509,7 @@ pub fn render(
                                                             header.col(|ui| { ui.strong("Sel"); });
                                                             header.col(|ui| { ui.strong("Kill Range"); });
                                                             header.col(|ui| { ui.strong("Kills"); });
-                                                            header.col(|ui| { ui.strong("Timestamp"); });
+                                                            header.col(|ui| { ui.strong("Time"); });
                                                             header.col(|ui| { ui.strong("Dur."); });
                                                             header.col(|ui| { ui.strong("Status"); });
                                                             header.col(|ui| { ui.strong("Notes"); });
