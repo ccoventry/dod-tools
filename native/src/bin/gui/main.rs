@@ -682,6 +682,61 @@ impl Default for Gui {
 
 impl eframe::App for Gui {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
+        let mut trigger_save = false;
+        let mut trigger_save_as = false;
+        let mut trigger_new = false;
+        let mut trigger_close = false;
+
+        ctx.input_mut(|i| {
+            if i.consume_key(egui::Modifiers::CTRL, egui::Key::S) {
+                if i.modifiers.shift {
+                    trigger_save_as = true;
+                } else {
+                    trigger_save = true;
+                }
+            }
+            if i.consume_key(egui::Modifiers::CTRL, egui::Key::N) {
+                trigger_new = true;
+            }
+            if i.consume_key(egui::Modifiers::CTRL, egui::Key::W) {
+                trigger_close = true;
+            }
+        });
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if trigger_save || trigger_save_as {
+                let arc = crate::views::capture::get_queued_demos();
+                let data = match arc.lock() { Ok(g) => g, Err(p) => p.into_inner() }.clone();
+
+                if trigger_save_as || crate::views::capture::get_active_project_path().is_none() {
+                    let mut dialog = rfd::FileDialog::new().add_filter("JSON", &["json"]);
+                    if let Some(dir) = crate::views::capture::get_default_projects_dir() {
+                        dialog = dialog.set_directory(&dir);
+                    }
+                    if let Some(path) = dialog.save_file() {
+                        if let Ok(()) = crate::views::capture::serialize_and_save_project(&path, &*data) {
+                            crate::views::capture::set_active_project_path(Some(path));
+                        }
+                    }
+                } else if let Some(path) = crate::views::capture::get_active_project_path() {
+                    let _ = crate::views::capture::serialize_and_save_project(&path, &*data);
+                }
+            }
+
+            if trigger_new || trigger_close {
+                crate::views::capture::set_active_project_path(None);
+                let arc = crate::views::capture::get_queued_demos();
+                let mut guard = match arc.lock() { Ok(g) => g, Err(p) => p.into_inner() };
+                let queued = std::sync::Arc::make_mut(&mut *guard);
+                queued.clear();
+                
+                if trigger_close {
+                    self.capture_studio_state = CaptureStudioState::Workspace;
+                }
+            }
+        }
+
         let current_state = self.capture_studio_state;
         if self.last_capture_studio_state != Some(current_state) {
             let prev_str = match self.last_capture_studio_state {

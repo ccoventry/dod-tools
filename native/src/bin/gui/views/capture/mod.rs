@@ -14,8 +14,7 @@
 //     but scan_demo_for_highlights uses only life-bounded segmentation — field never read by backend)
 // ============================================================
 
-pub mod scan;
-pub mod select;
+pub mod workspace;
 pub mod capture;
 pub mod widgets;
 pub mod payload;
@@ -26,7 +25,7 @@ use std::path::PathBuf;
 
 pub use native::log_markdown;
 
-fn get_default_projects_dir() -> Option<std::path::PathBuf> {
+pub fn get_default_projects_dir() -> Option<std::path::PathBuf> {
     dirs::document_dir().map(|mut p| {
         p.push("dod-tools");
         p.push("projects");
@@ -286,18 +285,10 @@ pub fn render_patch_ui(
 
     match current_state {
         CaptureStudioState::Workspace => {
-            // Phase 1: sequentially render scan and select sub-views within the
-            // unified workspace arm. Phase 2 will collapse these into a true
-            // master-detail layout.
-            scan::render(
-                ui, ctx, state_ptr, tx.clone(), loading_ptr,
-                get_highlight_rules(),
-                get_capture_state(),
-                get_queued_demos(),
-            );
-            select::render(
+            workspace::render(
                 ui, ctx, state_ptr, tx, loading_ptr,
                 get_highlight_rules(),
+                get_capture_state(),
                 get_queued_demos(),
                 get_patcher_config(),
                 get_render_config(),
