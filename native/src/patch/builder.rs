@@ -262,12 +262,13 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
                 director_events.push((match_tick, "echo [dod-tools] MATCH_START".to_string()));
             }
             let end_tick = if first_streak.total_demo_frames > 0 {
-                first_streak.total_demo_frames
+                first_streak.total_demo_frames.saturating_sub(5)
             } else {
-                streaks.iter().map(|s| s.end_tick).max().unwrap_or(0)
+                streaks.iter().map(|s| s.end_tick).max().unwrap_or(0).saturating_sub(5)
             };
             director_events.push((end_tick, "echo [dod-tools] DEMO_END".to_string()));
         }
+        director_events.sort_by_key(|e| e.0);
 
         let demo_fps = streaks.first().map(|s| s.demo_fps).filter(|&fps| fps > 0.0).unwrap_or(30.0);
 
@@ -765,12 +766,13 @@ pub fn build_preview_patch_jobs(
                 director_events.push((match_tick, "echo [dod-tools] MATCH_START".to_string()));
             }
             let end_tick = if first_streak.total_demo_frames > 0 {
-                first_streak.total_demo_frames
+                first_streak.total_demo_frames.saturating_sub(5)
             } else {
-                streaks.iter().map(|s| s.end_tick).max().unwrap_or(0)
+                streaks.iter().map(|s| s.end_tick).max().unwrap_or(0).saturating_sub(5)
             };
             director_events.push((end_tick, "echo [dod-tools] DEMO_END".to_string()));
         }
+        director_events.sort_by_key(|e| e.0);
 
         // Resolve output path: "<stem>_preview.dem" beside original, or in output_dir.
         let source_path = std::path::PathBuf::from(&source_demo);
