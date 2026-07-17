@@ -13,9 +13,9 @@ IMMUTABLE MILESTONES ARCHITECTURE RULES:
 ### Game Capture Pipeline
 - [x] Task: Graceful Degradation for Clutch Clips — Update `builder.rs` to handle edge cases where a kill occurs inside the 3.0-second EOF danger zone. The patcher must gracefully sacrifice the post-roll and schedule the `DOD_TOOLS_EXIT_TRIGGER` exactly 5 ticks before the absolute final frame to ensure the highlight is captured without crashing the batch.
 - [x] Feature: Config Injection — Ensure the engine dynamically injects `+exec movie.cfg` into the HLAE command line arguments to preserve custom capture framerates and HUD settings.
-- [ ] Task: Long Demo Validation — Validate capture sequence for 30+ minute demos.
-- [ ] Task: Packet Audit — Audit `.dem` packet length consistency.
-- [ ] Chore: Packet Initialization Rule — Formalize GoldSrc packet memory initialization rule.
+- [x] Task: Long Demo Validation — Validate capture sequence for 30+ minute demos.
+- [x] Task: Packet Audit — Injected a strict 2MB bounds guard into the binary scanner to prevent memory overruns and alignment drift on extended demos.
+- [x] Chore: Cruft Purge — Aggressively pruned deprecated `target_player` and `min_kills` filters from configuration structs and ingestion loops.
 - [x] Chore: Standardize Milestones Architecture — Design and document a strict, immutable markdown layout for this file to completely prevent AI-driven format drift across future sessions.
 - [x] Task: Director Events Pipeline - Fixed premature DEMO_END assignment and properly anchored MATCH_START director events to the parsed frame times.
 

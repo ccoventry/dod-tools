@@ -27,6 +27,7 @@ pub mod scanner;
 // Every existing `native::patch::*` call site resolves here unchanged.
 
 pub use types::{
+    MAX_PAYLOAD_SIZE,
     CustomCommand,
     CommandRelation,
     PatchOptions,

@@ -5,13 +5,15 @@
 
 use std::sync::{Arc, atomic::AtomicBool};
 
+pub const MAX_PAYLOAD_SIZE: usize = 2_000_000;
+
 // ── Command scheduling ────────────────────────────────────────────────────────
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq)]
 pub struct CustomCommand {
     pub command: String,
     pub offset: f32,
-    pub relation: CommandRelation,
+    pub relation: CommandRelation,  
 }
 
 #[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]

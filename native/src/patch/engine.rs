@@ -4,7 +4,7 @@
 // Strict 468-byte NetworkMessage alignment must be preserved; see ai_project_context.md.
 
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
-use crate::patch::types::{PatchJob, PatcherConfig};
+use crate::patch::types::{PatchJob, PatcherConfig, MAX_PAYLOAD_SIZE};
 
 // ── Internal helper ───────────────────────────────────────────────────────────
 
@@ -292,7 +292,7 @@ impl StreamPatcher {
                     writer.write_all(&prefix)?;
                     let sample_length = u32::from_le_bytes(prefix[4..8].try_into().unwrap()) as usize;
 
-                    if sample_length > 2_000_000 {
+                    if sample_length > MAX_PAYLOAD_SIZE {
                         crate::log_markdown(&format!(
                             "Alignment lost! Read impossible size: {} at offset {}",
                             sample_length,
@@ -311,7 +311,7 @@ impl StreamPatcher {
                     writer.write_all(&prefix)?;
                     let buffer_length = u32::from_le_bytes(prefix) as usize;
 
-                    if buffer_length > 2_000_000 {
+                    if buffer_length > MAX_PAYLOAD_SIZE {
                         crate::log_markdown(&format!(
                             "Alignment lost! Read impossible size: {} at offset {}",
                             buffer_length,
@@ -348,7 +348,7 @@ impl StreamPatcher {
                     writer.write_all(&len_buf)?;
                     let msg_len = u32::from_le_bytes(len_buf) as usize;
 
-                    if msg_len > 2_000_000 {
+                    if msg_len > MAX_PAYLOAD_SIZE {
                         crate::log_markdown(&format!(
                             "Alignment lost! Read impossible size: {} at offset {}",
                             msg_len,
