@@ -2,7 +2,7 @@
 // Life-bounded highlight scanner and HLTV detection.
 // All three functions perform std::fs I/O — native-only.
 
-use crate::patch::types::{CaptureStreak, HighlightStatus};
+use crate::patch::types::{CaptureStreak, HighlightStatus, MAX_PAYLOAD_SIZE};
 
 // ── HLTV guard ────────────────────────────────────────────────────────────────
 
@@ -63,6 +63,9 @@ pub fn scan_demo_for_highlights(
                 0 | 1 => {
                     if pos + 468 > end { break; }
                     let len = i32::from_le_bytes(bytes[pos+464..pos+468].try_into().unwrap()) as usize;
+                    if len > MAX_PAYLOAD_SIZE {
+                        return Err(format!("Scanner alignment lost! Read impossible packet size: {} bytes at pos {}", len, pos));
+                    }
                     pos += 468 + len;
                 },
                 2 | 255 => {},

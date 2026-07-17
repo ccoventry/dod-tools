@@ -4,10 +4,10 @@
 - [ ] Refactor: Isolate native engine stream slicing mechanisms behind explicit `target_arch` macro controls.
 
 ## Immediate Tasks (Next Session)
-- [ ] **Long Demo Validation & Packet Audit:** Verify parsing and slicing stability on extended demo files (>30 mins) to ensure packet index alignments do not drift.
-- [ ] **Global Deprecation & Cruft Purge:** Aggressively identify and delete all legacy fallback paths, unused variables, and historical code workarounds across the UI and patcher crates. *Constraint: Backwards compatibility is not required for the current application lifecycle phase.*
 
 ## Completed
+- [x] **Long Demo Validation & Packet Audit:** Verify parsing and slicing stability on extended demo files (>30 mins) to ensure packet index alignments do not drift.
+- [x] **Global Deprecation & Cruft Purge:** Aggressively identify and delete all legacy fallback paths, unused variables, and historical code workarounds across the UI and patcher crates. *Constraint: Backwards compatibility is not required for the current application lifecycle phase.*
 - [x] Feature: Add match start and demo end director events in `native/src/patch/builder.rs` for each demo (requires piping `match_start_tick` from `AnalyzerState` to `DemoData`).
 - [x] Refactor: Purged vestigial directory picker from the JSON project load sequence.
 - [x] Feature: Transposed Workspace UI elements (Paths/Disk Space) and added Pending/Captured/Rendered tracking columns to the Master List.
