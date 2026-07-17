@@ -51,7 +51,10 @@ pub fn scan_demo_for_highlights(
             if type_byte > 9 && type_byte != 255 {
                 break;
             }
-            if type_byte != 5 && type_byte != 255 {
+            if type_byte == 5 {
+                break;
+            }
+            if type_byte != 255 {
                 let time = f32::from_le_bytes(bytes[pos+1..pos+5].try_into().unwrap());
                 frame_times.push(time);
             }
@@ -62,7 +65,7 @@ pub fn scan_demo_for_highlights(
                     let len = i32::from_le_bytes(bytes[pos+464..pos+468].try_into().unwrap()) as usize;
                     pos += 468 + len;
                 },
-                2 | 5 | 255 => {},
+                2 | 255 => {},
                 3 => pos += 64,
                 4 => pos += 32,
                 6 => pos += 84,
@@ -81,6 +84,11 @@ pub fn scan_demo_for_highlights(
             }
         }
     }
+    let final_demo_frames = if !frame_times.is_empty() {
+        frame_times.len() as i32
+    } else {
+        analysis.demo_info.playback_frames
+    };
     let frame_times_arc = std::sync::Arc::new(frame_times);
 
     let mut tickrate = if analysis.demo_info.playback_time > 0.0 {
@@ -141,7 +149,7 @@ pub fn scan_demo_for_highlights(
                 viewdemo_times,
                 start_index: 0,
                 end_index,
-                total_demo_frames: analysis.demo_info.playback_frames,
+                total_demo_frames: final_demo_frames,
                 demo_fps: tickrate,
                 frame_times: frame_times_arc.clone(),
                 status: HighlightStatus::None,
