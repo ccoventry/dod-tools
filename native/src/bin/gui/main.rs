@@ -742,11 +742,18 @@ impl eframe::App for Gui {
                                         let project_root = json_path.parent().map(|p| p.to_path_buf());
                                         let settings = crate::settings::load_settings();
                                         let last_used = settings.last_demo_dir.clone();
+                                        let patcher_config = crate::settings::load_patcher_config();
+                                        let hl_path = if !patcher_config.game_path.is_empty() {
+                                            Some(std::path::PathBuf::from(&patcher_config.game_path))
+                                        } else {
+                                            None
+                                        };
                                         let resolved = rt.block_on(crate::session::import_session_async(
                                             base_dir,
                                             session_data.entries,
                                             project_root,
                                             last_used,
+                                            hl_path,
                                         ));
                                         if !resolved.is_empty() {
                                             let mut paths_to_ingest = Vec::new();
@@ -880,8 +887,9 @@ impl eframe::App for Gui {
                         let rules = crate::views::capture::get_highlight_rules_clone();
                         let tx_clone = self.tx.clone();
                         let ctx_clone = ctx.clone();
-                        let hl_path = if !self.patcher_config.game_path.is_empty() {
-                            Some(std::path::PathBuf::from(&self.patcher_config.game_path))
+                        let patcher_config = crate::settings::load_patcher_config();
+                        let hl_path = if !patcher_config.game_path.is_empty() {
+                            Some(std::path::PathBuf::from(&patcher_config.game_path))
                         } else {
                             None
                         };
@@ -1626,12 +1634,13 @@ impl eframe::App for Gui {
                 let rules = crate::views::capture::get_highlight_rules_clone();
                 let ctx_clone = ctx.clone();
                 let tx_clone = self.tx.clone();
+                let paths = capture_scan_paths.into_iter().map(|p| (p.clone(), p)).collect::<Vec<_>>();
                 std::thread::Builder::new()
                     .name("drop_ingestion_batch".into())
                     .stack_size(16 * 1024 * 1024)
                     .spawn(move || {
                         crate::views::capture::spawn_ingestion_thread(
-                            crate::views::capture::IngestionInput::Batch(capture_scan_paths),
+                            crate::views::capture::IngestionInput::Batch(paths),
                             rules,
                             ctx_clone,
                             tx_clone,
