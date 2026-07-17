@@ -271,10 +271,16 @@ pub fn render(
                                     
                                     let project_root = super::get_active_project_path().and_then(|p| p.parent().map(|parent| parent.to_path_buf()));
                                     let last_used = settings.last_demo_dir.as_ref();
+                                    let hl_path = if !patcher_config.game_path.is_empty() {
+                                        Some(std::path::PathBuf::from(&patcher_config.game_path))
+                                    } else {
+                                        None
+                                    };
                                     let resolved_path = super::resolve_demo_path(
                                         &demo.path.to_string_lossy(),
                                         project_root.as_ref(),
                                         last_used,
+                                        hl_path.as_ref(),
                                     );
                                     let path_exists = resolved_path.exists();
 
@@ -1063,17 +1069,17 @@ fn launch_preview(
     let project_root = super::get_active_project_path().and_then(|p| p.parent().map(|parent| parent.to_path_buf()));
     let settings = crate::settings::load_settings();
     let last_used = settings.last_demo_dir.as_ref();
+    let game_path_buf = std::path::PathBuf::from(&patcher_config.game_path);
     let resolved_path = super::resolve_demo_path(
         &demo_path.to_string_lossy(),
         project_root.as_ref(),
         last_used,
+        Some(&game_path_buf),
     );
     let name_without_ext = std::path::Path::new(&demo_name)
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or(&demo_name);
-
-    let game_path_buf = std::path::PathBuf::from(&patcher_config.game_path);
     let dod_dir = match game_path_buf.parent() {
         Some(parent) => parent.join("dod"),
         None => std::path::PathBuf::from("dod"),

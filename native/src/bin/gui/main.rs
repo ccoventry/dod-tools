@@ -880,6 +880,11 @@ impl eframe::App for Gui {
                         let rules = crate::views::capture::get_highlight_rules_clone();
                         let tx_clone = self.tx.clone();
                         let ctx_clone = ctx.clone();
+                        let hl_path = if !self.patcher_config.game_path.is_empty() {
+                            Some(std::path::PathBuf::from(&self.patcher_config.game_path))
+                        } else {
+                            None
+                        };
                         let paths: Vec<(std::path::PathBuf, std::path::PathBuf)> = session_data.entries
                             .iter()
                             .map(|e| {
@@ -887,6 +892,7 @@ impl eframe::App for Gui {
                                     &e.path.to_string_lossy(),
                                     None,
                                     self.settings.last_demo_dir.as_ref(),
+                                    hl_path.as_ref(),
                                 );
                                 (resolved, e.path.clone())
                             })

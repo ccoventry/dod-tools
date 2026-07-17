@@ -15,12 +15,19 @@ pub fn build_capture_streak_payload(
         .and_then(|p| p.parent().map(|parent| parent.to_path_buf()));
     let settings = crate::settings::load_settings();
     let last_used = settings.last_demo_dir.as_ref();
+    let patcher_config = crate::settings::load_patcher_config();
+    let hl_path = if !patcher_config.game_path.is_empty() {
+        Some(std::path::PathBuf::from(&patcher_config.game_path))
+    } else {
+        None
+    };
 
     for demo in demos {
         let resolved = crate::views::capture::resolve_demo_path(
             &demo.path.to_string_lossy(),
             project_root.as_ref(),
             last_used,
+            hl_path.as_ref(),
         );
         let demo_path_str = resolved.to_string_lossy().to_string();
         for streak in &demo.streaks {
