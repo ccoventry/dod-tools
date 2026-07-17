@@ -4,7 +4,6 @@ use egui_extras::{TableBuilder, Column};
 use native::patch::{PatcherConfig, CommandRelation, DriveAllocationStrategy};
 use crate::settings::{AppSettings, save_settings, apply_language_setting};
 use super::widgets;
-use super::acquire_lock;
 
 pub fn render_engine_config_panel(
     ui: &mut egui::Ui,
@@ -446,7 +445,10 @@ pub fn render_export_config_panel(
         }
 
         static EXPORT_DRIVE_PICKER: std::sync::OnceLock<Mutex<egui_file_dialog::FileDialog>> = std::sync::OnceLock::new();
-        let mut drive_picker = acquire_lock!(EXPORT_DRIVE_PICKER.get_or_init(|| Mutex::new(egui_file_dialog::FileDialog::new())));
+        let mut drive_picker = match EXPORT_DRIVE_PICKER.get_or_init(|| Mutex::new(egui_file_dialog::FileDialog::new())).lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
 
         if ui.button("➕ Add Export Drive").clicked() {
             drive_picker.pick_directory();

@@ -20,7 +20,7 @@ use std::sync::{Arc, Mutex};
 use sysinfo::ProcessExt;
 use native::patch::PatcherConfig;
 use crate::types::{DemoData, CaptureStudioState};
-use super::{acquire_lock, widgets, panels};
+use super::{widgets, panels};
 use super::log_markdown;
 use egui_extras::{TableBuilder, Column};
 
@@ -59,7 +59,10 @@ pub fn render(
 
     // O(1) Arc pointer clone — does not deep-copy the underlying Vec.
     let queued_demos_shared = {
-        let guard = acquire_lock!(queued_demos_arc);
+        let guard = match queued_demos_arc.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
         guard.clone()
     };
     let data = &*queued_demos_shared;
@@ -72,7 +75,10 @@ pub fn render(
     // Compute disk warning visibility state beforehand to feed the global footer warnings
     let mut show_disk_warning = false;
     {
-        let patcher_config = acquire_lock!(patcher_config_mutex);
+        let patcher_config = match patcher_config_mutex.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
         if !data.is_empty() {
             let total_sequence_duration = calculate_merged_duration(data, &patcher_config);
             let w = patcher_config.resolution_width;
@@ -110,7 +116,10 @@ pub fn render(
 
             // Engine paths (HLAE / hl.exe)
             {
-                let mut patcher_config = acquire_lock!(patcher_config_mutex);
+                let mut patcher_config = match patcher_config_mutex.lock() {
+                    Ok(g) => g,
+                    Err(p) => p.into_inner(),
+                };
                 ui.horizontal(|ui| {
                     ui.strong("Recording Engine Paths:");
                 });
@@ -123,7 +132,10 @@ pub fn render(
 
             // Primary process dispatch buttons (Proceed to Capture, Build Payload)
             {
-                let mut patcher_config = acquire_lock!(patcher_config_mutex);
+                let mut patcher_config = match patcher_config_mutex.lock() {
+                    Ok(g) => g,
+                    Err(p) => p.into_inner(),
+                };
                 widgets::render_primary_actions(
                     ui,
                     &mut patcher_config,
@@ -213,7 +225,10 @@ pub fn render(
                                                             let target_path = demo.path.clone();
                                                             let target_name = demo.demo_name.clone();
                                                             let demo_clone = demo.clone();
-                                                            let patcher_config = acquire_lock!(patcher_config_mutex).clone();
+                                                            let patcher_config = match patcher_config_mutex.lock() {
+                                                                Ok(g) => g,
+                                                                Err(p) => p.into_inner(),
+                                                            }.clone();
                                                             let ctx_clone = ctx.clone();
 
                                                             let running = {
@@ -358,7 +373,10 @@ pub fn render(
                                                                             "UI Interaction: Toggled streak selection for {}, new value: {}",
                                                                             streak.target_player, is_selected
                                                                         ));
-                                                                        let mut guard = acquire_lock!(queued_demos_arc);
+                                                                        let mut guard = match queued_demos_arc.lock() {
+                                                                            Ok(g) => g,
+                                                                            Err(p) => p.into_inner(),
+                                                                        };
                                                                         let queued = Arc::make_mut(&mut *guard);
                                                                         queued[d_idx].streaks[streak_idx].is_selected = is_selected;
                                                                         ctx.data_mut(|d| d.insert_temp(egui::Id::new("dodtools_disk_estimate_dirty"), true));
@@ -396,7 +414,10 @@ pub fn render(
                                                                             ).changed();
 
                                                                             if start_changed || end_changed {
-                                                                                let mut guard = acquire_lock!(queued_demos_arc);
+                                                                                let mut guard = match queued_demos_arc.lock() {
+                                                                                    Ok(g) => g,
+                                                                                    Err(p) => p.into_inner(),
+                                                                                };
                                                                                 let queued = Arc::make_mut(&mut *guard);
                                                                                 let sm = &mut queued[d_idx].streaks[streak_idx];
                                                                                 sm.start_index = start_idx;
@@ -410,7 +431,10 @@ pub fn render(
                                                                             .on_hover_text("Reset to full range")
                                                                             .clicked()
                                                                         {
-                                                                            let mut guard = acquire_lock!(queued_demos_arc);
+                                                                            let mut guard = match queued_demos_arc.lock() {
+                                                                                Ok(g) => g,
+                                                                                Err(p) => p.into_inner(),
+                                                                            };
                                                                             let queued = Arc::make_mut(&mut *guard);
                                                                             let sm = &mut queued[d_idx].streaks[streak_idx];
                                                                             sm.start_index = 0;
@@ -470,7 +494,10 @@ pub fn render(
                             for action in &actions_to_apply {
                                 match action {
                                     DemoAction::SelectAll(idx) => {
-                                        let mut guard = acquire_lock!(queued_demos_arc);
+                                        let mut guard = match queued_demos_arc.lock() {
+                                            Ok(g) => g,
+                                            Err(p) => p.into_inner(),
+                                        };
                                         let queued = Arc::make_mut(&mut *guard);
                                         if let Some(demo) = queued.get_mut(*idx) {
                                             for s in &mut demo.streaks {
@@ -483,7 +510,10 @@ pub fn render(
                                         estimate_changed = true;
                                     }
                                     DemoAction::DeselectAll(idx) => {
-                                        let mut guard = acquire_lock!(queued_demos_arc);
+                                        let mut guard = match queued_demos_arc.lock() {
+                                            Ok(g) => g,
+                                            Err(p) => p.into_inner(),
+                                        };
                                         let queued = Arc::make_mut(&mut *guard);
                                         if let Some(demo) = queued.get_mut(*idx) {
                                             for s in &mut demo.streaks { s.is_selected = false; }
@@ -494,7 +524,10 @@ pub fn render(
                                 }
                             }
                             for idx in removals {
-                                let mut guard = acquire_lock!(queued_demos_arc);
+                                let mut guard = match queued_demos_arc.lock() {
+                                    Ok(g) => g,
+                                    Err(p) => p.into_inner(),
+                                };
                                 let queued = Arc::make_mut(&mut *guard);
                                 if idx < queued.len() {
                                     queued.remove(idx);
@@ -514,7 +547,10 @@ pub fn render(
                         ui.label("Configure target codecs, folders, and resolution options.");
                         ui.add_space(8.0);
 
-                        let mut patcher_config = acquire_lock!(patcher_config_mutex);
+                        let mut patcher_config = match patcher_config_mutex.lock() {
+                            Ok(g) => g,
+                            Err(p) => p.into_inner(),
+                        };
 
                         // Disk Space Estimate
                         {
@@ -526,7 +562,10 @@ pub fn render(
                             let required_bytes = match cached_estimate {
                                 Some(bytes) if !is_dirty => bytes,
                                 _ => {
-                                    let latest_demos = acquire_lock!(queued_demos_arc);
+                                    let latest_demos = match queued_demos_arc.lock() {
+                                        Ok(g) => g,
+                                        Err(p) => p.into_inner(),
+                                    };
                                     let total_sequence_duration = calculate_merged_duration(&latest_demos, &patcher_config);
                                     let w = patcher_config.resolution_width;
                                     let h = patcher_config.resolution_height;
@@ -618,7 +657,10 @@ pub fn render(
                         }
 
                         static DRIVE_PICKER: std::sync::OnceLock<Mutex<egui_file_dialog::FileDialog>> = std::sync::OnceLock::new();
-                        let mut drive_picker = acquire_lock!(DRIVE_PICKER.get_or_init(|| Mutex::new(egui_file_dialog::FileDialog::new())));
+                        let mut drive_picker = match DRIVE_PICKER.get_or_init(|| Mutex::new(egui_file_dialog::FileDialog::new())).lock() {
+                            Ok(g) => g,
+                            Err(p) => p.into_inner(),
+                        };
 
                         if ui.button("➕ Add Drive").clicked() {
                             drive_picker.pick_directory();
@@ -643,7 +685,10 @@ pub fn render(
                         // Export profiles & codecs
                         ui.strong("Export Configuration");
                         ui.add_space(4.0);
-                        let mut render_config = acquire_lock!(render_config_mutex);
+                        let mut render_config = match render_config_mutex.lock() {
+                            Ok(g) => g,
+                            Err(p) => p.into_inner(),
+                        };
                         panels::render_export_config_panel(ui, ctx, &mut render_config);
                     }
                     SelectTab::Advanced => {
@@ -652,7 +697,10 @@ pub fn render(
                         ui.label("Configure precision buffers, scripting commands, and debugging variables.");
                         ui.add_space(8.0);
 
-                        let mut patcher_config = acquire_lock!(patcher_config_mutex);
+                        let mut patcher_config = match patcher_config_mutex.lock() {
+                            Ok(g) => g,
+                            Err(p) => p.into_inner(),
+                        };
 
                         // Render highlight buffers, scripting events and timelines
                         let highlight_changed = panels::render_highlight_settings_panel(
@@ -704,7 +752,10 @@ pub fn render(
                         if ui.button("Force Relaunch").clicked() {
                             let demo_path_clone = demo_path.clone();
                             let demo_name_clone = demo_name.clone();
-                            let patcher_config_clone = acquire_lock!(patcher_config_mutex).clone();
+                            let patcher_config_clone = match patcher_config_mutex.lock() {
+                                Ok(g) => g,
+                                Err(p) => p.into_inner(),
+                            }.clone();
                             let ctx_clone = ctx.clone();
 
                             ctx.data_mut(|d| d.insert_temp(modal_open_id, false));
