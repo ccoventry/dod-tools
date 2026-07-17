@@ -8,6 +8,7 @@ pub struct AppSettings {
     pub scan_folders_for_demos: bool,
     pub demo_folder_history: Vec<PathBuf>,
     pub pinned_folders: Vec<PathBuf>,
+    pub last_demo_dir: Option<PathBuf>,
 }
 
 impl Default for AppSettings {
@@ -17,6 +18,7 @@ impl Default for AppSettings {
             scan_folders_for_demos: false,
             demo_folder_history: Vec::new(),
             pinned_folders: Vec::new(),
+            last_demo_dir: None,
         }
     }
 }
@@ -54,11 +56,16 @@ pub fn load_settings() -> AppSettings {
                             .collect()
                     })
                     .unwrap_or_default();
+                let last_demo_dir = val
+                    .get("last_demo_dir")
+                    .and_then(|v| v.as_str())
+                    .map(PathBuf::from);
                 return AppSettings {
                     language,
                     scan_folders_for_demos,
                     demo_folder_history,
                     pinned_folders,
+                    last_demo_dir,
                 };
             }
         }
@@ -99,11 +106,16 @@ pub fn load_settings() -> AppSettings {
                                 .collect()
                         })
                         .unwrap_or_default();
+                    let last_demo_dir = val
+                        .get("last_demo_dir")
+                        .and_then(|v| v.as_str())
+                        .map(PathBuf::from);
                     return AppSettings {
                         language,
                         scan_folders_for_demos,
                         demo_folder_history,
                         pinned_folders,
+                        last_demo_dir,
                     };
                 }
             }
@@ -143,6 +155,12 @@ pub fn save_settings(settings: &AppSettings) {
                 .collect(),
         ),
     );
+    if let Some(ref dir) = settings.last_demo_dir {
+        map.insert(
+            "last_demo_dir".to_string(),
+            serde_json::Value::String(dir.to_string_lossy().into_owned()),
+        );
+    }
     let val = serde_json::Value::Object(map);
     if let Ok(content) = serde_json::to_string_pretty(&val) {
         let path = native::shared::paths::get_appdata_dir().join("settings.json");

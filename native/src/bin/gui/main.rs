@@ -739,7 +739,15 @@ impl eframe::App for Gui {
                                 if let Ok(session_data) = serde_json::from_str::<crate::session::SessionData>(&json) {
                                     if let Some(base_dir) = rfd::FileDialog::new().pick_folder() {
                                         let rt = tokio::runtime::Runtime::new().unwrap();
-                                        let resolved = rt.block_on(crate::session::import_session_async(base_dir, session_data.entries));
+                                        let project_root = json_path.parent().map(|p| p.to_path_buf());
+                                        let settings = crate::settings::load_settings();
+                                        let last_used = settings.last_demo_dir.clone();
+                                        let resolved = rt.block_on(crate::session::import_session_async(
+                                            base_dir,
+                                            session_data.entries,
+                                            project_root,
+                                            last_used,
+                                        ));
                                         if !resolved.is_empty() {
                                             let mut paths_to_ingest = Vec::new();
                                             {
@@ -747,13 +755,16 @@ impl eframe::App for Gui {
                                                     Ok(g) => g,
                                                     Err(p) => p.into_inner(),
                                                 };
-                                                for (path, _) in &resolved {
-                                                    if !guard.iter().any(|d| &d.path == path) {
-                                                        paths_to_ingest.push(path.clone());
+                                                for (resolved_path, orig_path, _) in &resolved {
+                                                    if !guard.iter().any(|d| &d.path == orig_path) {
+                                                        paths_to_ingest.push((resolved_path.clone(), orig_path.clone()));
                                                     }
                                                 }
                                             }
-                                            let _ = tx_clone.send(crate::types::GuiMessage::ProjectLoaded(resolved));
+                                            let resolved_for_msg: Vec<(PathBuf, Vec<crate::session::HighlightMetadata>)> = resolved.iter()
+                                                .map(|(_, orig_path, metas)| (orig_path.clone(), metas.clone()))
+                                                .collect();
+                                            let _ = tx_clone.send(crate::types::GuiMessage::ProjectLoaded(resolved_for_msg));
                                             if !paths_to_ingest.is_empty() {
                                                 crate::views::capture::spawn_ingestion_thread(
                                                     crate::views::capture::IngestionInput::Batch(paths_to_ingest),
@@ -869,9 +880,16 @@ impl eframe::App for Gui {
                         let rules = crate::views::capture::get_highlight_rules_clone();
                         let tx_clone = self.tx.clone();
                         let ctx_clone = ctx.clone();
-                        let paths: Vec<std::path::PathBuf> = session_data.entries
+                        let paths: Vec<(std::path::PathBuf, std::path::PathBuf)> = session_data.entries
                             .iter()
-                            .map(|e| e.path.clone())
+                            .map(|e| {
+                                let resolved = crate::views::capture::resolve_demo_path(
+                                    &e.path.to_string_lossy(),
+                                    None,
+                                    self.settings.last_demo_dir.as_ref(),
+                                );
+                                (resolved, e.path.clone())
+                            })
                             .collect();
                         crate::views::capture::spawn_ingestion_thread(
                             crate::views::capture::IngestionInput::Batch(paths),
@@ -1107,7 +1125,9 @@ impl eframe::App for Gui {
             self.file_picker.update(ctx);
             if let Some(path) = self.file_picker.take_picked() {
                 self.root_dir = Some(path.clone());
-                self.current_dir = Some(path);
+                self.current_dir = Some(path.clone());
+                self.settings.last_demo_dir = Some(path);
+                crate::settings::save_settings(&self.settings);
                 self.subdir_cache.clear();
                 self.selected_analysis_path = None;
                 self.error_message = None;

@@ -184,8 +184,14 @@ pub fn render(
                                     .add_filter("Demo files", &["dem"])
                                     .pick_files()
                                 {
+                                    if let Some(parent) = files.first().and_then(|f| f.parent()) {
+                                        let mut s = crate::settings::load_settings();
+                                        s.last_demo_dir = Some(parent.to_path_buf());
+                                        crate::settings::save_settings(&s);
+                                    }
+                                    let paths = files.iter().map(|f| (f.clone(), f.clone())).collect();
                                     spawn_ingestion_thread(
-                                        IngestionInput::Batch(files),
+                                        IngestionInput::Batch(paths),
                                         rules_clone,
                                         ctx_clone,
                                         tx_clone,
@@ -207,8 +213,13 @@ pub fn render(
                             .stack_size(8 * 1024 * 1024)
                             .spawn(move || {
                                 if let Some(folder) = rfd::FileDialog::new().pick_folder() {
+                                    {
+                                        let mut s = crate::settings::load_settings();
+                                        s.last_demo_dir = Some(folder.clone());
+                                        crate::settings::save_settings(&s);
+                                    }
                                     spawn_ingestion_thread(
-                                        IngestionInput::Batch(vec![folder]),
+                                        IngestionInput::Batch(vec![(folder.clone(), folder)]),
                                         rules_clone,
                                         ctx_clone,
                                         tx_clone,
@@ -258,8 +269,21 @@ pub fn render(
                                         row.set_selected(true);
                                     }
                                     
+                                    let project_root = super::get_active_project_path().and_then(|p| p.parent().map(|parent| parent.to_path_buf()));
+                                    let last_used = settings.last_demo_dir.as_ref();
+                                    let resolved_path = super::resolve_demo_path(
+                                        &demo.path.to_string_lossy(),
+                                        project_root.as_ref(),
+                                        last_used,
+                                    );
+                                    let path_exists = resolved_path.exists();
+
                                     row.col(|ui| {
-                                        ui.label(&demo.demo_name);
+                                        if path_exists {
+                                            ui.label(&demo.demo_name);
+                                        } else {
+                                            ui.colored_label(egui::Color32::RED, format!("{} (Missing)", demo.demo_name));
+                                        }
                                     });
                                     row.col(|ui| {
                                         let yield_count = demo.streaks.iter().filter(|s| Some(s.player_index) == demo.local_player_index).count();
@@ -1036,6 +1060,14 @@ fn launch_preview(
     demo_name: String,
     patcher_config: PatcherConfig,
 ) {
+    let project_root = super::get_active_project_path().and_then(|p| p.parent().map(|parent| parent.to_path_buf()));
+    let settings = crate::settings::load_settings();
+    let last_used = settings.last_demo_dir.as_ref();
+    let resolved_path = super::resolve_demo_path(
+        &demo_path.to_string_lossy(),
+        project_root.as_ref(),
+        last_used,
+    );
     let name_without_ext = std::path::Path::new(&demo_name)
         .file_stem()
         .and_then(|s| s.to_str())
@@ -1057,7 +1089,7 @@ fn launch_preview(
     primer_scheduled.push((500, format!("viewdemo {}_preview", name_without_ext)));
 
     let job = native::patch::PatchJob {
-        source_demo: demo_path.to_string_lossy().to_string(),
+        source_demo: resolved_path.to_string_lossy().to_string(),
         output_demo: primer_out,
         streaks: Vec::new(),
         target_player: None,

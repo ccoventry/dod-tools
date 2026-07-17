@@ -11,8 +11,18 @@ pub fn build_capture_streak_payload(
     filter: StreakFilter,
 ) -> Vec<CaptureStreak> {
     let mut payload = Vec::new();
+    let project_root = crate::views::capture::get_active_project_path()
+        .and_then(|p| p.parent().map(|parent| parent.to_path_buf()));
+    let settings = crate::settings::load_settings();
+    let last_used = settings.last_demo_dir.as_ref();
+
     for demo in demos {
-        let demo_path_str = demo.path.to_string_lossy().to_string();
+        let resolved = crate::views::capture::resolve_demo_path(
+            &demo.path.to_string_lossy(),
+            project_root.as_ref(),
+            last_used,
+        );
+        let demo_path_str = resolved.to_string_lossy().to_string();
         for streak in &demo.streaks {
             if filter.selected_only && !streak.is_selected {
                 continue;
