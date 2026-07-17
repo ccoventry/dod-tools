@@ -437,6 +437,7 @@ pub(crate) fn spawn_ingestion_thread(
                                     viewdemo_times: s.viewdemo_times,
                                     frame_times: s.frame_times,
                                     status: native::patch::HighlightStatus::None,
+                                    notes: None,
                                 }
                             })
                             .collect();
@@ -522,6 +523,7 @@ pub fn serialize_and_save_project(path: &std::path::Path, data: &[crate::types::
                 start_kill: s.start_index as i32,
                 end_kill: s.end_index as i32,
                 status: s.status,
+                notes: s.notes.clone(),
             }
         }).collect();
         crate::session::DemoEntry {

@@ -249,6 +249,8 @@ pub struct HighlightStreak {
     pub frame_times: std::sync::Arc<Vec<f32>>,
     #[serde(default)]
     pub status: native::patch::HighlightStatus,
+    #[serde(default)]
+    pub notes: Option<String>,
 }
 
 impl HighlightStreak {
