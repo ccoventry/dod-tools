@@ -29,7 +29,6 @@ pub fn is_hltv_demo(path: &std::path::Path) -> Result<bool, std::io::Error> {
 
 pub fn scan_demo_for_highlights(
     path: &std::path::Path,
-    rules: &HighlightRules,
 ) -> Result<(f32, Vec<CaptureStreak>, bool, Option<usize>, i32, Option<i32>), String> {
     match is_hltv_demo(path) {
         Ok(true) => return Err("Unsupported HLTV proxy demo format".to_string()),
