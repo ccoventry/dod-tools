@@ -2867,9 +2867,9 @@ impl eframe::App for Gui {
             egui::Area::new(egui::Id::new("toast_notification"))
                 .anchor(egui::Align2::RIGHT_BOTTOM, egui::Vec2::new(-20.0, -20.0))
                 .show(ctx, |ui| {
-                    egui::Frame::none()
+                    egui::Frame::NONE
                         .fill(egui::Color32::from_black_alpha(150))
-                        .rounding(4.0)
+                        .corner_radius(4.0)
                         .inner_margin(12.0)
                         .show(ui, |ui| {
                             ui.label(

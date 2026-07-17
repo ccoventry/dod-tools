@@ -533,8 +533,8 @@ pub fn render(
                                                         .column(Column::initial(70.0))
                                                         .column(Column::exact(50.0))
                                                         .column(Column::exact(85.0))
-                                                        .column(Column::initial(120.0).resizable(true))
-                                                        .column(Column::remainder().resizable(false))
+                                                        .column(Column::initial(120.0))
+                                                        .column(Column::remainder())
                                                         .header(20.0, |mut header| {
                                                             header.col(|ui| { ui.strong("Row #"); });
                                                             header.col(|ui| { ui.strong("Sel"); });
