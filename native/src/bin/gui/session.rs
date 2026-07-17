@@ -35,6 +35,7 @@ pub async fn import_session_async(
     session_data: Vec<DemoEntry>,
     project_root: Option<PathBuf>,
     last_used_dir: Option<PathBuf>,
+    hl_path: Option<PathBuf>,
 ) -> Vec<(PathBuf, PathBuf, Vec<HighlightMetadata>)> {
     tokio::task::spawn_blocking(move || {
         let mut resolved_data = Vec::new();
@@ -46,6 +47,7 @@ pub async fn import_session_async(
                 &entry.path.to_string_lossy(),
                 project_root.as_ref(),
                 last_used_dir.as_ref(),
+                hl_path.as_ref(),
             );
             if resolved.exists() {
                 resolved_data.push((resolved, entry.path.clone(), entry.highlights.clone()));

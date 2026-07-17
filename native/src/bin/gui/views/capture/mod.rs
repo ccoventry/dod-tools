@@ -25,17 +25,29 @@ use std::path::PathBuf;
 
 pub use native::log_markdown;
 
-pub fn resolve_demo_path(saved_path: &str, project_root: Option<&PathBuf>, last_used_dir: Option<&PathBuf>) -> PathBuf {
+pub fn resolve_demo_path(
+    saved_path: &str,
+    project_root: Option<&PathBuf>,
+    last_used_dir: Option<&PathBuf>,
+    hl_path: Option<&PathBuf>,
+) -> PathBuf {
     use std::path::Path;
     let path = Path::new(saved_path);
     if path.exists() { return path.to_path_buf(); }
+    let filename = path.file_name().unwrap_or_default();
     if let Some(root) = project_root {
-        let resolved = root.join(path.file_name().unwrap_or_default());
+        let resolved = root.join(filename);
         if resolved.exists() { return resolved; }
     }
     if let Some(last) = last_used_dir {
-        let resolved = last.join(path.file_name().unwrap_or_default());
+        let resolved = last.join(filename);
         if resolved.exists() { return resolved; }
+    }
+    if let Some(hl) = hl_path {
+        if let Some(parent) = hl.parent() {
+            let resolved = parent.join("dod").join(filename);
+            if resolved.exists() { return resolved; }
+        }
     }
     path.to_path_buf()
 }
@@ -222,11 +234,18 @@ pub fn render_patch_ui(
                                         let project_root = json_path.parent().map(|p| p.to_path_buf());
                                         let settings = crate::settings::load_settings();
                                         let last_used = settings.last_demo_dir.clone();
+                                        let patcher_config = crate::settings::load_patcher_config();
+                                        let hl_path = if !patcher_config.game_path.is_empty() {
+                                            Some(std::path::PathBuf::from(&patcher_config.game_path))
+                                        } else {
+                                            None
+                                        };
                                         let resolved = rt.block_on(crate::session::import_session_async(
                                             base_dir,
                                             session_data.entries,
                                             project_root,
                                             last_used,
+                                            hl_path,
                                         ));
                                         if !resolved.is_empty() {
                                             let mut paths_to_ingest = Vec::new();
