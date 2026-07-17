@@ -17,9 +17,13 @@ IMMUTABLE MILESTONES ARCHITECTURE RULES:
 - [ ] Task: Packet Audit — Audit `.dem` packet length consistency.
 - [ ] Chore: Packet Initialization Rule — Formalize GoldSrc packet memory initialization rule.
 - [x] Chore: Standardize Milestones Architecture — Design and document a strict, immutable markdown layout for this file to completely prevent AI-driven format drift across future sessions.
+- [x] Task: Director Events Pipeline - Fixed premature DEMO_END assignment and properly anchored MATCH_START director events to the parsed frame times.
 
 ### Frontend Migration
 - [ ] Feature: Tauri & Vite Integration — Ongoing migration of the frontend stack from native `egui` to a Tauri + Vite architecture. (Note: Excluded from primary architecture docs until finalized).
+
+### UI/UX Polish
+- [x] Feature: Workspace Layout Updates - Transposed paths and disk space estimators, added highlight status columns to the Master List, and removed legacy folder pickers.
 
 ## 📋 General Backlog (Future Roadmap Items)
 
