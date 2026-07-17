@@ -30,15 +30,25 @@ pub struct SessionData {
     pub entries: Vec<DemoEntry>,
 }
 
-pub async fn import_session_async(base_dir: PathBuf, session_data: Vec<DemoEntry>) -> Vec<(PathBuf, Vec<HighlightMetadata>)> {
+pub async fn import_session_async(
+    base_dir: PathBuf,
+    session_data: Vec<DemoEntry>,
+    project_root: Option<PathBuf>,
+    last_used_dir: Option<PathBuf>,
+) -> Vec<(PathBuf, PathBuf, Vec<HighlightMetadata>)> {
     tokio::task::spawn_blocking(move || {
         let mut resolved_data = Vec::new();
         let mut index = HashMap::new();
         let mut index_built = false;
 
         for entry in session_data {
-            if entry.path.exists() {
-                resolved_data.push((entry.path.clone(), entry.highlights.clone()));
+            let resolved = crate::views::capture::resolve_demo_path(
+                &entry.path.to_string_lossy(),
+                project_root.as_ref(),
+                last_used_dir.as_ref(),
+            );
+            if resolved.exists() {
+                resolved_data.push((resolved, entry.path.clone(), entry.highlights.clone()));
             } else if let Some(target_key) = entry.key {
                 if !index_built {
                     for walk_entry in WalkDir::new(&base_dir).into_iter().filter_map(|e| e.ok()) {
@@ -53,7 +63,7 @@ pub async fn import_session_async(base_dir: PathBuf, session_data: Vec<DemoEntry
                 }
 
                 if let Some(found_path) = index.get(&target_key) {
-                    resolved_data.push((found_path.clone(), entry.highlights.clone()));
+                    resolved_data.push((found_path.clone(), entry.path.clone(), entry.highlights.clone()));
                 }
             }
         }

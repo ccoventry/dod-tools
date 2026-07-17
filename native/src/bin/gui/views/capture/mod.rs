@@ -25,6 +25,21 @@ use std::path::PathBuf;
 
 pub use native::log_markdown;
 
+pub fn resolve_demo_path(saved_path: &str, project_root: Option<&PathBuf>, last_used_dir: Option<&PathBuf>) -> PathBuf {
+    use std::path::Path;
+    let path = Path::new(saved_path);
+    if path.exists() { return path.to_path_buf(); }
+    if let Some(root) = project_root {
+        let resolved = root.join(path.file_name().unwrap_or_default());
+        if resolved.exists() { return resolved; }
+    }
+    if let Some(last) = last_used_dir {
+        let resolved = last.join(path.file_name().unwrap_or_default());
+        if resolved.exists() { return resolved; }
+    }
+    path.to_path_buf()
+}
+
 pub fn get_default_projects_dir() -> Option<std::path::PathBuf> {
     dirs::document_dir().map(|mut p| {
         p.push("dod-tools");
@@ -204,7 +219,15 @@ pub fn render_patch_ui(
                                 if let Ok(session_data) = serde_json::from_str::<crate::session::SessionData>(&json) {
                                     if let Some(base_dir) = rfd::FileDialog::new().pick_folder() {
                                         let rt = tokio::runtime::Runtime::new().unwrap();
-                                        let resolved = rt.block_on(crate::session::import_session_async(base_dir, session_data.entries));
+                                        let project_root = json_path.parent().map(|p| p.to_path_buf());
+                                        let settings = crate::settings::load_settings();
+                                        let last_used = settings.last_demo_dir.clone();
+                                        let resolved = rt.block_on(crate::session::import_session_async(
+                                            base_dir,
+                                            session_data.entries,
+                                            project_root,
+                                            last_used,
+                                        ));
                                         if !resolved.is_empty() {
                                             let mut paths_to_ingest = Vec::new();
                                             {
@@ -212,13 +235,16 @@ pub fn render_patch_ui(
                                                     Ok(g) => g,
                                                     Err(p) => p.into_inner(),
                                                 };
-                                                for (path, _) in &resolved {
-                                                    if !guard.iter().any(|d| &d.path == path) {
-                                                        paths_to_ingest.push(path.clone());
+                                                for (resolved_path, orig_path, _) in &resolved {
+                                                    if !guard.iter().any(|d| &d.path == orig_path) {
+                                                        paths_to_ingest.push((resolved_path.clone(), orig_path.clone()));
                                                     }
                                                 }
                                             }
-                                            let _ = tx_clone.send(crate::types::GuiMessage::ProjectLoaded(resolved));
+                                            let resolved_for_msg: Vec<(PathBuf, Vec<crate::session::HighlightMetadata>)> = resolved.iter()
+                                                .map(|(_, orig_path, metas)| (orig_path.clone(), metas.clone()))
+                                                .collect();
+                                            let _ = tx_clone.send(crate::types::GuiMessage::ProjectLoaded(resolved_for_msg));
                                             if !paths_to_ingest.is_empty() {
                                                 spawn_ingestion_thread(
                                                     IngestionInput::Batch(paths_to_ingest),
@@ -320,7 +346,7 @@ pub fn render_patch_ui(
 // ── Ingestion thread ─────────────────────────────────────────────────────────────
 
 pub enum IngestionInput {
-    Batch(Vec<PathBuf>),
+    Batch(Vec<(PathBuf, PathBuf)>),
 }
 
 pub(crate) fn spawn_ingestion_thread(
@@ -350,29 +376,29 @@ pub(crate) fn spawn_ingestion_thread(
                     let mut list = Vec::new();
                     let mut dir_stack = Vec::new();
 
-                    for path in paths {
+                    for (path, orig_path) in paths {
                         if path.is_dir() {
-                            dir_stack.push(path);
+                            dir_stack.push((path, orig_path));
                         } else if path.is_file() && path.extension().map(|ext| ext == "dem").unwrap_or(false) {
-                            let insert_idx = list.binary_search_by(|p: &PathBuf| p.file_name().unwrap_or_default().cmp(&path.file_name().unwrap_or_default()))
+                            let insert_idx = list.binary_search_by(|p: &(PathBuf, PathBuf)| p.0.file_name().unwrap_or_default().cmp(&path.file_name().unwrap_or_default()))
                                 .unwrap_or_else(|pos| pos);
-                            list.insert(insert_idx, path);
+                            list.insert(insert_idx, (path, orig_path));
                         }
                     }
 
                     // Iterative walk — explicit stack avoids OS stack pressure on deep trees.
-                    while let Some(dir) = dir_stack.pop() {
+                    while let Some((dir, orig_dir)) = dir_stack.pop() {
                         if let Ok(entries) = std::fs::read_dir(&dir) {
                             for entry in entries.flatten() {
                                 let path = entry.path();
                                 if path.is_dir() {
-                                    dir_stack.push(path);
+                                    dir_stack.push((path.clone(), path.clone()));
                                 } else if path.is_file()
                                     && path.extension().map(|ext| ext == "dem").unwrap_or(false)
                                 {
-                                    let insert_idx = list.binary_search_by(|p: &PathBuf| p.file_name().unwrap_or_default().cmp(&path.file_name().unwrap_or_default()))
+                                    let insert_idx = list.binary_search_by(|p: &(PathBuf, PathBuf)| p.0.file_name().unwrap_or_default().cmp(&path.file_name().unwrap_or_default()))
                                         .unwrap_or_else(|pos| pos);
-                                    list.insert(insert_idx, path);
+                                    list.insert(insert_idx, (path.clone(), path.clone()));
                                 }
                             }
                         }
@@ -382,7 +408,7 @@ pub(crate) fn spawn_ingestion_thread(
             };
 
             let total_files = files.len();
-            for (index, file) in files.into_iter().enumerate() {
+            for (index, (file, orig_file)) in files.into_iter().enumerate() {
                 {
                     let mut state = match get_capture_state().lock() {
                         Ok(g) => g,
@@ -429,7 +455,7 @@ pub(crate) fn spawn_ingestion_thread(
                             let demo_name = file.file_name().unwrap_or_default().to_string_lossy().into_owned();
                             let mut item = DemoData {
                                 demo_name,
-                                path: file.to_path_buf(),
+                                path: orig_file,
                                 streaks: selectable,
                                 tickrate,
                                 is_pov,
