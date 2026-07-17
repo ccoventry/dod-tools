@@ -331,9 +331,8 @@ pub fn render(
         ui.separator();
         ui.add_space(4.0);
 
-        egui::ScrollArea::vertical()
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
+        {
+            let ui = ui;
                 match active_tab {
                     SelectTab::Highlights => {
                         ui.heading("🎬 Step 2: Detail View & Selection");
