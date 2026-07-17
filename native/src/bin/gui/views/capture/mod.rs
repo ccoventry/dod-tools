@@ -406,7 +406,7 @@ pub(crate) fn spawn_ingestion_thread(
                     }
 
                     // Iterative walk — explicit stack avoids OS stack pressure on deep trees.
-                    while let Some((dir, orig_dir)) = dir_stack.pop() {
+                    while let Some((dir, _orig_dir)) = dir_stack.pop() {
                         if let Ok(entries) = std::fs::read_dir(&dir) {
                             for entry in entries.flatten() {
                                 let path = entry.path();
