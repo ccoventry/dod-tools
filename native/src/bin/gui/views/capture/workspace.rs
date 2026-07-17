@@ -262,7 +262,8 @@ pub fn render(
                                         ui.label(&demo.demo_name);
                                     });
                                     row.col(|ui| {
-                                        ui.label(format!("{} streaks", demo.streaks.len()));
+                                        let yield_count = demo.streaks.iter().filter(|s| Some(s.player_index) == demo.local_player_index).count();
+                                        ui.label(format!("{} streaks", yield_count));
                                     });
                                     row.col(|ui| {
                                         ui.horizontal(|ui| {
@@ -502,7 +503,7 @@ pub fn render(
                                                         .column(Column::exact(50.0))
                                                         .column(Column::exact(85.0))
                                                         .column(Column::initial(120.0).resizable(true))
-                                                        .column(Column::remainder())
+                                                        .column(Column::remainder().resizable(false))
                                                         .header(20.0, |mut header| {
                                                             header.col(|ui| { ui.strong("Row #"); });
                                                             header.col(|ui| { ui.strong("Sel"); });
