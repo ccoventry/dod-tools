@@ -219,6 +219,8 @@ pub enum GuiMessage {
     CaptureStudioFinished,
     CaptureEngineEvent(EngineEvent),
     IngestionFinished,
+    #[cfg(not(target_arch = "wasm32"))]
+    ProjectLoaded(Vec<(PathBuf, Vec<crate::session::HighlightMetadata>)>),
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)]

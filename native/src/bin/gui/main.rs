@@ -174,6 +174,8 @@ pub(crate) struct Gui {
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) pending_streak_export: Option<PendingStreakExport>,
     #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) pending_loaded_project: Option<Vec<(PathBuf, Vec<crate::session::HighlightMetadata>)>>,
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) root_dir: Option<PathBuf>,
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) current_dir: Option<PathBuf>,
@@ -581,6 +583,8 @@ impl Default for Gui {
             capture_export_picker: FileDialog::default(),
             #[cfg(not(target_arch = "wasm32"))]
             pending_streak_export: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            pending_loaded_project: None,
             #[cfg(not(target_arch = "wasm32"))]
             root_dir: std::env::current_dir().ok(),
             #[cfg(not(target_arch = "wasm32"))]
@@ -1199,6 +1203,10 @@ impl eframe::App for Gui {
         while let Ok(msg) = self.rx.try_recv() {
             match msg {
                 GuiMessage::Idle => {}
+                #[cfg(not(target_arch = "wasm32"))]
+                GuiMessage::ProjectLoaded(resolved) => {
+                    self.pending_loaded_project = Some(resolved);
+                }
                 GuiMessage::PatchingComplete => {
                     #[cfg(not(target_arch = "wasm32"))]
                     crate::views::capture::set_is_patching(false);
@@ -1390,6 +1398,27 @@ impl eframe::App for Gui {
                 }
                 GuiMessage::IngestionFinished => {
                     self.capture_studio_loading = false;
+                    #[cfg(not(target_arch = "wasm32"))]
+                    if let Some(resolved) = self.pending_loaded_project.take() {
+                        let queued_demos_arc = crate::views::capture::get_queued_demos();
+                        let mut guard = match queued_demos_arc.lock() {
+                            Ok(g) => g,
+                            Err(p) => p.into_inner(),
+                        };
+                        let queued = std::sync::Arc::make_mut(&mut *guard);
+                        for (path, metas) in resolved {
+                            if let Some(demo) = queued.iter_mut().find(|d| d.path == path) {
+                                for (streak, meta) in demo.streaks.iter_mut().zip(metas) {
+                                    streak.is_selected = meta.is_selected;
+                                    streak.start_index = meta.start_kill as usize;
+                                    streak.end_index = meta.end_kill as usize;
+                                    streak.status = meta.status;
+                                    streak.notes = meta.notes;
+                                    streak.update_visuals();
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
