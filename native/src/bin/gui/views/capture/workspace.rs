@@ -248,35 +248,35 @@ pub fn render(
                                 header.col(|ui| { ui.strong("Yield"); });
                                 header.col(|ui| { ui.strong("Status"); });
                             })
-                            .body(|mut body| {
-                                for (index, demo) in data.iter().enumerate() {
+                            .body(|body| {
+                                body.rows(24.0, data.len(), |mut row| {
+                                    let index = row.index();
+                                    let demo = &data[index];
                                     let is_selected = active_idx == Some(index);
                                     
-                                    body.row(24.0, |mut row| {
-                                        if is_selected {
-                                            row.set_selected(true);
-                                        }
-                                        
-                                        row.col(|ui| {
-                                            ui.label(&demo.demo_name);
-                                        });
-                                        row.col(|ui| {
-                                            ui.label(format!("{} streaks", demo.streaks.len()));
-                                        });
-                                        row.col(|ui| {
-                                            ui.horizontal(|ui| {
-                                                ui.label("Scanned");
-                                                if ui.button("🗑").clicked() {
-                                                    pending_demo_to_remove = Some(index);
-                                                }
-                                            });
-                                        });
-                                        
-                                        if row.response().clicked() {
-                                            clicked_idx = Some(index);
-                                        }
+                                    if is_selected {
+                                        row.set_selected(true);
+                                    }
+                                    
+                                    row.col(|ui| {
+                                        ui.label(&demo.demo_name);
                                     });
-                                }
+                                    row.col(|ui| {
+                                        ui.label(format!("{} streaks", demo.streaks.len()));
+                                    });
+                                    row.col(|ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.label("Scanned");
+                                            if ui.button("🗑").clicked() {
+                                                pending_demo_to_remove = Some(index);
+                                            }
+                                        });
+                                    });
+                                    
+                                    if row.response().clicked() {
+                                        clicked_idx = Some(index);
+                                    }
+                                });
                             });
 
                         if let Some(idx) = clicked_idx {
@@ -527,7 +527,7 @@ pub fn render(
                                                                 })
                                                                 .collect();
 
-                                                            body.rows(20.0, filtered_indices.len(), |mut row| {
+                                                            body.rows(28.0, filtered_indices.len(), |mut row| {
                                                                 let row_idx = row.index();
                                                                 let streak_idx = filtered_indices[row_idx];
                                                                 let streak = &demo.streaks[streak_idx];
