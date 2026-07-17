@@ -144,10 +144,16 @@ fn main() {}
 #[cfg(not(target_arch = "wasm32"))]
 pub use views::browser::VisibleNode;
 
+pub struct Notification {
+    pub message: String,
+    pub expiration: std::time::Instant,
+}
+
 pub(crate) struct Gui {
     pub(crate) analyses: HashMap<String, (FileInfo, Analysis)>,
     pub(crate) selected_analysis_path: Option<String>,
     pub(crate) cache: DemoCache,
+    pub notification: Option<Notification>,
     pub(crate) player_highlight: PlayerHighlighting,
     pub(crate) error_message: Option<String>,
     pub(crate) settings: AppSettings,
@@ -673,6 +679,7 @@ impl Default for Gui {
                     StartupState::Normal
                 }
             },
+            notification: None,
         }
     }
 }
@@ -778,10 +785,19 @@ impl eframe::App for Gui {
                     if let Some(path) = dialog.save_file() {
                         if let Ok(()) = crate::views::capture::serialize_and_save_project(&path, &*data) {
                             crate::views::capture::set_active_project_path(Some(path));
+                            self.notification = Some(Notification {
+                                message: "Project saved successfully".to_string(),
+                                expiration: std::time::Instant::now() + std::time::Duration::from_secs(3),
+                            });
                         }
                     }
                 } else if let Some(path) = crate::views::capture::get_active_project_path() {
-                    let _ = crate::views::capture::serialize_and_save_project(&path, &*data);
+                    if let Ok(()) = crate::views::capture::serialize_and_save_project(&path, &*data) {
+                        self.notification = Some(Notification {
+                            message: "Project saved successfully".to_string(),
+                            expiration: std::time::Instant::now() + std::time::Duration::from_secs(3),
+                        });
+                    }
                 }
             }
 
@@ -1515,6 +1531,7 @@ impl eframe::App for Gui {
                 GuiMessage::IngestionFinished => {
                     self.capture_studio_loading = false;
                     #[cfg(not(target_arch = "wasm32"))]
+                    let was_loaded = self.pending_loaded_project.is_some();
                     if let Some(resolved) = self.pending_loaded_project.take() {
                         let queued_demos_arc = crate::views::capture::get_queued_demos();
                         let mut guard = match queued_demos_arc.lock() {
@@ -1534,6 +1551,12 @@ impl eframe::App for Gui {
                                 }
                             }
                         }
+                    }
+                    if was_loaded {
+                        self.notification = Some(Notification {
+                            message: "Project loaded successfully".to_string(),
+                            expiration: std::time::Instant::now() + std::time::Duration::from_secs(3),
+                        });
                     }
                 }
             }
@@ -2752,6 +2775,35 @@ impl eframe::App for Gui {
                 }
             }
         }
+
+        // Render toast notifications if active
+        let expired = if let Some(n) = &self.notification {
+            std::time::Instant::now() >= n.expiration
+        } else {
+            false
+        };
+        if expired {
+            self.notification = None;
+        }
+
+        if let Some(n) = &self.notification {
+            egui::Area::new(egui::Id::new("toast_notification"))
+                .anchor(egui::Align2::RIGHT_BOTTOM, egui::Vec2::new(-20.0, -20.0))
+                .show(ctx, |ui| {
+                    egui::Frame::none()
+                        .fill(egui::Color32::from_black_alpha(150))
+                        .rounding(4.0)
+                        .inner_margin(12.0)
+                        .show(ui, |ui| {
+                            ui.label(
+                                egui::RichText::new(&n.message)
+                                    .color(egui::Color32::WHITE)
+                            );
+                        });
+                });
+            ctx.request_repaint();
+        }
+
         #[cfg(not(target_arch = "wasm32"))]
         {
             self.selection_changed_via_keyboard = false;
