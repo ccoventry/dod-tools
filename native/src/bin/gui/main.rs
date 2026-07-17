@@ -737,50 +737,49 @@ impl eframe::App for Gui {
                             crate::views::capture::set_active_project_path(Some(json_path.clone()));
                             if let Ok(json) = std::fs::read_to_string(&json_path) {
                                 if let Ok(session_data) = serde_json::from_str::<crate::session::SessionData>(&json) {
-                                    if let Some(base_dir) = rfd::FileDialog::new().pick_folder() {
-                                        let rt = tokio::runtime::Runtime::new().unwrap();
-                                        let project_root = json_path.parent().map(|p| p.to_path_buf());
-                                        let settings = crate::settings::load_settings();
-                                        let last_used = settings.last_demo_dir.clone();
-                                        let patcher_config = crate::settings::load_patcher_config();
-                                        let hl_path = if !patcher_config.game_path.is_empty() {
-                                            Some(std::path::PathBuf::from(&patcher_config.game_path))
-                                        } else {
-                                            None
-                                        };
-                                        let resolved = rt.block_on(crate::session::import_session_async(
-                                            base_dir,
-                                            session_data.entries,
-                                            project_root,
-                                            last_used,
-                                            hl_path,
-                                        ));
-                                        if !resolved.is_empty() {
-                                            let mut paths_to_ingest = Vec::new();
-                                            {
-                                                let guard = match queued_demos_clone.lock() {
-                                                    Ok(g) => g,
-                                                    Err(p) => p.into_inner(),
-                                                };
-                                                for (resolved_path, orig_path, _) in &resolved {
-                                                    if !guard.iter().any(|d| &d.path == orig_path) {
-                                                        paths_to_ingest.push((resolved_path.clone(), orig_path.clone()));
-                                                    }
+                                    let project_root = json_path.parent().map(|p| p.to_path_buf());
+                                    let base_dir = project_root.clone().unwrap_or_else(|| std::path::PathBuf::from("."));
+                                    let rt = tokio::runtime::Runtime::new().unwrap();
+                                    let settings = crate::settings::load_settings();
+                                    let last_used = settings.last_demo_dir.clone();
+                                    let patcher_config = crate::settings::load_patcher_config();
+                                    let hl_path = if !patcher_config.game_path.is_empty() {
+                                        Some(std::path::PathBuf::from(&patcher_config.game_path))
+                                    } else {
+                                        None
+                                    };
+                                    let resolved = rt.block_on(crate::session::import_session_async(
+                                        base_dir,
+                                        session_data.entries,
+                                        project_root,
+                                        last_used,
+                                        hl_path,
+                                    ));
+                                    if !resolved.is_empty() {
+                                        let mut paths_to_ingest = Vec::new();
+                                        {
+                                            let guard = match queued_demos_clone.lock() {
+                                                Ok(g) => g,
+                                                Err(p) => p.into_inner(),
+                                            };
+                                            for (resolved_path, orig_path, _) in &resolved {
+                                                if !guard.iter().any(|d| &d.path == orig_path) {
+                                                    paths_to_ingest.push((resolved_path.clone(), orig_path.clone()));
                                                 }
                                             }
-                                            let resolved_for_msg: Vec<(PathBuf, Vec<crate::session::HighlightMetadata>)> = resolved.iter()
-                                                .map(|(_, orig_path, metas)| (orig_path.clone(), metas.clone()))
-                                                .collect();
-                                            let _ = tx_clone.send(crate::types::GuiMessage::ProjectLoaded(resolved_for_msg));
-                                            if !paths_to_ingest.is_empty() {
-                                                crate::views::capture::spawn_ingestion_thread(
-                                                    crate::views::capture::IngestionInput::Batch(paths_to_ingest),
-                                                    rules_clone,
-                                                    ctx_clone,
-                                                    tx_clone,
-                                                );
-                                                return;
-                                            }
+                                        }
+                                        let resolved_for_msg: Vec<(PathBuf, Vec<crate::session::HighlightMetadata>)> = resolved.iter()
+                                            .map(|(_, orig_path, metas)| (orig_path.clone(), metas.clone()))
+                                            .collect();
+                                        let _ = tx_clone.send(crate::types::GuiMessage::ProjectLoaded(resolved_for_msg));
+                                        if !paths_to_ingest.is_empty() {
+                                            crate::views::capture::spawn_ingestion_thread(
+                                                crate::views::capture::IngestionInput::Batch(paths_to_ingest),
+                                                rules_clone,
+                                                ctx_clone,
+                                                tx_clone,
+                                            );
+                                            return;
                                         }
                                     }
                                 }
