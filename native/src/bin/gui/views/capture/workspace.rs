@@ -271,6 +271,7 @@ pub fn render(
                                     
                                     let project_root = super::get_active_project_path().and_then(|p| p.parent().map(|parent| parent.to_path_buf()));
                                     let last_used = settings.last_demo_dir.as_ref();
+                                    let patcher_config = crate::settings::load_patcher_config();
                                     let hl_path = if !patcher_config.game_path.is_empty() {
                                         Some(std::path::PathBuf::from(&patcher_config.game_path))
                                     } else {
