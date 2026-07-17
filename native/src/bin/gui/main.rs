@@ -1609,7 +1609,7 @@ impl eframe::App for Gui {
                                         start_index: meta.start_kill as usize,
                                         end_index: meta.end_kill as usize,
                                         viewdemo_times: Vec::new(),
-                                        frame_times: Vec::new(),
+                                        frame_times: std::sync::Arc::new(Vec::new()),
                                         status: meta.status,
                                         notes: meta.notes.clone(),
                                     }
