@@ -334,6 +334,7 @@ pub fn render(
                                                         .column(Column::initial(70.0))
                                                         .column(Column::exact(50.0))
                                                         .column(Column::exact(85.0))
+                                                        .column(Column::initial(120.0).resizable(true))
                                                         .column(Column::remainder())
                                                         .header(20.0, |mut header| {
                                                             header.col(|ui| { ui.strong("Row #"); });
@@ -343,6 +344,7 @@ pub fn render(
                                                             header.col(|ui| { ui.strong("Timestamp"); });
                                                             header.col(|ui| { ui.strong("Dur."); });
                                                             header.col(|ui| { ui.strong("Status"); });
+                                                            header.col(|ui| { ui.strong("Notes"); });
                                                             header.col(|ui| { ui.strong("Details"); });
                                                         })
                                                         .body(|body| {
@@ -467,10 +469,25 @@ pub fn render(
                                                                         }).inner.unwrap_or(false);
 
                                                                     if status_changed {
-                                                                        let mut guard = acquire_lock!(queued_demos_arc);
+                                                                        let mut guard = match queued_demos_arc.lock() {
+                                                                            Ok(g) => g,
+                                                                            Err(p) => p.into_inner(),
+                                                                        };
                                                                         let queued = Arc::make_mut(&mut *guard);
                                                                         queued[d_idx].streaks[streak_idx].status = status;
                                                                         ctx.data_mut(|d| d.insert_temp(egui::Id::new("dodtools_disk_estimate_dirty"), true));
+                                                                    }
+                                                                });
+
+                                                                row.col(|ui| {
+                                                                    let mut notes = streak.notes.clone().unwrap_or_default();
+                                                                    if ui.add(egui::TextEdit::singleline(&mut notes).hint_text("Add note...")).changed() {
+                                                                        let mut guard = match queued_demos_arc.lock() {
+                                                                            Ok(g) => g,
+                                                                            Err(p) => p.into_inner(),
+                                                                        };
+                                                                        let queued = Arc::make_mut(&mut *guard);
+                                                                        queued[d_idx].streaks[streak_idx].notes = Some(notes);
                                                                     }
                                                                 });
 

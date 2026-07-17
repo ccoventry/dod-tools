@@ -295,6 +295,7 @@ pub fn spawn_capture_engine(
                         start_kill: s.start_index as i32,
                         end_kill: s.end_index as i32,
                         status: s.status,
+                        notes: s.notes.clone(),
                     }).collect();
                     crate::session::DemoEntry {
                         path: d.path.clone(),

@@ -13,6 +13,8 @@ pub struct HighlightMetadata {
     pub end_kill: i32,
     #[serde(default)]
     pub status: HighlightStatus,
+    #[serde(default)]
+    pub notes: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
