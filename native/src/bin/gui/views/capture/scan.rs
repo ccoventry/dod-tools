@@ -1,32 +1,30 @@
 // ============================================================
 // views/capture/scan.rs
-// Renders CaptureStudioState::Scan — Step 1 of the Capture Studio wizard.
+// Renders the scan sub-view within CaptureStudioState::Workspace.
 //
 // Responsibilities:
-//   - Min Kills and Target Player Filter rule configuration fields
 //   - "Add Demo Files" / "Add Folder" buttons (RFD file picker, background thread)
 //   - Queued demo list with per-entry remove buttons
-//   - "Proceed to Selection" button with transition logging
 //
 // Intentionally excluded:
+//   - Min Kills and Target Player filter fields: removed in Phase 1 refactor.
 //   - Max Gap (sec) field: backend scanner uses life-bounded segmentation only.
 //     The field was confirmed dead in the Phase 9a audit.
+//   - "Proceed to Selection" button: states merged into unified Workspace.
 // ============================================================
 
 use std::sync::{Arc, Mutex};
 use native::patch::HighlightRules;
 use crate::types::{DemoData, CaptureStudioState};
 use super::{CaptureState, IngestionInput, spawn_ingestion_thread};
-use super::log_markdown;
 
 pub fn render(
     ui: &mut egui::Ui,
     ctx: &egui::Context,
-    state_ptr: &mut CaptureStudioState,
+    _state_ptr: &mut CaptureStudioState,
     tx: std::sync::mpsc::Sender<crate::types::GuiMessage>,
     loading_ptr: &mut bool,
     rules_mutex: &'static Mutex<HighlightRules>,
-    _min_kills_str_mutex: &'static Mutex<String>,
     capture_state_mutex: &'static Mutex<CaptureState>,
     queued_demos_arc: Arc<Mutex<Arc<Vec<DemoData>>>>,
 ) {
@@ -41,34 +39,6 @@ pub fn render(
             ui.add_space(4.0);
             ui.label("Configure highlight rules and scan files/folders to discover streaks dynamically.");
             ui.add_space(8.0);
-
-            // ── Rule Configuration (Legacy Pre-Scan Filters Hidden) ───────────────────────────────
-            /*
-            ui.horizontal(|ui| {
-                ui.label("Min Kills:");
-                if ui.text_edit_singleline(&mut *min_kills_str).changed() {
-                    let trimmed = min_kills_str.trim().to_string();
-                    if trimmed.is_empty() {
-                        rules.min_kills = None;
-                    } else if let Ok(val) = trimmed.parse::<usize>() {
-                        rules.min_kills = Some(val);
-                    }
-                }
-            });
-
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                ui.label("Target Player Filter (comma-separated):");
-                let mut filter_text = rules.target_players.join(", ");
-                if ui.text_edit_singleline(&mut filter_text).changed() {
-                    rules.target_players = filter_text
-                        .split(',')
-                        .map(|s| s.trim().to_string())
-                        .filter(|s| !s.is_empty())
-                        .collect();
-                }
-            });
-            */
 
             ui.add_space(8.0);
 
@@ -174,21 +144,6 @@ pub fn render(
                 }
             }
 
-            // ── Proceed Button ───────────────────────────────────────────────────
-            ui.add_space(16.0);
-            ui.horizontal(|ui| {
-                if ui.button("Proceed to Selection ->").clicked() {
-                    log_markdown("UI Interaction: Clicked Proceed to Selection");
-                    let queued_guard = match queued_demos_arc.lock() {
-                        Ok(g) => g,
-                        Err(p) => p.into_inner(),
-                    };
-                    let msg = format!("Transitioning with {} items", queued_guard.len());
-                    log::info!("{}", msg);
-                    log_markdown(&msg);
-                    *state_ptr = CaptureStudioState::Select;
-                }
-            });
         });
     });
 }

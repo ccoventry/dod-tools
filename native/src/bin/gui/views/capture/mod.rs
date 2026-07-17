@@ -75,13 +75,7 @@ pub fn set_active_project_path(path: Option<std::path::PathBuf>) {
     *guard = path;
 }
 
-// ── Wizard field string state — only min_kills remains (max_time_gap removed) ──
-
-static MIN_KILLS_STR: OnceLock<Mutex<String>> = OnceLock::new();
-
-fn get_min_kills_str() -> &'static Mutex<String> {
-    MIN_KILLS_STR.get_or_init(|| Mutex::new(String::new()))
-}
+// ── Wizard field string state ─────────────────────────────────────────────────
 
 // ── Core ingestion and discovery state ──────────────────────────────────────────
 
@@ -99,11 +93,9 @@ static PATCHER_CONFIG: OnceLock<Mutex<PatcherConfig>> = OnceLock::new();
 
 fn get_highlight_rules() -> &'static Mutex<HighlightRules> {
     HIGHLIGHT_RULES.get_or_init(|| Mutex::new(HighlightRules {
-        min_kills: None,
         // max_time_gap is kept on the struct for future use but not exposed in the UI.
         // The backend scanner uses strictly life-bounded segmentation (DeathMsg / ServerReset).
         max_time_gap: None,
-        target_players: Vec::new(),
     }))
 }
 
@@ -288,16 +280,16 @@ pub fn render_patch_ui(
     ui.add_space(4.0);
 
     match current_state {
-        CaptureStudioState::Scan => {
+        CaptureStudioState::Workspace => {
+            // Phase 1: sequentially render scan and select sub-views within the
+            // unified workspace arm. Phase 2 will collapse these into a true
+            // master-detail layout.
             scan::render(
-                ui, ctx, state_ptr, tx, loading_ptr,
+                ui, ctx, state_ptr, tx.clone(), loading_ptr,
                 get_highlight_rules(),
-                get_min_kills_str(),
                 get_capture_state(),
                 get_queued_demos(),
             );
-        }
-        CaptureStudioState::Select => {
             select::render(
                 ui, ctx, state_ptr, tx, loading_ptr,
                 get_highlight_rules(),

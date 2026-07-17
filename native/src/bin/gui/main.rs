@@ -630,7 +630,7 @@ impl Default for Gui {
             chat_cache: ChatCache::default(),
             player_details_cache: PlayerDetailsCache::default(),
             export_queue: Vec::new(),
-            capture_studio_state: CaptureStudioState::Scan,
+            capture_studio_state: CaptureStudioState::Workspace,
             #[cfg(not(target_arch = "wasm32"))]
             batch_export_picker: FileDialog::default(),
             #[cfg(not(target_arch = "wasm32"))]
@@ -733,7 +733,7 @@ impl eframe::App for Gui {
                     if let Ok(session_data) = serde_json::from_str::<crate::session::SessionData>(&json) {
                         self.capture_studio_loading = true;
                         self.active_sidebar_tab = SidebarTab::CaptureStudio;
-                        self.capture_studio_state = CaptureStudioState::Scan;
+                        self.capture_studio_state = CaptureStudioState::Workspace;
                         let rules = crate::views::capture::get_highlight_rules_clone();
                         let tx_clone = self.tx.clone();
                         let ctx_clone = ctx.clone();
@@ -1446,7 +1446,7 @@ impl eframe::App for Gui {
                 for file in &i.raw.dropped_files {
                     if let Some(path) = &file.path {
                         let is_capture_scan = self.active_sidebar_tab == SidebarTab::CaptureStudio
-                            && self.capture_studio_state == CaptureStudioState::Scan;
+                            && self.capture_studio_state == CaptureStudioState::Workspace;
 
                         if is_capture_scan {
                             capture_scan_paths.push(path.clone());

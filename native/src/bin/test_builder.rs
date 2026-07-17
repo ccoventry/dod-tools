@@ -5,8 +5,6 @@ use native::patch::{build_batch_queue, StreamPatcher};
 fn main() {
     let path = std::path::Path::new("demos/wsod25-grp_r1-dyelife_gskill_armory_h1.dem");
     let rules = HighlightRules {
-        min_kills: Some(3),
-        target_players: vec![],
         max_time_gap: None,
     };
     match scan_demo_for_highlights(path, &rules) {
