@@ -1371,7 +1371,15 @@ impl eframe::App for Gui {
                 GuiMessage::Idle => {}
                 #[cfg(not(target_arch = "wasm32"))]
                 GuiMessage::ProjectLoaded(resolved) => {
+                    log::info!("GuiMessage::ProjectLoaded received: {} demos", resolved.len());
                     self.pending_loaded_project = Some(resolved);
+                    // Clear existing data to prevent stale state issues
+                    let queued_demos_arc = crate::views::capture::get_queued_demos();
+                    if let Ok(mut guard) = queued_demos_arc.lock() {
+                        let queued = std::sync::Arc::make_mut(&mut *guard);
+                        queued.clear();
+                    }
+                    ctx.request_repaint();
                 }
                 GuiMessage::PatchingComplete => {
                     #[cfg(not(target_arch = "wasm32"))]
@@ -1583,6 +1591,39 @@ impl eframe::App for Gui {
                                     streak.notes = meta.notes;
                                     streak.update_visuals();
                                 }
+                            } else {
+                                // Missing or unscanned demo: add as placeholder DemoData
+                                let demo_name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+                                let streaks: Vec<crate::types::HighlightStreak> = metas.iter().map(|meta| {
+                                    crate::types::HighlightStreak {
+                                        start_tick: 0,
+                                        end_tick: 0,
+                                        kill_count: 0,
+                                        target_player: String::new(),
+                                        is_selected: meta.is_selected,
+                                        display_text: format!("Kills: {} to {}", meta.start_kill, meta.end_kill),
+                                        timeline_string: String::new(),
+                                        duration_string: String::new(),
+                                        player_index: 0,
+                                        kills: Vec::new(),
+                                        start_index: meta.start_kill as usize,
+                                        end_index: meta.end_kill as usize,
+                                        viewdemo_times: Vec::new(),
+                                        frame_times: Vec::new(),
+                                        status: meta.status,
+                                        notes: meta.notes.clone(),
+                                    }
+                                }).collect();
+                                queued.push(crate::types::DemoData {
+                                    demo_name,
+                                    path: path.clone(),
+                                    streaks,
+                                    tickrate: 100.0,
+                                    is_pov: false,
+                                    local_player_index: None,
+                                    playback_frames: 0,
+                                    match_start_tick: None,
+                                });
                             }
                         }
                     }
@@ -1592,6 +1633,7 @@ impl eframe::App for Gui {
                             expiration: std::time::Instant::now() + std::time::Duration::from_secs(3),
                         });
                     }
+                    ctx.request_repaint();
                 }
             }
         }
