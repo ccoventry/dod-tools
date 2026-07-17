@@ -212,22 +212,17 @@ pub fn render_patch_ui(
                                         if !resolved.is_empty() {
                                             let mut paths_to_ingest = Vec::new();
                                             {
-                                                let mut guard = acquire_lock!(queued_demos_clone);
-                                                let queued = Arc::make_mut(&mut *guard);
-                                                for (path, metas) in resolved {
-                                                    if let Some(demo) = queued.iter_mut().find(|d| d.path == path) {
-                                                        for (streak, meta) in demo.streaks.iter_mut().zip(metas) {
-                                                            streak.is_selected = meta.is_selected;
-                                                            streak.start_index = meta.start_kill as usize;
-                                                            streak.end_index = meta.end_kill as usize;
-                                                            streak.status = meta.status;
-                                                            streak.update_visuals();
-                                                        }
-                                                    } else {
-                                                        paths_to_ingest.push(path);
+                                                let guard = match queued_demos_clone.lock() {
+                                                    Ok(g) => g,
+                                                    Err(p) => p.into_inner(),
+                                                };
+                                                for (path, _) in &resolved {
+                                                    if !guard.iter().any(|d| &d.path == path) {
+                                                        paths_to_ingest.push(path.clone());
                                                     }
                                                 }
                                             }
+                                            let _ = tx_clone.send(crate::types::GuiMessage::ProjectLoaded(resolved));
                                             if !paths_to_ingest.is_empty() {
                                                 spawn_ingestion_thread(
                                                     IngestionInput::Batch(paths_to_ingest),
