@@ -157,7 +157,7 @@ impl From<Demo> for DemoInfo {
             .directory
             .entries
             .iter()
-            .map(|e| e.frame_count)
+            .map(|e| e.frames.len() as i32)
             .sum::<i32>();
 
         let mut is_hltv = false;
