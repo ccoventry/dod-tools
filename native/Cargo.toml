@@ -58,6 +58,14 @@ path = "src/bin/frame_inspector.rs"
 name = "inspect_reconnect"
 path = "src/bin/inspect_reconnect.rs"
 
+[[bin]]
+name = "test_builder"
+path = "src/bin/test_builder.rs"
+
+[[bin]]
+name = "check_ticks"
+path = "src/bin/check_ticks.rs"
+
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2.100"
