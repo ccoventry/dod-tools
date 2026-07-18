@@ -5,10 +5,10 @@
 
 ## Completed/Resolved Bugs
 
-### [Fixed/Mitigated] All injected commands collapse to Tick 0
-* **Symptom:** Fast-forward and capture commands anchor at frame 0, duplicating overlapping commands and producing "Already recording!" errors.
-* **Root Cause:** A stacked failure of three bugs: (1) A time domain mismatch searching SVC_TIME against playback time. (2) Project-load serialization resulting in empty `frame_times` arrays that bypassed fallbacks. (3) The scanner truncating `frame_times` at the demo startup boundary (`type_byte == 5`), causing `find_tick_backwards` to clamp valid late-game frames down to the truncated length and walk back to 0.
-* **Resolution:** Reverted float-time lookups to direct scanner frame indices (`kills[i].0`), removed clamp constraints on absolute final frames, and added explicit out-of-bounds guards in `find_tick_backwards`/`forwards` to return `start_frame` unmodified when exceeding array lengths.
+### [Fixed/Mitigated] All injected commands collapse to Tick 0 / Early Execution
+* **Symptom:** Fast-forward and capture commands anchored at frame 0, or executed minutes too early, causing missed highlights and duplicated clips.
+* **Root Cause:** A combination of array-truncation in the scanner (stopping at `type_byte == 5`) and a severe domain mismatch in the patcher loop. The patcher was evaluating scheduled gameplay ticks against `frame_counter` (the raw binary packet index), which grew exponentially faster than the actual game time.
+* **Resolution:** Replaced raw float-time lookups with direct scanner indices, implemented mathematical fallbacks for truncated arrays in `find_tick_backwards`, and normalized the patcher loop to evaluate against `current_playback_tick` (calculated via `file_tick - base_tick`).
 
 ### [Fixed/Mitigated] svc_bad (SZ_GetSpace overflow) Crash During Demo Fast-Forward
 * **Symptom:** The GoldSrc engine (`hl.exe`) would deterministically crash with a `svc_bad` error when attempting to fast-forward (`host_framerate`) through a demo after executing a `mirv_recordmovie` cycle.
