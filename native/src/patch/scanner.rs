@@ -88,10 +88,12 @@ pub fn scan_demo_for_highlights(
             }
         }
     }
-    let final_demo_frames = if !frame_times.is_empty() {
+    let final_demo_frames = if analysis.demo_info.playback_frames > 0 {
+        analysis.demo_info.playback_frames
+    } else if !frame_times.is_empty() {
         frame_times.len() as i32
     } else {
-        analysis.demo_info.playback_frames
+        0
     };
     let frame_times_arc = std::sync::Arc::new(frame_times);
 

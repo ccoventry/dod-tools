@@ -434,14 +434,11 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
                 .map(|a| a.as_slice())
                 .unwrap_or_else(|| streak.frame_times.as_slice());
 
-            // When frame_times_ref is populated (fresh scan), use its length for EOF bounds.
-            // When it is empty (project loaded from disk — frame_times has #[serde(skip)]),
-            // fall back to streak.total_demo_frames which IS serialized and survives load.
-            let absolute_final_frame = if frame_times_ref.is_empty() {
-                streak.total_demo_frames
-            } else {
-                frame_times_ref.len() as i32
-            };
+            // Always use streak.total_demo_frames (which maps to the demo's true
+            // playback_frames from the header) as the authoritative final frame count.
+            // Do not trust frame_times_ref.len() on its own, as it is truncated
+            // at the demo section boundary (type_byte == 5) during scanning.
+            let absolute_final_frame = streak.total_demo_frames.max(frame_times_ref.len() as i32);
             let exit_frame = absolute_final_frame.saturating_sub(5);
             let danger_zone = absolute_final_frame.saturating_sub(10);
 
