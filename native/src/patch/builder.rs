@@ -15,16 +15,17 @@ use crate::patch::engine::StreamPatcher;
 /// `gap_seconds` of real demo time has been accumulated. Returns the 0-indexed
 /// frame where that time boundary is reached. Clamps to frame 0 if the gap
 /// exceeds the available history before the start frame.
-fn find_tick_backwards(start_frame: usize, gap_seconds: f32, frame_times: &[f32]) -> i32 {
-    if frame_times.is_empty() || gap_seconds <= 0.0 {
+fn find_tick_backwards(start_frame: usize, gap_seconds: f32, frame_times: &[f32], fps: f32) -> i32 {
+    let fps = if fps > 0.0 { fps } else { 100.0 };
+    if gap_seconds <= 0.0 {
         return start_frame as i32;
     }
-    // If start_frame is beyond the array, the time-based walk can't be done correctly.
-    // Return the tick unchanged — same behaviour as the empty-slice fast path above.
-    // This happens when frame_times only covers the demo startup section (~30 frames)
-    // while start_frame is a main-playback tick (e.g. 77,831).
-    if start_frame >= frame_times.len() {
-        return start_frame as i32;
+    // If frame_times is empty or start_frame is out-of-bounds, fall back to linear math.
+    // This is safe, consistent, and spaces commands chronologically when frame_times
+    // is truncated or absent.
+    if frame_times.is_empty() || start_frame >= frame_times.len() {
+        let ticks_gap = (gap_seconds * fps).round() as i32;
+        return (start_frame as i32 - ticks_gap).max(0);
     }
     let anchor_time = frame_times[start_frame];
     let target_time = anchor_time - gap_seconds;
@@ -43,13 +44,14 @@ fn find_tick_backwards(start_frame: usize, gap_seconds: f32, frame_times: &[f32]
 /// `gap_seconds` of real demo time has accumulated. Returns the 0-indexed
 /// frame where that time boundary is reached. Clamps to the last valid frame
 /// if the end of the array is reached before the gap is satisfied.
-fn find_tick_forwards(start_frame: usize, gap_seconds: f32, frame_times: &[f32]) -> i32 {
-    if frame_times.is_empty() || gap_seconds <= 0.0 {
+fn find_tick_forwards(start_frame: usize, gap_seconds: f32, frame_times: &[f32], fps: f32) -> i32 {
+    let fps = if fps > 0.0 { fps } else { 100.0 };
+    if gap_seconds <= 0.0 {
         return start_frame as i32;
     }
-    // Same out-of-bounds guard as find_tick_backwards.
-    if start_frame >= frame_times.len() {
-        return start_frame as i32;
+    if frame_times.is_empty() || start_frame >= frame_times.len() {
+        let ticks_gap = (gap_seconds * fps).round() as i32;
+        return start_frame as i32 + ticks_gap;
     }
     let anchor_time = frame_times[start_frame];
     let target_time = anchor_time + gap_seconds;
@@ -269,11 +271,7 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
             .get(&demo_filename)
             .cloned()
             .unwrap_or_default();
-        let total_demo_frames = if demo_frame_times.is_empty() {
-            streaks.first().map(|s| s.frame_times.len() as i32).unwrap_or(0)
-        } else {
-            demo_frame_times.len() as i32
-        };
+        let total_demo_frames = streaks.first().map(|s| s.total_demo_frames).unwrap_or(0);
 
         // One svc_director STUFFTEXT event per streak — label mirrors the highlight table:
         // "#<row>: <kill_count> kills: <timeline_string>"
@@ -465,11 +463,11 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
                 .map(|k| k.0 as usize)
                 .unwrap_or(streak.end_tick as usize);
 
-            let record_start_tick = find_tick_backwards(physical_frame, config.record_start_lead, frame_times_ref);
-            let s_speed_tick = find_tick_backwards(record_start_tick.max(0) as usize, 3.0, frame_times_ref);
-            let s_sound_tick = find_tick_backwards(record_start_tick.max(0) as usize, 1.0, frame_times_ref);
-            let mut r_stop = find_tick_forwards(physical_end_frame, config.record_stop_trail, frame_times_ref);
-            let mut s_end = find_tick_forwards(r_stop.max(0) as usize, config.post_roll_seconds, frame_times_ref);
+            let record_start_tick = find_tick_backwards(physical_frame, config.record_start_lead, frame_times_ref, demo_fps);
+            let s_speed_tick = find_tick_backwards(record_start_tick.max(0) as usize, 3.0, frame_times_ref, demo_fps);
+            let s_sound_tick = find_tick_backwards(record_start_tick.max(0) as usize, 1.0, frame_times_ref, demo_fps);
+            let mut r_stop = find_tick_forwards(physical_end_frame, config.record_stop_trail, frame_times_ref, demo_fps);
+            let mut s_end = find_tick_forwards(r_stop.max(0) as usize, config.post_roll_seconds, frame_times_ref, demo_fps);
 
             let mut is_clutch = false;
             if s_end >= danger_zone {
@@ -490,14 +488,14 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
                 };
                 let target_tick = match custom.relation {
                     CommandRelation::Before => {
-                        let mut t = find_tick_backwards(physical_frame, custom.offset, frame_times_ref);
+                        let mut t = find_tick_backwards(physical_frame, custom.offset, frame_times_ref, demo_fps);
                         if t == s_speed_tick || t == s_sound_tick || t == record_start_tick {
                             t += 1;
                         }
                         t
                     }
                     CommandRelation::After => {
-                        let mut t = find_tick_forwards(physical_end_frame, custom.offset, frame_times_ref);
+                        let mut t = find_tick_forwards(physical_end_frame, custom.offset, frame_times_ref, demo_fps);
                         if t == r_stop {
                             t += 1;
                         }
@@ -566,7 +564,7 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
         }
 
         // Implement Global Breadcrumb Loop
-        let total_demo_frames = merged_streaks.first().map(|s| s.frame_times.len()).unwrap_or(0) as i32;
+        let total_demo_frames = merged_streaks.first().map(|s| s.total_demo_frames).unwrap_or(0);
         let mut step = 0;
         while step < total_demo_frames {
             scheduled_commands.push((
@@ -812,7 +810,7 @@ pub fn build_preview_patch_jobs(
         // Build (tick, label) for each streak — same format as the highlight table.
         let mut director_events: Vec<(i32, String)> = streaks.iter().enumerate().map(|(i, s)| {
             let label = format!("#{}/{}: {} kills: {}", i + 1,streaks.len(), s.kill_count, s.timeline_string);
-            let preview_tick = find_tick_backwards(s.start_tick as usize, 3.0, &s.frame_times);
+            let preview_tick = find_tick_backwards(s.start_tick as usize, 3.0, &s.frame_times, s.demo_fps);
             (preview_tick, label)
         }).collect();
 

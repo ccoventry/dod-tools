@@ -1,4 +1,4 @@
-﻿// check_ticks.rs — Diagnostic binary for verifying injected command tick positions.
+// check_ticks.rs — Diagnostic binary for verifying injected command tick positions.
 //
 // Usage:
 //   cargo run --bin check_ticks -- demos/wsod25-grp_r1-dyelife_gskill_armory_h1.dem
@@ -47,6 +47,12 @@ fn run_scenario(
                     let is_bug = *tick == 0 && !cmd.contains("BREADCRUMB");
                     if is_bug { any_bug = true; }
                     println!("    tick {:>6}  {}{}",  tick, cmd, if is_bug { "  <<< BUG" } else { "" });
+                }
+                println!("    --- Director Events ---");
+                let mut dir_events = job.director_events.clone();
+                dir_events.sort_by_key(|e| e.0);
+                for (tick, label) in &dir_events {
+                    println!("    tick {:>6}  [DIRECTOR] {}", tick, label);
                 }
             }
             if any_bug {
