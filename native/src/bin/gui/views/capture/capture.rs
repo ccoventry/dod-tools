@@ -90,8 +90,8 @@ pub fn render(
                 let hl_path = std::sync::Arc::new(std::path::PathBuf::from(&game_path_str));
                 let dod_dir = hl_path.parent().unwrap().join("dod");
 
-                // Build raw streak list from the shared queued demos mutex.
-                let raw_streaks = {
+                // Build raw streak list and global frame-time map from the shared queued demos mutex.
+                let (raw_streaks, global_arrays) = {
                     let queued_demos_arc = crate::views::capture::get_queued_demos();
                     let queued_demos = match queued_demos_arc.lock() {
                         Ok(guard) => guard,
@@ -100,13 +100,18 @@ pub fn render(
                             poisoned.into_inner()
                         }
                     };
-                    crate::views::capture::payload::build_capture_streak_payload(
+                    let streaks = crate::views::capture::payload::build_capture_streak_payload(
                         &queued_demos,
                         crate::views::capture::payload::StreakFilter {
                             selected_only: true,
                             pov_local_only: true,
                         },
-                    )
+                    );
+                    let mut arrays = std::collections::HashMap::new();
+                    for demo in queued_demos.iter() {
+                        arrays.insert(demo.demo_name.clone(), demo.frame_times.clone());
+                    }
+                    (streaks, arrays)
                 };
 
                 // Resolve patcher config and convert seconds → ticks.
@@ -122,7 +127,7 @@ pub fn render(
                 patcher_config.pre_roll_ticks = (patcher_config.pre_roll_seconds * 100.0) as i32;
                 patcher_config.post_roll_ticks = (patcher_config.post_roll_seconds * 100.0) as i32;
 
-                let patch_jobs = match native::patch::build_batch_queue(raw_streaks, &patcher_config) {
+                let patch_jobs = match native::patch::build_batch_queue(raw_streaks, &patcher_config, &global_arrays) {
                     Ok(jobs) => jobs,
                     Err(e) => {
                         log::error!("Failed to write helper config: {}", e);

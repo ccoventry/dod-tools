@@ -15,7 +15,7 @@ fn main() {
     };
     
     match scan_demo_for_highlights(path) {
-        Ok((tickrate, streaks, _is_pov, _pov_idx, _frames, _match_start_tick)) => {
+        Ok((tickrate, streaks, _is_pov, _pov_idx, _frames, _match_start_tick, _frame_times)) => {
             println!("Tickrate: {}", tickrate);
             for s in streaks {
                 println!("Streak: player='{}' kills={}, start_tick={}, end_tick={}, duration={}", 

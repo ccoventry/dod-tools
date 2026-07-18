@@ -8,7 +8,7 @@ fn main() {
         max_time_gap: None,
     };
     match scan_demo_for_highlights(path) {
-        Ok((_tickrate, mut streaks, _is_pov, _pov_idx, _frames, _match_start_tick)) => {
+        Ok((_tickrate, mut streaks, _is_pov, _pov_idx, _frames, _match_start_tick, _frame_times)) => {
             streaks.retain(|s| s.target_player.as_deref().unwrap_or("") == "dicE[: :]DyeL!fe[dd]");
             for (i, streak) in streaks.iter().enumerate() {
                 println!("Streak {}: start_tick = {}, end_tick = {}, kills = {}", i, streak.start_tick, streak.end_tick, streak.kill_count);
@@ -18,7 +18,8 @@ fn main() {
             config.capture_directories = vec![std::path::PathBuf::from("demos")];
             config.fast_forward_speed = 0.05;
 
-            let jobs = build_batch_queue(streaks, &config).unwrap();
+            let global_arrays: std::collections::HashMap<String, std::sync::Arc<Vec<f32>>> = std::collections::HashMap::new();
+            let jobs = build_batch_queue(streaks, &config, &global_arrays).unwrap();
             println!("Generated {} jobs", jobs.len());
             for job in jobs {
                 println!("Running job for output: {}", job.output_demo.display());
