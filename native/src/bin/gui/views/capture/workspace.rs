@@ -644,8 +644,8 @@ pub fn render(
                                                                     let mut is_selected = streak.is_selected;
                                                                     if ui.checkbox(&mut is_selected, "").changed() {
                                                                         log_markdown(&format!(
-                                                                            "UI Interaction: Toggled streak selection for {}, new value: {}",
-                                                                            streak.target_player, is_selected
+                                                                            "UI Interaction: Toggled selection for Demo '{}', Row #{} (Player: {}), new value: {}",
+                                                                            demo.demo_name, row_idx + 1, streak.target_player, is_selected
                                                                         ));
                                                                         let mut guard = match queued_demos_arc.lock() {
                                                                             Ok(g) => g,

@@ -463,7 +463,8 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
 
             let mut is_clutch = false;
             if s_end >= danger_zone {
-                crate::log_markdown("⚠️ **Clutch Clip Detected:** Post-roll truncated to save batch near EOF.");
+                let demo_file_name = std::path::Path::new(&streak.source_demo).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                crate::log_markdown(&format!("⚠️ **EOF Boundary Reached:** Highlight #{} in demo '{}' (Player: {}) has a post-roll that exceeds the demo's end frame. Post-roll truncated to save batch.", i + 1, demo_file_name, streak.target_player.as_deref().unwrap_or("Unknown")));
                 is_clutch = true;
                 r_stop = r_stop.min(exit_frame);
                 s_end = exit_frame;
