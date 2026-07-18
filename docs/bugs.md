@@ -5,6 +5,11 @@
 
 ## Completed/Resolved Bugs
 
+### [Fixed/Mitigated] All injected commands collapse to Tick 0
+* **Symptom:** Fast-forward and capture commands anchor at frame 0, duplicating overlapping commands and producing "Already recording!" errors.
+* **Root Cause:** A stacked failure of three bugs: (1) A time domain mismatch searching SVC_TIME against playback time. (2) Project-load serialization resulting in empty `frame_times` arrays that bypassed fallbacks. (3) The scanner truncating `frame_times` at the demo startup boundary (`type_byte == 5`), causing `find_tick_backwards` to clamp valid late-game frames down to the truncated length and walk back to 0.
+* **Resolution:** Reverted float-time lookups to direct scanner frame indices (`kills[i].0`), removed clamp constraints on absolute final frames, and added explicit out-of-bounds guards in `find_tick_backwards`/`forwards` to return `start_frame` unmodified when exceeding array lengths.
+
 ### [Fixed/Mitigated] svc_bad (SZ_GetSpace overflow) Crash During Demo Fast-Forward
 * **Symptom:** The GoldSrc engine (`hl.exe`) would deterministically crash with a `svc_bad` error when attempting to fast-forward (`host_framerate`) through a demo after executing a `mirv_recordmovie` cycle.
 * **Root Cause:** A binary formatting violation in the stream patcher (`native/src/patch/engine.rs`). The patcher was injecting director event `BOOKMARK` frames *interleaved inside* the payload of original `NetworkMessage` frames. The engine read the original frame header, expected gameplay data, but read the injected bookmark bytes instead. It interpreted those bytes as a 32-bit packet length, resulting in a phantom ~2.9 Gigabyte packet that instantly overflowed the `netchan` buffer.

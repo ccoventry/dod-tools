@@ -19,7 +19,13 @@ fn find_tick_backwards(start_frame: usize, gap_seconds: f32, frame_times: &[f32]
     if frame_times.is_empty() || gap_seconds <= 0.0 {
         return start_frame as i32;
     }
-    let start_frame = start_frame.min(frame_times.len().saturating_sub(1));
+    // If start_frame is beyond the array, the time-based walk can't be done correctly.
+    // Return the tick unchanged — same behaviour as the empty-slice fast path above.
+    // This happens when frame_times only covers the demo startup section (~30 frames)
+    // while start_frame is a main-playback tick (e.g. 77,831).
+    if start_frame >= frame_times.len() {
+        return start_frame as i32;
+    }
     let anchor_time = frame_times[start_frame];
     let target_time = anchor_time - gap_seconds;
     // Walk backwards until we cross target_time
@@ -41,7 +47,10 @@ fn find_tick_forwards(start_frame: usize, gap_seconds: f32, frame_times: &[f32])
     if frame_times.is_empty() || gap_seconds <= 0.0 {
         return start_frame as i32;
     }
-    let start_frame = start_frame.min(frame_times.len().saturating_sub(1));
+    // Same out-of-bounds guard as find_tick_backwards.
+    if start_frame >= frame_times.len() {
+        return start_frame as i32;
+    }
     let anchor_time = frame_times[start_frame];
     let target_time = anchor_time + gap_seconds;
     let last = frame_times.len().saturating_sub(1);
@@ -425,19 +434,39 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
                 .map(|a| a.as_slice())
                 .unwrap_or_else(|| streak.frame_times.as_slice());
 
-            let absolute_final_frame = frame_times_ref.len() as i32;
+            // When frame_times_ref is populated (fresh scan), use its length for EOF bounds.
+            // When it is empty (project loaded from disk — frame_times has #[serde(skip)]),
+            // fall back to streak.total_demo_frames which IS serialized and survives load.
+            let absolute_final_frame = if frame_times_ref.is_empty() {
+                streak.total_demo_frames
+            } else {
+                frame_times_ref.len() as i32
+            };
             let exit_frame = absolute_final_frame.saturating_sub(5);
             let danger_zone = absolute_final_frame.saturating_sub(10);
 
-            let target_float_time = streak.viewdemo_times.get(streak.start_index).copied()
-                .or_else(|| streak.kills.get(streak.start_index).map(|k| k.1))
-                .unwrap_or(0.0);
-            let physical_frame = frame_times_ref.iter().position(|&t| t >= target_float_time).unwrap_or(0);
+            // Resolve the physical frame index for the start/end kills directly from
+            // kills[i].0 (= frame_index, the 1-based frame counter used during scanning),
+            // which is aligned with frame_times_ref[].
+            //
+            // NOTE: Do NOT apply a .min(frame_times_ref.len()-1) clamp here.
+            // When frame_times_ref is empty that saturates to 0 and destroys the index.
+            // find_tick_backwards / find_tick_forwards already clamp start_frame
+            // internally, and return start_frame as-is when frame_times is empty.
+            //
+            // NOTE: Do NOT use viewdemo_times here. viewdemo_times[i] stores
+            // viewdemo_offset (= SVC_TIME server game clock, e.g. 300.0 s from server
+            // start), while frame_times_ref[] contains demo-playback timestamps starting
+            // near 0.0. The two domains are incompatible — a position() search would
+            // always return None → unwrap_or(0) → every command collapsed to tick 0.
+            let physical_frame = streak.kills.get(streak.start_index)
+                .map(|k| k.0 as usize)
+                .unwrap_or(streak.start_tick as usize);
 
-            let target_end_float_time = streak.viewdemo_times.get(streak.end_index.min(streak.viewdemo_times.len().saturating_sub(1))).copied()
-                .or_else(|| streak.kills.get(streak.end_index.min(streak.kills.len().saturating_sub(1))).map(|k| k.1))
-                .unwrap_or(0.0);
-            let physical_end_frame = frame_times_ref.iter().position(|&t| t >= target_end_float_time).unwrap_or(0);
+            let end_kill_idx = streak.end_index.min(streak.kills.len().saturating_sub(1));
+            let physical_end_frame = streak.kills.get(end_kill_idx)
+                .map(|k| k.0 as usize)
+                .unwrap_or(streak.end_tick as usize);
 
             let record_start_tick = find_tick_backwards(physical_frame, config.record_start_lead, frame_times_ref);
             let s_speed_tick = find_tick_backwards(record_start_tick.max(0) as usize, 3.0, frame_times_ref);
