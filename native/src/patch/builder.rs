@@ -263,14 +263,6 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
         // Sort by start_tick in ascending order
         streaks.sort_by_key(|s| s.start_tick);
 
-        let demo_filename = std::path::Path::new(&source_demo)
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        let demo_frame_times = global_arrays
-            .get(&demo_filename)
-            .cloned()
-            .unwrap_or_default();
         let total_demo_frames = streaks.first().map(|s| s.total_demo_frames).unwrap_or(0);
 
         // One svc_director STUFFTEXT event per streak — label mirrors the highlight table:
