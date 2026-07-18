@@ -185,7 +185,8 @@ impl StreamPatcher {
 
         // Step 3: Zero-Allocation Copy Loop
         let mut scratch_buf = Vec::new();
-        let mut frame_counter = 0i32;
+        let mut base_tick = 0i32;
+        let mut base_tick_captured = false;
 
         loop {
             if cancel_token.load(Ordering::Relaxed) {
@@ -205,11 +206,18 @@ impl StreamPatcher {
                 return Err(e);
             }
 
-            frame_counter += 1;
-
             let type_byte = frame_hdr[0];
             let time = f32::from_le_bytes(frame_hdr[1..5].try_into().unwrap());
             let file_tick = i32::from_le_bytes(frame_hdr[5..9].try_into().unwrap());
+
+            if type_byte == 2 && !base_tick_captured {
+                base_tick = file_tick;
+                base_tick_captured = true;
+            }
+            if type_byte == 5 {
+                base_tick_captured = false;
+            }
+            let current_playback_tick = if base_tick_captured { (file_tick - base_tick).max(0) } else { 0 };
 
             if type_byte == 2 && is_first_frame {
                 playback_started = true;
@@ -222,7 +230,7 @@ impl StreamPatcher {
                 
                 while let Some((target_tick, _cmd)) = scheduled_queue.front() {
                     let actual_target = *target_tick;
-                    if playback_started && frame_counter >= actual_target {
+                    if playback_started && current_playback_tick >= actual_target {
                         let (_, cmd) = scheduled_queue.pop_front().unwrap();
                         let b = write_console_cmd(&mut writer, time, file_tick, &cmd)?;
                         update_injection(pos, b, 1);
@@ -237,7 +245,7 @@ impl StreamPatcher {
 
             while let Some((target_tick, _cmd)) = scheduled_queue.front() {
                 let actual_target = *target_tick;
-                if playback_started && frame_counter >= actual_target {
+                if playback_started && current_playback_tick >= actual_target {
                     let (_, cmd) = scheduled_queue.pop_front().unwrap();
                     let b = write_console_cmd(&mut writer, time, file_tick, &cmd)?;
                     update_injection(pos, b, 1);
@@ -329,7 +337,7 @@ impl StreamPatcher {
 
                     // Inject svc_director STUFFTEXT events at highlight start ticks
                     while let Some((target_tick, _)) = director_queue.front() {
-                        if playback_started && frame_counter >= *target_tick {
+                        if playback_started && current_playback_tick >= *target_tick {
                             let (_, label) = director_queue.pop_front().unwrap();
                             let b = write_director_event_payload(&mut writer, time, file_tick, &scratch_buf, &label)?;
                             update_injection(pos, b, 1);
