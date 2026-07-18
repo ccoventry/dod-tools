@@ -241,11 +241,14 @@ pub fn render_primary_actions(
                     let tx_clone = tx.clone();
                     let ctx_clone = ctx.clone();
                     let config_clone = patcher_config.clone();
+                    let mut global_arrays: std::collections::HashMap<String, std::sync::Arc<Vec<f32>>> = std::collections::HashMap::new();
+                    for demo in queued_demos.iter() {
+                        global_arrays.insert(demo.demo_name.clone(), demo.frame_times.clone());
+                    }
 
                     std::thread::Builder::new()
-                        .name("patch_worker".into())
                         .spawn(move || {
-                            let jobs = match build_batch_queue(payload, &config_clone) {
+                            let jobs = match build_batch_queue(payload, &config_clone, &global_arrays) {
                                 Ok(jobs) => jobs,
                                 Err(e) => {
                                     let err_msg = format!("Failed to build batch queue (capacity simulation may have failed): {}", e);

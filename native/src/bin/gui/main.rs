@@ -1622,6 +1622,7 @@ impl eframe::App for Gui {
                                     local_player_index: None,
                                     playback_frames: 0,
                                     match_start_tick: None,
+                                    frame_times: std::sync::Arc::new(Vec::new()),
                                 });
                             }
                         }

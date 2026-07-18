@@ -129,7 +129,7 @@ fn build_safe_echos(tick: i32, message: &str) -> Vec<(i32, String)> {
 
 // ── Batch queue builder ───────────────────────────────────────────────────────
 
-pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig) -> Result<Vec<PatchJob>, std::io::Error> {
+pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig, global_arrays: &std::collections::HashMap<String, std::sync::Arc<Vec<f32>>>) -> Result<Vec<PatchJob>, std::io::Error> {
     // tickrate is extracted dynamically from streaks per-demo
     let mut grouped: std::collections::HashMap<(String, Option<String>), Vec<CaptureStreak>> = std::collections::HashMap::new();
     for streak in raw_streaks {
@@ -252,6 +252,20 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
         // Sort by start_tick in ascending order
         streaks.sort_by_key(|s| s.start_tick);
 
+        let demo_filename = std::path::Path::new(&source_demo)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let demo_frame_times = global_arrays
+            .get(&demo_filename)
+            .cloned()
+            .unwrap_or_default();
+        let total_demo_frames = if demo_frame_times.is_empty() {
+            streaks.first().map(|s| s.frame_times.len() as i32).unwrap_or(0)
+        } else {
+            demo_frame_times.len() as i32
+        };
+
         // One svc_director STUFFTEXT event per streak — label mirrors the highlight table:
         // "#<row>: <kill_count> kills: <timeline_string>"
         let mut director_events: Vec<(i32, String)> = streaks.iter().enumerate().map(|(i, s)| {
@@ -262,8 +276,8 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
         if let Some(first_streak) = streaks.first() {
             let match_tick = first_streak.match_start_tick.unwrap_or(0);
             director_events.push((match_tick, "echo [dod-tools] MATCH_START".to_string()));
-            let end_tick = first_streak.frame_times.len().saturating_sub(1) as i32;
-            director_events.push((end_tick, "echo [dod-tools] DEMO_END".to_string()));
+            let demo_end_tick = total_demo_frames;
+            director_events.push((demo_end_tick, "echo [dod-tools] DEMO_END".to_string()));
         }
         director_events.sort_by_key(|e| e.0);
 
@@ -402,16 +416,34 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
         for (i, streak) in merged_streaks.iter().enumerate() {
 
 
-            let frame_times = &streak.frame_times;
-            let absolute_final_frame = frame_times.len() as i32;
+            let streak_demo_filename = std::path::Path::new(&streak.source_demo)
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let frame_times_ref = global_arrays
+                .get(&streak_demo_filename)
+                .map(|a| a.as_slice())
+                .unwrap_or_else(|| streak.frame_times.as_slice());
+
+            let absolute_final_frame = frame_times_ref.len() as i32;
             let exit_frame = absolute_final_frame.saturating_sub(5);
             let danger_zone = absolute_final_frame.saturating_sub(10);
 
-            let record_start_tick = find_tick_backwards(streak.start_tick as usize, config.record_start_lead, frame_times);
-            let s_speed_tick = find_tick_backwards(record_start_tick.max(0) as usize, 3.0, frame_times);
-            let s_sound_tick = find_tick_backwards(record_start_tick.max(0) as usize, 1.0, frame_times);
-            let mut r_stop = find_tick_forwards(streak.end_tick as usize, config.record_stop_trail, frame_times);
-            let mut s_end = find_tick_forwards(r_stop.max(0) as usize, config.post_roll_seconds, frame_times);
+            let target_float_time = streak.viewdemo_times.get(streak.start_index).copied()
+                .or_else(|| streak.kills.get(streak.start_index).map(|k| k.1))
+                .unwrap_or(0.0);
+            let physical_frame = frame_times_ref.iter().position(|&t| t >= target_float_time).unwrap_or(0);
+
+            let target_end_float_time = streak.viewdemo_times.get(streak.end_index.min(streak.viewdemo_times.len().saturating_sub(1))).copied()
+                .or_else(|| streak.kills.get(streak.end_index.min(streak.kills.len().saturating_sub(1))).map(|k| k.1))
+                .unwrap_or(0.0);
+            let physical_end_frame = frame_times_ref.iter().position(|&t| t >= target_end_float_time).unwrap_or(0);
+
+            let record_start_tick = find_tick_backwards(physical_frame, config.record_start_lead, frame_times_ref);
+            let s_speed_tick = find_tick_backwards(record_start_tick.max(0) as usize, 3.0, frame_times_ref);
+            let s_sound_tick = find_tick_backwards(record_start_tick.max(0) as usize, 1.0, frame_times_ref);
+            let mut r_stop = find_tick_forwards(physical_end_frame, config.record_stop_trail, frame_times_ref);
+            let mut s_end = find_tick_forwards(r_stop.max(0) as usize, config.post_roll_seconds, frame_times_ref);
 
             let mut is_clutch = false;
             if s_end >= danger_zone {
@@ -432,14 +464,14 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
                 };
                 let target_tick = match custom.relation {
                     CommandRelation::Before => {
-                        let mut t = find_tick_backwards(streak.start_tick as usize, custom.offset, frame_times);
+                        let mut t = find_tick_backwards(physical_frame, custom.offset, frame_times_ref);
                         if t == s_speed_tick || t == s_sound_tick || t == record_start_tick {
                             t += 1;
                         }
                         t
                     }
                     CommandRelation::After => {
-                        let mut t = find_tick_forwards(streak.end_tick as usize, custom.offset, frame_times);
+                        let mut t = find_tick_forwards(physical_end_frame, custom.offset, frame_times_ref);
                         if t == r_stop {
                             t += 1;
                         }
@@ -761,8 +793,9 @@ pub fn build_preview_patch_jobs(
         if let Some(first_streak) = streaks.first() {
             let match_frame_idx = 0; // Float time unavailable for match start
             director_events.push((match_frame_idx, "echo [dod-tools] MATCH_START".to_string()));
-            let end_tick = first_streak.frame_times.len().saturating_sub(1) as i32;
-            director_events.push((end_tick, "echo [dod-tools] DEMO_END".to_string()));
+            let total_demo_frames = if first_streak.total_demo_frames > 0 { first_streak.total_demo_frames } else { first_streak.frame_times.len() as i32 };
+            let demo_end_tick = total_demo_frames;
+            director_events.push((demo_end_tick, "echo [dod-tools] DEMO_END".to_string()));
         }
         director_events.sort_by_key(|e| e.0);
 
@@ -967,7 +1000,7 @@ mod tests {
             },
         ];
 
-        let jobs = build_batch_queue(raw_streaks, &config).unwrap();
+        let jobs = build_batch_queue(raw_streaks, &config, &std::collections::HashMap::new()).unwrap();
         assert_eq!(jobs.len(), 2);
         
         let primer = &jobs[0];

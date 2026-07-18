@@ -298,6 +298,8 @@ pub struct DemoData {
     pub playback_frames: i32,
     #[serde(default)]
     pub match_start_tick: Option<i32>,
+    #[serde(skip)]
+    pub frame_times: std::sync::Arc<Vec<f32>>,
 }
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct CaptureJob {
