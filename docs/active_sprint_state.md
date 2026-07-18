@@ -1,7 +1,7 @@
 ## Web AI State
-* **Current Goal:** Transition to the next engineering backlog item (Magic Number Audit). Ensure the timeline hydration and Tick 0 bugs are fully resolved across all edge cases (fresh scan and project load).
-* **Last Edited Component:** `native/src/patch/builder.rs` (`find_tick_backwards`, `find_tick_forwards`, `build_batch_queue`).
-* **Unresolved Bugs:** None.
+* **Current Goal:** Execute the Magic Number Re-Audit across the patcher modules without altering underlying demo parsing logic boundaries (specifically `type_byte == 5`).
+* **Last Edited Component:** `docs/` trackers (`staging_lessons.md`, `bugs.md`, `active_sprint_state.md`, `engineering_backlog.md`).
+* **Unresolved Bugs:** None. The Tick 0 domain mismatch is fully resolved.
 
 ## Active Epics
 - **Dynamic Drive Failover:** COMPLETED
@@ -11,7 +11,7 @@
   - **UI/UX Polish:** Integrated dynamic vector list reordering (⬆/⬇ swap controls), removed deprecated individual directory pickers, and mounted a global "Total Export Pool Free" indicator on the Render view.
 
 ## IDE AI State
-* **Overarching Goal:** Execute a Magic Number Audit across the patch module to scan the codebase for hardcoded limits and consolidate them as clean configuration constants.
-* **Last Edited File:** `native/src/patch/builder.rs`.
-* **Next Intended Edit:** Scan the patch/ and bin/ crates to locate remaining hardcoded numbers.
-* **Status:** Resolved all compilation errors and verified tick injection calculations on both scenario paths (fresh scans and project loads) via `check_ticks`. Code builds cleanly and is ready for constants refactoring.
+* **Overarching Goal:** Execute the Magic Number Re-Audit to scan and refactor all hardcoded magic numbers into shared module constants.
+* **Last Edited File:** `docs/active_sprint_state.md`.
+* **Next Intended Edit:** `native/src/patch/mod.rs`.
+* **Status:** Workspace prepared and trackers synchronized. Standing by for session reset.
