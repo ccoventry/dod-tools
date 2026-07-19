@@ -1,7 +1,7 @@
 # Engineering Backlog
 
 ## 📋 General Backlog (Future Roadmap Items)
-- [ ] Refactor: Isolate native engine stream slicing mechanisms behind explicit `target_arch` macro controls.
+- [x] Refactor: Isolate native engine stream slicing mechanisms behind explicit `target_arch` macro controls.
 
 ## Immediate Tasks (Next Session)
 - [x] Task: Magic Number Audit - Scan the codebase for hardcoded magic numbers (e.g., buffer sizes, static offsets, byte limits) and evaluate extracting them into shared module-level constants.

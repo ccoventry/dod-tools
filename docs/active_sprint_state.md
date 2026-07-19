@@ -1,6 +1,6 @@
 ## Web AI State
-* **Current Goal:** Execute the Magic Number Re-Audit across the patcher modules without altering underlying demo parsing logic boundaries (specifically `type_byte == 5`).
-* **Last Edited Component:** `docs/` trackers (`staging_lessons.md`, `bugs.md`, `active_sprint_state.md`, `engineering_backlog.md`).
+* **Current Goal:** Isolate native engine stream slicing mechanisms behind `#[cfg(not(target_arch = "wasm32"))]` conditional compilation gates to ensure WASM GUI compilation safety.
+* **Last Edited Component:** `native/src/patch/mod.rs`.
 * **Unresolved Bugs:** None. The Tick 0 domain mismatch is fully resolved.
 
 ## Active Epics
@@ -11,7 +11,7 @@
   - **UI/UX Polish:** Integrated dynamic vector list reordering (⬆/⬇ swap controls), removed deprecated individual directory pickers, and mounted a global "Total Export Pool Free" indicator on the Render view.
 
 ## IDE AI State
-* **Overarching Goal:** Execute the Magic Number Re-Audit to scan and refactor all hardcoded magic numbers into shared module constants.
-* **Last Edited File:** `docs/active_sprint_state.md`.
-* **Next Intended Edit:** `native/src/patch/mod.rs`.
-* **Status:** Workspace prepared and trackers synchronized. Standing by for session reset.
+* **Overarching Goal:** Isolate native engine stream slicing mechanisms behind `#[cfg(not(target_arch = "wasm32"))]` conditional compilation gates to ensure WASM GUI compilation safety.
+* **Last Edited File:** `native/src/patch/mod.rs`.
+* **Next Intended Edit:** Pending review.
+* **Status:** Workspace prepared and trackers synchronized.
