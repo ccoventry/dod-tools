@@ -1,6 +1,6 @@
 ## Web AI State
-* **Current Goal:** Isolate native engine stream slicing mechanisms behind `#[cfg(not(target_arch = "wasm32"))]` conditional compilation gates to ensure WASM GUI compilation safety.
-* **Last Edited Component:** `native/src/patch/mod.rs`.
+* **Current Goal:** Purge obsolete legacy `batch_queue.rs` component and update trackers to close the Batch Queue UI integration milestone.
+* **Last Edited Component:** `docs/milestones.md`.
 * **Unresolved Bugs:** None. The Tick 0 domain mismatch is fully resolved.
 
 ## Active Epics
@@ -11,7 +11,7 @@
   - **UI/UX Polish:** Integrated dynamic vector list reordering (⬆/⬇ swap controls), removed deprecated individual directory pickers, and mounted a global "Total Export Pool Free" indicator on the Render view.
 
 ## IDE AI State
-* **Overarching Goal:** Isolate native engine stream slicing mechanisms behind `#[cfg(not(target_arch = "wasm32"))]` conditional compilation gates to ensure WASM GUI compilation safety.
-* **Last Edited File:** `native/src/patch/mod.rs`.
+* **Overarching Goal:** Purge obsolete legacy `batch_queue.rs` component and update trackers to close the Batch Queue UI integration milestone.
+* **Last Edited File:** `docs/milestones.md`.
 * **Next Intended Edit:** Pending review.
 * **Status:** Workspace prepared and trackers synchronized.

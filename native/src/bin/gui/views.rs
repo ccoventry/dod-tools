@@ -87,7 +87,6 @@ pub mod scoreboard;
 pub mod summary;
 pub mod team_details;
 pub mod timeline;
-pub mod batch_queue;
 pub mod settings;
 pub mod capture_studio;
 #[cfg(not(target_arch = "wasm32"))]
@@ -108,8 +107,6 @@ pub use scoreboard::scoreboard_ui;
 pub use summary::header_ui;
 pub use team_details::team_details_ui;
 pub use timeline::team_score_timeline_ui;
-#[allow(unused_imports)]
-pub use batch_queue::batch_queue_ui;
 
 pub fn report_ui(
     file_info: Option<&FileInfo>,
