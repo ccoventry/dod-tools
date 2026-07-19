@@ -28,7 +28,7 @@ IMMUTABLE MILESTONES ARCHITECTURE RULES:
 ## 📋 General Backlog (Future Roadmap Items)
 
 ### Task B: Unify Killstreak Segmentation (demo_parser.rs)
-- [ ] Refactor: Life-Bounded Streaks — Extracted life-bounded streak definitions from the `analysis` crate. The Capture Studio now natively limits "killstreaks" to events bounded by `DeathMsg` or `ServerReset`, avoiding arbitrary temporal-gap logic that causes recording cross-talk. (Note: Continue unification)
+- [x] Refactor: Life-Bounded Streaks — Extracted life-bounded streak definitions from the `analysis` crate. The Capture Studio now natively limits "killstreaks" to events bounded by `DeathMsg` or `ServerReset`, avoiding arbitrary temporal-gap logic that causes recording cross-talk.
 
 ### Task D: Architectural Decoupling & File Cleanup
 - [ ] Chore: Context — Review the project to decouple logic, abstract UI components into separate modules/files, and clean up deprecated code. This is an ongoing radar item to maintain code health and readability.
