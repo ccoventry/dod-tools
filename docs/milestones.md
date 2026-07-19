@@ -34,7 +34,7 @@ IMMUTABLE MILESTONES ARCHITECTURE RULES:
 - [ ] Chore: Context — Review the project to decouple logic, abstract UI components into separate modules/files, and clean up deprecated code. This is an ongoing radar item to maintain code health and readability.
 
 ### Phase 11 & 12 Enhancements (Deferred)
-- [ ] Feature: Batch Queue UI Re-integration — Restore and integrate the `batch_queue_ui` to allow users to queue up multiple demos for continuous, unattended processing.
+- [x] Feature: Batch Queue UI Re-integration — Absorbed by the Master-Detail workspace UI, which supports native batch queuing, scheduling, and multi-demo dispatch.
 - [ ] Task: HLTV Parser Upgrade — Reverse-engineer the GoldSrc HLTV proxy byte structure in `patch.rs` to allow the engine to parse massive server-side demos and generate player-specific queues.
 - [ ] Task: Rendering & Finalization — Handling the resulting `.mov` files.
 
