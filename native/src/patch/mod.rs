@@ -16,6 +16,7 @@ pub const MAX_CONSOLE_CMD_LEN: usize = 64;
 pub const MAX_CONSOLE_CMD_SAFE_LEN: usize = 63;
 pub const MAX_DIRECTOR_STUFFTEXT_LEN: usize = 253;
 pub const IO_BUFFER_CAPACITY: usize = 262_144;
+pub const MAX_PAYLOAD_LIMIT_BYTES: usize = 2_097_152;
 
 // Binary Frame & Header Sizes
 pub const HLTV_HEADER_SIZE: usize = 512;
@@ -23,7 +24,9 @@ pub const DEMO_HEADER_SIZE: usize = 544;
 pub const DIRECTORY_OFFSET_POS: usize = 540;
 pub const FRAME_HEADER_SIZE: usize = 9;
 pub const NETMSG_INFO_SIZE: usize = 464;
+pub const NETWORK_HEADER_ALIGNMENT: usize = 468;
 pub const DIR_ENTRY_SIZE: usize = 92;
+pub const SCANNER_SECTION_BOUNDARY: u8 = 5;
 
 // Frame Type Payload Sizes
 pub const CMD_FRAME_SIZE: usize = 64;

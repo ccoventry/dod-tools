@@ -2,7 +2,8 @@
 // Life-bounded highlight scanner and HLTV detection.
 // All three functions perform std::fs I/O — native-only.
 
-use crate::patch::types::{CaptureStreak, HighlightStatus, MAX_PAYLOAD_SIZE};
+use crate::patch::types::{CaptureStreak, HighlightStatus};
+use crate::patch::{MAX_PAYLOAD_LIMIT_BYTES, NETWORK_HEADER_ALIGNMENT, SCANNER_SECTION_BOUNDARY};
 
 // ── HLTV guard ────────────────────────────────────────────────────────────────
 
@@ -51,7 +52,7 @@ pub fn scan_demo_for_highlights(
             if type_byte > 9 && type_byte != 255 {
                 break;
             }
-            if type_byte == 5 {
+            if type_byte == SCANNER_SECTION_BOUNDARY {
                 break;
             }
             if type_byte != 255 {
@@ -61,10 +62,10 @@ pub fn scan_demo_for_highlights(
             pos += crate::patch::FRAME_HEADER_SIZE;
             match type_byte {
                 0 | 1 => {
-                    let total_fixed_size = crate::patch::NETMSG_INFO_SIZE + 4;
+                    let total_fixed_size = NETWORK_HEADER_ALIGNMENT;
                     if pos + total_fixed_size > end { break; }
                     let len = i32::from_le_bytes(bytes[pos+crate::patch::NETMSG_INFO_SIZE..pos+total_fixed_size].try_into().unwrap()) as usize;
-                    if len > MAX_PAYLOAD_SIZE {
+                    if len > MAX_PAYLOAD_LIMIT_BYTES {
                         return Err(format!("Scanner alignment lost! Read impossible packet size: {} bytes at pos {}", len, pos));
                     }
                     pos += total_fixed_size + len;

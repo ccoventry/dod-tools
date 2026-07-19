@@ -5,7 +5,8 @@
 
 use std::sync::{Arc, atomic::AtomicBool};
 
-pub const MAX_PAYLOAD_SIZE: usize = 2_000_000;
+pub const MAX_PAYLOAD_LIMIT_BYTES: usize = 2_097_152;
+pub const MAX_PAYLOAD_SIZE: usize = MAX_PAYLOAD_LIMIT_BYTES;
 
 // ── Command scheduling ────────────────────────────────────────────────────────
 
