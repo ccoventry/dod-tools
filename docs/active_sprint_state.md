@@ -1,8 +1,6 @@
 ## Web AI State
-* **Current Goal:** Safely hijack the HLTV Auto-Director by forcing the camera to a specific Player ID.
-* **Last Evaluated:** `native/src/patch/engine.rs` (StreamPatcher block).
-* **Blocker/Pivot:** Blind byte injection via `diagnostic_hltv_injector.rs` failed due to strict protocol constraints.
-* **Next Action:** Implement a custom deserializer loop within the `NetworkMessage` match arm in `engine.rs` to intercept `svc_director` packets, mutate the target entity ID in-place, and rewrite the payload at the exact original byte length.
+* **Current Goal:** Awaiting human verification of HLTV active frame injection.
+* **Last Evaluated:** `native/src/patch/engine.rs` (StreamPatcher `NetworkMessage` match arm: Active standalone frame injection (`DRC_CMD_INEYE`)).
 
 ## Active Epics
 - **Dynamic Drive Failover:** COMPLETED
@@ -12,7 +10,5 @@
   - **UI/UX Polish:** Integrated dynamic vector list reordering (⬆/⬇ swap controls), removed deprecated individual directory pickers, and mounted a global "Total Export Pool Free" indicator on the Render view.
 
 ## IDE AI State
-* **Overarching Goal:** Safely hijack the HLTV Auto-Director by forcing the camera to a specific Player ID via in-place `svc_director` payload mutation.
-* **Last Edited File:** `docs/staging_lessons.md`.
-* **Next Intended Edit:** `native/src/patch/engine.rs`.
-* **Status:** Diagnostic analysis complete; ready for in-place packet deserializer implementation.
+* **Overarching Goal:** Awaiting human verification of HLTV active frame injection.
+* **Status:** Active frame injection implementation complete; standing by for compilation and runtime validation.

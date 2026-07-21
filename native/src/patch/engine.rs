@@ -82,6 +82,37 @@ fn write_director_event_payload(
     Ok(total_bytes as i32)
 }
 
+fn write_ineye_hijack_payload(
+    writer: &mut std::io::BufWriter<std::fs::File>,
+    time: f32,
+    tick: i32,
+    info_block: &[u8],
+    target_player_id: u8,
+) -> std::io::Result<i32> {
+    use std::io::Write;
+
+    // Synthesise a minimal svc_director DRC_CMD_INEYE packet:
+    //   byte 0: 51  (SVC_DIRECTOR)
+    //   byte 1:  2  (length field = 1 command byte + 1 entity byte)
+    //   byte 2:  5  (DRC_CMD_INEYE)
+    //   byte 3: target_player_id
+    let payload: &[u8] = &[51, 2, 5, target_player_id];
+
+    writer.write_all(&[1_u8])?;                    // type (NetworkMessage)
+    writer.write_all(&time.to_le_bytes())?;
+    writer.write_all(&tick.to_le_bytes())?;
+    writer.write_all(info_block)?;
+
+    // payload_length includes the trailing svc_nop (1 byte)
+    let msg_len = (payload.len() as u32) + 1;
+    writer.write_all(&msg_len.to_le_bytes())?;
+    writer.write_all(payload)?;
+    writer.write_all(&[1_u8])?;                    // svc_nop
+
+    let total_bytes = crate::patch::FRAME_HEADER_SIZE + NETWORK_HEADER_ALIGNMENT + payload.len() + 1;
+    Ok(total_bytes as i32)
+}
+
 // ── Stream patcher ────────────────────────────────────────────────────────────
 
 pub struct StreamPatcher {
@@ -328,11 +359,20 @@ impl StreamPatcher {
                     scratch_buf.resize(crate::patch::NETMSG_INFO_SIZE, 0);
                     read_exact(&mut reader, &mut scratch_buf, "NetworkMessage Info")?;
 
-                    // Inject svc_director STUFFTEXT events at highlight start ticks
+                    // Inject svc_director STUFFTEXT events at highlight start ticks;
+                    // also synthesise a DRC_CMD_INEYE hijack frame to override the auto-director camera.
                     while let Some((target_tick, _)) = director_queue.front() {
                         if playback_started && frame_counter >= *target_tick {
                             let (_, label) = director_queue.pop_front().unwrap();
                             let b = write_director_event_payload(&mut writer, time, file_tick, &scratch_buf, &label)?;
+                            update_injection(pos, b, 1);
+                            bytes_injected += b;
+
+                            let target_player_id = job.target_player
+                                .as_ref()
+                                .and_then(|s| s.parse::<u8>().ok())
+                                .unwrap_or(2);
+                            let b = write_ineye_hijack_payload(&mut writer, time, file_tick, &scratch_buf, target_player_id)?;
                             update_injection(pos, b, 1);
                             bytes_injected += b;
                         } else {
@@ -346,7 +386,6 @@ impl StreamPatcher {
 
                     let mut len_buf = [0u8; 4];
                     read_exact(&mut reader, &mut len_buf, "NetworkMessage Length")?;
-                    writer.write_all(&len_buf)?;
                     let msg_len = u32::from_le_bytes(len_buf) as usize;
 
                     if msg_len > MAX_PAYLOAD_LIMIT_BYTES {
@@ -358,7 +397,11 @@ impl StreamPatcher {
                         return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Parser alignment lost"));
                     }
 
-                    std::io::copy(&mut reader.by_ref().take(msg_len as u64), &mut writer)?;
+                    let mut net_buf = vec![0u8; msg_len];
+                    read_exact(&mut reader, &mut net_buf, "NetworkMessage Body")?;
+
+                    writer.write_all(&len_buf)?;
+                    writer.write_all(&net_buf)?;
                 }
             }
         }

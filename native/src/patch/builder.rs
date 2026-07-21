@@ -213,7 +213,8 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
     ));
     
     helper_cfg_content.push_str("# Global aliases\n");
-    helper_cfg_content.push_str("alias sys_normal_speed \"clear; host_framerate 0\"\n");
+    helper_cfg_content.push_str("alias sys_autodir \"spec_autodirector 1\"\n");
+    helper_cfg_content.push_str("alias sys_normal_speed \"sys_autodir; clear; host_framerate 0\"\n");
     helper_cfg_content.push_str("alias sys_fast_forward \"host_framerate 0.05\"\n");
     helper_cfg_content.push_str("alias sys_sound \"stopsound\"\n");
     helper_cfg_content.push_str("alias sys_record_start \"mirv_recordmovie_start; stopsound\"\n");
@@ -226,6 +227,7 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
     if total_jobs > 0 {
         let first_source = sorted_groups[0].0.0.clone();
         let mut primer_init = config.init_commands.clone();
+        primer_init.push("sys_autodir".to_string());
         
         let separate_hud_str = if config.separate_hud { "1" } else { "0" };
         primer_init.push(format!("mirv_movie_separate_hud {}", separate_hud_str));
@@ -571,6 +573,7 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
         scheduled_commands.sort_by_key(|(tick, _)| *tick);
 
         let mut final_init_commands = config.init_commands.clone();
+        final_init_commands.push("sys_autodir".to_string());
 
         final_init_commands.push(format!("mirv_movie_fps {}", config.capture_fps));
 
