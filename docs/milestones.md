@@ -19,7 +19,7 @@ IMMUTABLE MILESTONES ARCHITECTURE RULES:
 - [x] Chore: Standardize Milestones Architecture — Design and document a strict, immutable markdown layout for this file to completely prevent AI-driven format drift across future sessions.
 
 ### Frontend Migration
-- [ ] Feature: Tauri & Vite Integration — Ongoing migration of the frontend stack from native `egui` to a Tauri + Vite architecture. (Note: Excluded from primary architecture docs until finalized).
+- [x] Feature: Tauri & Vite Integration — Completed frontend stack migration from native `egui` to Tauri + Vite architecture with full Master-Detail UI feature parity, IPC bridge, native folder pickers, and `@tauri-apps/plugin-fs` project session persistence.
 
 ## 📋 General Backlog (Future Roadmap Items)
 
