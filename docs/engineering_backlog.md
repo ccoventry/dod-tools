@@ -1,12 +1,15 @@
 # Engineering Backlog
 
 ## 📋 General Backlog (Future Roadmap Items)
-- [x] Refactor: Isolate native engine stream slicing mechanisms behind explicit `target_arch` macro controls.
 
 ## Immediate Tasks (Next Session)
-- [x] Task: Magic Number Audit - Scan the codebase for hardcoded magic numbers (e.g., buffer sizes, static offsets, byte limits) and evaluate extracting them into shared module-level constants.
+- [ ] Feature: Tauri & Vite Integration — Ongoing migration of the frontend stack from native `egui` to a Tauri + Vite architecture.
 
 ## Completed
+- [x] Task: Magic Number Audit - Scan the codebase for hardcoded magic numbers (e.g., buffer sizes, static offsets, byte limits) and extract them into shared module-level constants.
+- [x] Refactor: Isolate native engine stream slicing mechanisms behind explicit `target_arch` macro controls.
+- [x] **HLTV Active Frame Injection:** Implemented and verified active standalone `DRC_CMD_INEYE` frame injection in `native/src/patch/engine.rs` (StreamPatcher `NetworkMessage` match arm) with dynamic `target_player_id` extraction from capture streaks.
+- [x] **Dynamic Drive Failover:** Implemented AOT capture routing, duration math parity, JIT render routing, and UI/UX export pool indicators with dynamic vector list reordering.
 - [x] **Long Demo Validation & Packet Audit:** Verify parsing and slicing stability on extended demo files (>30 mins) to ensure packet index alignments do not drift.
 - [x] **Global Deprecation & Cruft Purge:** Aggressively identify and delete all legacy fallback paths, unused variables, and historical code workarounds across the UI and patcher crates. *Constraint: Backwards compatibility is not required for the current application lifecycle phase.*
 - [x] Feature: Add match start and demo end director events in `native/src/patch/builder.rs` for each demo (requires piping `match_start_tick` from `AnalyzerState` to `DemoData`).
