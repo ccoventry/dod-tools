@@ -9,6 +9,7 @@
 - [ ] **Global Deprecation & Cruft Purge:** Aggressively identify and delete all legacy fallback paths, unused variables, and historical code workarounds across the UI and patcher crates. *Constraint: Backwards compatibility is not required for the current application lifecycle phase.*
 
 ## Completed
+- [x] **Vite Master-Detail Workspace UI:** Implemented top-pane Master List Table and bottom-pane Detail View in `desktop-studio/src/main.js` and `index.html`.
 - [x] Feature: Implement "Session Restore" on startup (Detects unclean exits and prompts user to restore state).
 - [x] Review and finalize the Rust `Drop` trait "Garbage Collector" to ensure `DOD_TOOLS_EXIT_TRIGGER` and junction links are safely cleaned up on program exit/panic.
 - [x] Feature: Set up an automated directory watch mechanism looking out for local `DOD_BATCH_DONE` signals.
