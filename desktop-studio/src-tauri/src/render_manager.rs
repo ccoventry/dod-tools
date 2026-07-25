@@ -1,7 +1,7 @@
 // desktop-studio/src-tauri/src/render_manager.rs
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 use native::hlcr::scanner::{scan_folder_background, ClipData};
@@ -126,10 +126,6 @@ pub async fn execute_render_batch(
             *current_status.lock().unwrap() = "No takes found to render".to_string();
             return;
         }
-
-        let mut config = native::hlcr::config::RenderConfig::default();
-        config.video.crf = payload.crf;
-        config.video.preset = payload.preset;
 
         for (idx, clip) in jobs.into_iter().enumerate() {
             if cancel_token.load(Ordering::SeqCst) {
