@@ -119,7 +119,7 @@ impl HlcrState {
 
         let source_dir_clone = source_dir.clone();
         let handle = std::thread::spawn(move || {
-            scan_folder_background(source_dir_clone, clip_tx, status_tx)
+            scan_folder_background(vec![source_dir_clone], clip_tx, status_tx)
         });
         self.scan_thread = Some(handle);
     }
