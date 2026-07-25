@@ -1,4 +1,5 @@
-import { open } from '@tauri-apps/plugin-dialog';
+import { open, save } from '@tauri-apps/plugin-dialog';
+import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
 import { invoke } from '@tauri-apps/api/core';
 
 window.addEventListener("DOMContentLoaded", () => {
@@ -7,6 +8,63 @@ window.addEventListener("DOMContentLoaded", () => {
   let renderFolders = [];
   let currentScannedDemos = [];
   let selectedDemoIdx = null;
+
+  // Save Project Session
+  const saveProjectBtn = document.querySelector('#save-project-btn');
+  if (saveProjectBtn) {
+    saveProjectBtn.addEventListener('click', async () => {
+      if (currentScannedDemos.length === 0) {
+        console.warn("No scanned demo state to save.");
+        return;
+      }
+      try {
+        const filePath = await save({
+          title: 'Save Studio Project Session',
+          defaultPath: 'dod_project.json',
+          filters: [{ name: 'JSON Project File', extensions: ['json'] }]
+        });
+        if (filePath) {
+          const projectData = JSON.stringify({
+            version: "0.10.0",
+            scanPaths: scanPaths,
+            demos: currentScannedDemos
+          }, null, 2);
+          await writeTextFile(filePath, projectData);
+          document.querySelector('#scan-status').textContent = `Status: Project session saved successfully to ${filePath}`;
+        }
+      } catch (err) {
+        console.error("Save project error:", err);
+      }
+    });
+  }
+
+  // Load Project Session
+  const loadProjectBtn = document.querySelector('#load-project-btn');
+  if (loadProjectBtn) {
+    loadProjectBtn.addEventListener('click', async () => {
+      try {
+        const selected = await open({
+          multiple: false,
+          filters: [{ name: 'JSON Project File', extensions: ['json'] }]
+        });
+        if (selected) {
+          const content = await readTextFile(selected);
+          const data = JSON.parse(content);
+          if (data && data.demos) {
+            currentScannedDemos = data.demos;
+            selectedDemoIdx = currentScannedDemos.length > 0 ? 0 : null;
+            renderMasterList(currentScannedDemos);
+            if (currentScannedDemos.length > 0) {
+              renderDetailView(currentScannedDemos[0]);
+            }
+            document.querySelector('#scan-status').textContent = `Status: Loaded ${currentScannedDemos.length} demos from project file`;
+          }
+        }
+      } catch (err) {
+        console.error("Load project error:", err);
+      }
+    });
+  }
 
   // Folder paths management
   document.querySelector('#add-folder-btn').addEventListener('click', () => {
