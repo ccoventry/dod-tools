@@ -1,12 +1,10 @@
 ## Web AI State
-* **Current Goal:** Frontend Migration (Tauri & Vite Integration on branch `feature/tauri-migration`).
-* **Last Evaluated:** `desktop-studio/` workspace directory and remote branch `origin/feature/tauri-migration`.
+* **Current Goal:** Frontend Migration Completed (Tauri & Vite Integration on branch `feature/tauri-migration`).
+* **Last Evaluated:** `desktop-studio/src/main.js`, `index.html`, and `src-tauri/src/lib.rs` (Full feature parity achieved with native IPC bridge, Master-Detail UI, dialogs, and native FS persistence).
 
 ## Active Epics
-- **HLTV Active Frame Injection:** COMPLETED
-  - **Standalone Frame Injection:** Implemented active standalone `DRC_CMD_INEYE` frame injection in `native/src/patch/engine.rs` within the StreamPatcher `NetworkMessage` match arm with dynamic `target_player_id` extraction from capture streaks.
-- **Frontend Migration:** IN PROGRESS (Branch: `feature/tauri-migration`)
-  - **Tauri & Vite Integration:** Transitioning frontend stack to Tauri + Vite architecture in the `desktop-studio/` workspace (`src-tauri/`).
+- **Frontend Migration:** COMPLETED (Branch: `feature/tauri-migration`)
+  - **Tauri & Vite Integration:** Completed frontend stack migration from native `egui` to Tauri + Vite architecture with full Master-Detail UI feature parity, native IPC handlers, dialogs, and `@tauri-apps/plugin-fs` session persistence.
 - **Dynamic Drive Failover:** COMPLETED
   - **AOT Capture Routing:** Automated Ahead-Of-Time capacity simulation loop that calculates disk footprint before execution and deploys NTFS directory junctions to swap output drives when a disk drops below 15 GB.
   - **Duration Math Parity:** Abstracted a unified `calculate_total_capture_duration` method on `PatcherConfig` to ensure UI disk estimates and backend AOT math accurately isolate recording boundaries and exclude non-capturing engine phases.
@@ -15,4 +13,5 @@
 
 ## IDE AI State
 * **Overarching Goal:** Frontend Migration (Tauri & Vite Integration).
-* **Status:** Active frame injection implementation and dynamic target player index extraction verified and completed.
+* **Current Branch:** feature/tauri-migration
+* **Status:** Frontend Migration completed on `feature/tauri-migration`. Documentation fully synchronized across workspace. Standing by.

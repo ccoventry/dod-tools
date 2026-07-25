@@ -24,7 +24,7 @@ IMMUTABLE MILESTONES ARCHITECTURE RULES:
 - [x] Task: AOT Capture Routing & JIT Render Routing — Automated capacity simulation loop, unified duration math parity, FFmpeg mezzanine threshold polling (>20 GB guard), and NTFS directory junction drive swapping below 15 GB.
 
 ### Frontend Migration
-- [ ] Feature: Tauri & Vite Integration — Ongoing migration of the frontend stack from native `egui` to a Tauri + Vite architecture. (Note: Excluded from primary architecture docs until finalized).
+- [x] Feature: Tauri & Vite Integration — Completed frontend stack migration from native `egui` to Tauri + Vite architecture with full Master-Detail UI feature parity, IPC bridge, native folder pickers, and `@tauri-apps/plugin-fs` project session persistence.
 
 ### UI/UX Polish
 - [x] Feature: Workspace Layout Updates - Transposed paths and disk space estimators, added highlight status columns to the Master List, removed legacy folder pickers, and mounted a global "Total Export Pool Free" indicator with dynamic vector list reordering.
