@@ -45,6 +45,11 @@ async fn scan_directory(paths: Vec<String>) -> Result<Vec<capture_manager::Seria
     capture_manager::scan_directory_impl(paths).await
 }
 
+#[tauri::command]
+async fn scan_demos(paths: Vec<String>) -> Result<Vec<capture_manager::SerializedDemo>, String> {
+    capture_manager::scan_directory_impl(paths).await
+}
+
 // ── App entry point ────────────────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -60,6 +65,7 @@ pub fn run() {
             cancel_capture_batch,
             capture_status,
             scan_directory,
+            scan_demos,
             scan_render_directories,
             execute_render_batch,
             render_status,

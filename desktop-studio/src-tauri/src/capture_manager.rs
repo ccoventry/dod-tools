@@ -336,9 +336,7 @@ pub async fn scan_directory_impl(paths: Vec<String>) -> Result<Vec<SerializedDem
         }
 
         let rules = HighlightRules {
-            min_kills: None,
             max_time_gap: None,
-            target_players: Vec::new(),
         };
 
         let mut results = Vec::new();
