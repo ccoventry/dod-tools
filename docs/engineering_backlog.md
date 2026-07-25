@@ -3,7 +3,7 @@
 ## 📋 General Backlog (Future Roadmap Items)
 
 ## Immediate Tasks (Next Session)
-- [ ] Feature: Tauri & Vite Integration — Ongoing migration of the frontend stack from native `egui` to a Tauri + Vite architecture.
+- [ ] Feature: Tauri & Vite Integration — Audit existing scaffolding in `desktop-studio/` and `src-tauri/` on branch `feature/tauri-migration`.
 
 ## Completed
 - [x] Task: Magic Number Audit - Scan the codebase for hardcoded magic numbers (e.g., buffer sizes, static offsets, byte limits) and extract them into shared module-level constants.
