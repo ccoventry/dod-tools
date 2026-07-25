@@ -81,7 +81,8 @@ impl From<SerializedStreak> for CaptureStreak {
             total_demo_frames: s.total_demo_frames,
             demo_fps: s.demo_fps,
             viewdemo_times: s.viewdemo_times,
-            frame_times: Arc::new(Vec::new()),
+            match_start_tick: None,
+            status: native::patch::types::HighlightStatus::Pending,
         }
     }
 }
@@ -209,7 +210,7 @@ pub async fn start_capture_batch_impl(
 
     // ── Offload blocking I/O to a dedicated thread ────────────────────────────
     tokio::task::spawn_blocking(move || {
-        let patch_jobs = match build_batch_queue(raw_streaks, &patcher_config) {
+        let patch_jobs = match build_batch_queue(raw_streaks, &patcher_config, &std::collections::HashMap::new()) {
             Ok(jobs) => jobs,
             Err(e) => {
                 log::error!("build_batch_queue failed: {}", e);
@@ -341,7 +342,7 @@ pub async fn scan_directory_impl(paths: Vec<String>) -> Result<Vec<SerializedDem
 
         let mut results = Vec::new();
         for file in list {
-            if let Ok((tickrate, streaks, is_pov, local_player_index, playback_frames)) = scan_demo_for_highlights(&file, &rules) {
+            if let Ok((tickrate, streaks, is_pov, local_player_index, playback_frames, _demo_end_tick, _frame_times)) = scan_demo_for_highlights(&file) {
                 let serialized_streaks: Vec<SerializedStreak> = streaks.into_iter().map(SerializedStreak::from).collect();
                 results.push(SerializedDemo {
                     path: file.to_string_lossy().to_string(),
