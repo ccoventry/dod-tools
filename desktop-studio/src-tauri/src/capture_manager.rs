@@ -81,6 +81,7 @@ impl From<SerializedStreak> for CaptureStreak {
             total_demo_frames: s.total_demo_frames,
             demo_fps: s.demo_fps,
             viewdemo_times: s.viewdemo_times,
+            frame_times: std::sync::Arc::new(Vec::new()),
             match_start_tick: None,
             status: native::patch::types::HighlightStatus::Pending,
         }
@@ -303,7 +304,7 @@ impl From<CaptureStreak> for SerializedStreak {
 
 pub async fn scan_directory_impl(paths: Vec<String>) -> Result<Vec<SerializedDemo>, String> {
     tokio::task::spawn_blocking(move || {
-        use native::patch::{scan_demo_for_highlights, HighlightRules};
+        use native::patch::scan_demo_for_highlights;
 
         let mut list = Vec::new();
         let mut dir_stack = Vec::new();
@@ -335,10 +336,6 @@ pub async fn scan_directory_impl(paths: Vec<String>) -> Result<Vec<SerializedDem
                 }
             }
         }
-
-        let rules = HighlightRules {
-            max_time_gap: None,
-        };
 
         let mut results = Vec::new();
         for file in list {
