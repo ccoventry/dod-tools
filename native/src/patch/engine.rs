@@ -403,7 +403,7 @@ impl StreamPatcher {
                     let mut added_bytes: i32 = 0;
 
                     if let Some(ref _tp) = job.target_player {
-                        let target_player_id: u8 = 9;
+                        let target_player_id: u8 = job.streaks.first().map(|s| s.player_index as u8).unwrap_or(1);
                         let mut hijacked_buf = vec![51u8, 2, 5, target_player_id];
                         hijacked_buf.extend_from_slice(&final_net_buf);
                         final_net_buf = hijacked_buf;

@@ -11,6 +11,7 @@ IMMUTABLE MILESTONES ARCHITECTURE RULES:
 ## 🚀 Active Sprint Priorities
 
 ### Game Capture Pipeline
+- [x] Task: HLTV Active Frame Injection — Standalone `DRC_CMD_INEYE` frame injection implemented and verified in `native/src/patch/engine.rs` with dynamic `target_player_id` extraction.
 - [x] Task: Graceful Degradation for Clutch Clips — Update `builder.rs` to handle edge cases where a kill occurs inside the 3.0-second EOF danger zone. The patcher must gracefully sacrifice the post-roll and schedule the `DOD_TOOLS_EXIT_TRIGGER` exactly 5 ticks before the absolute final frame to ensure the highlight is captured without crashing the batch.
 - [x] Feature: Config Injection — Ensure the engine dynamically injects `+exec movie.cfg` into the HLAE command line arguments to preserve custom capture framerates and HUD settings.
 - [x] Task: Long Demo Validation — Validate capture sequence for 30+ minute demos.
@@ -19,11 +20,14 @@ IMMUTABLE MILESTONES ARCHITECTURE RULES:
 - [x] Chore: Standardize Milestones Architecture — Design and document a strict, immutable markdown layout for this file to completely prevent AI-driven format drift across future sessions.
 - [x] Task: Director Events Pipeline - Fixed premature DEMO_END assignment and properly anchored MATCH_START director events to the parsed frame times.
 
+### Dynamic Drive Failover
+- [x] Task: AOT Capture Routing & JIT Render Routing — Automated capacity simulation loop, unified duration math parity, FFmpeg mezzanine threshold polling (>20 GB guard), and NTFS directory junction drive swapping below 15 GB.
+
 ### Frontend Migration
 - [ ] Feature: Tauri & Vite Integration — Ongoing migration of the frontend stack from native `egui` to a Tauri + Vite architecture. (Note: Excluded from primary architecture docs until finalized).
 
 ### UI/UX Polish
-- [x] Feature: Workspace Layout Updates - Transposed paths and disk space estimators, added highlight status columns to the Master List, and removed legacy folder pickers.
+- [x] Feature: Workspace Layout Updates - Transposed paths and disk space estimators, added highlight status columns to the Master List, removed legacy folder pickers, and mounted a global "Total Export Pool Free" indicator with dynamic vector list reordering.
 
 ## 📋 General Backlog (Future Roadmap Items)
 
@@ -35,13 +39,17 @@ IMMUTABLE MILESTONES ARCHITECTURE RULES:
 
 ### Phase 11 & 12 Enhancements (Deferred)
 - [x] Feature: Batch Queue UI Re-integration — Absorbed by the Master-Detail workspace UI, which supports native batch queuing, scheduling, and multi-demo dispatch.
-- [ ] Task: HLTV Parser Upgrade — Reverse-engineer the GoldSrc HLTV proxy byte structure in `patch.rs` to allow the engine to parse massive server-side demos and generate player-specific queues.
+- [x] Task: HLTV Parser Upgrade & Active Frame Injection — Reverse-engineered GoldSrc HLTV proxy byte structure and implemented active standalone `DRC_CMD_INEYE` frame injection in `native/src/patch/engine.rs`.
 - [ ] Task: Rendering & Finalization — Handling the resulting `.mov` files.
 
 ### Task E: Google Takeout Gemini Logs Parsing (Knowledge Harvest)
 - [ ] Task: Implementation — Determine a programmatic or streamlined method to parse offline chat logs and feed them into the Knowledge Harvester to extract and deduplicate workflow protocols, constraints, and engine quirks from historical Web AI sessions.
 
 ## ✅ Completed Tasks
+
+### Codebase Audits & Architecture Maintenance (July 2026)
+- [x] Task: Magic Number Audit — Scanned codebase for hardcoded magic numbers, buffer sizes, and static offsets; extracted shared module-level constants.
+- [x] Refactor: Stream Slicing Macro Control — Isolated native engine stream slicing mechanisms behind explicit `target_arch` macro controls.
 
 ### Capture Engine Timeline Stabilization (July 1, 2026)
 - [x] Refactor: Time-Aware 0-Indexed Bounds — Resurrected `find_tick_backwards` and `find_tick_forwards` to bypass map change jumps, calculating exact bounds via float timestamps while returning engine-safe 0-indexed frame integers.
