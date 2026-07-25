@@ -32,16 +32,20 @@ impl From<ClipData> for SerializedRenderJob {
 }
 
 pub struct RenderManager {
-    pub is_running: Arc<Mutex<bool>>,
+    pub is_running: Arc<AtomicBool>,
     pub cancel_token: Arc<AtomicBool>,
+    pub active_job_index: Arc<AtomicU32>,
+    pub total_jobs_count: Arc<AtomicU32>,
     pub current_status: Arc<Mutex<String>>,
 }
 
 impl RenderManager {
     pub fn new() -> Self {
         Self {
-            is_running: Arc::new(Mutex::new(false)),
+            is_running: Arc::new(AtomicBool::new(false)),
             cancel_token: Arc::new(AtomicBool::new(false)),
+            active_job_index: Arc::new(AtomicU32::new(0)),
+            total_jobs_count: Arc::new(AtomicU32::new(0)),
             current_status: Arc::new(Mutex::new("Idle".to_string())),
         }
     }
@@ -75,91 +79,109 @@ pub async fn scan_render_directories(paths: Vec<String>) -> Result<Vec<Serialize
     .map_err(|e| format!("Task join failed: {}", e))?
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RenderBatchPayload {
+    pub render_directories: Vec<String>,
+    pub output_format: String,
+    pub crf: u8,
+    pub preset: String,
+}
+
 #[tauri::command]
 pub async fn execute_render_batch(
     state: tauri::State<'_, RenderManager>,
-    jobs: Vec<SerializedRenderJob>,
+    payload: RenderBatchPayload,
 ) -> Result<(), String> {
-    {
-        let mut running = state.is_running.lock().unwrap();
-        if *running {
-            return Err("Render batch already in progress".to_string());
-        }
-        *running = true;
+    if state.is_running.swap(true, Ordering::SeqCst) {
+        return Err("Render batch already in progress".to_string());
     }
     
-    state.cancel_token.store(false, Ordering::Relaxed);
-    *state.current_status.lock().unwrap() = "Executing...".to_string();
+    state.cancel_token.store(false, Ordering::SeqCst);
+    state.active_job_index.store(0, Ordering::SeqCst);
+    state.total_jobs_count.store(0, Ordering::SeqCst);
+    *state.current_status.lock().unwrap() = "Scanning for takes...".to_string();
 
     let cancel_token = Arc::clone(&state.cancel_token);
     let is_running = Arc::clone(&state.is_running);
+    let active_job_index = Arc::clone(&state.active_job_index);
+    let total_jobs_count = Arc::clone(&state.total_jobs_count);
     let current_status = Arc::clone(&state.current_status);
 
     tokio::spawn(async move {
-        let (update_tx, update_rx) = std::sync::mpsc::channel();
-        let config = native::hlcr::config::RenderConfig::default();
+        let (clip_tx, clip_rx) = std::sync::mpsc::channel();
+        let (status_tx, _status_rx) = std::sync::mpsc::channel();
+        let source_folders: Vec<PathBuf> = payload.render_directories.into_iter().map(PathBuf::from).collect();
 
-        let total_jobs = jobs.len();
+        scan_folder_background(source_folders, clip_tx, status_tx);
 
-        for (idx, job) in jobs.into_iter().enumerate() {
-            if cancel_token.load(Ordering::Relaxed) {
+        let mut jobs = Vec::new();
+        while let Ok(clip) = clip_rx.try_recv() {
+            jobs.push(clip);
+        }
+
+        let total = jobs.len() as u32;
+        total_jobs_count.store(total, Ordering::SeqCst);
+        if total == 0 {
+            is_running.store(false, Ordering::SeqCst);
+            *current_status.lock().unwrap() = "No takes found to render".to_string();
+            return;
+        }
+
+        let mut config = native::hlcr::config::RenderConfig::default();
+        config.video.crf = payload.crf;
+        config.video.preset = payload.preset;
+
+        for (idx, clip) in jobs.into_iter().enumerate() {
+            if cancel_token.load(Ordering::SeqCst) {
                 break;
             }
 
-            let clip = ClipData {
-                take_folder: job.take_folder.clone(),
-                clip_type: job.clip_type.clone(),
-                img_folder: job.img_folder.clone(),
-                wav_file: job.wav_file.clone(),
-                base_name: job.base_name.clone(),
-                frame_count: job.frame_count,
-                date: job.date.clone(),
-            };
-
-            let job_id = format!("job_{}", idx);
-            let job_cancel = Arc::new(AtomicBool::new(false));
-
-            let update_tx_clone = update_tx.clone();
-            let job_cancel_clone = Arc::clone(&job_cancel);
-            let cancel_token_clone = Arc::clone(&cancel_token);
-
-            // Spawn a monitor thread to handle per-job cancellation if the global cancel token is set
-            tokio::spawn(async move {
-                while !job_cancel_clone.load(Ordering::Relaxed) {
-                    if cancel_token_clone.load(Ordering::Relaxed) {
-                        job_cancel_clone.store(true, Ordering::Relaxed);
-                        break;
-                    }
-                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-                }
-            });
-
+            active_job_index.store((idx + 1) as u32, Ordering::SeqCst);
             {
                 let mut status = current_status.lock().unwrap();
-                *status = format!("Rendering {}/{} ({})", idx + 1, total_jobs, job.base_name);
+                *status = format!("Rendering {}/{} ({})", idx + 1, total, clip.base_name);
             }
 
-            // Execute the single render job (this async fn runs command in background)
-            native::hlcr::renderer::run_render_job(job_id, clip, config.clone(), update_tx_clone, job_cancel).await;
+            let input_img_pattern = PathBuf::from(&clip.img_folder).join("%05d.tga");
+            let output_file = PathBuf::from(&clip.take_folder).with_extension(&payload.output_format);
 
-            // Wait for completion or errors for this job
-            loop {
-                if let Ok(update) = update_rx.try_recv() {
-                    match update {
-                        native::hlcr::renderer::RenderUpdate::Finished(_, _, _) => {
-                            break;
+            let mut cmd = std::process::Command::new("ffmpeg");
+            cmd.arg("-y")
+               .arg("-framerate").arg("60")
+               .arg("-i").arg(input_img_pattern)
+               .arg("-i").arg(&clip.wav_file)
+               .arg("-c:v").arg("libx264")
+               .arg("-crf").arg(payload.crf.to_string())
+               .arg("-preset").arg(&payload.preset)
+               .arg("-c:a").arg("aac")
+               .arg("-pix_fmt").arg("yuv420p")
+               .arg(&output_file);
+
+            match cmd.spawn() {
+                Ok(mut child) => {
+                    match child.wait() {
+                        Ok(status) => {
+                            if !status.success() {
+                                log::error!("FFmpeg process exited with non-zero status for {}", clip.base_name);
+                            }
                         }
-                        _ => {}
+                        Err(e) => {
+                            log::error!("Error waiting for FFmpeg process on {}: {}", clip.base_name, e);
+                        }
                     }
                 }
-                tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+                Err(e) => {
+                    log::error!("Failed to spawn FFmpeg process for {}: {}", clip.base_name, e);
+                    let mut status = current_status.lock().unwrap();
+                    *status = format!("FFmpeg spawn error on clip {}: {}", clip.base_name, e);
+                    continue;
+                }
             }
         }
 
-        let mut running = is_running.lock().unwrap();
-        *running = false;
+        is_running.store(false, Ordering::SeqCst);
         let mut status = current_status.lock().unwrap();
-        *status = if cancel_token.load(Ordering::Relaxed) {
+        *status = if cancel_token.load(Ordering::SeqCst) {
             "Cancelled".to_string()
         } else {
             "Finished".to_string()
@@ -171,12 +193,22 @@ pub async fn execute_render_batch(
 
 #[tauri::command]
 pub fn render_status(state: tauri::State<'_, RenderManager>) -> String {
-    state.current_status.lock().unwrap().clone()
+    if state.is_running.load(Ordering::SeqCst) {
+        let active = state.active_job_index.load(Ordering::SeqCst);
+        let total = state.total_jobs_count.load(Ordering::SeqCst);
+        if total > 0 {
+            format!("Rendering {}/{}", active, total)
+        } else {
+            state.current_status.lock().unwrap().clone()
+        }
+    } else {
+        state.current_status.lock().unwrap().clone()
+    }
 }
 
 #[tauri::command]
 pub async fn cancel_render_batch(state: tauri::State<'_, RenderManager>) -> Result<(), String> {
-    state.cancel_token.store(true, Ordering::Relaxed);
+    state.cancel_token.store(true, Ordering::SeqCst);
     *state.current_status.lock().unwrap() = "Cancelling...".to_string();
     Ok(())
 }
