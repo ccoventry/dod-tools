@@ -20,6 +20,9 @@ IMMUTABLE MILESTONES ARCHITECTURE RULES:
 - [x] Chore: Standardize Milestones Architecture — Design and document a strict, immutable markdown layout for this file to completely prevent AI-driven format drift across future sessions.
 - [x] Task: Director Events Pipeline - Fixed premature DEMO_END assignment and properly anchored MATCH_START director events to the parsed frame times.
 
+### Rendering & Finalization
+- [x] Task: Rendering & Finalization — Native FFmpeg transcoding pipeline, raw `.mov` image sequence take ingestion, mezzanine export routing, and render queue execution via Tauri IPC.
+
 ### Dynamic Drive Failover
 - [x] Task: AOT Capture Routing & JIT Render Routing — Automated capacity simulation loop, unified duration math parity, FFmpeg mezzanine threshold polling (>20 GB guard), and NTFS directory junction drive swapping below 15 GB.
 

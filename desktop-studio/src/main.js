@@ -351,4 +351,52 @@ window.addEventListener("DOMContentLoaded", () => {
         .catch(err => console.error("Error cancelling batch:", err));
     });
   }
+
+  // Render Studio Batch Controls
+  let renderStatusInterval = null;
+  const startRenderBtn = document.querySelector('#start-render-btn');
+  const cancelRenderBtn = document.querySelector('#cancel-render-btn');
+  const renderStatusEl = document.querySelector('#render-status');
+
+  if (startRenderBtn) {
+    startRenderBtn.addEventListener('click', () => {
+      renderStatusEl.textContent = "Status: Initializing render batch...";
+      startRenderBtn.disabled = true;
+      if (cancelRenderBtn) cancelRenderBtn.disabled = false;
+
+      const renderPayload = {
+        render_directories: renderFolders,
+        output_format: "mp4",
+        crf: 18,
+        preset: "medium"
+      };
+
+      invoke("execute_render_batch", { payload: renderPayload })
+        .then(() => {
+          renderStatusEl.textContent = "Status: Render batch queued successfully!";
+          if (renderStatusInterval) clearInterval(renderStatusInterval);
+          renderStatusInterval = setInterval(async () => {
+            try {
+              const isRendering = await invoke("render_status");
+              if (isRendering) {
+                renderStatusEl.textContent = "Status: Rendering in progress...";
+              } else {
+                clearInterval(renderStatusInterval);
+                renderStatusInterval = null;
+                renderStatusEl.textContent = "Status: Render completed";
+                if (startRenderBtn) startRenderBtn.disabled = false;
+                if (cancelRenderBtn) cancelRenderBtn.disabled = true;
+              }
+            } catch (err) {
+              console.error("Error polling render status:", err);
+            }
+          }, 500);
+        })
+        .catch((err) => {
+          renderStatusEl.textContent = "Error starting render: " + err;
+          if (startRenderBtn) startRenderBtn.disabled = false;
+          if (cancelRenderBtn) cancelRenderBtn.disabled = true;
+        });
+    });
+  }
 });
