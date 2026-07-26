@@ -9,6 +9,7 @@ const NETMSG_INFO_SIZE: usize = 464;
 const DIR_ENTRY_SIZE: usize = 92;
 const MAX_PAYLOAD_LIMIT_BYTES: usize = 2_097_152;
 
+#[allow(dead_code)]
 fn write_hltv_director_frame(
     writer: &mut BufWriter<File>,
     time: f32,
@@ -98,10 +99,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let mut bytes_injected = 0i32;
-    let mut injected_ineye = false;
-    let mut injected_mode = false;
+    let mut _injected_ineye = false;
+    let mut _injected_mode = false;
     let mut last_info_block = vec![0u8; NETMSG_INFO_SIZE];
-    let mut has_info_block = false;
+    let mut _has_info_block = false;
 
     let mut scratch_buf = Vec::new();
 
@@ -117,7 +118,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         let type_byte = frame_hdr[0];
-        let time = f32::from_le_bytes(frame_hdr[1..5].try_into()?);
+        let _time = f32::from_le_bytes(frame_hdr[1..5].try_into()?);
+        let file_tick = i32::from_le_bytes(frame_hdr[5..9].try_into()?);
         let file_tick = i32::from_le_bytes(frame_hdr[5..9].try_into()?);
 
 
@@ -176,7 +178,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 scratch_buf.resize(NETMSG_INFO_SIZE, 0);
                 reader.read_exact(&mut scratch_buf)?;
                 last_info_block.copy_from_slice(&scratch_buf);
-                has_info_block = true;
+                _has_info_block = true;
 
                 writer.write_all(&frame_hdr)?;
                 writer.write_all(&scratch_buf)?;

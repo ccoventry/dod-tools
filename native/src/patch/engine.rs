@@ -82,6 +82,7 @@ fn write_director_event_payload(
     Ok(total_bytes as i32)
 }
 
+#[allow(dead_code)]
 fn write_ineye_hijack_payload(
     writer: &mut std::io::BufWriter<std::fs::File>,
     time: f32,

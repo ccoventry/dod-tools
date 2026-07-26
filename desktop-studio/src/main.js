@@ -119,6 +119,27 @@ window.addEventListener("DOMContentLoaded", () => {
     }
   });
 
+  const browseDriveBtn = document.querySelector('#browse-drive-btn');
+  if (browseDriveBtn) {
+    browseDriveBtn.addEventListener('click', async () => {
+      try {
+        const selected = await open({
+          directory: true,
+          multiple: false,
+          title: 'Select Target Output Drive/Directory'
+        });
+        if (selected && !targetDrives.includes(selected)) {
+          targetDrives.push(selected);
+          const li = document.createElement('li');
+          li.textContent = selected;
+          document.querySelector('#target-drive-list').appendChild(li);
+        }
+      } catch (err) {
+        console.error("Error opening target drive dialog:", err);
+      }
+    });
+  }
+
   // Render folders management
   document.querySelector('#add-render-folder-btn').addEventListener('click', () => {
     const inputEl = document.querySelector('#render-path-input');
@@ -131,6 +152,27 @@ window.addEventListener("DOMContentLoaded", () => {
       document.querySelector('#render-folder-list').appendChild(li);
     }
   });
+
+  const browseRenderFolderBtn = document.querySelector('#browse-render-folder-btn');
+  if (browseRenderFolderBtn) {
+    browseRenderFolderBtn.addEventListener('click', async () => {
+      try {
+        const selected = await open({
+          directory: true,
+          multiple: false,
+          title: 'Select Render Directory'
+        });
+        if (selected && !renderFolders.includes(selected)) {
+          renderFolders.push(selected);
+          const li = document.createElement('li');
+          li.textContent = selected;
+          document.querySelector('#render-folder-list').appendChild(li);
+        }
+      } catch (err) {
+        console.error("Error opening render directory dialog:", err);
+      }
+    });
+  }
 
   const scanBtn = document.querySelector('#scan-dir-btn');
   const scanStatusEl = document.querySelector('#scan-status');
@@ -377,13 +419,13 @@ window.addEventListener("DOMContentLoaded", () => {
           if (renderStatusInterval) clearInterval(renderStatusInterval);
           renderStatusInterval = setInterval(async () => {
             try {
-              const isRendering = await invoke("render_status");
-              if (isRendering) {
-                renderStatusEl.textContent = "Status: Rendering in progress...";
+              const statusText = await invoke("render_status");
+              if (statusText.startsWith("Rendering") || statusText.startsWith("Scanning")) {
+                renderStatusEl.textContent = `Status: ${statusText}`;
               } else {
                 clearInterval(renderStatusInterval);
                 renderStatusInterval = null;
-                renderStatusEl.textContent = "Status: Render completed";
+                renderStatusEl.textContent = `Status: ${statusText}`;
                 if (startRenderBtn) startRenderBtn.disabled = false;
                 if (cancelRenderBtn) cancelRenderBtn.disabled = true;
               }
@@ -397,6 +439,15 @@ window.addEventListener("DOMContentLoaded", () => {
           if (startRenderBtn) startRenderBtn.disabled = false;
           if (cancelRenderBtn) cancelRenderBtn.disabled = true;
         });
+    });
+  }
+
+  if (cancelRenderBtn) {
+    cancelRenderBtn.addEventListener('click', () => {
+      renderStatusEl.textContent = "Status: Cancelling render batch...";
+      cancelRenderBtn.disabled = true;
+      invoke("cancel_render_batch")
+        .catch(err => console.error("Error cancelling render batch:", err));
     });
   }
 });

@@ -45,3 +45,6 @@ primer.dem
 node_modules/
 **/node_modules/
 **/dist/
+
+# === Tauri Artifacts ===
+desktop-studio/src-tauri/gen/

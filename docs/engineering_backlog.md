@@ -27,3 +27,6 @@
 - **Mode Toggle:** Add functionality to Capture Studio to switch between "Timing Mode" and "Capture Mode".
 - **[Optimization] Session Compression & Modular Export:** Add options for Gzip/Zstd compression for JSON and "Selective Export" feature flags (e.g., export demos only vs. export full project metadata).
 
+## chris random manually added ideas for tasks (NOT TO BE DONE YET):
+- Explore mid-demo spawn splicing: Investigate the feasibility of daisy-chaining or splitting demos exactly at spawn events (ResetHUD/DeathMsg) to bypass long fast-forwarding times. Requires evaluating potential workarounds for delta-compressed global baseline initialization, entity state tracking, and PVS (Potentially Visible Set) corruption.
+
