@@ -40,3 +40,8 @@ patcher_config.json
 native/local/crash_log.md
 patcher_config.json
 primer.dem
+
+# === Node / JS Dependencies ===
+node_modules/
+**/node_modules/
+**/dist/
