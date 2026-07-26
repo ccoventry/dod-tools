@@ -106,6 +106,23 @@ window.addEventListener("DOMContentLoaded", () => {
     });
   }
 
+  async function updateExportPoolIndicator() {
+    const indicator = document.querySelector('#export-pool-free-indicator');
+    if (!indicator) return;
+    if (targetDrives.length === 0) {
+      indicator.textContent = "Total Export Pool Free: 0.0 GB";
+      return;
+    }
+    try {
+      const bytes = await invoke("calculate_export_pool_space", { paths: targetDrives });
+      const gb = bytes / (1024 * 1024 * 1024);
+      indicator.textContent = `Total Export Pool Free: ${gb.toFixed(1)} GB`;
+    } catch (err) {
+      console.error("Error calculating export pool space:", err);
+      indicator.textContent = "Total Export Pool Free: Error calculating space";
+    }
+  }
+
   // Target drives management
   document.querySelector('#add-drive-btn').addEventListener('click', () => {
     const driveEl = document.querySelector('#drive-path-input');
@@ -116,6 +133,7 @@ window.addEventListener("DOMContentLoaded", () => {
       const li = document.createElement('li');
       li.textContent = drivePath;
       document.querySelector('#target-drive-list').appendChild(li);
+      updateExportPoolIndicator();
     }
   });
 
@@ -133,6 +151,7 @@ window.addEventListener("DOMContentLoaded", () => {
           const li = document.createElement('li');
           li.textContent = selected;
           document.querySelector('#target-drive-list').appendChild(li);
+          updateExportPoolIndicator();
         }
       } catch (err) {
         console.error("Error opening target drive dialog:", err);

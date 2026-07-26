@@ -50,6 +50,19 @@ async fn scan_demos(paths: Vec<String>) -> Result<Vec<capture_manager::Serialize
     capture_manager::scan_directory_impl(paths).await
 }
 
+#[tauri::command]
+fn calculate_export_pool_space(paths: Vec<String>) -> Result<u64, String> {
+    let mut total: u64 = 0;
+    for path_str in paths {
+        let p = std::path::PathBuf::from(path_str);
+        let space = native::sys::disk::get_available_bytes(&p);
+        if space != u64::MAX {
+            total += space;
+        }
+    }
+    Ok(total)
+}
+
 // ── App entry point ────────────────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -67,6 +80,7 @@ pub fn run() {
             capture_status,
             scan_directory,
             scan_demos,
+            calculate_export_pool_space,
             scan_render_directories,
             execute_render_batch,
             render_status,
