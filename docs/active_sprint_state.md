@@ -1,7 +1,7 @@
 ## Web AI State
-- **Overarching Goal**: Launch and verify the native FFmpeg batch rendering and UI pipelines on the isolated `feature/tauri-migration` branch.
-- **Last Edited**: `desktop-studio/src-tauri/src/capture_manager.rs` and `desktop-studio/package.json`.
-- **Unresolved Compiler Errors/Bugs**: Backend compiles successfully. Awaiting Vite dev server launch to confirm `@tauri-apps/plugin-fs` resolution error is fixed.
+* **Current Goal:** Frontend Migration (Tauri & Vite Integration on branch `feature/tauri-migration`).
+* **Last Evaluated:** Wired `PatcherConfig` payload hydration (`capture_manager.rs`) and OS-level disk capacity checks to the Vite DOM (`main.js`, `index.html`).
+* **Next Step:** Implement frontend execution logic for the capture and render batch queues.
 
 ## Active Epics
 - **Rendering & Finalization:** COMPLETED (Branch: `feature/tauri-migration`)
@@ -15,7 +15,7 @@
   - **UI/UX Polish:** Integrated dynamic vector list reordering (⬆/⬇ swap controls), removed deprecated individual directory pickers, and mounted a global "Total Export Pool Free" indicator on the Render view.
 
 ## IDE AI State
-- **Overarching Goal**: Launch and verify the native FFmpeg batch rendering and UI pipelines on the isolated `feature/tauri-migration` branch.
-- **Current Branch**: `feature/tauri-migration`
-- **Status**: Lessons learned and context state handoff updated. Ready for manual verification.
-- **Next Command**: `cd desktop-studio && npm run tauri dev`
+* **Current Goal:** Frontend Migration (Tauri & Vite Integration on branch `feature/tauri-migration`).
+* **Last Evaluated:** `desktop-studio/src-tauri/src/capture_manager.rs`, `desktop-studio/src/main.js`, `desktop-studio/index.html`.
+* **Status:** Verified `calculate_export_pool_space` IPC command and `PatcherConfig` input hydration. Application compiles cleanly and executes via `npx tauri dev`.
+* **Next Target:** `desktop-studio/src/main.js` (Batch execution & IPC progress event listeners).

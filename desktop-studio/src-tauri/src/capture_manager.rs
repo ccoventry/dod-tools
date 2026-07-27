@@ -41,7 +41,18 @@ pub struct CapturePayload {
     pub drives: Vec<String>,
     /// Matches native `DriveAllocationStrategy`: "MaximizeSpace" | "Chronological".
     pub allocation_strategy: String,
+    #[serde(default)]
+    pub record_start_lead: f32,
+    #[serde(default)]
+    pub record_stop_trail: f32,
+    #[serde(default = "default_initial_delay")]
+    pub initial_delay: f32,
+    #[serde(default = "default_fast_forward_speed")]
+    pub fast_forward_speed: f32,
 }
+
+fn default_initial_delay() -> f32 { 3.0 }
+fn default_fast_forward_speed() -> f32 { 10.0 }
 
 /// One highlight streak — serialisable across the Tauri IPC boundary.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -128,6 +139,10 @@ fn config_from_payload(payload: &CapturePayload) -> PatcherConfig {
     cfg.capture_directories = payload.capture_directories.iter().map(std::path::PathBuf::from).collect();
     cfg.capture_fps = payload.capture_fps;
     cfg.tickrate = payload.expected_fps;
+    cfg.record_start_lead = payload.record_start_lead;
+    cfg.record_stop_trail = payload.record_stop_trail;
+    cfg.initial_delay = payload.initial_delay;
+    cfg.fast_forward_speed = payload.fast_forward_speed;
     // Drive routing
     cfg.primary_media_dir = payload.drives.first().map(std::path::PathBuf::from);
     cfg.backup_media_dir = payload.drives.get(1).map(std::path::PathBuf::from);
