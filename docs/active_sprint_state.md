@@ -1,6 +1,7 @@
 ## Web AI State
 * **Current Goal:** Frontend Migration (Tauri & Vite Integration on branch `feature/tauri-migration`).
-* **Last Evaluated:** `desktop-studio/` workspace directory and remote branch `origin/feature/tauri-migration`.
+* **Last Evaluated:** AI workflow standardization, `.cursorrules` alignment, and `docs/` canonical file deduplication.
+* **Next Step:** Resume implementation of frontend execution logic for the capture and render batch queues.
 
 ## Active Epics
 - **HLTV Active Frame Injection:** COMPLETED
@@ -14,5 +15,8 @@
   - **UI/UX Polish:** Integrated dynamic vector list reordering (⬆/⬇ swap controls), removed deprecated individual directory pickers, and mounted a global "Total Export Pool Free" indicator on the Render view.
 
 ## IDE AI State
-* **Overarching Goal:** Frontend Migration (Tauri & Vite Integration).
-* **Status:** Active frame injection implementation and dynamic target player index extraction verified and completed.
+* **Current Goal:** Frontend Migration (Tauri & Vite Integration on branch `feature/tauri-migration`).
+* **Last Evaluated:** `docs/active_sprint_state.md` updated and `docs/` documentation files deduplicated across the workspace.
+* **Status:** Workspace documentation deduplicated; Tauri backend and Vite frontend IPC bridges ready for batch queue processing.
+* **Next Command:** `cd desktop-studio && npm run tauri dev`
+* **Next File to Edit:** `desktop-studio/src/main.js` (Batch execution & IPC progress event listeners).
