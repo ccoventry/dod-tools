@@ -46,4 +46,14 @@
 * **Stream Alignment Crashing:** Do not append or prepend custom `svc_director` payloads to existing `NetworkMessage` packets. Altering the total payload length without recalculating internal offsets misaligns the client parser, resulting in `FATAL ERROR: Server::ParsePacketEntities: entnum>MAX_PACKET_ENTITIES`.
 * **Buffer Overflows:** Continuously injecting new multi-byte network frames across sequential ticks will trigger immediate `packet read overflow` engine panics.
 * **Playback Tool Routing:** `viewdemo` actively intercepts `svc_director` commands to populate its GUI, blocking live camera execution. Camera hijacking must be tested via `playdemo` while ensuring the `spec_autodirector 1` cvar is active.
-* **svc_setview Instability:** Executing a hard `svc_setview` override while the client is functioning as a spectator often results in memory access violations (segfaults).
+* **svc_setview Instability:** Executing a hard `svc_setview` override while the client is functioning as a spectator often results in memory access violations (segfaults).
+- **Tauri Plugin Architecture:** The Vite frontend `fs:default` capability silently fails the build if the corresponding backend Rust crate `tauri-plugin-fs` is not added to Cargo.toml and explicitly initialized via `.plugin(tauri_plugin_fs::init())` in the builder chain.
+
+## Staging & Tauri Reconciliation Lessons
+- **Legacy Module Purging**: Tauri workspace migrations leaving orphaned files (e.g., deprecated `egui` native UI) will break the backend build. Always remove associated module declarations (`pub mod ui;`) when purging files.
+- **Signature Drift**: Upstream native crate updates to functions like `scan_demo_for_highlights` require updating tuple destructuring to match new return elements, and satisfying newly added arguments (e.g., passing empty hashmaps to `build_batch_queue`).
+- **Lock-Free Imports**: When refactoring threading states for Tauri IPC progress polling, explicitly ensure `std::sync::atomic::AtomicU32` is imported, as compiler errors for undeclared types will occur otherwise.
+- **Git Index Clutter**: Executing `npm install` in the frontend directory without an updated `.gitignore` bloats the source control tree. Untrack cached directories using `git rm -r --cached` immediately.
+- **Vite Plugin Panics**: Missing Tauri NPM plugins (like `@tauri-apps/plugin-fs`) will cause Vite import analysis to fail and the dev server to crash on startup, requiring manual NPM installation.
+- **IPC Hardware Queries**: Never rely on frontend arrays (e.g., counting `targetDrives.length`) to estimate hardware capacity. Always cross the IPC boundary to execute OS-level `sysinfo` queries and return accurate bytes to the frontend.
+- **Dialog API Enforcement**: Manual text inputs for file paths introduce silent escaping failures. Always enforce `@tauri-apps/plugin-dialog` to leverage native OS folder pickers for routing.
