@@ -372,6 +372,10 @@ window.addEventListener("DOMContentLoaded", () => {
       const expectedFpsVal = parseFloat(document.querySelector("#config-expected-fps").value) || 100.0;
       const preRollVal = parseFloat(document.querySelector("#config-pre-roll").value) || 3.0;
       const postRollVal = parseFloat(document.querySelector("#config-post-roll").value) || 2.0;
+      const recordStartLeadVal = parseFloat(document.querySelector("#config-record-start-lead")?.value) || 0.0;
+      const recordStopTrailVal = parseFloat(document.querySelector("#config-record-stop-trail")?.value) || 0.0;
+      const initialDelayVal = parseFloat(document.querySelector("#config-initial-delay")?.value) || 3.0;
+      const fastForwardSpeedVal = parseFloat(document.querySelector("#config-fast-forward-speed")?.value) || 10.0;
       const allocationStrategyVal = document.getElementById('allocation-strategy').value;
 
       const activePayload = {
@@ -384,7 +388,11 @@ window.addEventListener("DOMContentLoaded", () => {
         capture_fps: captureFpsVal,
         expected_fps: expectedFpsVal,
         drives: targetDrives,
-        allocation_strategy: allocationStrategyVal
+        allocation_strategy: allocationStrategyVal,
+        record_start_lead: recordStartLeadVal,
+        record_stop_trail: recordStopTrailVal,
+        initial_delay: initialDelayVal,
+        fast_forward_speed: fastForwardSpeedVal
       };
 
       invoke("start_capture_batch", { payload: activePayload })
