@@ -110,3 +110,14 @@ button {
     background-color: #0f0f0f69;
   }
 }
+
+/* Egui Visual Parity & Master-Detail Layout Classes */
+.progress-bar-container { width: 100%; height: 8px; background: #333; border-radius: 4px; overflow: hidden; margin-top: 5px; }
+.progress-bar-fill { height: 100%; transition: width 0.2s ease-in-out; }
+.egui-card { border: 1px solid #444; border-radius: 4px; padding: 8px 12px; background: rgba(255, 255, 255, 0.05); margin-bottom: 12px; }
+.table-row-selected { background: rgba(255, 255, 255, 0.1) !important; }
+
+.pane-split-container { display: flex; flex-direction: column; height: 100vh; overflow: hidden; background: #000; color: #fff; }
+.pane-master { flex: 1; overflow-y: auto; border-bottom: 2px solid #444; padding: 10px; }
+.pane-detail { flex: 1; overflow-y: auto; background: #1a1a1a; padding: 15px; }
+
