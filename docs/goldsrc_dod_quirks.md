@@ -1,6 +1,6 @@
 # GoldSrc Engine & Day of Defeat 1.3 Quirks
 
-## ⚠️ Core Engine Limitations & Workarounds
+## Core Engine Limitations & Workarounds
 - **The Initialization Rule:** The `DemoStart` (Type 2) frame must be processed *before* any `ConsoleCommand` (Type 3) frames are written. Injecting commands prior forces the engine to read uninitialized memory buffers, triggering fatal `MAX_POSSIBLE_MSG` crashes.
 - **The Cbuf Overflow (Buffer Bomb):** GoldSrc has a strict 64-byte payload limit for command strings inside macro frames. Injecting long absolute paths alongside configuration commands in a single tick saturates `Cbuf_AddTextToBuffer`, silently discarding commands. Command payloads must be staggered across multiple ticks prior to the target frame.
 - **Console Buffer Overflow (`Cbuf`):** Flooding the engine command buffer causes massive execution dropouts and drops the engine loop entirely back to the main menu.
@@ -13,7 +13,16 @@
 - **Alias Nested Quotes (The Exec Bypass):** GoldSrc cannot parse nested quotes inside aliases. When complex commands like absolute paths require quotes, they must be written to individual `.cfg` files and executed via `exec filename.cfg` instead of injected directly into an alias.
 - **Filenames:** Filenames for playdemo calls must be strictly alphanumeric with underscores (_) and under 40 characters.
 - **Engine Logging vs. Console Buffer (The Clear Failsafe Bug):** The `-condebug` launch parameter generates `qconsole.log` in real-time via continuous disk I/O, meaning the `clear` command does not erase historical data. The `condump` console command relies on the visual console memory buffer. Executing `clear` permanently destroys this history, resulting in an empty or partial text file.
+- **Visual Asset Pre-Caching (`gl_spriteblend`):** Setting `gl_spriteblend 0` before a demo fully loads causes severe crosshair and sprite corruption. Initialization configurations modifying visual rendering states must strictly be injected after the `DemoStart` frame to allow engine initialization.
+- **Scanner Section Boundary Truncation (`type_byte == 5`):** The engine's scanner stops accumulating `frame_times` at the startup section boundary. Do not rely on localized arrays mapping 1:1 with global ticks without proper offset math.
 
-## 🎮 Day of Defeat 1.3 Gameplay Parsing Logic
+## NetworkMessage Quirks & HLTV Protocol
+- **DRC_CMD_CAMERA Structure:** The `DRC_CMD_CAMERA` subcommand is a 30+ byte cinematic vector command (coordinates, FOV, direction vectors), not a 1-byte entity lock.
+- **Stream Alignment Crashing:** Custom `svc_director` payloads must not be appended or prepended inside existing `NetworkMessage` packets. Modifying payload lengths without recalculating internal offsets crashes the parser with `FATAL ERROR: Server::ParsePacketEntities: entnum>MAX_PACKET_ENTITIES`.
+- **Buffer Overflows:** Continuously injecting multi-byte network frames across sequential ticks will trigger immediate `packet read overflow` panics. Stagger injection.
+- **Playback Tool Routing:** `viewdemo` intercepts `svc_director` commands, blocking live camera execution. Camera hijacking must occur via `playdemo` with the `spec_autodirector 1` cvar active.
+- **svc_setview Instability:** Executing a hard `svc_setview` override while the client acts as a spectator frequently causes memory access violations (segfaults).
+
+## Day of Defeat 1.3 Gameplay Parsing Logic
 - **British Faction Mis-assignment:** The native parser drops British players into Allies or Unassigned categories. Faction tracking requires dynamically upgrading Allies entities to the British faction when `BritishRifleman` or `BritishMortar` classes are explicitly detected.
 - **Reconnect Stat Wipes:** DoD 1.3 servers forcefully reset a player's scoreboard stats to zero upon reconnecting. The analyzer must ignore absolute server totals on reconnects and manually accumulate raw `DeathMsg` packet deltas.
