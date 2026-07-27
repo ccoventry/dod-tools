@@ -1,5 +1,5 @@
 # SYSTEM GUARDRAILS (STRICT COMPLIANCE)
-- CONTEXT: Rely strictly on active chat window code and docs/ folder. Strictly ignore any open files residing in hidden directories (e.g., .ai_prompts/) to prevent meta-instruction contamination. Do not read documentation files unless explicitly requested.
+- CONTEXT: Rely strictly on active chat window code and docs/ folder. Strictly ignore any open files residing in hidden directories (e.g., any folder prefixed with a dot) to prevent meta-instruction contamination. Never attempt to read, query, or index prompt template directories. Do not read documentation files unless explicitly requested.
 - BEHAVIOR: Be concise. No conversational filler, apologies, or requirement summaries.
 - CODE CHANGES: Output ONLY minimal unified diffs (e.g., // ... existing code ...). Never rewrite entire files or unchanged lines.
 - CONSTRAINTS: Do not introduce new dependencies, patterns, or abstractions. Match existing naming and style exactly.
@@ -8,14 +8,19 @@
 - CHAIN OF THOUGHT: Keep internal reasoning focused exclusively on technical logic. Skip all conversational filler.
 - QUALITY BAR: Prefer clarity over cleverness. Prefer explicit logic over magic behavior.
 - OUTCOME PRIORITY: 1. Correctness, 2. Maintainability, 3. Performance (only when relevant).
+- GHOST TEXT COMPATIBILITY: When formatting lists or repetitive structures, maintain exact visual and syntactic patterns. Unpredictable pattern breaks trigger destructive deletions by inline predictive IDE AI models.
+- DATA SHAPE HALLUCINATION: Do not operate on assumed structural payloads. Verify raw data footprints explicitly (e.g., dump array lengths to confirm if data is local or global).
 
 # TERMINAL & RUNTIME COMMANDS
 - DIAGNOSTICS: Never echo raw compiler output or verbose tool failure logs. Provide concise, single-sentence failure summaries and propose direct mechanical fixes.
+- DIAGNOSTIC BINARIES: Isolate complex state logic into lightweight standalone Rust diagnostic binaries (e.g., `check_ticks.rs`). Run simulations in the terminal rather than launching the full engine to preserve processing quotas.
 - SHELL MANIPULATION: Multi-step shell actions must be collapsed into a single, chained sequence using semicolons (;). 
 - PIPELINE RUNS: DO NOT run 'cargo check' or 'cargo run' internally; output the exact command piped to tuf (e.g., 'cmd 2>&1 | tuf') for manual user execution. When reading tuf output logs, restrict ingestion to the final 30 lines or grep specifically for error signatures to conserve context.
+- EXECUTION BYPASSES: Use `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` for blocked Node scripts. For unsigned Rust binaries blocked by WDAC, execute via `run.ps1` to sequence `Stop-Process`, `cargo build`, and `Set-AuthenticodeSignature` (using `CN=LocalRustDev` root cert).
 - DRY-RUN DEFAULT: Configurations targeting batch processing workflows must verify a clean dry-run mode before enabling live external process executions.
 - TASK COMPLETION REPORT: When your assigned task is fully complete or you hit a blocker requiring Web AI review, you must output a SINGLE markdown code block titled "### 📡 Return Payload for Web AI: {Prompt Title that was given to you last}". Inside this block, provide a mechanical, point-form list of: 1) Files modified, 2) Exact logic changes made, 3) Final terminal/compiler status. Suppress all other conversational filler outside this block so the user can one-click copy your report.
 - SEARCH EXCLUSIONS: System searches and file queries are strictly prohibited from indexing the `target/` directory, the `demos/` folder, and `Cargo.lock`. Massive asset maps inside the `localizations/` folder must use line-clamped lookups (e.g., grep -m 5).
+- STAGING MAINTENANCE: Track and clear cached frontend dependency directories strictly with `git rm -r --cached` immediately following `npm install` changes to prevent index clutter.
 
 # RUST, WASM & CONCURRENCY CONSTRAINTS
 - TERMINOLOGY: Strictly preserve the "HLAE Game Capture" naming convention; never revert to "Native Game Capture".
