@@ -4,10 +4,10 @@
 * **Next Step:** Resume implementation of frontend execution logic for the capture and render batch queues.
 
 ## Active Epics
-- **HLTV Active Frame Injection:** COMPLETED
-  - **Standalone Frame Injection:** Implemented active standalone `DRC_CMD_INEYE` frame injection in `native/src/patch/engine.rs` within the StreamPatcher `NetworkMessage` match arm with dynamic `target_player_id` extraction from capture streaks.
-- **Frontend Migration:** IN PROGRESS (Branch: `feature/tauri-migration`)
-  - **Tauri & Vite Integration:** Transitioning frontend stack to Tauri + Vite architecture in the `desktop-studio/` workspace (`src-tauri/`).
+- **Rendering & Finalization:** COMPLETED (Branch: `feature/tauri-migration`)
+  - **FFmpeg Transcoding & Render Studio:** Native FFmpeg encoding pipeline, `RenderBatchPayload` deserialization, lock-free atomic progress tracking, and live render status polling implemented in `render_manager.rs`.
+- **Frontend Migration:** COMPLETED (Branch: `feature/tauri-migration`)
+  - **Tauri & Vite Integration:** Completed frontend stack migration from native `egui` to Tauri + Vite architecture with full Master-Detail UI feature parity, native IPC handlers, dialogs, and `@tauri-apps/plugin-fs` session persistence.
 - **Dynamic Drive Failover:** COMPLETED
   - **AOT Capture Routing:** Automated Ahead-Of-Time capacity simulation loop that calculates disk footprint before execution and deploys NTFS directory junctions to swap output drives when a disk drops below 15 GB.
   - **Duration Math Parity:** Abstracted a unified `calculate_total_capture_duration` method on `PatcherConfig` to ensure UI disk estimates and backend AOT math accurately isolate recording boundaries and exclude non-capturing engine phases.
