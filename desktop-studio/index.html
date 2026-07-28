@@ -9,146 +9,316 @@
   </head>
 
   <body>
-    <main class="pane-split-container">
+    <div id="app-container">
       
-      <!-- Top Pane: Master Queue & Directory Management -->
-      <section class="pane-master">
-        <h1>DoD Tools Studio Workspace</h1>
-
-        <div class="row">
-          <input type="text" id="scan-path-input" placeholder="Enter directory path..." style="flex: 1;" />
-          <button id="add-folder-btn">Add Folder</button>
-          <button id="browse-dir-btn">Browse Directory</button>
-          <button id="scan-dir-btn">Scan Demos</button>
-          <button id="save-project-btn">Save Project</button>
-          <button id="load-project-btn">Load Project</button>
+      <!-- Top Navigation Bar -->
+      <header id="top-navbar">
+        <div class="nav-brand">
+          <span class="brand-title">DoD Tools Studio</span>
         </div>
-        <ul id="folder-list"></ul>
-        <p id="scan-status">Status: Ready</p>
-
-        <!-- Master List Table -->
-        <div id="master-pane" class="egui-card">
-          <h3>Master Demo Queue</h3>
-          <table id="master-demo-table" style="width: 100%; border-collapse: collapse; text-align: left;">
-            <thead>
-              <tr style="border-bottom: 1px solid #555;">
-                <th style="padding: 8px;">Demo File</th>
-                <th style="padding: 8px;">Path</th>
-                <th style="padding: 8px;">Tickrate</th>
-                <th style="padding: 8px;">POV</th>
-                <th style="padding: 8px;">Highlights</th>
-                <th style="padding: 8px;">Status</th>
-              </tr>
-            </thead>
-            <tbody id="master-demo-table-body">
-              <tr>
-                <td colspan="6" style="padding: 12px; text-align: center; color: #888;">No demos scanned yet. Add a directory and click 'Scan Demos'.</td>
-              </tr>
-            </tbody>
-          </table>
+        <div class="nav-tabs">
+          <button class="nav-tab-btn active" data-nav="workspace">1. Workspace & Master Queue</button>
+          <button class="nav-tab-btn" data-nav="export-config">2. Batch Capture Config</button>
+          <button class="nav-tab-btn" data-nav="render-studio">3. Render Studio</button>
         </div>
-      </section>
+        <div class="nav-actions">
+          <button id="save-project-btn" title="Save Project Session">Save Session</button>
+          <button id="load-project-btn" title="Load Project Session">Load Session</button>
+        </div>
+      </header>
 
-      <!-- Bottom Pane: Detail View, Export Configuration & Render Studio -->
-      <section class="pane-detail">
+      <!-- Main Split Content Area -->
+      <main id="main-content-split">
         
-        <!-- Detail View: Highlight Rules -->
-        <div id="detail-pane" class="egui-card">
-          <div style="display: flex; justify-content: space-between; align-items: center;">
-            <h3 id="detail-demo-title">Highlight Details (Select a Demo)</h3>
-            <div class="row" style="gap: 10px;">
-              <input type="checkbox" id="config-hide-non-pov" />
-              <label for="config-hide-non-pov">Hide Non-POV</label>
+        <!-- Left / Top Split Pane: Workspace Setup & Master Demo Queue -->
+        <section id="pane-workspace" class="content-pane">
+          <div class="egui-panel">
+            <div class="panel-header">
+              <h3>Directory Scan & Management</h3>
+            </div>
+            <div class="panel-body">
+              <div class="row-inputs">
+                <button id="add-files-btn">+ Add Demo Files</button>
+                <button id="add-folder-btn">+ Add Folder</button>
+              </div>
+              <p id="scan-status" class="status-indicator">Status: Ready</p>
             </div>
           </div>
-          <div id="detail-streaks-container" style="margin-top: 10px;">
-            <p style="color: #888;">Select a demo in the Master List to view its killstreak details.</p>
+
+          <!-- Master Demo Queue -->
+          <div id="master-pane" class="egui-panel">
+            <div class="panel-header flex-between">
+              <h3>Master Demo Queue</h3>
+              <input type="text" id="demo-search-input" placeholder="Search demos or maps..." />
+            </div>
+            <div class="table-wrapper">
+              <table id="master-demo-table">
+                <thead>
+                  <tr>
+                    <th>Demo File</th>
+                    <th>Yield</th>
+                    <th>Status</th>
+                    <th>Pending</th>
+                    <th>Captured</th>
+                    <th>Rendered</th>
+                  </tr>
+                </thead>
+                <tbody id="master-demo-table-body">
+                  <tr>
+                    <td colspan="6" class="table-empty">No demos scanned yet. Add a directory and click 'Scan Demos'.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- Right / Bottom Split Pane: Detail View & Configuration Panels -->
+        <section id="pane-details-config" class="content-pane">
+          
+          <!-- Detail View: Highlight Rules -->
+          <div id="detail-pane" class="egui-panel">
+            <div class="panel-header flex-between">
+              <h3 id="detail-demo-title">Highlight Details (Select a Demo)</h3>
+              <div class="header-controls" style="display: flex; gap: 8px; align-items: center;">
+                <button id="view-telemetry-btn" disabled>View Match Telemetry</button>
+                <button id="btn-select-all">Select All</button>
+                <button id="btn-deselect-all">Deselect All</button>
+                <div class="control-group">
+                  <label for="input-min-kills">Min Kills:</label>
+                  <input type="number" id="input-min-kills" value="1" min="1" style="width: 50px;" />
+                </div>
+              </div>
+            </div>
+            <div id="detail-streaks-container">
+              <p class="placeholder-text" style="color: #888;">Select a demo in the Master List to view its killstreak details.</p>
+            </div>
+          </div>
+
+          <!-- Advanced Diagnostics Collapsible Block -->
+          <details id="advanced-diagnostics-details" class="egui-panel">
+            <summary style="cursor: pointer; font-weight: bold; color: #ccc;">Advanced Diagnostics (Canvas Timeline & Telemetry)</summary>
+            <div class="diagnostics-content" style="margin-top: 10px;">
+              <h4 style="margin: 5px 0;">Streak Timeline Canvas</h4>
+              <canvas id="streak-timeline-canvas" height="100" style="width: 100%; border-radius: 2px; background: #181818; border: 1px solid #383838; margin-top: 5px; margin-bottom: 10px;"></canvas>
+              
+              <div id="telemetry-pane" style="margin-top: 10px;">
+                <h4 style="margin: 5px 0;">Match Telemetry</h4>
+                <div id="telemetry-container" style="max-height: 250px; overflow-y: auto; background-color: #181818; padding: 10px; border-radius: 2px;">
+                  <p class="placeholder-text" style="color: #888;">Select a demo to view telemetry data.</p>
+                </div>
+              </div>
+            </div>
+          </details>
+
+          <!-- Export Configuration & Batch Capture -->
+          <div id="export-config-panel" class="egui-panel">
+            <div class="panel-header">
+              <h3>Export Configuration & Batch Capture Pipeline</h3>
+            </div>
+            
+            <div class="config-tabs-nav">
+              <button class="config-tab-btn active" data-tab="tab-path-routing">Path Routing</button>
+              <button class="config-tab-btn" data-tab="tab-timing-options">Timing Options</button>
+              <button class="config-tab-btn" data-tab="tab-drive-overrides">Drive Overrides</button>
+            </div>
+
+            <!-- Tab Content: Path Routing -->
+            <div id="tab-path-routing" class="config-tab-content active-tab" style="display: block;">
+              <div class="input-row">
+                <label>HLAE Executable:</label>
+                <input type="text" id="hlae-path-input" placeholder="Path to hlae.exe" style="flex: 1;" />
+                <button id="hlae-browse-btn">Browse</button>
+              </div>
+              <div class="input-row">
+                <label>Half-Life Executable:</label>
+                <input type="text" id="hl-path-input" placeholder="Path to hl.exe" style="flex: 1;" />
+                <button id="hl-browse-btn">Browse</button>
+              </div>
+              <div class="input-row">
+                <label>FFmpeg Override Path:</label>
+                <input type="text" id="ffmpeg-override-path-input" placeholder="Optional path to ffmpeg.exe" style="flex: 1;" />
+                <button id="ffmpeg-browse-btn">Browse</button>
+              </div>
+              <div class="input-row">
+                <label>Primary Media Dir:</label>
+                <input type="text" id="primary-media-dir-input" placeholder="Primary output folder for captures" style="flex: 1;" />
+                <button id="primary-media-browse-btn">Browse</button>
+              </div>
+              <div class="input-row">
+                <label>Backup Media Dir:</label>
+                <input type="text" id="backup-media-dir-input" placeholder="Optional backup output folder" style="flex: 1;" />
+                <button id="backup-media-browse-btn">Browse</button>
+              </div>
+              <div class="inline-controls">
+                <div class="control-group">
+                  <label for="config-res-width">Width:</label>
+                  <input type="number" id="config-res-width" value="1280" style="width: 80px;" />
+                </div>
+                <div class="control-group">
+                  <label for="config-res-height">Height:</label>
+                  <input type="number" id="config-res-height" value="720" style="width: 80px;" />
+                </div>
+                <div class="control-group">
+                  <input type="checkbox" id="config-separate-hud" />
+                  <label for="config-separate-hud">Separate HUD</label>
+                </div>
+                <div class="control-group">
+                  <input type="checkbox" id="config-save-local-patched" />
+                  <label for="config-save-local-patched">Save Local Patched Copy</label>
+                </div>
+                <div class="control-group">
+                  <input type="checkbox" id="config-add-condebug" checked />
+                  <label for="config-add-condebug">Add Condebug</label>
+                </div>
+              </div>
+            </div>
+
+            <!-- Tab Content: Timing Options -->
+            <div id="tab-timing-options" class="config-tab-content" style="display: none;">
+              <div class="grid-controls">
+                <div class="control-group">
+                  <label for="config-pre-roll">Pre-roll (s):</label>
+                  <input type="number" step="0.1" id="config-pre-roll" value="2.0" style="width: 80px;" />
+                </div>
+                <div class="control-group">
+                  <label for="config-post-roll">Post-roll (s):</label>
+                  <input type="number" step="0.1" id="config-post-roll" value="0.6" style="width: 80px;" />
+                </div>
+                <div class="control-group">
+                  <label for="config-record-start-lead">Start Lead (s):</label>
+                  <input type="number" step="0.1" id="config-record-start-lead" value="0.0" style="width: 80px;" />
+                </div>
+                <div class="control-group">
+                  <label for="config-record-stop-trail">Stop Trail (s):</label>
+                  <input type="number" step="0.1" id="config-record-stop-trail" value="0.0" style="width: 80px;" />
+                </div>
+                <div class="control-group">
+                  <label for="config-initial-delay">Initial Delay (s):</label>
+                  <input type="number" step="0.1" id="config-initial-delay" value="3.0" style="width: 80px;" />
+                </div>
+                <div class="control-group">
+                  <label for="config-fast-forward-speed">FF Speed (x):</label>
+                  <input type="number" step="0.01" id="config-fast-forward-speed" value="0.05" style="width: 80px;" />
+                </div>
+                <div class="control-group">
+                  <label for="config-capture-fps">Capture FPS:</label>
+                  <input type="number" id="config-capture-fps" value="300" style="width: 80px;" />
+                </div>
+                <div class="control-group">
+                  <label for="config-expected-fps">Expected FPS:</label>
+                  <input type="number" id="config-expected-fps" value="100" style="width: 80px;" />
+                </div>
+              </div>
+            </div>
+
+            <!-- Tab Content: Drive Overrides -->
+            <div id="tab-drive-overrides" class="config-tab-content" style="display: none;">
+              <div class="input-row">
+                <input type="text" id="drive-path-input" placeholder="Target output drive path..." style="flex: 1;" />
+                <button id="add-drive-btn">Add Drive</button>
+                <button id="browse-drive-btn">Browse Drive</button>
+                <select id="allocation-strategy">
+                  <option value="MaximizeSpace">Maximize Space</option>
+                  <option value="Chronological">Chronological</option>
+                </select>
+              </div>
+              <div class="inline-controls">
+                <div class="control-group">
+                  <input type="checkbox" id="config-auto-clear-logs" />
+                  <label for="config-auto-clear-logs">Auto-clear Logs</label>
+                </div>
+                <div class="control-group">
+                  <input type="checkbox" id="config-auto-clear-previews" />
+                  <label for="config-auto-clear-previews">Auto-clear Previews</label>
+                </div>
+                <div class="control-group">
+                  <input type="checkbox" id="config-auto-clear-temp-demos" />
+                  <label for="config-auto-clear-temp-demos">Auto-clear Temp Demos</label>
+                </div>
+              </div>
+              <ul id="target-drive-list" style="margin-top: 8px;"></ul>
+            </div>
+
+            <div class="action-footer flex-between" style="margin-top: 12px; border-top: 1px solid #383838; padding-top: 10px;">
+              <div class="action-buttons">
+                <button id="start-capture-btn" class="primary-btn">Start Capture Batch</button>
+                <button id="cancel-batch-btn" disabled>Cancel Batch</button>
+              </div>
+              <p id="batch-status" class="status-text">Status: Waiting...</p>
+            </div>
+            <div id="capture-progress-container" class="progress-bar-container" style="display: none;">
+              <div id="capture-progress-bar" class="progress-bar-fill"></div>
+            </div>
+          </div>
+
+          <!-- Render Studio Panel -->
+          <div id="render-studio-panel" class="egui-panel">
+            <div class="panel-header">
+              <h2>Render Studio</h2>
+            </div>
+            <div class="input-row">
+              <input type="text" id="render-path-input" placeholder="Enter render directory path..." style="flex: 1;" />
+              <button id="add-render-folder-btn">Add Render Folder</button>
+              <button id="browse-render-folder-btn">Browse Render Folder</button>
+            </div>
+            <ul id="render-folder-list"></ul>
+            <div class="action-row" style="margin-top: 8px;">
+              <button id="scan-render-btn">Scan for Takes</button>
+            </div>
+            <div id="render-job-container"></div>
+            <div class="action-footer flex-between" style="margin-top: 12px; border-top: 1px solid #383838; padding-top: 10px;">
+              <div class="action-buttons">
+                <button id="start-render-btn" class="primary-btn">Start Render Batch</button>
+                <button id="cancel-render-btn" disabled>Cancel Render</button>
+              </div>
+              <p id="render-status" class="status-text">Status: Waiting...</p>
+            </div>
+            <div id="render-progress-container" class="progress-bar-container" style="display: none;">
+              <div id="render-progress-bar" class="progress-bar-fill"></div>
+            </div>
+          </div>
+
+        </section>
+      </main>
+
+      <!-- Pinned Bottom Action / Status Bar -->
+      <footer id="pinned-action-bar">
+        <div id="export-pool-free-indicator">Total Export Pool Free: 0.0 GB</div>
+        <div class="action-bar-right">
+          <button id="proceed-capture-nav-btn" class="action-next-btn">Proceed to Capture &rarr;</button>
+        </div>
+      </footer>
+
+    </div>
+
+    <div id="toast-container"></div>
+
+    <!-- Telemetry Modal -->
+    <div id="telemetry-modal" class="modal" style="display: none;">
+      <div class="modal-content egui-panel" style="padding: 20px;">
+        <div class="modal-header flex-between" style="border-bottom: 1px solid #383838; padding-bottom: 10px; margin-bottom: 15px;">
+          <h2>Match Telemetry Analysis</h2>
+          <button id="telemetry-modal-close-btn">Close</button>
+        </div>
+        <div id="telemetry-loading-state" style="padding: 20px; text-align: center; color: #888; display: none;">
+          <p>Analyzing demo telemetry data...</p>
+        </div>
+        <div id="telemetry-content-container">
+          <div id="telemetry-scoreboard" style="margin-bottom: 20px;">
+            <h3>Scoreboard</h3>
+            <div class="telemetry-data-box"></div>
+          </div>
+          <div id="telemetry-chat-logs" style="margin-bottom: 20px;">
+            <h3>Chat Logs</h3>
+            <div class="telemetry-data-box"></div>
+          </div>
+          <div id="telemetry-mortality-metrics" style="margin-bottom: 20px;">
+            <h3>Mortality Metrics</h3>
+            <div class="telemetry-data-box"></div>
           </div>
         </div>
-
-        <!-- Export Configuration & Batch Capture -->
-        <div id="export-config-panel" class="egui-card">
-          <h3>Batch Capture Pipeline</h3>
-          <div class="row" style="gap: 15px;">
-            <div>
-              <label for="config-capture-fps">Capture FPS:</label>
-              <input type="number" id="config-capture-fps" value="60" style="width: 80px;" />
-            </div>
-            <div>
-              <label for="config-expected-fps">Expected FPS:</label>
-              <input type="number" id="config-expected-fps" value="100" style="width: 80px;" />
-            </div>
-            <div>
-              <label for="config-pre-roll">Pre-roll (s):</label>
-              <input type="number" step="0.1" id="config-pre-roll" value="3.0" style="width: 80px;" />
-            </div>
-            <div>
-              <label for="config-post-roll">Post-roll (s):</label>
-              <input type="number" step="0.1" id="config-post-roll" value="2.0" style="width: 80px;" />
-            </div>
-            <div>
-              <label for="config-record-start-lead">Start Lead (s):</label>
-              <input type="number" step="0.1" id="config-record-start-lead" value="0.0" style="width: 80px;" />
-            </div>
-            <div>
-              <label for="config-record-stop-trail">Stop Trail (s):</label>
-              <input type="number" step="0.1" id="config-record-stop-trail" value="0.0" style="width: 80px;" />
-            </div>
-            <div>
-              <label for="config-initial-delay">Initial Delay (s):</label>
-              <input type="number" step="0.1" id="config-initial-delay" value="3.0" style="width: 80px;" />
-            </div>
-            <div>
-              <label for="config-fast-forward-speed">FF Speed (x):</label>
-              <input type="number" step="1.0" id="config-fast-forward-speed" value="10.0" style="width: 80px;" />
-            </div>
-          </div>
-          <div class="row" style="margin-top: 10px;">
-            <input type="text" id="drive-path-input" placeholder="Target output drive path..." style="flex: 1;" />
-            <button id="add-drive-btn">Add Drive</button>
-            <button id="browse-drive-btn">Browse Drive</button>
-            <select id="allocation-strategy">
-              <option value="MaximizeSpace">Maximize Space</option>
-              <option value="Chronological">Chronological</option>
-            </select>
-          </div>
-          <ul id="target-drive-list"></ul>
-          <div id="export-pool-free-indicator" style="margin-top: 5px; font-size: 0.9em; color: #4caf50; font-weight: bold;">Total Export Pool Free: 0.0 GB</div>
-
-          <div class="row" style="margin-top: 15px;">
-            <button id="start-capture-btn">Start Capture Batch</button>
-            <button id="cancel-batch-btn" disabled>Cancel Batch</button>
-          </div>
-          <p id="batch-status">Status: Waiting...</p>
-          <div id="capture-progress-container" class="progress-bar-container" style="display: none;">
-            <div id="capture-progress-bar" class="progress-bar-fill" style="width: 0%; background: #4caf50;"></div>
-          </div>
-        </div>
-
-        <!-- Render Studio Panel -->
-        <div id="render-studio-panel" class="egui-card">
-          <h2>Render Studio</h2>
-          <div class="row">
-            <input type="text" id="render-path-input" placeholder="Enter render directory path..." style="flex: 1;" />
-            <button id="add-render-folder-btn">Add Render Folder</button>
-            <button id="browse-render-folder-btn">Browse Render Folder</button>
-          </div>
-          <ul id="render-folder-list"></ul>
-          <div class="row">
-            <button id="scan-render-btn">Scan for Takes</button>
-          </div>
-          <div id="render-job-container" style="margin-top: 15px;"></div>
-          <div class="row" style="margin-top: 15px;">
-            <button id="start-render-btn">Start Render Batch</button>
-            <button id="cancel-render-btn" disabled>Cancel Render</button>
-          </div>
-          <p id="render-status">Status: Waiting...</p>
-          <div id="render-progress-container" class="progress-bar-container" style="display: none;">
-            <div id="render-progress-bar" class="progress-bar-fill" style="width: 0%; background: #2196f3;"></div>
-          </div>
-        </div>
-
-      </section>
-    </main>
+      </div>
+    </div>
   </body>
 </html>

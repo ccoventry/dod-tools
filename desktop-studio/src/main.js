@@ -4,10 +4,12 @@ import {
   scanDirectory,
   calculateExportPoolSpace
 } from './ipc_bridge.js';
-import { renderMasterList } from './master_pane.js';
+import { renderMasterList, initMasterPane } from './master_pane.js';
 import { renderDetailView } from './detail_pane.js';
 import { initCaptureUI } from './capture_pane.js';
 import { initRenderUI } from './render_pane.js';
+import { initTelemetryPane, renderTelemetry } from './telemetry_pane.js';
+import { analyzeDemo } from './ipc_bridge.js';
 
 window.addEventListener("DOMContentLoaded", async () => {
   let scanPaths = [];
@@ -31,10 +33,14 @@ window.addEventListener("DOMContentLoaded", async () => {
           filters: [{ name: 'JSON Project File', extensions: ['json'] }]
         });
         if (filePath) {
+          const hlaePath = document.querySelector('#hlae-path-input')?.value || "";
+          const hlPath = document.querySelector('#hl-path-input')?.value || "";
           const projectData = JSON.stringify({
             version: "0.10.0",
             scanPaths: scanPaths,
-            demos: currentScannedDemos
+            demos: currentScannedDemos,
+            hlaePath: hlaePath,
+            hlPath: hlPath
           }, null, 2);
           await writeTextFile(filePath, projectData);
           document.querySelector('#scan-status').textContent = `Status: Project session saved successfully to ${filePath}`;
@@ -57,17 +63,27 @@ window.addEventListener("DOMContentLoaded", async () => {
         if (selected) {
           const content = await readTextFile(selected);
           const data = JSON.parse(content);
-          if (data && data.demos) {
-            currentScannedDemos = data.demos;
-            selectedDemoIdx = currentScannedDemos.length > 0 ? 0 : null;
-            renderMasterList(currentScannedDemos, selectedDemoIdx, (demo, idx) => {
-              selectedDemoIdx = idx;
-              renderDetailView(demo, selectedDemoIdx);
-            });
-            if (currentScannedDemos.length > 0) {
-              renderDetailView(currentScannedDemos[0], selectedDemoIdx);
+          if (data) {
+            if (data.hlaePath) {
+              const hlaeInput = document.querySelector('#hlae-path-input');
+              if (hlaeInput) hlaeInput.value = data.hlaePath;
             }
-            document.querySelector('#scan-status').textContent = `Status: Loaded ${currentScannedDemos.length} demos from project file`;
+            if (data.hlPath) {
+              const hlInput = document.querySelector('#hl-path-input');
+              if (hlInput) hlInput.value = data.hlPath;
+            }
+            if (data.demos) {
+              currentScannedDemos = data.demos;
+              selectedDemoIdx = currentScannedDemos.length > 0 ? 0 : null;
+              renderMasterList(currentScannedDemos, selectedDemoIdx, (demo, idx) => {
+                selectedDemoIdx = idx;
+                renderDetailView(demo, selectedDemoIdx);
+              });
+              if (currentScannedDemos.length > 0) {
+                renderDetailView(currentScannedDemos[0], selectedDemoIdx);
+              }
+              document.querySelector('#scan-status').textContent = `Status: Loaded ${currentScannedDemos.length} demos from project file`;
+            }
           }
         }
       } catch (err) {
@@ -76,42 +92,195 @@ window.addEventListener("DOMContentLoaded", async () => {
     });
   }
 
-  // Folder paths management
-  document.querySelector('#add-folder-btn').addEventListener('click', () => {
-    const inputEl = document.querySelector('#scan-path-input');
-    const inputPath = inputEl.value.trim();
-    if (inputPath && !scanPaths.includes(inputPath)) {
-      scanPaths.push(inputPath);
-      inputEl.value = "";
-      
-      const li = document.createElement('li');
-      li.textContent = inputPath;
-      document.querySelector('#folder-list').appendChild(li);
-    }
-  });
+  // Executable & Path Browse Dialog Pickers
+  const hlaeBrowseBtn = document.querySelector('#hlae-browse-btn');
+  if (hlaeBrowseBtn) {
+    hlaeBrowseBtn.addEventListener('click', async () => {
+      try {
+        const selected = await open({
+          multiple: false,
+          filters: [{ name: 'Executable', extensions: ['exe'] }],
+          title: 'Select HLAE Executable (hlae.exe)'
+        });
+        if (selected) {
+          const path = Array.isArray(selected) ? selected[0] : selected;
+          const inputEl = document.querySelector('#hlae-path-input');
+          if (inputEl) inputEl.value = path;
+        }
+      } catch (err) {
+        console.error("Error selecting HLAE executable:", err);
+      }
+    });
+  }
 
-  const browseDirBtn = document.querySelector('#browse-dir-btn');
-  if (browseDirBtn) {
-    browseDirBtn.addEventListener('click', async () => {
+  const hlBrowseBtn = document.querySelector('#hl-browse-btn');
+  if (hlBrowseBtn) {
+    hlBrowseBtn.addEventListener('click', async () => {
+      try {
+        const selected = await open({
+          multiple: false,
+          filters: [{ name: 'Executable', extensions: ['exe'] }],
+          title: 'Select Half-Life Executable (hl.exe)'
+        });
+        if (selected) {
+          const path = Array.isArray(selected) ? selected[0] : selected;
+          const inputEl = document.querySelector('#hl-path-input');
+          if (inputEl) inputEl.value = path;
+        }
+      } catch (err) {
+        console.error("Error selecting Half-Life executable:", err);
+      }
+    });
+  }
+
+  const ffmpegBrowseBtn = document.querySelector('#ffmpeg-browse-btn');
+  if (ffmpegBrowseBtn) {
+    ffmpegBrowseBtn.addEventListener('click', async () => {
+      try {
+        const selected = await open({
+          multiple: false,
+          filters: [{ name: 'Executable', extensions: ['exe'] }],
+          title: 'Select FFmpeg Executable (ffmpeg.exe)'
+        });
+        if (selected) {
+          const path = Array.isArray(selected) ? selected[0] : selected;
+          const inputEl = document.querySelector('#ffmpeg-override-path-input');
+          if (inputEl) inputEl.value = path;
+        }
+      } catch (err) {
+        console.error("Error selecting FFmpeg executable:", err);
+      }
+    });
+  }
+
+  const primaryMediaBrowseBtn = document.querySelector('#primary-media-browse-btn');
+  if (primaryMediaBrowseBtn) {
+    primaryMediaBrowseBtn.addEventListener('click', async () => {
       try {
         const selected = await open({
           directory: true,
-          multiple: true,
-          title: 'Select Demo Directory'
+          multiple: false,
+          title: 'Select Primary Media Directory'
         });
         if (selected) {
-          const paths = Array.isArray(selected) ? selected : [selected];
-          paths.forEach(p => {
-            if (!scanPaths.includes(p)) {
-              scanPaths.push(p);
-              const li = document.createElement('li');
-              li.textContent = p;
-              document.querySelector('#folder-list').appendChild(li);
-            }
-          });
+          const path = Array.isArray(selected) ? selected[0] : selected;
+          const inputEl = document.querySelector('#primary-media-dir-input');
+          if (inputEl) inputEl.value = path;
         }
       } catch (err) {
-        console.error("Error opening directory dialog:", err);
+        console.error("Error selecting primary media directory:", err);
+      }
+    });
+  }
+
+  const backupMediaBrowseBtn = document.querySelector('#backup-media-browse-btn');
+  if (backupMediaBrowseBtn) {
+    backupMediaBrowseBtn.addEventListener('click', async () => {
+      try {
+        const selected = await open({
+          directory: true,
+          multiple: false,
+          title: 'Select Backup Media Directory'
+        });
+        if (selected) {
+          const path = Array.isArray(selected) ? selected[0] : selected;
+          const inputEl = document.querySelector('#backup-media-dir-input');
+          if (inputEl) inputEl.value = path;
+        }
+      } catch (err) {
+        console.error("Error selecting backup media directory:", err);
+      }
+    });
+  }
+
+  // Auto-scan helper function
+  async function triggerAutoScan() {
+    if (scanPaths.length === 0) return;
+
+    const scanStatusEl = document.querySelector('#scan-status');
+    const addFilesBtn = document.querySelector('#add-files-btn');
+    const addFolderBtn = document.querySelector('#add-folder-btn');
+
+    if (addFilesBtn) addFilesBtn.disabled = true;
+    if (addFolderBtn) addFolderBtn.disabled = true;
+    if (scanStatusEl) scanStatusEl.textContent = "Status: Scanning directories...";
+    
+    const masterTableBody = document.querySelector('#master-demo-table-body');
+    if (masterTableBody) masterTableBody.innerHTML = '<tr style="text-align:center"><td colspan="6">Loading... scanning directories...</td></tr>';
+
+    try {
+      const demos = await scanDirectory(scanPaths);
+      currentScannedDemos = demos;
+      if (scanStatusEl) scanStatusEl.textContent = `Status: Scan complete (${demos.length} demos found)`;
+      selectedDemoIdx = demos.length > 0 ? 0 : null;
+      renderMasterList(demos, selectedDemoIdx, async (demo, idx) => {
+        selectedDemoIdx = idx;
+        renderDetailView(demo, selectedDemoIdx);
+        try {
+          const telemetryData = await analyzeDemo(demo.path);
+          renderTelemetry(telemetryData);
+        } catch (e) {
+          console.error("Analysis failed for", demo.path, e);
+          renderTelemetry(null);
+        }
+      });
+      if (demos.length > 0) {
+        renderDetailView(demos[0], selectedDemoIdx);
+        analyzeDemo(demos[0].path).then(renderTelemetry).catch(() => renderTelemetry(null));
+      }
+    } catch (err) {
+      console.error("Error scanning directories:", err);
+      if (scanStatusEl) scanStatusEl.textContent = "Error: " + err;
+    } finally {
+      if (addFilesBtn) addFilesBtn.disabled = false;
+      if (addFolderBtn) addFolderBtn.disabled = false;
+    }
+  }
+
+  // Native Demo Files Ingestion (+ Add Demo Files)
+  const addFilesBtn = document.querySelector('#add-files-btn');
+  if (addFilesBtn) {
+    addFilesBtn.addEventListener('click', async () => {
+      try {
+        const selected = await open({
+          multiple: true,
+          filters: [{ name: 'Demo Files', extensions: ['dem'] }],
+          title: 'Select Demo Files (.dem)'
+        });
+        if (selected) {
+          const files = Array.isArray(selected) ? selected : [selected];
+          files.forEach(f => {
+            if (!scanPaths.includes(f)) {
+              scanPaths.push(f);
+            }
+          });
+          await triggerAutoScan();
+        }
+      } catch (err) {
+        console.error("Error opening demo files dialog:", err);
+      }
+    });
+  }
+
+  // Native Demo Folder Ingestion (+ Add Folder)
+  const addFolderBtn = document.querySelector('#add-folder-btn');
+  if (addFolderBtn) {
+    addFolderBtn.addEventListener('click', async () => {
+      try {
+        const selected = await open({
+          directory: true,
+          multiple: false,
+          title: 'Select Demo Folder'
+        });
+        if (selected) {
+          const folder = Array.isArray(selected) ? selected[0] : selected;
+          if (!scanPaths.includes(folder)) {
+            scanPaths.push(folder);
+            await triggerAutoScan();
+          }
+        }
+      } catch (err) {
+        console.error("Error opening demo directory dialog:", err);
       }
     });
   }
@@ -203,45 +372,82 @@ window.addEventListener("DOMContentLoaded", async () => {
     });
   }
 
-  const scanBtn = document.querySelector('#scan-dir-btn');
-  const scanStatusEl = document.querySelector('#scan-status');
 
-  scanBtn.addEventListener('click', () => {
-    if (scanPaths.length === 0) {
-      console.warn("Please add at least one folder path.");
-      return;
-    }
-    
-    scanBtn.disabled = true;
-    scanStatusEl.textContent = "Status: Scanning directories...";
-    
-    scanDirectory(scanPaths)
-      .then((demos) => {
-        currentScannedDemos = demos;
-        scanStatusEl.textContent = `Status: Scan complete (${demos.length} demos found)`;
-        selectedDemoIdx = demos.length > 0 ? 0 : null;
-        renderMasterList(demos, selectedDemoIdx, (demo, idx) => {
-          selectedDemoIdx = idx;
-          renderDetailView(demo, selectedDemoIdx);
-        });
-        if (demos.length > 0) {
-          renderDetailView(demos[0], selectedDemoIdx);
-        }
-      })
-      .catch((err) => {
-        console.error("Error scanning directories:", err);
-        scanStatusEl.textContent = "Error: " + err;
-      })
-      .finally(() => {
-        scanBtn.disabled = false;
+
+  // Export Configuration tab switching
+  const tabBtns = document.querySelectorAll('.config-tab-btn');
+  tabBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      tabBtns.forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.config-tab-content').forEach(content => {
+        content.style.display = 'none';
       });
+      btn.classList.add('active');
+      const targetId = btn.getAttribute('data-tab');
+      const targetEl = document.getElementById(targetId);
+      if (targetEl) targetEl.style.display = 'block';
+    });
   });
 
-  document.querySelector('#config-hide-non-pov').addEventListener('change', () => {
-    if (selectedDemoIdx !== null && currentScannedDemos[selectedDemoIdx]) {
-      renderDetailView(currentScannedDemos[selectedDemoIdx], selectedDemoIdx);
+  // Wizard Navigation: top nav bar view routing
+  function activateWizardStep(navKey) {
+    const workspacePane = document.querySelector('#pane-workspace');
+    const detailsPane = document.querySelector('#pane-details-config');
+    const detailPane = document.querySelector('#detail-pane');
+    const advancedPanel = document.querySelector('#advanced-diagnostics-details');
+    const exportPanel = document.querySelector('#export-config-panel');
+    const renderPanel = document.querySelector('#render-studio-panel');
+
+    // Strict display override to hide all panels initially
+    if (workspacePane) workspacePane.style.display = 'none';
+    if (detailsPane) detailsPane.style.display = 'none';
+    if (detailPane) detailPane.style.display = 'none';
+    if (advancedPanel) advancedPanel.style.display = 'none';
+    if (exportPanel) exportPanel.style.display = 'none';
+    if (renderPanel) renderPanel.style.display = 'none';
+
+    // Selectively display panels based on wizard step
+    if (navKey === 'workspace') {
+      if (workspacePane) workspacePane.style.display = 'flex';
+      if (detailsPane) detailsPane.style.display = 'flex';
+      if (detailPane) detailPane.style.display = 'block';
+      if (advancedPanel) advancedPanel.style.display = 'block';
+    } else if (navKey === 'export-config') {
+      if (detailsPane) detailsPane.style.display = 'flex';
+      if (exportPanel) exportPanel.style.display = 'block';
+    } else if (navKey === 'render-studio') {
+      if (detailsPane) detailsPane.style.display = 'flex';
+      if (renderPanel) renderPanel.style.display = 'block';
     }
+  }
+
+  // Set initial wizard state
+  activateWizardStep('workspace');
+
+  const navTabBtns = document.querySelectorAll('.nav-tab-btn');
+  navTabBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      navTabBtns.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      activateWizardStep(btn.getAttribute('data-nav'));
+    });
   });
+
+  // Proceed to Capture button in footer
+  const proceedBtn = document.querySelector('#proceed-capture-nav-btn');
+  if (proceedBtn) {
+    proceedBtn.addEventListener('click', () => {
+      const captureNavBtn = document.querySelector('.nav-tab-btn[data-nav="export-config"]');
+      navTabBtns.forEach(b => {
+        if (b === captureNavBtn) {
+          b.classList.add('active');
+        } else {
+          b.classList.remove('active');
+        }
+      });
+      activateWizardStep('export-config');
+    });
+  }
 
   // Initialize Capture Batch UI
   initCaptureUI(() => ({
@@ -252,4 +458,7 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   // Initialize Render Studio UI
   initRenderUI(() => renderFolders);
+
+  initMasterPane();
+  initTelemetryPane();
 });

@@ -1,10 +1,29 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { showToast } from './toast.js';
 
 export async function scanDirectory(scanPaths) {
   return invoke("scan_directory", { paths: scanPaths })
     .catch((err) => {
       console.error("IPC Execution Error (scan_directory):", err);
+      showToast(`Scan error: ${err}`, 'error');
+      throw err;
+    });
+}
+
+export async function validatePaths(hlaePath, hlPath) {
+  return await invoke('validate_paths', { hlaePath, hlPath })
+    .catch((err) => {
+      console.error("IPC Execution Error (validate_paths):", err);
+      showToast(`Validation error: ${err}`, 'error');
+      throw err;
+    });
+}
+
+export async function analyzeDemo(demoPath) {
+  return await invoke('analyze_demo', { demoPath })
+    .catch((err) => {
+      console.error("IPC Execution Error (analyze_demo):", err);
       throw err;
     });
 }
@@ -76,6 +95,14 @@ export async function cancelRenderBatch() {
 export async function initRenderProgressListener(onStatusUpdate) {
   return listen('render_status', (event) => {
     if (onStatusUpdate) onStatusUpdate(event.payload);
+  }).catch((err) => {
+    console.error("IPC Execution Error (listen render_status):", err);
+  });
+}
+
+export async function onRenderStatus(callback) {
+  return await listen('render_status', (event) => {
+    if (callback) callback(event.payload);
   }).catch((err) => {
     console.error("IPC Execution Error (listen render_status):", err);
   });
