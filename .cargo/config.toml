@@ -1,2 +1,2 @@
-[target.x86_64-pc-windows-msvc]
-linker = "rust-lld.exe"
+[target.'cfg(windows)']
+runner = ["powershell", "-ExecutionPolicy", "Bypass", "-File", "../../.cargo/sign_and_run.ps1"]
