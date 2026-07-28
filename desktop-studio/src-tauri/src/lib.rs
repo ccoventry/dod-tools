@@ -63,6 +63,54 @@ fn calculate_export_pool_space(paths: Vec<String>) -> Result<u64, String> {
     Ok(total)
 }
 
+#[tauri::command]
+async fn validate_paths(hlae_path: String, hl_path: String) -> Result<bool, String> {
+    let hlae_p = std::path::Path::new(&hlae_path);
+    let hl_p = std::path::Path::new(&hl_path);
+
+    if !hlae_p.exists() || !hlae_p.is_file() {
+        return Err("HLAE executable not found at specified path.".into());
+    }
+    if !hl_p.exists() || !hl_p.is_file() {
+        return Err("Half-Life executable not found at specified path.".into());
+    }
+    Ok(true)
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+pub struct SerializedAnalysis {
+    pub scoreboard: serde_json::Value,
+    pub chat_logs: serde_json::Value,
+    pub mortality_metrics: serde_json::Value,
+    pub round_chronologies: serde_json::Value,
+    pub file_info: serde_json::Value,
+}
+
+#[tauri::command]
+async fn analyze_demo(demo_path: String) -> Result<SerializedAnalysis, String> {
+    let path = std::path::PathBuf::from(&demo_path);
+    match native::run_analyzer_with_progress(&path, |_, _| {}) {
+        Ok((file_info, analysis)) => {
+            let analysis_json = serde_json::to_value(&analysis).map_err(|e| e.to_string())?;
+            let file_info_json = serde_json::to_value(&file_info).map_err(|e| e.to_string())?;
+
+            let scoreboard = analysis_json.get("scoreboard").cloned().unwrap_or(serde_json::Value::Null);
+            let chat_logs = analysis_json.get("chat_logs").or_else(|| analysis_json.get("chat")).cloned().unwrap_or(serde_json::Value::Null);
+            let mortality_metrics = analysis_json.get("mortality_metrics").or_else(|| analysis_json.get("deaths")).cloned().unwrap_or(serde_json::Value::Null);
+            let round_chronologies = analysis_json.get("round_chronologies").or_else(|| analysis_json.get("rounds")).cloned().unwrap_or(serde_json::Value::Null);
+
+            Ok(SerializedAnalysis {
+                scoreboard,
+                chat_logs,
+                mortality_metrics,
+                round_chronologies,
+                file_info: file_info_json,
+            })
+        },
+        Err(e) => Err(e.to_string()),
+    }
+}
+
 // ── App entry point ────────────────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -75,6 +123,8 @@ pub fn run() {
         .manage(RenderManager::new())
         .invoke_handler(tauri::generate_handler![
             test_bridge,
+            validate_paths,
+            analyze_demo,
             start_capture_batch,
             cancel_capture_batch,
             capture_status,
