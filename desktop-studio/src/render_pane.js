@@ -1,18 +1,40 @@
+import { listen } from '@tauri-apps/api/event';
 import {
   scanRenderDirectories,
   executeRenderBatch,
-  getRenderStatus,
   cancelRenderBatch,
-  initRenderProgressListener
+  onRenderStatus
 } from './ipc_bridge.js';
+import { showToast } from './toast.js';
 
-let renderStatusInterval = null;
+export function initRenderProgressListener(renderStatusEl, progressBar, progressContainer, startRenderBtn, cancelRenderBtn) {
+  return listen('render_status', (event) => {
+    const payload = event.payload;
+    if (progressContainer) progressContainer.style.display = 'block';
 
-function stopRenderPolling() {
-  if (renderStatusInterval) {
-    clearInterval(renderStatusInterval);
-    renderStatusInterval = null;
-  }
+    const statusText = typeof payload === 'object' && payload.status ? payload.status : payload;
+    if (renderStatusEl) {
+      renderStatusEl.textContent = typeof statusText === 'string' ? `Status: ${statusText}` : `Status: ${JSON.stringify(statusText)}`;
+    }
+
+    if (progressBar && typeof payload === 'object' && payload.progress !== undefined) {
+      progressBar.style.width = `${payload.progress}%`;
+    }
+
+    if (statusText === 'Finished') {
+      showToast("Render batch completed successfully!", "success");
+      if (startRenderBtn) startRenderBtn.disabled = false;
+      if (cancelRenderBtn) cancelRenderBtn.disabled = true;
+    } else if (statusText === 'Cancelled') {
+      showToast("Render batch cancelled.", "info");
+      if (startRenderBtn) startRenderBtn.disabled = false;
+      if (cancelRenderBtn) cancelRenderBtn.disabled = true;
+    } else if (typeof statusText === 'string' && statusText.startsWith('FFmpeg spawn error')) {
+      showToast(statusText, "error");
+      if (startRenderBtn) startRenderBtn.disabled = false;
+      if (cancelRenderBtn) cancelRenderBtn.disabled = true;
+    }
+  });
 }
 
 export function initRenderUI(getRenderFolders) {
@@ -23,28 +45,22 @@ export function initRenderUI(getRenderFolders) {
   const progressContainer = document.querySelector('#render-progress-container');
   const progressBar = document.querySelector('#render-progress-bar');
 
-  // Register real-time progress listener
-  initRenderProgressListener((payload) => {
-    if (renderStatusEl) {
-      renderStatusEl.textContent = typeof payload === 'string' ? `Status: ${payload}` : `Status: ${JSON.stringify(payload)}`;
-    }
-    if (progressContainer) progressContainer.style.display = 'block';
-    if (progressBar && typeof payload === 'object' && payload.progress !== undefined) {
-      progressBar.style.width = `${payload.progress}%`;
-    }
-  });
+  // Register real-time progress listener via Tauri events
+  initRenderProgressListener(renderStatusEl, progressBar, progressContainer, startRenderBtn, cancelRenderBtn);
 
   if (scanRenderBtn) {
     scanRenderBtn.addEventListener('click', () => {
       const renderFolders = getRenderFolders ? getRenderFolders() : [];
       if (!renderFolders || renderFolders.length === 0) {
-        console.warn("Please add at least one render directory.");
+        showToast("Please add at least one render directory.", "error");
         return;
       }
       if (renderStatusEl) renderStatusEl.textContent = "Status: Scanning render directories...";
       scanRenderDirectories(renderFolders)
         .then((takes) => {
-          if (renderStatusEl) renderStatusEl.textContent = `Status: Scanned ${takes ? takes.length : 0} render take(s).`;
+          const count = takes ? takes.length : 0;
+          if (renderStatusEl) renderStatusEl.textContent = `Status: Scanned ${count} render take(s).`;
+          showToast(`Scanned ${count} render take(s).`, "info");
           const container = document.querySelector('#render-job-container');
           if (container) {
             container.innerHTML = takes && takes.length > 0
@@ -55,6 +71,7 @@ export function initRenderUI(getRenderFolders) {
         .catch((err) => {
           console.error("IPC Execution Error (scan_render_directories):", err);
           if (renderStatusEl) renderStatusEl.textContent = "IPC Execution Error: " + err;
+          showToast("Error scanning render directories: " + err, "error");
         });
     });
   }
@@ -63,10 +80,11 @@ export function initRenderUI(getRenderFolders) {
     startRenderBtn.addEventListener('click', () => {
       const renderFolders = getRenderFolders ? getRenderFolders() : [];
       if (renderStatusEl) renderStatusEl.textContent = "Status: Initializing render batch...";
+      showToast("Initializing render batch...", "info");
       startRenderBtn.disabled = true;
       if (cancelRenderBtn) cancelRenderBtn.disabled = false;
       if (progressContainer) progressContainer.style.display = 'block';
-      if (progressBar) progressBar.style.width = '10%';
+      if (progressBar) progressBar.style.width = '5%';
 
       const renderPayload = {
         render_directories: renderFolders,
@@ -78,33 +96,12 @@ export function initRenderUI(getRenderFolders) {
       executeRenderBatch(renderPayload)
         .then(() => {
           if (renderStatusEl) renderStatusEl.textContent = "Status: Render batch queued successfully!";
-          stopRenderPolling();
-          renderStatusInterval = setInterval(async () => {
-            try {
-              const statusText = await getRenderStatus();
-              if (statusText.startsWith("Rendering") || statusText.startsWith("Scanning")) {
-                if (renderStatusEl) renderStatusEl.textContent = `Status: ${statusText}`;
-                if (progressBar) progressBar.style.width = '50%';
-              } else {
-                stopRenderPolling();
-                if (renderStatusEl) renderStatusEl.textContent = `Status: ${statusText}`;
-                if (progressBar) progressBar.style.width = '100%';
-                if (startRenderBtn) startRenderBtn.disabled = false;
-                if (cancelRenderBtn) cancelRenderBtn.disabled = true;
-              }
-            } catch (err) {
-              console.error("IPC Execution Error (getRenderStatus):", err);
-              stopRenderPolling();
-              if (renderStatusEl) renderStatusEl.textContent = "IPC Execution Error: " + err;
-              if (startRenderBtn) startRenderBtn.disabled = false;
-              if (cancelRenderBtn) cancelRenderBtn.disabled = true;
-            }
-          }, 500);
+          showToast("Render batch queued successfully!", "success");
         })
         .catch((err) => {
           console.error("IPC Execution Error (executeRenderBatch):", err);
-          stopRenderPolling();
           if (renderStatusEl) renderStatusEl.textContent = "IPC Execution Error: " + err;
+          showToast("Error executing render batch: " + err, "error");
           if (startRenderBtn) startRenderBtn.disabled = false;
           if (cancelRenderBtn) cancelRenderBtn.disabled = true;
         });
@@ -116,14 +113,8 @@ export function initRenderUI(getRenderFolders) {
       if (renderStatusEl) renderStatusEl.textContent = "Status: Cancelling render batch...";
       cancelRenderBtn.disabled = true;
       cancelRenderBatch()
-        .then(() => {
-          stopRenderPolling();
-          if (startRenderBtn) startRenderBtn.disabled = false;
-          if (progressBar) progressBar.style.width = '0%';
-        })
         .catch((err) => {
           console.error("IPC Execution Error (cancelRenderBatch):", err);
-          stopRenderPolling();
           if (startRenderBtn) startRenderBtn.disabled = false;
         });
     });
