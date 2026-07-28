@@ -1,5 +1,5 @@
 ## Web AI State
-* **Current Goal:** Tauri migration UI parity audit and structural reconciliation (resuming tomorrow).
+* **Current Goal:** Feature development is wrapped up with changes committed. Tauri migration UI parity audit and structural reconciliation are scheduled to resume tomorrow.
 * **Last Edited:** `desktop-studio/src/detail_pane.js`, `desktop-studio/src/master_pane.js`, `desktop-studio/index.html`.
 * **Unresolved Bugs:** Minor UI/UX parity mismatches between legacy `dev` branch and Tauri branch pending audit.
 
@@ -15,5 +15,4 @@
   - **UI/UX Polish:** Integrated dynamic vector list reordering (⬆/⬇ swap controls), removed deprecated individual directory pickers, and mounted a global "Total Export Pool Free" indicator on the Render view.
 
 ## IDE AI State
-* **Current Action:** Await prompt to execute cross-branch structural diff audit between `dev` and `feature/tauri-migration`.
-* **Next Command:** Compare frontend DOM structures and event bindings upon session resumption.
+* **Current Action:** Readiness to execute a cross-branch structural diff audit between `dev` and `feature/tauri-migration` upon session resumption.
