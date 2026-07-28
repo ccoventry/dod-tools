@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 use native::hlcr::scanner::{scan_folder_background, ClipData};
+use tauri::Emitter;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SerializedRenderJob {
@@ -89,6 +90,7 @@ pub struct RenderBatchPayload {
 
 #[tauri::command]
 pub async fn execute_render_batch(
+    app: tauri::AppHandle,
     state: tauri::State<'_, RenderManager>,
     payload: RenderBatchPayload,
 ) -> Result<(), String> {
@@ -106,8 +108,11 @@ pub async fn execute_render_batch(
     let active_job_index = Arc::clone(&state.active_job_index);
     let total_jobs_count = Arc::clone(&state.total_jobs_count);
     let current_status = Arc::clone(&state.current_status);
+    let app_emitter = app.clone();
 
     tokio::spawn(async move {
+        let _ = app_emitter.emit("render_status", serde_json::json!({ "progress": 5, "status": "Scanning for takes..." }));
+
         let (clip_tx, clip_rx) = std::sync::mpsc::channel();
         let (status_tx, _status_rx) = std::sync::mpsc::channel();
         let source_folders: Vec<PathBuf> = payload.render_directories.into_iter().map(PathBuf::from).collect();
@@ -123,7 +128,9 @@ pub async fn execute_render_batch(
         total_jobs_count.store(total, Ordering::SeqCst);
         if total == 0 {
             is_running.store(false, Ordering::SeqCst);
-            *current_status.lock().unwrap() = "No takes found to render".to_string();
+            let msg = "No takes found to render".to_string();
+            *current_status.lock().unwrap() = msg.clone();
+            let _ = app_emitter.emit("render_status", serde_json::json!({ "progress": 0, "status": msg }));
             return;
         }
 
@@ -133,10 +140,19 @@ pub async fn execute_render_batch(
             }
 
             active_job_index.store((idx + 1) as u32, Ordering::SeqCst);
+            let pct = (((idx + 1) as f32 / total as f32) * 100.0) as u32;
+            let status_msg = format!("Rendering {}/{} ({})", idx + 1, total, clip.base_name);
             {
                 let mut status = current_status.lock().unwrap();
-                *status = format!("Rendering {}/{} ({})", idx + 1, total, clip.base_name);
+                *status = status_msg.clone();
             }
+            let progress_payload = serde_json::json!({
+                "progress": pct,
+                "status": status_msg,
+                "current_frame": idx + 1,
+                "total_frames": total
+            });
+            let _ = app_emitter.emit("render_status", progress_payload);
 
             let input_img_pattern = PathBuf::from(&clip.img_folder).join("%05d.tga");
             let output_file = PathBuf::from(&clip.take_folder).with_extension(&payload.output_format);
@@ -168,20 +184,30 @@ pub async fn execute_render_batch(
                 }
                 Err(e) => {
                     log::error!("Failed to spawn FFmpeg process for {}: {}", clip.base_name, e);
-                    let mut status = current_status.lock().unwrap();
-                    *status = format!("FFmpeg spawn error on clip {}: {}", clip.base_name, e);
+                    let err_msg = format!("FFmpeg spawn error on clip {}: {}", clip.base_name, e);
+                    {
+                        let mut status = current_status.lock().unwrap();
+                        *status = err_msg.clone();
+                    }
+                    let _ = app_emitter.emit("render_status", serde_json::json!({ "progress": pct, "status": err_msg }));
                     continue;
                 }
             }
         }
 
         is_running.store(false, Ordering::SeqCst);
-        let mut status = current_status.lock().unwrap();
-        *status = if cancel_token.load(Ordering::SeqCst) {
+        let is_cancelled = cancel_token.load(Ordering::SeqCst);
+        let final_status = if is_cancelled {
             "Cancelled".to_string()
         } else {
             "Finished".to_string()
         };
+        {
+            let mut status = current_status.lock().unwrap();
+            *status = final_status.clone();
+        }
+        let final_pct = if is_cancelled { 0 } else { 100 };
+        let _ = app_emitter.emit("render_status", serde_json::json!({ "progress": final_pct, "status": final_status }));
     });
 
     Ok(())
