@@ -10,6 +10,7 @@ import { initCaptureUI } from './capture_pane.js';
 import { initRenderUI } from './render_pane.js';
 import { initTelemetryPane, renderTelemetry } from './telemetry_pane.js';
 import { analyzeDemo } from './ipc_bridge.js';
+import { showToast } from './toast.js';
 
 window.addEventListener("DOMContentLoaded", async () => {
   let scanPaths = [];
@@ -43,10 +44,11 @@ window.addEventListener("DOMContentLoaded", async () => {
             hlPath: hlPath
           }, null, 2);
           await writeTextFile(filePath, projectData);
-          document.querySelector('#scan-status').textContent = `Status: Project session saved successfully to ${filePath}`;
+          showToast(`Project session saved successfully to ${filePath}`, 'success');
         }
       } catch (err) {
         console.error("Save project error:", err);
+        showToast("Error saving project session.", 'error');
       }
     });
   }
@@ -82,12 +84,13 @@ window.addEventListener("DOMContentLoaded", async () => {
               if (currentScannedDemos.length > 0) {
                 renderDetailView(currentScannedDemos[0], selectedDemoIdx);
               }
-              document.querySelector('#scan-status').textContent = `Status: Loaded ${currentScannedDemos.length} demos from project file`;
+              showToast(`Loaded ${currentScannedDemos.length} demos from project file`, 'success');
             }
           }
         }
       } catch (err) {
         console.error("Load project error:", err);
+        showToast("Error loading project session.", 'error');
       }
     });
   }
@@ -203,19 +206,25 @@ window.addEventListener("DOMContentLoaded", async () => {
 
     if (addFilesBtn) addFilesBtn.disabled = true;
     if (addFolderBtn) addFolderBtn.disabled = true;
-    if (scanStatusEl) scanStatusEl.textContent = "Status: Scanning directories...";
+    showToast("Scanning directories...", 'info');
     
     const masterTableBody = document.querySelector('#master-demo-table-body');
-    if (masterTableBody) masterTableBody.innerHTML = '<tr style="text-align:center"><td colspan="6">Loading... scanning directories...</td></tr>';
+    if (masterTableBody) masterTableBody.innerHTML = '<tr style="text-align:center"><td colspan="7">Loading... scanning directories...</td></tr>';
 
     try {
       const demos = await scanDirectory(scanPaths);
       currentScannedDemos = demos;
-      if (scanStatusEl) scanStatusEl.textContent = `Status: Scan complete (${demos.length} demos found)`;
+      showToast(`Scan complete (${demos.length} demos found)`, 'success');
       selectedDemoIdx = demos.length > 0 ? 0 : null;
       renderMasterList(demos, selectedDemoIdx, async (demo, idx) => {
         selectedDemoIdx = idx;
         renderDetailView(demo, selectedDemoIdx);
+        // Update the View Telemetry button with the selected demo path.
+        const telemBtn = document.querySelector('#view-telemetry-btn');
+        if (telemBtn) {
+          telemBtn.dataset.demoPath = demo.path;
+          telemBtn.disabled = false;
+        }
         try {
           const telemetryData = await analyzeDemo(demo.path);
           renderTelemetry(telemetryData);
@@ -225,12 +234,19 @@ window.addEventListener("DOMContentLoaded", async () => {
         }
       });
       if (demos.length > 0) {
-        renderDetailView(demos[0], selectedDemoIdx);
-        analyzeDemo(demos[0].path).then(renderTelemetry).catch(() => renderTelemetry(null));
+        const firstDemo = demos[0];
+        renderDetailView(firstDemo, selectedDemoIdx);
+        // Prime the telemetry button for the auto-selected first demo.
+        const telemBtn = document.querySelector('#view-telemetry-btn');
+        if (telemBtn) {
+          telemBtn.dataset.demoPath = firstDemo.path;
+          telemBtn.disabled = false;
+        }
+        analyzeDemo(firstDemo.path).then(renderTelemetry).catch(() => renderTelemetry(null));
       }
     } catch (err) {
       console.error("Error scanning directories:", err);
-      if (scanStatusEl) scanStatusEl.textContent = "Error: " + err;
+      showToast("Error: " + err, 'error');
     } finally {
       if (addFilesBtn) addFilesBtn.disabled = false;
       if (addFolderBtn) addFolderBtn.disabled = false;
@@ -372,6 +388,25 @@ window.addEventListener("DOMContentLoaded", async () => {
     });
   }
 
+  // Browse handler for render export directory override
+  const browseRenderExportBtn = document.querySelector('#browse-render-export-btn');
+  if (browseRenderExportBtn) {
+    browseRenderExportBtn.addEventListener('click', async () => {
+      try {
+        const selected = await open({
+          directory: true,
+          multiple: false,
+          title: 'Select Render Export Directory'
+        });
+        if (selected) {
+          const inputEl = document.querySelector('#render-export-dir-input');
+          if (inputEl) inputEl.value = selected;
+        }
+      } catch (err) {
+        console.error("Error opening render export directory dialog:", err);
+      }
+    });
+  }
 
 
   // Export Configuration tab switching
@@ -459,6 +494,24 @@ window.addEventListener("DOMContentLoaded", async () => {
   // Initialize Render Studio UI
   initRenderUI(() => renderFolders);
 
-  initMasterPane();
+  // Delete callback: remove a demo from the active scan list and re-render.
+  // Called by master_pane.js when the 🗑 button is clicked on a row.
+  const onDeleteDemo = (deletedOriginalIdx, updatedDemos) => {
+    currentScannedDemos = updatedDemos;
+    // If the deleted demo was the selected one, clear the detail view.
+    if (selectedDemoIdx === deletedOriginalIdx) {
+      selectedDemoIdx = currentScannedDemos.length > 0 ? 0 : null;
+      if (selectedDemoIdx !== null) {
+        renderDetailView(currentScannedDemos[0], selectedDemoIdx);
+      } else {
+        renderDetailView(null, null);
+      }
+    } else if (selectedDemoIdx !== null && selectedDemoIdx > deletedOriginalIdx) {
+      // Shift selection index down if a demo above it was removed.
+      selectedDemoIdx -= 1;
+    }
+  };
+
+  initMasterPane(onDeleteDemo);
   initTelemetryPane();
 });

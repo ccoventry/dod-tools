@@ -139,25 +139,36 @@ export function renderDetailView(demo, selectedDemoIdx) {
     const secs = Math.floor(total_seconds % 60).toString().padStart(2, '0');
     const timeStr = `${mins}:${secs}`;
     
-    // Kill Range
-    const killRange = `1 - ${streak.kill_count}`;
+    // Kill Range: use the precomputed timeline_string from the backend
+    // (e.g. "Rifle (+0:03) Rifle" — first kill weapon + gap + weapon chain).
+    const killRange = streak.timeline_string || `${streak.kill_count} kills`;
+
+    // Status badge colours matching HighlightStatus enum
+    const statusColors = {
+      Pending: '#888',
+      Captured: '#4caf50',
+      Rendered: '#2196f3',
+      None: '#555',
+    };
+    const statusLabel = streak.status || 'Pending';
+    const statusColor = statusColors[statusLabel] || '#888';
 
     tr.innerHTML = `
       <td style="padding: 8px;">${rowNum}</td>
       <td style="padding: 8px;">
         <input type="checkbox" class="streak-select-cb" ${streak.selected ? 'checked' : ''} />
       </td>
-      <td style="padding: 8px;">${killRange}</td>
+      <td style="padding: 8px; font-size: 0.8em; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${killRange}">${killRange}</td>
       <td style="padding: 8px; font-weight: bold;">${streak.kill_count}</td>
       <td style="padding: 8px;">${timeStr}</td>
       <td style="padding: 8px;">${durSecs}s</td>
       <td style="padding: 8px;">
-        <select style="background: #2a2a2a; color: #fff; border: 1px solid #444; border-radius: 3px; padding: 2px;"><option>None</option></select>
+        <span style="color: ${statusColor}; font-size: 0.85em;">${statusLabel}</span>
       </td>
       <td style="padding: 8px;">
         <input type="text" placeholder="Add note..." style="background: #1a1a1a; color: #fff; border: 1px solid #444; border-radius: 3px; padding: 2px; width: 100%;" />
       </td>
-      <td style="padding: 8px; font-size: 0.8em;">${(streak.kills || []).map(k => k.weapon || 'kill').join(', ')}</td>
+      <td style="padding: 8px; font-size: 0.8em;">${(streak.kills || []).map(k => k[2] || 'kill').join(', ')}</td>
     `;
 
     const cb = tr.querySelector('.streak-select-cb');
@@ -197,11 +208,17 @@ export function renderTimeline(demo) {
     return;
   }
 
+  const preRollSecs = parseFloat(document.querySelector("#config-pre-roll")?.value) || 2.0;
+  const postRollSecs = parseFloat(document.querySelector("#config-post-roll")?.value) || 0.6;
+  const tickrate = demo.tickrate || 100;
+  const preRollTicks = preRollSecs * tickrate;
+  const postRollTicks = postRollSecs * tickrate;
+
   let minTick = Infinity;
   let maxTick = -Infinity;
   demo.streaks.forEach(s => {
-    if (s.start_tick < minTick) minTick = s.start_tick;
-    if (s.end_tick > maxTick) maxTick = s.end_tick;
+    if (s.start_tick - preRollTicks < minTick) minTick = s.start_tick - preRollTicks;
+    if (s.end_tick + postRollTicks > maxTick) maxTick = s.end_tick + postRollTicks;
   });
 
   if (minTick === Infinity || maxTick === -Infinity || maxTick <= minTick) {
@@ -234,18 +251,36 @@ export function renderTimeline(demo) {
     const endX = padding + ((streak.end_tick - minTick) / tickSpan) * usableWidth;
     const blockWidth = Math.max(endX - startX, 4);
 
-    // Span block
+    const preX = padding + (((streak.start_tick - preRollTicks) - minTick) / tickSpan) * usableWidth;
+    const preWidth = Math.max(startX - preX, 0);
+
+    const postX = endX;
+    const postEndX = padding + (((streak.end_tick + postRollTicks) - minTick) / tickSpan) * usableWidth;
+    const postWidth = Math.max(postEndX - postX, 0);
+
+    // Pre-roll margin
+    ctx.fillStyle = isSelected ? 'rgba(76, 175, 80, 0.15)' : 'rgba(255, 255, 255, 0.02)';
+    ctx.fillRect(preX, 15, preWidth, height - 40);
+
+    // Post-roll margin
+    ctx.fillRect(postX, 15, postWidth, height - 40);
+
+    // Core Span block
     ctx.fillStyle = isSelected ? 'rgba(76, 175, 80, 0.35)' : 'rgba(255, 255, 255, 0.05)';
     ctx.fillRect(startX, 15, blockWidth, height - 40);
 
     ctx.strokeStyle = isSelected ? '#4caf50' : '#444444';
     ctx.lineWidth = 1;
     ctx.strokeRect(startX, 15, blockWidth, height - 40);
+    // Draw outer bounds for margins
+    ctx.strokeStyle = isSelected ? 'rgba(76, 175, 80, 0.4)' : '#333333';
+    ctx.strokeRect(preX, 15, preWidth + blockWidth + postWidth, height - 40);
 
-    // Kill timestamp markers
+    // Kill timestamp markers — kills are (tick, abs_time_secs, weapon) tuples
     if (streak.kills && Array.isArray(streak.kills) && streak.kills.length > 0) {
       streak.kills.forEach(k => {
-        const kTick = k.tick || streak.start_tick;
+        // k[0] = tick (integer), k[1] = abs_time_secs, k[2] = weapon name
+        const kTick = k[0] !== undefined ? k[0] : streak.start_tick;
         const kX = padding + ((kTick - minTick) / tickSpan) * usableWidth;
         ctx.strokeStyle = isSelected ? '#ff4444' : '#773333';
         ctx.lineWidth = 2;

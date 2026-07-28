@@ -88,27 +88,53 @@ pub struct SerializedAnalysis {
 
 #[tauri::command]
 async fn analyze_demo(demo_path: String) -> Result<SerializedAnalysis, String> {
-    let path = std::path::PathBuf::from(&demo_path);
-    match native::run_analyzer_with_progress(&path, |_, _| {}) {
-        Ok((file_info, analysis)) => {
-            let analysis_json = serde_json::to_value(&analysis).map_err(|e| e.to_string())?;
-            let file_info_json = serde_json::to_value(&file_info).map_err(|e| e.to_string())?;
+    tokio::task::spawn_blocking(move || {
+        let path = std::path::PathBuf::from(&demo_path);
 
-            let scoreboard = analysis_json.get("scoreboard").cloned().unwrap_or(serde_json::Value::Null);
-            let chat_logs = analysis_json.get("chat_logs").or_else(|| analysis_json.get("chat")).cloned().unwrap_or(serde_json::Value::Null);
-            let mortality_metrics = analysis_json.get("mortality_metrics").or_else(|| analysis_json.get("deaths")).cloned().unwrap_or(serde_json::Value::Null);
-            let round_chronologies = analysis_json.get("round_chronologies").or_else(|| analysis_json.get("rounds")).cloned().unwrap_or(serde_json::Value::Null);
+        if !path.exists() || !path.is_file() {
+            return Err(format!("Demo file not found: {}", demo_path));
+        }
 
-            Ok(SerializedAnalysis {
-                scoreboard,
-                chat_logs,
-                mortality_metrics,
-                round_chronologies,
-                file_info: file_info_json,
-            })
-        },
-        Err(e) => Err(e.to_string()),
-    }
+        match native::run_analyzer_with_progress(&path, |_, _| {}) {
+            Ok((file_info, analysis)) => {
+                let analysis_json = serde_json::to_value(&analysis)
+                    .map_err(|e| format!("Serialization error (analysis): {}", e))?;
+                let file_info_json = serde_json::to_value(&file_info)
+                    .map_err(|e| format!("Serialization error (file_info): {}", e))?;
+
+                let scoreboard = analysis_json
+                    .get("scoreboard")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null);
+                let chat_logs = analysis_json
+                    .get("chat_logs")
+                    .or_else(|| analysis_json.get("chat"))
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null);
+                let mortality_metrics = analysis_json
+                    .get("mortality_metrics")
+                    .or_else(|| analysis_json.get("deaths"))
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null);
+                let round_chronologies = analysis_json
+                    .get("round_chronologies")
+                    .or_else(|| analysis_json.get("rounds"))
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null);
+
+                Ok(SerializedAnalysis {
+                    scoreboard,
+                    chat_logs,
+                    mortality_metrics,
+                    round_chronologies,
+                    file_info: file_info_json,
+                })
+            }
+            Err(e) => Err(format!("Analyzer error: {}", e)),
+        }
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
 }
 
 // ── App entry point ────────────────────────────────────────────────────────────

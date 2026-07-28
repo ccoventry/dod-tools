@@ -38,12 +38,10 @@ export function initCaptureUI(getState) {
       try {
         const isRunning = await getCaptureStatus();
         if (isRunning) {
-          statusEl.textContent = "Status: Capturing batch in progress...";
           updateRowBadges("Capturing...", "#ff9800");
           if (progressBar) progressBar.style.width = '65%';
         } else {
           stopStatusPolling();
-          statusEl.textContent = "Status: Batch completed";
           showToast("Batch capture completed successfully!", "success");
           updateRowBadges("Completed", "#4caf50");
           if (progressBar) progressBar.style.width = '100%';
@@ -53,7 +51,6 @@ export function initCaptureUI(getState) {
       } catch (err) {
         console.error("IPC Error polling capture status:", err);
         stopStatusPolling();
-        statusEl.textContent = "Error checking capture status: " + err;
         showToast("Error checking capture status: " + err, "error");
         updateRowBadges("Error", "#f44336");
         if (startBtn) startBtn.disabled = false;
@@ -108,7 +105,6 @@ export function initCaptureUI(getState) {
       if (!hlaePathVal || !hlPathVal) {
         const errorMsg = "Please specify valid file paths for both HLAE Executable (hlae.exe) and Half-Life Executable (hl.exe).";
         showToast(errorMsg, 'error');
-        if (statusEl) statusEl.textContent = "Error: " + errorMsg;
         return;
       }
 
@@ -117,7 +113,6 @@ export function initCaptureUI(getState) {
       } catch (err) {
         console.error("Executable path validation failed:", err);
         showToast(String(err), 'error');
-        if (statusEl) statusEl.textContent = "Error: " + err;
         return;
       }
 
@@ -149,7 +144,6 @@ export function initCaptureUI(getState) {
         auto_clear_temp_demos: autoClearTempDemosVal
       };
 
-      statusEl.textContent = "Status: Initializing capture batch...";
       showToast("Initializing capture batch...", "info");
       startBtn.disabled = true;
       if (cancelBtn) cancelBtn.disabled = false;
@@ -157,14 +151,12 @@ export function initCaptureUI(getState) {
 
       startCaptureBatch(activePayload)
         .then(() => {
-          statusEl.textContent = "Status: Batch queued successfully!";
           showToast("Batch capture queued successfully!", "success");
           startStatusPolling();
         })
         .catch((err) => {
           console.error("IPC Execution Error (start_capture_batch):", err);
           stopStatusPolling();
-          statusEl.textContent = "Error starting batch: " + err;
           showToast("Error starting batch: " + err, "error");
           updateRowBadges("Failed", "#f44336");
           if (startBtn) startBtn.disabled = false;
@@ -175,7 +167,7 @@ export function initCaptureUI(getState) {
 
   if (cancelBtn) {
     cancelBtn.addEventListener('click', () => {
-      statusEl.textContent = "Status: Cancelling batch...";
+      showToast("Cancelling batch...", "info");
       cancelBtn.disabled = true;
       cancelCaptureBatch()
         .then(() => {

@@ -73,6 +73,16 @@ pub struct SerializedStreak {
     pub total_demo_frames: i32,
     pub demo_fps: f32,
     pub viewdemo_times: Vec<f32>,
+    /// Tick at which `svc_gametime` resets (i.e. the match clock zero point).
+    /// `None` when the scanner could not locate the reset event.
+    #[serde(default)]
+    pub match_start_tick: Option<i32>,
+    /// Per-frame absolute timestamps extracted from the demo binary.
+    /// Transported as a plain `Vec` so it crosses the JSON IPC boundary;
+    /// deserialization wraps it in `Arc<Vec<f32>>` before handing it to the
+    /// native patch engine.
+    #[serde(default)]
+    pub frame_times: Vec<f32>,
 }
 
 impl From<SerializedStreak> for CaptureStreak {
@@ -92,8 +102,9 @@ impl From<SerializedStreak> for CaptureStreak {
             total_demo_frames: s.total_demo_frames,
             demo_fps: s.demo_fps,
             viewdemo_times: s.viewdemo_times,
-            frame_times: std::sync::Arc::new(Vec::new()),
-            match_start_tick: None,
+            // Restore the Arc wrapper that was flattened for JSON transport.
+            frame_times: std::sync::Arc::new(s.frame_times),
+            match_start_tick: s.match_start_tick,
             status: native::patch::types::HighlightStatus::Pending,
         }
     }
@@ -313,6 +324,10 @@ impl From<CaptureStreak> for SerializedStreak {
             total_demo_frames: c.total_demo_frames,
             demo_fps: c.demo_fps,
             viewdemo_times: c.viewdemo_times,
+            // Flatten Arc<Vec<f32>> → Vec<f32> for JSON transport.
+            // The inbound From<SerializedStreak> impl re-wraps it in Arc::new().
+            frame_times: (*c.frame_times).clone(),
+            match_start_tick: c.match_start_tick,
         }
     }
 }
@@ -354,11 +369,38 @@ pub async fn scan_directory_impl(paths: Vec<String>) -> Result<Vec<SerializedDem
 
         let mut results = Vec::new();
         for file in list {
-            if let Ok((tickrate, streaks, is_pov, local_player_index, playback_frames, _demo_end_tick, _frame_times)) = scan_demo_for_highlights(&file) {
-                let serialized_streaks: Vec<SerializedStreak> = streaks.into_iter().map(SerializedStreak::from).collect();
+            if let Ok((
+                tickrate,
+                streaks,
+                is_pov,
+                local_player_index,
+                playback_frames,
+                match_start_tick,
+                frame_times_arc,
+            )) = scan_demo_for_highlights(&file)
+            {
+                let serialized_streaks: Vec<SerializedStreak> = streaks
+                    .into_iter()
+                    .map(|mut s| {
+                        // Propagate per-demo fields that the scanner attaches
+                        // to the demo level, not to each individual streak.
+                        // frame_times_arc is Arc<Vec<f32>>; CaptureStreak.frame_times
+                        // is the same type, so a cheap Arc clone is correct here.
+                        // SerializedStreak::from() then deref-clones it to Vec<f32>
+                        // for JSON transport.
+                        s.match_start_tick = match_start_tick;
+                        s.frame_times = frame_times_arc.clone();
+                        SerializedStreak::from(s)
+                    })
+                    .collect();
+
                 results.push(SerializedDemo {
                     path: file.to_string_lossy().to_string(),
-                    name: file.file_name().unwrap_or_default().to_string_lossy().to_string(),
+                    name: file
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_string(),
                     tickrate,
                     is_pov,
                     local_player_index,

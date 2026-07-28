@@ -49,7 +49,7 @@
           <div id="master-pane" class="egui-panel">
             <div class="panel-header flex-between">
               <h3>Master Demo Queue</h3>
-              <input type="text" id="demo-search-input" placeholder="Search demos or maps..." />
+              <input type="text" id="demo-search-input" placeholder="Search filename or map..." style="padding: 4px 8px; font-size: 12px; background: #1a1a1a; color: #fff; border: 1px solid #444; border-radius: 3px;" />
             </div>
             <div class="table-wrapper">
               <table id="master-demo-table">
@@ -88,7 +88,14 @@
                   <label for="input-min-kills">Min Kills:</label>
                   <input type="number" id="input-min-kills" value="1" min="1" style="width: 50px;" />
                 </div>
+                <div class="control-group">
+                  <input type="checkbox" id="config-hide-non-pov" />
+                  <label for="config-hide-non-pov">POV Only</label>
+                </div>
               </div>
+            </div>
+            <div style="padding: 10px; border-bottom: 1px solid #333; background: #1a1a1a;">
+              <canvas id="streak-timeline-canvas" height="60" style="width: 100%; border-radius: 2px; background: #121212; border: 1px solid #333;"></canvas>
             </div>
             <div id="detail-streaks-container">
               <p class="placeholder-text" style="color: #888;">Select a demo in the Master List to view its killstreak details.</p>
@@ -99,9 +106,6 @@
           <details id="advanced-diagnostics-details" class="egui-panel">
             <summary style="cursor: pointer; font-weight: bold; color: #ccc;">Advanced Diagnostics (Canvas Timeline & Telemetry)</summary>
             <div class="diagnostics-content" style="margin-top: 10px;">
-              <h4 style="margin: 5px 0;">Streak Timeline Canvas</h4>
-              <canvas id="streak-timeline-canvas" height="100" style="width: 100%; border-radius: 2px; background: #181818; border: 1px solid #383838; margin-top: 5px; margin-bottom: 10px;"></canvas>
-              
               <div id="telemetry-pane" style="margin-top: 10px;">
                 <h4 style="margin: 5px 0;">Match Telemetry</h4>
                 <div id="telemetry-container" style="max-height: 250px; overflow-y: auto; background-color: #181818; padding: 10px; border-radius: 2px;">
@@ -263,6 +267,28 @@
               <button id="browse-render-folder-btn">Browse Render Folder</button>
             </div>
             <ul id="render-folder-list"></ul>
+
+            <!-- Render Configuration -->
+            <div class="inline-controls" style="margin-top: 8px;">
+              <div class="control-group">
+                <label for="render-codec-select">Codec:</label>
+                <select id="render-codec-select" style="background: #2a2a2a; color: #fff; border: 1px solid #444; border-radius: 3px; padding: 2px 4px;">
+                  <option value="prores">ProRes 422 HQ</option>
+                  <option value="dnxhr">DNxHR HQ</option>
+                  <option value="h264">H.264 (MP4)</option>
+                </select>
+              </div>
+              <div class="control-group">
+                <label for="render-fps-input">Source FPS:</label>
+                <input type="number" id="render-fps-input" value="300" min="1" max="1000" style="width: 70px;" />
+              </div>
+            </div>
+            <div class="input-row" style="margin-top: 6px;">
+              <label style="white-space: nowrap;">Export Dir:</label>
+              <input type="text" id="render-export-dir-input" placeholder="Optional: override output directory..." style="flex: 1;" />
+              <button id="browse-render-export-btn">Browse</button>
+            </div>
+
             <div class="action-row" style="margin-top: 8px;">
               <button id="scan-render-btn">Scan for Takes</button>
             </div>
@@ -298,7 +324,10 @@
     <div id="telemetry-modal" class="modal" style="display: none;">
       <div class="modal-content egui-panel" style="padding: 20px;">
         <div class="modal-header flex-between" style="border-bottom: 1px solid #383838; padding-bottom: 10px; margin-bottom: 15px;">
-          <h2>Match Telemetry Analysis</h2>
+          <div>
+            <h2>Match Telemetry Analysis</h2>
+            <p id="telemetry-file-info" style="font-size: 11px; color: #888; margin-top: 3px;"></p>
+          </div>
           <button id="telemetry-modal-close-btn">Close</button>
         </div>
         <div id="telemetry-loading-state" style="padding: 20px; text-align: center; color: #888; display: none;">
@@ -306,15 +335,19 @@
         </div>
         <div id="telemetry-content-container">
           <div id="telemetry-scoreboard" style="margin-bottom: 20px;">
-            <h3>Scoreboard</h3>
+            <h3 style="font-size: 13px; color: #ccc; margin-bottom: 6px;">Scoreboard</h3>
             <div class="telemetry-data-box"></div>
           </div>
           <div id="telemetry-chat-logs" style="margin-bottom: 20px;">
-            <h3>Chat Logs</h3>
+            <h3 style="font-size: 13px; color: #ccc; margin-bottom: 6px;">Chat Logs</h3>
             <div class="telemetry-data-box"></div>
           </div>
           <div id="telemetry-mortality-metrics" style="margin-bottom: 20px;">
-            <h3>Mortality Metrics</h3>
+            <h3 style="font-size: 13px; color: #ccc; margin-bottom: 6px;">Mortality Metrics</h3>
+            <div class="telemetry-data-box"></div>
+          </div>
+          <div id="telemetry-round-chronologies" style="margin-bottom: 20px;">
+            <h3 style="font-size: 13px; color: #ccc; margin-bottom: 6px;">Round Chronologies</h3>
             <div class="telemetry-data-box"></div>
           </div>
         </div>
