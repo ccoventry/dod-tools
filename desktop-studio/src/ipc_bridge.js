@@ -69,17 +69,11 @@ export async function scanRenderDirectories(renderFolders) {
 }
 
 export async function executeRenderBatch(payload) {
+  // payload must match RenderBatchPayload:
+  //   { render_directories, codec, fps, ffmpeg_path?, export_directory? }
   return invoke("execute_render_batch", { payload: payload })
     .catch((err) => {
       console.error("IPC Execution Error (execute_render_batch):", err);
-      throw err;
-    });
-}
-
-export async function getRenderStatus() {
-  return invoke("render_status")
-    .catch((err) => {
-      console.error("IPC Execution Error (render_status):", err);
       throw err;
     });
 }
@@ -92,18 +86,7 @@ export async function cancelRenderBatch() {
     });
 }
 
-export async function initRenderProgressListener(onStatusUpdate) {
-  return listen('render_status', (event) => {
-    if (onStatusUpdate) onStatusUpdate(event.payload);
-  }).catch((err) => {
-    console.error("IPC Execution Error (listen render_status):", err);
-  });
-}
-
-export async function onRenderStatus(callback) {
-  return await listen('render_status', (event) => {
-    if (callback) callback(event.payload);
-  }).catch((err) => {
-    console.error("IPC Execution Error (listen render_status):", err);
-  });
-}
+// NOTE: onRenderStatus and initRenderProgressListener have been intentionally
+// removed from this module. render_pane.js registers a single
+// listen('render_status', ...) listener directly to avoid double-registration
+// bugs (ipc_bridge.js must not create a second competing listener).

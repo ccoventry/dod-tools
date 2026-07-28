@@ -59,7 +59,8 @@ pub async fn scan_render_directories(paths: Vec<String>) -> Result<Vec<Serialize
         let (clip_tx, clip_rx) = std::sync::mpsc::channel();
         let (status_tx, _status_rx) = std::sync::mpsc::channel();
 
-        // Perform the scan using the updated scanner
+        // scan_folder_background is blocking and exhausts sends before returning.
+        // try_recv is therefore race-free here.
         scan_folder_background(source_folders, clip_tx, status_tx);
 
         let mut results = Vec::new();
@@ -67,7 +68,6 @@ pub async fn scan_render_directories(paths: Vec<String>) -> Result<Vec<Serialize
             results.push(SerializedRenderJob::from(clip));
         }
 
-        // Apply deterministic sorting to the final collection
         results.sort_by(|a, b| {
             a.take_folder.cmp(&b.take_folder)
                 .then_with(|| a.img_folder.cmp(&b.img_folder))
@@ -80,12 +80,76 @@ pub async fn scan_render_directories(paths: Vec<String>) -> Result<Vec<Serialize
     .map_err(|e| format!("Task join failed: {}", e))?
 }
 
+/// Expanded payload that carries all render-configuration fields the legacy
+/// `RenderConfig` / `get_codec_preset()` path requires.  The old three-field
+/// payload (`output_format`, `crf`, `preset`) is superseded by this struct;
+/// `ipc_bridge.js` and `render_pane.js` must be updated in parallel.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RenderBatchPayload {
+    /// Root directories to scan for HLCR take folders.
     pub render_directories: Vec<String>,
-    pub output_format: String,
-    pub crf: u8,
-    pub preset: String,
+    /// Target codec: "prores" | "dnxhr" | "h264"  (maps to get_codec_preset)
+    pub codec: String,
+    /// Capture / source framerate (default 300 to match capture FPS).
+    pub fps: u32,
+    /// Optional absolute path to ffmpeg.exe; falls back to bundled then PATH.
+    pub ffmpeg_path: Option<String>,
+    /// Optional absolute path to write finished files; defaults to take_folder parent.
+    pub export_directory: Option<String>,
+}
+
+/// Resolve the FFmpeg binary path using the same fallback chain as the legacy
+/// `settings::resolve_ffmpeg_path()`: override → bundled local → system PATH.
+fn resolve_ffmpeg(override_path: Option<&String>) -> PathBuf {
+    if let Some(p) = override_path {
+        let pb = PathBuf::from(p);
+        if !p.trim().is_empty() && pb.exists() {
+            return pb;
+        }
+    }
+    // Bundled local binary adjacent to the Tauri executable.
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            let local = parent.join("local/tools/ffmpeg.exe");
+            if local.exists() {
+                return local;
+            }
+        }
+    }
+    PathBuf::from("ffmpeg")
+}
+
+/// Returns the codec CLI arguments and output file extension for each
+/// codec name string — mirrors `native::hlcr::config::get_codec_preset()`.
+fn codec_args_and_ext(codec: &str) -> (Vec<String>, &'static str) {
+    match codec {
+        "dnxhr" | "dnxhd" => (
+            vec![
+                "-c:v".into(), "dnxhd".into(),
+                "-profile:v".into(), "dnxhr_hq".into(),
+                "-pix_fmt".into(), "yuv422p".into(),
+            ],
+            ".mov",
+        ),
+        "h264" => (
+            vec![
+                "-c:v".into(), "libx264".into(),
+                "-preset".into(), "fast".into(),
+                "-crf".into(), "16".into(),
+                "-pix_fmt".into(), "yuv420p".into(),
+            ],
+            ".mp4",
+        ),
+        // Default: ProRes 422 HQ (matches dev RenderCodec::ProRes)
+        _ => (
+            vec![
+                "-c:v".into(), "prores".into(),
+                "-profile:v".into(), "3".into(),
+                "-pix_fmt".into(), "yuv422p10le".into(),
+            ],
+            ".mov",
+        ),
+    }
 }
 
 #[tauri::command]
@@ -115,11 +179,11 @@ pub async fn execute_render_batch(
 
         let (clip_tx, clip_rx) = std::sync::mpsc::channel();
         let (status_tx, _status_rx) = std::sync::mpsc::channel();
-        let source_folders: Vec<PathBuf> = payload.render_directories.into_iter().map(PathBuf::from).collect();
+        let source_folders: Vec<PathBuf> = payload.render_directories.iter().map(PathBuf::from).collect();
 
         scan_folder_background(source_folders, clip_tx, status_tx);
 
-        let mut jobs = Vec::new();
+        let mut jobs: Vec<ClipData> = Vec::new();
         while let Ok(clip) = clip_rx.try_recv() {
             jobs.push(clip);
         }
@@ -134,18 +198,21 @@ pub async fn execute_render_batch(
             return;
         }
 
+        let ffmpeg_bin = resolve_ffmpeg(payload.ffmpeg_path.as_ref());
+        let fps_str = payload.fps.max(1).to_string();
+        let (codec_args, codec_ext) = codec_args_and_ext(&payload.codec);
+
         for (idx, clip) in jobs.into_iter().enumerate() {
             if cancel_token.load(Ordering::SeqCst) {
                 break;
             }
 
             active_job_index.store((idx + 1) as u32, Ordering::SeqCst);
-            let pct = (((idx + 1) as f32 / total as f32) * 100.0) as u32;
+            // Reserve the final 10% for the completion tick.
+            let pct = (((idx + 1) as f32 / total as f32) * 90.0) as u32;
             let status_msg = format!("Rendering {}/{} ({})", idx + 1, total, clip.base_name);
-            {
-                let mut status = current_status.lock().unwrap();
-                *status = status_msg.clone();
-            }
+            *current_status.lock().unwrap() = status_msg.clone();
+            
             let progress_payload = serde_json::json!({
                 "progress": pct,
                 "status": status_msg,
@@ -154,41 +221,84 @@ pub async fn execute_render_batch(
             });
             let _ = app_emitter.emit("render_status", progress_payload);
 
-            let input_img_pattern = PathBuf::from(&clip.img_folder).join("%05d.tga");
-            let output_file = PathBuf::from(&clip.take_folder).with_extension(&payload.output_format);
+            let take_folder_path = PathBuf::from(&clip.take_folder);
+            let img_folder_path = take_folder_path.join(&clip.img_folder);
+            let input_img_pattern = img_folder_path.join("%05d.bmp");
+            let wav_path = take_folder_path.join(&clip.wav_file);
 
-            let mut cmd = std::process::Command::new("ffmpeg");
+            let output_dir = if let Some(ref dir) = payload.export_directory {
+                PathBuf::from(dir)
+            } else {
+                take_folder_path.parent().unwrap_or(&take_folder_path).to_path_buf()
+            };
+            let output_file = output_dir.join(format!("{}{}", clip.base_name, codec_ext));
+
+            let mut cmd = std::process::Command::new(&ffmpeg_bin);
             cmd.arg("-y")
-               .arg("-framerate").arg("60")
-               .arg("-i").arg(input_img_pattern)
-               .arg("-i").arg(&clip.wav_file)
-               .arg("-c:v").arg("libx264")
-               .arg("-crf").arg(payload.crf.to_string())
-               .arg("-preset").arg(&payload.preset)
-               .arg("-c:a").arg("aac")
-               .arg("-pix_fmt").arg("yuv420p")
+               .arg("-probesize").arg("32")
+               .arg("-analyzeduration").arg("0")
+               .arg("-thread_queue_size").arg("512")
+               .arg("-framerate").arg(&fps_str)
+               .arg("-i").arg(&input_img_pattern)
+               .arg("-thread_queue_size").arg("512")
+               .arg("-i").arg(&wav_path);
+
+            for arg in &codec_args {
+                cmd.arg(arg);
+            }
+
+            cmd.arg("-c:a").arg("pcm_s16le")
+               .arg("-shortest")
+               .arg("-progress").arg("pipe:1")
+               .arg("-loglevel").arg("error")
                .arg(&output_file);
+
+            #[cfg(target_os = "windows")]
+            {
+                use std::os::windows::process::CommandExt;
+                cmd.creation_flags(0x08000000);
+            }
 
             match cmd.spawn() {
                 Ok(mut child) => {
-                    match child.wait() {
-                        Ok(status) => {
-                            if !status.success() {
-                                log::error!("FFmpeg process exited with non-zero status for {}", clip.base_name);
-                            }
+                    loop {
+                        if cancel_token.load(Ordering::SeqCst) {
+                            let _ = child.kill();
+                            let _ = child.wait();
+                            let cancelled_msg = format!("FFmpeg cancelled on clip {}", clip.base_name);
+                            *current_status.lock().unwrap() = cancelled_msg.clone();
+                            let _ = app_emitter.emit("render_status", serde_json::json!({ "progress": pct, "status": cancelled_msg }));
+                            break;
                         }
-                        Err(e) => {
-                            log::error!("Error waiting for FFmpeg process on {}: {}", clip.base_name, e);
+                        match child.try_wait() {
+                            Ok(Some(exit_status)) => {
+                                if !exit_status.success() {
+                                    let code = exit_status.code().unwrap_or(-1);
+                                    let err_msg = format!("FFmpeg failed (exit {}) on clip {}", code, clip.base_name);
+                                    log::error!("{}", err_msg);
+                                    *current_status.lock().unwrap() = err_msg.clone();
+                                    let _ = app_emitter.emit("render_status", serde_json::json!({ "progress": pct, "status": err_msg }));
+                                }
+                                break;
+                            }
+                            Ok(None) => {
+                                tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+                            }
+                            Err(e) => {
+                                log::error!("Error waiting for FFmpeg on {}: {}", clip.base_name, e);
+                                break;
+                            }
                         }
                     }
                 }
                 Err(e) => {
-                    log::error!("Failed to spawn FFmpeg process for {}: {}", clip.base_name, e);
-                    let err_msg = format!("FFmpeg spawn error on clip {}: {}", clip.base_name, e);
-                    {
-                        let mut status = current_status.lock().unwrap();
-                        *status = err_msg.clone();
-                    }
+                    log::error!("Failed to spawn FFmpeg for {}: {}", clip.base_name, e);
+                    let err_msg = if e.kind() == std::io::ErrorKind::NotFound {
+                        "FFmpeg not found. Install FFmpeg or set a custom path in Settings.".to_string()
+                    } else {
+                        format!("FFmpeg spawn error on clip {}: {}", clip.base_name, e)
+                    };
+                    *current_status.lock().unwrap() = err_msg.clone();
                     let _ = app_emitter.emit("render_status", serde_json::json!({ "progress": pct, "status": err_msg }));
                     continue;
                 }
@@ -197,16 +307,9 @@ pub async fn execute_render_batch(
 
         is_running.store(false, Ordering::SeqCst);
         let is_cancelled = cancel_token.load(Ordering::SeqCst);
-        let final_status = if is_cancelled {
-            "Cancelled".to_string()
-        } else {
-            "Finished".to_string()
-        };
-        {
-            let mut status = current_status.lock().unwrap();
-            *status = final_status.clone();
-        }
-        let final_pct = if is_cancelled { 0 } else { 100 };
+        let final_status = if is_cancelled { "Cancelled".to_string() } else { "Finished".to_string() };
+        *current_status.lock().unwrap() = final_status.clone();
+        let final_pct = if is_cancelled { 0u32 } else { 100u32 };
         let _ = app_emitter.emit("render_status", serde_json::json!({ "progress": final_pct, "status": final_status }));
     });
 

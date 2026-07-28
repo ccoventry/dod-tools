@@ -1,4 +1,28 @@
-/* Immediate-Mode egui Dark Aesthetic & Layout Reset */
+/* ── Absolute CSS reset — overrides Vite/browser defaults ─────────────────── */
+/* Must appear before any other rules so specificity is established early.    */
+
+/* Remove Vite's injected link styling that shows blue underlined anchors. */
+a, a:visited, a:hover, a:active {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* Prevent browsers from applying their UA button styles which Vite doesn't
+   fully suppress in dev-mode (Chromium applies a system font and border). */
+button, input, select, textarea {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+/* Vite's index.css resets line-height to 1 which collapses egui-style rows. */
+html {
+  line-height: 1.4;
+}
+
+/* ── Layout / Box model reset ─────────────────────────────────────────────── */
 
 * {
   box-sizing: border-box;
