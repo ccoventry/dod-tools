@@ -1,7 +1,19 @@
 ## Web AI State
-* **Current Goal:** Parity and functional reconciliation sprint complete across Phase 1 (Render Studio), Phase 2 (Analysis & Telemetry IPC), and Phase 3 (UX Polish, Filtering & Timeline Canvas).
-* **Last Edited:** `desktop-studio/src/toast.js`, `desktop-studio/src/detail_pane.js`, `desktop-studio/src/master_pane.js`, `desktop-studio/src-tauri/src/capture_manager.rs`, `desktop-studio/src-tauri/src/lib.rs`, `desktop-studio/index.html`, `.cargo/sign_and_run.ps1`.
-* **Unresolved Bugs:** Local binary execution blocked by Windows 11 Smart App Control cloud reputation check (requires disabling SAC in Windows Security for local dev execution).
+- **Current Goal:** Tauri Migration - Desktop Studio Workspace & Master Queue Audit
+- **Active Environment Path:** `~/dod-tools/desktop-studio` (Native WSL ext4)
+- **Build Status:** Compiling and launching cleanly via `npx tauri dev`.
+- **Pending Engineering Backlog (Workspace & Master Queue):**
+  - [TASK-01] Replace broken status glyph with functional SVG/CSS trash button in Master Queue.
+  - [TASK-02] Restrict demo parser strictly to local recording player POV (SteamID/Name).
+  - [TASK-03] Connect Telemetry IPC parser outputs to Match Telemetry Analysis modal.
+  - [TASK-04] Move visual density timeline barcode chart into Advanced Diagnostics drawer.
+  - [TASK-05] Remove redundant "POV Only" top-bar toggle.
+  - [TASK-06] Implement 1-based sequential row indexing in Highlights table.
+  - [TASK-07] Add interactive selection checkboxes to "Sel" column.
+  - [TASK-08] Implement editable Kill Range (validation, undo button, dynamic recalculation of Kills & Time).
+  - [TASK-09] Convert Status column to interactive dropdown (`N/A`, `Pending`, `Captured`, `Rendered`).
+  - [TASK-10] Format Details column to show kill sequence and interval offsets (`(+0:05)`).
+  - [TASK-11] Prevent `Min Kills` filter from hiding or unchecking user-selected rows.
 
 ## Active Epics
 - **Rendering & Finalization:** COMPLETED (Branch: `feature/tauri-migration`)
@@ -15,4 +27,4 @@
   - **UI/UX Polish:** Integrated dynamic vector list reordering (⬆/⬇ swap controls), removed deprecated individual directory pickers, mounted global export free indicators, and implemented floating toast notification controller.
 
 ## IDE AI State
-* **Current Action:** Architecture baseline updated. All 3 migration phases (Render Studio, Analysis/Telemetry IPC, UX Polish & Timeline Canvas) complete with 1:1 parity against legacy egui implementation. Ready for deployment testing once SAC is bypassed or binary is published.
+* **Current Action:** Workspace migrated to WSL ext4 filesystem (`~/dod-tools/desktop-studio`). Build friction rules documented in `staging_lessons.md`. Ready to proceed with Desktop Studio Workspace & Master Queue backlog tasks.

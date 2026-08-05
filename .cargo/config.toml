@@ -1,2 +1,0 @@
-[target.'cfg(windows)']
-runner = ["powershell", "-ExecutionPolicy", "Bypass", "-File", "../../.cargo/sign_and_run.ps1"]
