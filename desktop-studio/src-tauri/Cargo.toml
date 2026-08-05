@@ -16,6 +16,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+indexmap = { version = "1.9.3", features = ["std"] }
 
 [dependencies]
 tauri = { version = "2", features = [] }
@@ -29,6 +30,7 @@ tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 log = "0.4"
 dod = { path = "../../dod" }
 analysis = { path = "../../analysis" }
+indexmap = { version = "1.9.3", features = ["std"] }
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
