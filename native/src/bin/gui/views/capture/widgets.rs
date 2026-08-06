@@ -11,7 +11,7 @@ pub fn render_bulk_actions(
 ) -> bool {
     let mut clicked = false;
     ui.horizontal(|ui| {
-        if ui.button("Clear All Discovered").clicked() {
+        if ui.button(crate::strings::capture::BTN_CLEAR_DISCOVERED).clicked() {
             let mut guard = match queued_demos_shared.lock() {
                 Ok(g) => g,
                 Err(p) => p.into_inner(),
@@ -20,7 +20,7 @@ pub fn render_bulk_actions(
             queued.clear();
             clicked = true;
         }
-        if ui.button("Select All").clicked() {
+        if ui.button(crate::strings::workspace::BTN_SELECT_ALL).clicked() {
             let mut guard = match queued_demos_shared.lock() {
                 Ok(g) => g,
                 Err(p) => p.into_inner(),
@@ -36,7 +36,7 @@ pub fn render_bulk_actions(
             }
             clicked = true;
         }
-        if ui.button("Deselect All").clicked() {
+        if ui.button(crate::strings::workspace::BTN_DESELECT_ALL).clicked() {
             let mut guard = match queued_demos_shared.lock() {
                 Ok(g) => g,
                 Err(p) => p.into_inner(),
@@ -72,12 +72,10 @@ pub fn render_primary_actions(
     }.clone();
     ui.horizontal(|ui| {
         let can_preview = !is_running && !queued_demos.is_empty();
-        let show_preview_success: bool = ctx.data(|d| d.get_temp(egui::Id::new("dodtools_preview_success_msg")).unwrap_or(false));
-        if ui.add_enabled(can_preview, egui::Button::new("🔍 Create Previews for all loaded demos"))
+        if ui.add_enabled(can_preview, egui::Button::new(crate::strings::capture::BTN_GENERATE_PREVIEWS))
             .on_hover_text("Patches all detected highlights as viewdemo Event List entries into a _preview.dem copy of each demo. No capture is triggered.")
             .clicked()
         {
-            ctx.data_mut(|d| d.insert_temp(egui::Id::new("dodtools_preview_success_msg"), false));
             let preview_payload = build_capture_streak_payload(
                 &queued_demos,
                 StreakFilter {
@@ -132,7 +130,6 @@ pub fn render_primary_actions(
                                 Err(e) => super::log_markdown(&format!("[PREVIEW PATCH] ❌ Error: {}", e)),
                             }
                         }
-                        ctx_clone.data_mut(|d| d.insert_temp(egui::Id::new("dodtools_preview_success_msg"), true));
                         let _ = tx_clone.send(crate::types::GuiMessage::PreviewPatchingComplete);
                         ctx_clone.request_repaint();
                     })
@@ -142,12 +139,7 @@ pub fn render_primary_actions(
 
         ui.add_space(8.0);
 
-        if show_preview_success {
-            ui.weak("Previews Generated. Click [▶ Preview] on a demo row, or manually load the _preview.dem files in-game.");
-            ui.add_space(8.0);
-        }
-
-        if ui.button("🗑️ Clear Previews").clicked() {
+        if ui.button(crate::strings::capture::BTN_CLEAR_PREVIEWS).clicked() {
             let mut verified_previews = Vec::new();
             let mut dirs_to_scan = std::collections::HashSet::new();
             let game_path_buf = std::path::PathBuf::from(&patcher_config.game_path);
@@ -241,9 +233,9 @@ pub fn render_primary_actions(
                     let tx_clone = tx.clone();
                     let ctx_clone = ctx.clone();
                     let config_clone = patcher_config.clone();
-                    let mut global_arrays: std::collections::HashMap<String, std::sync::Arc<Vec<f32>>> = std::collections::HashMap::new();
+                    let mut global_arrays: std::collections::HashMap<std::path::PathBuf, std::sync::Arc<Vec<f32>>> = std::collections::HashMap::new();
                     for demo in queued_demos.iter() {
-                        global_arrays.insert(demo.demo_name.clone(), demo.frame_times.clone());
+                        global_arrays.insert(demo.path.clone(), demo.frame_times.clone());
                     }
 
                     std::thread::Builder::new()
@@ -330,7 +322,7 @@ pub fn render_primary_actions(
                         }
                         ctx.data_mut(|d| d.remove_temp::<Vec<std::path::PathBuf>>(temp_id));
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(crate::strings::global::BTN_CANCEL).clicked() {
                         ctx.data_mut(|d| d.remove_temp::<Vec<std::path::PathBuf>>(temp_id));
                     }
                 });
@@ -363,7 +355,7 @@ pub fn render_error_banner(
                     ui.add_space(8.0);
                     ui.label(&error);
                     ui.add_space(12.0);
-                    if ui.button("Dismiss").clicked() {
+                    if ui.button(crate::strings::global::BTN_DISMISS).clicked() {
                         dismiss = true;
                     }
                 });
@@ -389,7 +381,7 @@ pub fn render_path_row(
         ui.add(egui::TextEdit::singleline(value).desired_width(ui.available_width() - 80.0));
         #[cfg(not(target_arch = "wasm32"))]
         {
-            if ui.button("Browse...").clicked() {
+            if ui.button(crate::strings::global::BTN_BROWSE).clicked() {
                 let mut dialog = rfd::FileDialog::new();
                 if !filter_exts.is_empty() {
                     dialog = dialog.add_filter(filter_name, filter_exts);
@@ -430,7 +422,7 @@ pub fn render_command_list(
             for (i, cmd) in commands.iter_mut().enumerate() {
                 ui.horizontal(|ui| {
                     ui.add(egui::TextEdit::singleline(cmd).desired_width(ui.available_width() - 40.0));
-                    if ui.button("❌").clicked() {
+                    if ui.button(crate::strings::global::BTN_DELETE).clicked() {
                         delete_idx = Some(i);
                     }
                 });
@@ -440,7 +432,7 @@ pub fn render_command_list(
     if let Some(i) = delete_idx {
         commands.remove(i);
     }
-    if ui.button("➕ Add Command").clicked() {
+    if ui.button(crate::strings::capture::BTN_ADD_COMMAND).clicked() {
         commands.push("".to_string());
     }
 }
@@ -470,7 +462,7 @@ pub fn render_custom_command_list(
                     }
                     
                     ui.add(egui::DragValue::new(&mut cmd.offset).speed(0.1).range(0.0..=60.0).suffix("s"));
-                    if ui.button("❌").clicked() {
+                    if ui.button(crate::strings::global::BTN_DELETE).clicked() {
                         delete_idx = Some(i);
                     }
                 });
@@ -480,7 +472,7 @@ pub fn render_custom_command_list(
     if let Some(i) = delete_idx {
         commands.remove(i);
     }
-    if ui.button("➕ Add Default").clicked() {
+    if ui.button(crate::strings::capture::BTN_ADD_DEFAULT).clicked() {
         commands.push(native::patch::CustomCommand {
             command: "".to_string(),
             offset: 2.0,

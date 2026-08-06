@@ -207,7 +207,7 @@ pub fn render(
         .min_height(150.0)
         .show_inside(ui, |ui| {
             ui.vertical(|ui| {
-                ui.heading("📂 Master List: Scan & Discover Highlights");
+                ui.heading(crate::strings::workspace::HEADER_MASTER_LIST);
                 ui.add_space(4.0);
 
                 // Import buttons (RFD)
@@ -225,7 +225,7 @@ pub fn render(
                         Err(p) => p.into_inner(),
                     };
 
-                    if ui.add_enabled(!ingesting, egui::Button::new("➕ Add Demo Files")).clicked() {
+                    if ui.add_enabled(!ingesting, egui::Button::new(crate::strings::workspace::BTN_ADD_DEMO_FILES)).clicked() {
                         *loading_ptr = true;
                         let ctx_clone = ctx.clone();
                         let rules_clone = rules.clone();
@@ -436,8 +436,33 @@ pub fn render(
         ui.separator();
         ui.add_space(4.0);
 
-        {
-            let ui = ui;
+        egui::TopBottomPanel::bottom("global_settings_footer")
+            .frame(egui::Frame::NONE.inner_margin(egui::Margin::same(8)))
+            .show_inside(ui, |ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button(crate::strings::workspace::BTN_SAVE_GLOBAL_SETTINGS).clicked() {
+                        let patcher_config = match patcher_config_mutex.lock() {
+                            Ok(g) => g,
+                            Err(p) => p.into_inner(),
+                        };
+                        crate::settings::save_patcher_config(&patcher_config);
+                        crate::settings::save_settings(settings);
+                    }
+                    if ui.button(crate::strings::workspace::BTN_RESET_TO_DEFAULTS).clicked() {
+                        let mut patcher_config = match patcher_config_mutex.lock() {
+                            Ok(g) => g,
+                            Err(p) => p.into_inner(),
+                        };
+                        *patcher_config = native::patch::PatcherConfig::default();
+                        crate::settings::save_patcher_config(&patcher_config);
+                        ctx.request_repaint();
+                    }
+                });
+            });
+
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE)
+            .show_inside(ui, |ui| {
                 match active_tab {
                     SelectTab::Highlights => {
                         ui.heading("🎬 Step 2: Detail View & Selection");
@@ -472,7 +497,7 @@ pub fn render(
                                     }
                                     ui.add_space(4.0);
 
-                                    ui.strong("Discovered Highlight Streaks");
+                                    ui.strong(crate::strings::workspace::LBL_DISCOVERED_HIGHLIGHTS);
                                     ui.add_space(4.0);
 
                                     ui.push_id(&demo.demo_name, |ui| {
@@ -487,13 +512,13 @@ pub fn render(
                                                     ui.add_space(4.0);
 
                                                     ui.horizontal(|ui| {
-                                                        if ui.button("Select All").clicked() {
+                                                        if ui.button(crate::strings::workspace::BTN_SELECT_ALL).clicked() {
                                                             actions_to_apply.push(DemoAction::SelectAll(d_idx));
                                                         }
-                                                        if ui.button("Deselect All").clicked() {
+                                                        if ui.button(crate::strings::workspace::BTN_DESELECT_ALL).clicked() {
                                                             actions_to_apply.push(DemoAction::DeselectAll(d_idx));
                                                         }
-                                                        if ui.button("▶ Preview").clicked() {
+                                                        if ui.button(crate::strings::workspace::BTN_PREVIEW).clicked() {
                                                             let target_path = demo.path.clone();
                                                             let target_name = demo.demo_name.clone();
                                                             let demo_clone = demo.clone();
@@ -586,7 +611,7 @@ pub fn render(
                                                             }
                                                         }
                                                         ui.add_space(4.0);
-                                                        if ui.button("🗑 Remove Demo")
+                                                        if ui.button(crate::strings::global::BTN_REMOVE_DEMO)
                                                             .on_hover_text("Remove this demo from the queue")
                                                             .clicked()
                                                         {
@@ -597,7 +622,7 @@ pub fn render(
                                                     TableBuilder::new(ui)
                                                         .id_salt(format!("{}_table", demo.demo_name))
                                                         .striped(true)
-                                                        .vscroll(false)
+                                                        .vscroll(true)
                                                         .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
                                                         .column(Column::initial(30.0))
                                                         .column(Column::auto())
@@ -861,16 +886,16 @@ pub fn render(
                                 ui.label(format!("{}:", idx + 1));
                                 ui.label(dir.to_string_lossy());
                                 if idx > 0 {
-                                    if ui.button("⬆").clicked() {
+                                    if ui.button(crate::strings::global::BTN_UP).clicked() {
                                         swap_indices = Some((idx, idx - 1));
                                     }
                                 }
                                 if idx < dirs_len.saturating_sub(1) {
-                                    if ui.button("⬇").clicked() {
+                                    if ui.button(crate::strings::global::BTN_DOWN).clicked() {
                                         swap_indices = Some((idx, idx + 1));
                                     }
                                 }
-                                if ui.button("🗑 Remove").clicked() {
+                                if ui.button(crate::strings::global::BTN_REMOVE).clicked() {
                                     to_remove = Some(idx);
                                 }
                             });
@@ -893,7 +918,7 @@ pub fn render(
                             Err(p) => p.into_inner(),
                         };
 
-                        if ui.button("➕ Add Drive").clicked() {
+                        if ui.button(crate::strings::workspace::BTN_ADD_DRIVE).clicked() {
                             drive_picker.pick_directory();
                         }
 
@@ -957,7 +982,7 @@ pub fn render(
                         panels::render_debug_panel(ui, &mut patcher_config);
                     }
                 }
-            }
+            });
     });
 
     // Smart Preview Modal
@@ -982,7 +1007,7 @@ pub fn render(
                 let demo_name: String = ctx.data(|d| d.get_temp(egui::Id::new("dodtools_preview_target_demo_name"))).unwrap_or_default();
 
                 ui.horizontal(|ui| {
-                    if ui.button("Force Relaunch").clicked() {
+                    if ui.button(crate::strings::workspace::BTN_FORCE_RELAUNCH).clicked() {
                         let demo_path_clone = demo_path.clone();
                         let demo_name_clone = demo_name.clone();
                         let patcher_config_clone = match patcher_config_mutex.lock() {
@@ -1006,7 +1031,7 @@ pub fn render(
                         });
                     }
 
-                    if ui.button("Copy View Command").clicked() {
+                    if ui.button(crate::strings::workspace::BTN_COPY_VIEW_COMMAND).clicked() {
                         let name_without_ext = std::path::Path::new(&demo_name)
                             .file_stem()
                             .and_then(|s| s.to_str())

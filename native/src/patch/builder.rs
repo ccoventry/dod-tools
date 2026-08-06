@@ -140,7 +140,7 @@ fn build_safe_echos(tick: i32, message: &str) -> Vec<(i32, String)> {
 
 // ── Batch queue builder ───────────────────────────────────────────────────────
 
-pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig, global_arrays: &std::collections::HashMap<String, std::sync::Arc<Vec<f32>>>) -> Result<Vec<PatchJob>, std::io::Error> {
+pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig, global_arrays: &std::collections::HashMap<std::path::PathBuf, std::sync::Arc<Vec<f32>>>) -> Result<Vec<PatchJob>, std::io::Error> {
     // tickrate is extracted dynamically from streaks per-demo
     let mut grouped: std::collections::HashMap<(String, Option<String>), Vec<CaptureStreak>> = std::collections::HashMap::new();
     for streak in raw_streaks {
@@ -417,12 +417,8 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
         for (i, streak) in merged_streaks.iter().enumerate() {
 
 
-            let streak_demo_filename = std::path::Path::new(&streak.source_demo)
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default();
             let frame_times_ref = global_arrays
-                .get(&streak_demo_filename)
+                .get(std::path::Path::new(&streak.source_demo))
                 .map(|a| a.as_slice())
                 .unwrap_or_else(|| streak.frame_times.as_slice());
 

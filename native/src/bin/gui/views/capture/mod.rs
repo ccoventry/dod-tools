@@ -398,7 +398,7 @@ pub(crate) fn spawn_ingestion_thread(
                         if path.is_dir() {
                             dir_stack.push((path, orig_path));
                         } else if path.is_file() && path.extension().map(|ext| ext == "dem").unwrap_or(false) {
-                            let insert_idx = list.binary_search_by(|p: &(PathBuf, PathBuf)| p.0.file_name().unwrap_or_default().cmp(&path.file_name().unwrap_or_default()))
+                            let insert_idx = list.binary_search_by(|p: &(PathBuf, PathBuf)| p.0.cmp(&path))
                                 .unwrap_or_else(|pos| pos);
                             list.insert(insert_idx, (path, orig_path));
                         }
@@ -414,7 +414,7 @@ pub(crate) fn spawn_ingestion_thread(
                                 } else if path.is_file()
                                     && path.extension().map(|ext| ext == "dem").unwrap_or(false)
                                 {
-                                    let insert_idx = list.binary_search_by(|p: &(PathBuf, PathBuf)| p.0.file_name().unwrap_or_default().cmp(&path.file_name().unwrap_or_default()))
+                                    let insert_idx = list.binary_search_by(|p: &(PathBuf, PathBuf)| p.0.cmp(&path))
                                         .unwrap_or_else(|pos| pos);
                                     list.insert(insert_idx, (path.clone(), path.clone()));
                                 }
@@ -501,7 +501,7 @@ pub(crate) fn spawn_ingestion_thread(
                                 log::info!("Ingestion thread acquired lock to push: {:?}", item.path);
                                 if !queued_guard.iter().any(|d| d.path == item.path) {
                                     let queued = Arc::make_mut(&mut *queued_guard);
-                                    let insert_idx = queued.binary_search_by(|d| d.demo_name.cmp(&item.demo_name))
+                                    let insert_idx = queued.binary_search_by(|d| d.path.cmp(&item.path))
                                         .unwrap_or_else(|pos| pos);
                                     queued.insert(insert_idx, item);
                                     true

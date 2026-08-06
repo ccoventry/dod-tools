@@ -81,6 +81,20 @@ pub enum CaptureStudioState {
     Finish,
 }
 
+#[derive(Clone, Debug)]
+pub enum ToastLevel {
+    Success,
+    Error,
+    Warning,
+}
+
+#[derive(Clone, Debug)]
+pub struct ActiveToast {
+    pub message: String,
+    pub level: ToastLevel,
+    pub start_time: f64,
+}
+
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct QueuedStreakExport {
     pub id: String,
