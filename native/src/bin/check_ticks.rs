@@ -18,7 +18,7 @@ use std::sync::Arc;
 fn run_scenario(
     label: &str,
     streaks: Vec<native::patch::CaptureStreak>,
-    global_arrays: std::collections::HashMap<String, Arc<Vec<f32>>>,
+    global_arrays: std::collections::HashMap<std::path::PathBuf, Arc<Vec<f32>>>,
     config: &PatcherConfig,
 ) {
     println!("\n=== {} ===", label);
@@ -31,7 +31,7 @@ fn run_scenario(
         );
     }
     for (key, arr) in &global_arrays {
-        println!("  global_arrays[\"{}\"] = {} entries", key, arr.len());
+        println!("  global_arrays[\"{}\"] = {} entries", key.display(), arr.len());
     }
 
     match build_batch_queue(streaks, config, &global_arrays) {
@@ -107,7 +107,7 @@ fn main() {
     // SCENARIO A: global_arrays has the real frame_times (fresh scan path)
     {
         let mut ga = std::collections::HashMap::new();
-        ga.insert(filename.clone(), frame_times_arc.clone());
+        ga.insert(path.to_path_buf(), frame_times_arc.clone());
         run_scenario("SCENARIO A — fresh scan (populated frame_times)", streaks.clone(), ga, &config);
     }
 
@@ -118,7 +118,7 @@ fn main() {
     //   The lookup finds the key so the unwrap_or_else fallback is never reached
     {
         let mut ga = std::collections::HashMap::new();
-        ga.insert(filename.clone(), Arc::new(Vec::<f32>::new()));
+        ga.insert(path.to_path_buf(), Arc::new(Vec::<f32>::new()));
 
         let mut proj_streaks = streaks.clone();
         for s in &mut proj_streaks {

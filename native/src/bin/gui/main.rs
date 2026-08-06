@@ -6,6 +6,7 @@ mod tree;
 mod views;
 pub mod types;
 pub mod settings;
+pub mod strings;
 #[cfg(target_arch = "wasm32")]
 pub mod worker;
 #[cfg(not(target_arch = "wasm32"))]
@@ -29,7 +30,7 @@ use views::{PlayerHighlighting, report_ui, t};
 use types::{
     SortColumn, ScoreboardCache, ChatFilterState, ChatCache,
     CapturePhase, CaptureStudioState, QueuedStreakExport, PlayerDetailsCache, SidebarTab,
-    GuiMessage, StartupState,
+    GuiMessage, StartupState, ToastLevel, ActiveToast,
 };
 #[cfg(not(target_arch = "wasm32"))]
 use types::{AuditorState, PendingStreakExport, BrowserView};
@@ -154,6 +155,7 @@ pub(crate) struct Gui {
     pub(crate) selected_analysis_path: Option<String>,
     pub(crate) cache: DemoCache,
     pub notification: Option<Notification>,
+    pub active_toast: Option<ActiveToast>,
     pub(crate) player_highlight: PlayerHighlighting,
     pub(crate) error_message: Option<String>,
     pub(crate) settings: AppSettings,
@@ -637,6 +639,7 @@ impl Default for Gui {
             player_details_cache: PlayerDetailsCache::default(),
             export_queue: Vec::new(),
             capture_studio_state: CaptureStudioState::Workspace,
+            active_toast: None,
             #[cfg(not(target_arch = "wasm32"))]
             batch_export_picker: FileDialog::default(),
             #[cfg(not(target_arch = "wasm32"))]
@@ -1388,6 +1391,11 @@ impl eframe::App for Gui {
                 GuiMessage::PreviewPatchingComplete => {
                     #[cfg(not(target_arch = "wasm32"))]
                     crate::views::capture::set_is_patching(false);
+                    self.active_toast = Some(ActiveToast {
+                        message: "Preview generation complete.".to_string(),
+                        level: ToastLevel::Success,
+                        start_time: ctx.input(|i| i.time),
+                    });
                 }
                 GuiMessage::AnalyzerStart { .. } => {}
                 GuiMessage::AnalyzerProgress {
@@ -2863,22 +2871,29 @@ impl eframe::App for Gui {
             self.notification = None;
         }
 
-        if let Some(n) = &self.notification {
-            egui::Area::new(egui::Id::new("toast_notification"))
-                .anchor(egui::Align2::RIGHT_BOTTOM, egui::Vec2::new(-20.0, -20.0))
-                .show(ctx, |ui| {
-                    egui::Frame::NONE
-                        .fill(egui::Color32::from_black_alpha(150))
-                        .corner_radius(4.0)
-                        .inner_margin(12.0)
-                        .show(ui, |ui| {
-                            ui.label(
-                                egui::RichText::new(&n.message)
-                                    .color(egui::Color32::WHITE)
-                            );
-                        });
-                });
-            ctx.request_repaint();
+        if let Some(toast) = &self.active_toast {
+            if ctx.input(|i| i.time) - toast.start_time < 3.0 {
+                let bg_color = match toast.level {
+                    ToastLevel::Success => egui::Color32::from_rgb(46, 125, 50), // Green
+                    ToastLevel::Error => egui::Color32::from_rgb(198, 40, 40),   // Red
+                    ToastLevel::Warning => egui::Color32::from_rgb(249, 168, 37), // Yellow
+                };
+
+                egui::Window::new("Notification_Toast")
+                    .title_bar(false)
+                    .anchor(egui::Align2::CENTER_TOP, [0.0, 32.0])
+                    .resizable(false)
+                    .collapsible(false)
+                    .frame(egui::Frame::NONE
+                        .fill(bg_color)
+                        .inner_margin(egui::Margin::same(12))
+                        .corner_radius(4.0))
+                    .show(ctx, |ui| {
+                        ui.label(egui::RichText::new(&toast.message).color(egui::Color32::WHITE));
+                    });
+            } else {
+                self.active_toast = None;
+            }
         }
 
         #[cfg(not(target_arch = "wasm32"))]

@@ -109,7 +109,7 @@ pub fn render(
                     );
                     let mut arrays = std::collections::HashMap::new();
                     for demo in queued_demos.iter() {
-                        arrays.insert(demo.demo_name.clone(), demo.frame_times.clone());
+                        arrays.insert(demo.path.clone(), demo.frame_times.clone());
                     }
                     (streaks, arrays)
                 };
