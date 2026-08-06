@@ -1397,6 +1397,13 @@ impl eframe::App for Gui {
                         start_time: ctx.input(|i| i.time),
                     });
                 }
+                GuiMessage::ShowToast { message, level } => {
+                    self.active_toast = Some(ActiveToast {
+                        message,
+                        level,
+                        start_time: ctx.input(|i| i.time),
+                    });
+                }
                 GuiMessage::AnalyzerStart { .. } => {}
                 GuiMessage::AnalyzerProgress {
                     file_info,

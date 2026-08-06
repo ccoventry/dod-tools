@@ -202,6 +202,10 @@ pub enum GuiMessage {
     },
     PatchingComplete,
     PreviewPatchingComplete,
+    ShowToast {
+        message: String,
+        level: ToastLevel,
+    },
     #[cfg(not(target_arch = "wasm32"))]
     DirScanComplete {
         dir: PathBuf,
