@@ -76,6 +76,16 @@ pub fn render_primary_actions(
             .on_hover_text("Patches all detected highlights as viewdemo Event List entries into a _preview.dem copy of each demo. No capture is triggered.")
             .clicked()
         {
+            let hl_exe_str = patcher_config.game_path.trim();
+            let hl_exe = std::path::Path::new(hl_exe_str);
+            if hl_exe_str.is_empty() || !hl_exe.exists() || !hl_exe.is_file() {
+                let _ = tx.send(crate::types::GuiMessage::ShowToast {
+                    message: "Invalid DoD Game Path (hl.exe)".to_string(),
+                    level: crate::types::ToastLevel::Warning,
+                });
+                return;
+            }
+
             let preview_payload = build_capture_streak_payload(
                 &queued_demos,
                 StreakFilter {
@@ -86,8 +96,8 @@ pub fn render_primary_actions(
 
             if !preview_payload.is_empty() {
                 use native::patch::build_preview_patch_jobs;
-                let game_path_buf = std::path::PathBuf::from(&patcher_config.game_path);
-                let dod_dir = game_path_buf.parent().unwrap_or(std::path::Path::new("")).join("dod");
+                let dod_dir = hl_exe.parent().unwrap().join("dod");
+
                 let jobs = build_preview_patch_jobs(
                     preview_payload,
                     Some(dod_dir.as_path()),

@@ -160,7 +160,10 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
     let game_path_buf = std::path::PathBuf::from(&config.game_path);
     let dod_dir = match game_path_buf.parent() {
         Some(parent) => parent.join("dod"),
-        None => std::path::PathBuf::from("dod"),
+        None => return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "Target game output directory not found"
+        )),
     };
 
     // Remove stale config from dod_dir
@@ -193,10 +196,13 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
         drive_free.push(u64::MAX);
     }
     
-    let active_export_dir = config.primary_media_dir.clone().unwrap_or_else(|| {
-        let exe_path = std::env::current_exe().expect("Failed to resolve absolute exe path");
-        exe_path.parent().expect("Exe has no parent directory").to_path_buf()
-    });
+    let active_export_dir = match config.primary_media_dir.clone() {
+        Some(dir) => dir,
+        None => return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "Target game output directory not found"
+        )),
+    };
     let session_dir = if !config.session_id.is_empty() {
         active_export_dir.join(&config.session_id)
     } else {
