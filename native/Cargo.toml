@@ -39,6 +39,10 @@ name = "dod-tools-gui"
 path = "src/bin/gui/main.rs"
 
 [[bin]]
+name = "preview_cli"
+path = "src/bin/cli/main.rs"
+
+[[bin]]
 name = "dod-tools-cli"
 path = "src/bin/cli.rs"
 

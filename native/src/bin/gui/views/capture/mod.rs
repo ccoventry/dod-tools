@@ -501,9 +501,7 @@ pub(crate) fn spawn_ingestion_thread(
                                 log::info!("Ingestion thread acquired lock to push: {:?}", item.path);
                                 if !queued_guard.iter().any(|d| d.path == item.path) {
                                     let queued = Arc::make_mut(&mut *queued_guard);
-                                    let insert_idx = queued.binary_search_by(|d| d.path.cmp(&item.path))
-                                        .unwrap_or_else(|pos| pos);
-                                    queued.insert(insert_idx, item);
+                                    queued.push(item);
                                     true
                                 } else {
                                     false
@@ -527,6 +525,16 @@ pub(crate) fn spawn_ingestion_thread(
                     last_repaint = std::time::Instant::now();
                     batch_count = 0;
                 }
+            }
+
+            {
+                let queued_arc = get_queued_demos();
+                let mut queued_guard = match queued_arc.lock() {
+                    Ok(g) => g,
+                    Err(p) => p.into_inner(),
+                };
+                let queued = Arc::make_mut(&mut *queued_guard);
+                queued.sort_by(|a, b| a.path.cmp(&b.path));
             }
 
             {
