@@ -1650,6 +1650,13 @@ impl eframe::App for Gui {
                     }
                     ctx.request_repaint();
                 }
+                #[cfg(not(target_arch = "wasm32"))]
+                GuiMessage::PathPickerResult { .. } => {
+                    // The selected path is already written into egui temp data by the picker
+                    // thread via `ctx.data_mut`. render_path_row_inner drains it on the next
+                    // frame and applies it to the target &mut String. No action needed here.
+                    ctx.request_repaint();
+                }
             }
         }
 

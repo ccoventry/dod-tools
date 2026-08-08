@@ -303,6 +303,24 @@ pub fn render(
                         let active_idx = *super::get_active_demo_selection().lock().unwrap();
                         let mut clicked_idx: Option<usize> = None;
 
+                        // Hoist game_path resolution outside the per-row closure so that
+                        // load_patcher_config() (disk read + JSON deserialise) is not called
+                        // N times per frame (once per visible table row).
+                        let row_hl_path: Option<std::path::PathBuf> = {
+                            let cfg = match patcher_config_mutex.lock() {
+                                Ok(g) => g,
+                                Err(p) => p.into_inner(),
+                            };
+                            if !cfg.game_path.is_empty() {
+                                Some(std::path::PathBuf::from(&cfg.game_path))
+                            } else {
+                                None
+                            }
+                        };
+                        let project_root = super::get_active_project_path()
+                            .and_then(|p| p.parent().map(|parent| parent.to_path_buf()));
+                        let last_used = settings.last_demo_dir.clone();
+
                         egui_extras::TableBuilder::new(ui)
                             .striped(true)
                             .resizable(true)
@@ -327,24 +345,16 @@ pub fn render(
                                     let index = row.index();
                                     let demo = &data[index];
                                     let is_selected = active_idx == Some(index);
-                                    
+
                                     if is_selected {
                                         row.set_selected(true);
                                     }
-                                    
-                                    let project_root = super::get_active_project_path().and_then(|p| p.parent().map(|parent| parent.to_path_buf()));
-                                    let last_used = settings.last_demo_dir.as_ref();
-                                    let patcher_config = crate::settings::load_patcher_config();
-                                    let hl_path = if !patcher_config.game_path.is_empty() {
-                                        Some(std::path::PathBuf::from(&patcher_config.game_path))
-                                    } else {
-                                        None
-                                    };
+
                                     let resolved_path = super::resolve_demo_path(
                                         &demo.path.to_string_lossy(),
                                         project_root.as_ref(),
-                                        last_used,
-                                        hl_path.as_ref(),
+                                        last_used.as_ref(),
+                                        row_hl_path.as_ref(),
                                     );
                                     let path_exists = resolved_path.exists();
 
