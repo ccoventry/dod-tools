@@ -175,6 +175,44 @@ pub struct PatcherConfig {
 }
 
 impl PatcherConfig {
+    pub fn build_hlae_process(&self, extra_engine_args: &str) -> std::process::Command {
+        let hlae_exe = &self.hlae_path;
+        let hl_exe = &self.game_path;
+
+        let dll_path = match std::path::Path::new(hlae_exe).parent() {
+            Some(parent) => parent.join("AfxHookGoldSrc.dll"),
+            None => std::path::PathBuf::from("AfxHookGoldSrc.dll"),
+        };
+
+        let hook_dll_str = dll_path.to_string_lossy().replace("/", "\\\\");
+        let program_path_str = hl_exe.replace("/", "\\\\");
+
+        let cmd_line_str = format!(
+            "-game dod -insecure -windowed -w {} -h {} {}",
+            self.resolution_width, self.resolution_height, extra_engine_args
+        );
+
+        let mut cmd = std::process::Command::new(hlae_exe);
+        cmd.args([
+            "-customLoader",
+            "-noGui",
+            "-autoStart",
+            "-hookDllPath",
+            &hook_dll_str,
+            "-programPath",
+            &program_path_str,
+            "-cmdLine",
+            &cmd_line_str,
+        ]);
+        cmd.env("SteamAppId", "30");
+
+        if let Some(parent) = std::path::Path::new(hlae_exe).parent() {
+            cmd.current_dir(parent);
+        }
+
+        cmd
+    }
+
     pub fn calculate_total_capture_duration(&self, base_action_secs: f32) -> f32 {
         self.record_start_lead + base_action_secs + self.record_stop_trail
     }

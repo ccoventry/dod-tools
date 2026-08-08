@@ -33,6 +33,7 @@
 - **External Demo Playback:** Investigate if DoD `.dem` files can be parsed and rendered outside the game engine (e.g., a web browser or lightweight desktop app) to preview killstreaks quickly.
 - **Mode Toggle:** Add functionality to Capture Studio to switch between "Timing Mode" and "Capture Mode".
 - **[Optimization] Session Compression & Modular Export:** Add options for Gzip/Zstd compression for JSON and "Selective Export" feature flags (e.g., export demos only vs. export full project metadata).
+- **Headless Preview CLI Generator:** Build a secondary `preview_cli` binary target. Enable drag-and-drop folder execution (`std::env::args()`) to scan directories for `.dem` files and automatically generate `_preview` copies with injected director events into a localized `previews/` subdirectory. Include standard output terminal logging for file routing audit trails.
 
 
 

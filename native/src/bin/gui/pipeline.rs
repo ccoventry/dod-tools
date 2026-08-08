@@ -407,34 +407,12 @@ pub fn start_capture_pipeline(
                 None => safe_output_name.clone(),
             };
 
-            let hlae_dir = std::path::Path::new(&hlae_path).parent().unwrap();
-            let hook_dll = hlae_dir.join("AfxHookGoldSrc.dll");
-            let hook_dll_str = hook_dll.to_string_lossy().to_string();
-
-            let args_str = format!("-game dod -demoedit -condebug -insecure -windowed -w 1280 -h 720 +exec dodtools_helper.cfg +playdemo {}", demo_name_no_ext);
-            let mut cmd = tokio::process::Command::new(&hlae_path);
+            let patcher_config = crate::settings::load_patcher_config();
+            let extra_args = format!("-demoedit -condebug +exec dodtools_helper.cfg +playdemo {}", demo_name_no_ext);
+            let mut cmd = tokio::process::Command::from(patcher_config.build_hlae_process(&extra_args));
             cmd.kill_on_drop(true);
-            cmd.env("SteamAppId", "30");
-            cmd.args(&[
-                "-customLoader",
-                "-noGui",
-                "-autoStart",
-                "-hookDllPath",
-                &hook_dll_str,
-                "-programPath",
-                &game_path,
-                "-cmdLine",
-                &args_str,
-            ]);
 
-            if let Some(parent_dir) = std::path::Path::new(&game_path).parent() {
-                cmd.current_dir(parent_dir);
-            }
-
-            let debug_command_str = format!(
-                "\"{}\" -customLoader -noGui -autoStart -hookDllPath \"{}\" -programPath \"{}\" -cmdLine \"{}\"",
-                hlae_path, hook_dll_str, game_path, args_str
-            );
+            let debug_command_str = format!("{:?}", cmd);
 
             // Launch HLAE sequential capture
             if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {

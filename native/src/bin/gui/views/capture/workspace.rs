@@ -197,6 +197,9 @@ pub fn render(
                     &queued_demos_arc,
                     ctx,
                 );
+                if ui.button("Launch Game (HLAE)").clicked() {
+                    launch_game_hlae(&patcher_config);
+                }
             }
         });
     });
@@ -1156,19 +1159,17 @@ fn launch_preview(
         log::error!("Failed to generate primer_preview: {}", e);
         return;
     }
-
-    let hl_exe = &patcher_config.game_path;
-
-    let mut cmd = std::process::Command::new(hl_exe);
-    cmd.arg("-game").arg("dod")
-       .arg("+playdemo").arg("primer_preview");
-    
-    if let Some(parent) = std::path::Path::new(hl_exe).parent() {
-        cmd.current_dir(parent);
-    }
-
+    let mut cmd = patcher_config.build_hlae_process("+playdemo primer_preview");
     match cmd.spawn() {
-        Ok(_) => log::info!("Successfully launched hl.exe with primer_preview"),
-        Err(e) => log::error!("Failed to launch hl.exe: {}", e),
+        Ok(_) => log::info!("Successfully launched hlae.exe with primer_preview"),
+        Err(e) => log::error!("Failed to launch hlae.exe: {}", e),
+    }
+}
+
+fn launch_game_hlae(patcher_config: &PatcherConfig) {
+    let mut cmd = patcher_config.build_hlae_process("");
+    match cmd.spawn() {
+        Ok(_) => log::info!("Successfully launched hlae.exe"),
+        Err(e) => log::error!("Failed to launch hlae.exe: {}", e),
     }
 }
