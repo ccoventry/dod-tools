@@ -377,6 +377,14 @@ pub fn render_error_banner(
     }
 }
 
+/// Renders a labelled path input row with a non-blocking Browse button.
+///
+/// When clicked, the picker is opened on a background thread so the egui render
+/// loop is never blocked.  The result is piped back via `GuiMessage::PathPickerResult`
+/// and written into `value` on the next frame by the caller.
+///
+/// Call sites that do not have access to a `tx` channel (i.e. `tx` is `None`)
+/// fall back to the synchronous path for back-compat during the migration period.
 pub fn render_path_row(
     ui: &mut egui::Ui,
     label: &str,
@@ -386,28 +394,148 @@ pub fn render_path_row(
     expected_filename: Option<&str>,
     error_message: &mut Option<String>,
 ) {
+    render_path_row_inner(ui, label, value, filter_name, filter_exts, expected_filename, error_message, None, None);
+}
+
+/// Extended variant used by callers that have access to the GUI message channel.
+pub fn render_path_row_with_tx(
+    ui: &mut egui::Ui,
+    ctx: &egui::Context,
+    label: &str,
+    value: &mut String,
+    filter_name: &str,
+    filter_exts: &[&str],
+    expected_filename: Option<&str>,
+    error_message: &mut Option<String>,
+    tx: std::sync::mpsc::Sender<crate::types::GuiMessage>,
+) {
+    render_path_row_inner(ui, label, value, filter_name, filter_exts, expected_filename, error_message, Some(ctx), Some(tx));
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_path_row_inner(
+    ui: &mut egui::Ui,
+    label: &str,
+    value: &mut String,
+    filter_name: &str,
+    filter_exts: &[&str],
+    expected_filename: Option<&str>,
+    error_message: &mut Option<String>,
+    ctx: Option<&egui::Context>,
+    tx: Option<std::sync::mpsc::Sender<crate::types::GuiMessage>>,
+) {
+    // Each label string is the picker key — it must be unique per render_path_row call site.
+    let picker_key = label.to_owned();
+
+    // If we have a ctx, drain any pending result for this key from the previous frame.
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(ctx) = ctx {
+        let pending_id = egui::Id::new(format!("path_picker_pending_{}", picker_key));
+        if let Some(picked): Option<String> = ctx.data_mut(|d| d.get_temp(pending_id)) {
+            // Validate and apply.
+            let apply = if let Some(expected) = expected_filename {
+                let is_ok = std::path::Path::new(&picked)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|s| s.to_lowercase())
+                    == Some(expected.to_lowercase());
+                if !is_ok {
+                    *error_message = Some(format!("Selected file must be {}", expected));
+                }
+                is_ok
+            } else {
+                true
+            };
+            if apply {
+                *value = picked;
+            }
+            // Clear the slot so it is not re-applied on the next frame.
+            ctx.data_mut(|d| d.remove::<String>(pending_id));
+        }
+    }
+
     ui.label(label);
     ui.horizontal(|ui| {
         ui.add(egui::TextEdit::singleline(value).desired_width(ui.available_width() - 80.0));
         #[cfg(not(target_arch = "wasm32"))]
         {
             if ui.button(crate::strings::global::BTN_BROWSE).clicked() {
-                let mut dialog = rfd::FileDialog::new();
-                if !filter_exts.is_empty() {
-                    dialog = dialog.add_filter(filter_name, filter_exts);
-                }
-                if let Some(path) = dialog.pick_file() {
-                    if let Some(expected) = expected_filename {
-                        let is_expected = path.file_name()
-                            .and_then(|n| n.to_str())
-                            .map(|s| s.to_lowercase()) == Some(expected.to_lowercase());
-                        if is_expected {
-                            *value = path.to_string_lossy().to_string();
-                        } else {
-                            *error_message = Some(format!("Selected file must be {}", expected));
+                match (ctx, tx) {
+                    (Some(ctx_ref), Some(tx_sender)) => {
+                        // Non-blocking path: spawn picker on a background thread.
+                        let open_id = egui::Id::new(format!("path_picker_open_{}", picker_key));
+                        // Guard against duplicate spawns while a picker is already open.
+                        let already_open: bool = ctx_ref.data(|d| d.get_temp(open_id)).unwrap_or(false);
+                        if !already_open {
+                            ctx_ref.data_mut(|d| d.insert_temp(open_id, true));
+                            let ctx_clone = ctx_ref.clone();
+                            let tx_clone = tx_sender.clone();
+                            let filter_name_owned = filter_name.to_owned();
+                            let filter_exts_owned: Vec<String> = filter_exts.iter().map(|s| s.to_string()).collect();
+                            let expected_owned = expected_filename.map(|s| s.to_owned());
+                            let key_owned = picker_key.clone();
+                            let pending_id_clone = egui::Id::new(format!("path_picker_pending_{}", key_owned));
+                            std::thread::Builder::new()
+                                .name(format!("rfd_path_picker_{}", key_owned))
+                                .stack_size(4 * 1024 * 1024)
+                                .spawn(move || {
+                                    let mut dialog = rfd::FileDialog::new();
+                                    if !filter_exts_owned.is_empty() {
+                                        let refs: Vec<&str> = filter_exts_owned.iter().map(|s| s.as_str()).collect();
+                                        dialog = dialog.add_filter(&filter_name_owned, &refs);
+                                    }
+                                    if let Some(path) = dialog.pick_file() {
+                                        let path_str = path.to_string_lossy().to_string();
+                                        // Validate expected filename on the worker thread to keep logic centralised.
+                                        let valid = if let Some(ref expected) = expected_owned {
+                                            path.file_name()
+                                                .and_then(|n| n.to_str())
+                                                .map(|s| s.to_lowercase())
+                                                == Some(expected.to_lowercase())
+                                        } else {
+                                            true
+                                        };
+                                        if valid {
+                                            // Stash result in egui temp data; the next frame's drain logic applies it.
+                                            ctx_clone.data_mut(|d| d.insert_temp(pending_id_clone, path_str.clone()));
+                                            let _ = tx_clone.send(crate::types::GuiMessage::PathPickerResult {
+                                                key: key_owned,
+                                                path: path_str,
+                                            });
+                                        } else if let Some(ref expected) = expected_owned {
+                                            let _ = tx_clone.send(crate::types::GuiMessage::ShowToast {
+                                                message: format!("Selected file must be {}", expected),
+                                                level: crate::types::ToastLevel::Error,
+                                            });
+                                        }
+                                    }
+                                    // Clear the "open" guard regardless of outcome.
+                                    ctx_clone.data_mut(|d| d.remove::<bool>(open_id));
+                                    ctx_clone.request_repaint();
+                                })
+                                .unwrap();
                         }
-                    } else {
-                        *value = path.to_string_lossy().to_string();
+                    }
+                    _ => {
+                        // Synchronous fallback for call sites without a channel (migration period).
+                        let mut dialog = rfd::FileDialog::new();
+                        if !filter_exts.is_empty() {
+                            dialog = dialog.add_filter(filter_name, filter_exts);
+                        }
+                        if let Some(path) = dialog.pick_file() {
+                            if let Some(expected) = expected_filename {
+                                let is_expected = path.file_name()
+                                    .and_then(|n| n.to_str())
+                                    .map(|s| s.to_lowercase()) == Some(expected.to_lowercase());
+                                if is_expected {
+                                    *value = path.to_string_lossy().to_string();
+                                } else {
+                                    *error_message = Some(format!("Selected file must be {}", expected));
+                                }
+                            } else {
+                                *value = path.to_string_lossy().to_string();
+                            }
+                        }
                     }
                 }
             }

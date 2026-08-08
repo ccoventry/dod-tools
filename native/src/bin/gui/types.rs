@@ -238,6 +238,10 @@ pub enum GuiMessage {
     IngestionFinished,
     #[cfg(not(target_arch = "wasm32"))]
     ProjectLoaded(Vec<(PathBuf, Vec<crate::session::HighlightMetadata>)>),
+    /// Sent by the non-blocking rfd file-picker thread spawned from `render_path_row`.
+    /// `key` uniquely identifies which field was being edited; `path` is the selected value.
+    #[cfg(not(target_arch = "wasm32"))]
+    PathPickerResult { key: String, path: String },
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
