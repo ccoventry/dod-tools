@@ -9,11 +9,10 @@
 
 fn main() {
     let mut input_paths: Vec<String> = std::env::args().skip(1).collect();
-    let mut is_interactive = false;
+    let is_interactive = false;
 
     if input_paths.is_empty() {
-        is_interactive = true;
-        println!("No arguments detected.\n[Interactive Mode] Drag and drop .dem files or folders here, then press Enter:");
+        println!("{}", analysis::translate_key("cli.prompt.drag_and_drop").unwrap_or_default());
 
         let mut buffer = String::new();
         if std::io::stdin().read_line(&mut buffer).is_ok() {
@@ -67,15 +66,15 @@ fn main() {
             // ── Directory input: scan all .dem files inside ──────────────────
             let output_dir = path.join("previews");
             if let Err(e) = std::fs::create_dir_all(&output_dir) {
-                eprintln!("Error: Failed to create output directory {:?}: {}", output_dir, e);
+                eprintln!("{}: {:?} - {}", analysis::translate_key("cli.error.directory_creation").unwrap_or_default(), output_dir, e);
                 continue;
             }
-            println!("Created output directory: {:?}", output_dir);
+            println!("{}: {:?}", analysis::translate_key("cli.status.directory_created").unwrap_or_default(), output_dir);
 
             let entries = match std::fs::read_dir(&path) {
                 Ok(e) => e,
                 Err(e) => {
-                    eprintln!("Error: Failed to read directory {:?}: {}", path, e);
+                    eprintln!("{}: {:?} - {}", analysis::translate_key("cli.error.read_directory").unwrap_or_default(), path, e);
                     continue;
                 }
             };
@@ -95,7 +94,7 @@ fn main() {
             // ── Individual file input ────────────────────────────────────────
             let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
             if ext.to_lowercase() != "dem" {
-                eprintln!("Skipped: {:?} — not a .dem file.", path.file_name().unwrap_or_default());
+                eprintln!("{}: {:?} — {}", analysis::translate_key("cli.status.skipped").unwrap_or_default(), path.file_name().unwrap_or_default(), analysis::translate_key("cli.error.not_a_dem_file").unwrap_or_default());
                 skipped += 1;
                 continue;
             }
@@ -106,26 +105,30 @@ fn main() {
                 .join("previews");
 
             if let Err(e) = std::fs::create_dir_all(&output_dir) {
-                eprintln!("Error: Failed to create output directory {:?}: {}", output_dir, e);
+                eprintln!("{}: {:?} - {}", analysis::translate_key("cli.error.directory_creation").unwrap_or_default(), output_dir, e);
                 skipped += 1;
                 continue;
             }
-            println!("Created output directory: {:?}", output_dir);
+            println!("{}: {:?}", analysis::translate_key("cli.status.directory_created").unwrap_or_default(), output_dir);
 
             process_demo(&path, &output_dir, &patcher_config, &cancel_token, &mut processed, &mut skipped);
         } else {
-            eprintln!("Skipped: {:?} — path does not exist or is not accessible.", path);
+            eprintln!("{}: {:?} — {}", analysis::translate_key("cli.status.skipped").unwrap_or_default(), path, analysis::translate_key("cli.error.path_not_accessible").unwrap_or_default());
             skipped += 1;
         }
     }
 
     println!(
-        "\n[dod-tools] Batch complete. Previews are ready.\n  Processed: {} demo(s)  |  Skipped: {} demo(s)",
-        processed, skipped
+        "\n{}\n  {}: {}  |  {}: {}",
+        analysis::translate_key("cli.summary.batch_complete").unwrap_or_default(),
+        analysis::translate_key("cli.summary.processed").unwrap_or_default(),
+        processed,
+        analysis::translate_key("cli.summary.skipped").unwrap_or_default(),
+        skipped
     );
 
     if is_interactive {
-        println!("\nPress Enter to exit...");
+        println!("\n{}", analysis::translate_key("cli.prompt.press_enter").unwrap_or_default());
         let _ = std::io::stdin().read_line(&mut String::new());
     }
 }
@@ -142,14 +145,13 @@ fn process_demo(
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_default();
-
-    println!("Processing: {}", original_filename);
+    println!("{}: {}", analysis::translate_key("cli.status.processing").unwrap_or_default(), original_filename);
 
     let (_tickrate, mut streaks, is_pov, local_player_idx, _playback_frames, _match_start, _frame_times) =
         match native::patch::scan_demo_for_highlights(path) {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("  Skipped: {} — scan error: {}", original_filename, e);
+                eprintln!("  {}: {} — {}: {}", analysis::translate_key("cli.status.skipped").unwrap_or_default(), original_filename, analysis::translate_key("cli.error.scan_error").unwrap_or_default(), e);
                 *skipped += 1;
                 return;
             }
@@ -160,7 +162,7 @@ fn process_demo(
     }
 
     if streaks.is_empty() {
-        println!("  Skipped: {} — no highlights found.", original_filename);
+        println!("  {}: {} — {}", analysis::translate_key("cli.status.skipped").unwrap_or_default(), original_filename, analysis::translate_key("cli.error.no_highlights").unwrap_or_default());
         *skipped += 1;
         return;
     }
@@ -176,11 +178,11 @@ fn process_demo(
         let patcher = native::patch::StreamPatcher::new(&job.source_demo, &job.output_demo);
         match patcher.patch(job, patcher_config, cancel_token) {
             Ok(()) => {
-                println!("  Saved: {}", new_filename);
+                println!("  {}: {}", analysis::translate_key("cli.status.saved").unwrap_or_default(), new_filename);
                 *processed += 1;
             }
             Err(e) => {
-                eprintln!("  Error writing {}: {}", new_filename, e);
+                eprintln!("  {}: {} - {}", analysis::translate_key("cli.error.writing_file").unwrap_or_default(), new_filename, e);
                 *skipped += 1;
             }
         }

@@ -126,7 +126,7 @@ impl Drop for CaptureCleanupGuard {
 
 pub fn spawn_capture_engine(
     jobs: Vec<CaptureJob>,
-    hlae_path: Arc<PathBuf>,
+    _hlae_path: Arc<PathBuf>,
     hl_path: Arc<PathBuf>,
     tx: Sender<EngineEvent>,
     cancel_token: Arc<AtomicBool>,

@@ -82,6 +82,7 @@ fn write_director_event_payload(
     Ok(total_bytes as i32)
 }
 
+#[allow(dead_code)]
 fn write_ineye_hijack_payload(
     writer: &mut std::io::BufWriter<std::fs::File>,
     time: f32,
@@ -569,6 +570,8 @@ mod tests {
                     demo_fps: 100.0,
                     viewdemo_times: Vec::new(),
                     frame_times: std::sync::Arc::new(Vec::new()),
+                    match_start_tick: None,
+                    status: Default::default(),
                 }
             ],
             target_player: None,
@@ -665,6 +668,8 @@ mod tests {
                     demo_fps: 100.0,
                     viewdemo_times: Vec::new(),
                     frame_times: std::sync::Arc::new(Vec::new()),
+                    match_start_tick: None,
+                    status: Default::default(),
                 }
             ],
             target_player: None,
@@ -714,5 +719,61 @@ mod tests {
         assert!(!output_path.exists());
 
         let _ = std::fs::remove_file(input_path);
+    }
+}
+
+#[cfg(test)]
+mod director_event_tests {
+    use super::*;
+    use std::io::{BufWriter, Read, Write};
+
+    #[test]
+    fn test_write_director_event_payload() {
+        let temp_path = std::env::temp_dir().join("test_write_director_event_payload.dem");
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&temp_path)
+            .unwrap();
+
+        let mut writer = BufWriter::new(file);
+
+        let time = 10.5_f32;
+        let tick = 1050_i32;
+        let command = "echo test";
+        let info_block = vec![0u8; 8];
+
+        write_director_event_payload(&mut writer, time, tick, &info_block, command).unwrap();
+        writer.flush().unwrap();
+
+        let mut file = std::fs::File::open(&temp_path).unwrap();
+        let mut result = Vec::new();
+        file.read_to_end(&mut result).unwrap();
+        let _ = std::fs::remove_file(&temp_path);
+
+        let cmd_bytes = command.as_bytes();
+        let payload_len = (1 + cmd_bytes.len() + 1) as u8;
+
+        let mut expected = Vec::new();
+        expected.push(1_u8); // NetworkMessage type
+        expected.extend_from_slice(&time.to_le_bytes());
+        expected.extend_from_slice(&tick.to_le_bytes());
+        expected.extend_from_slice(&info_block);
+
+        let mut payload = Vec::new();
+        payload.push(0x33);         // svc_director
+        payload.push(payload_len);
+        payload.push(0x0A);         // DRC_CMD_STUFFTEXT
+        payload.extend_from_slice(cmd_bytes);
+        payload.push(0x00);         // null terminator
+
+        let msg_len = (payload.len() + 1) as u32;
+        expected.extend_from_slice(&msg_len.to_le_bytes());
+        expected.extend_from_slice(&payload);
+        expected.push(0x01);        // svc_nop
+
+        assert_eq!(result, expected);
     }
 }
