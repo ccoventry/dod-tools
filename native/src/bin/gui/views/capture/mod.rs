@@ -74,11 +74,11 @@ use crate::types::{
 pub(crate) static IS_PATCHING: AtomicBool = AtomicBool::new(false);
 
 pub(crate) fn is_patching() -> bool {
-    IS_PATCHING.load(Ordering::SeqCst)
+    IS_PATCHING.load(Ordering::Acquire)
 }
 
 pub(crate) fn set_is_patching(val: bool) {
-    IS_PATCHING.store(val, Ordering::SeqCst);
+    IS_PATCHING.store(val, Ordering::Release);
 }
 
 pub static ACTIVE_PROJECT_PATH: std::sync::OnceLock<std::sync::Mutex<Option<std::path::PathBuf>>> = std::sync::OnceLock::new();

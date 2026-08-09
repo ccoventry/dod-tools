@@ -10,7 +10,7 @@ use crate::patch::{MAX_PAYLOAD_LIMIT_BYTES, NETWORK_HEADER_ALIGNMENT, SCANNER_SE
 pub fn is_hltv_demo(path: &std::path::Path) -> Result<bool, std::io::Error> {
     use std::io::Read;
     let mut file = std::fs::File::open(path)?;
-    let mut header = vec![0u8; crate::patch::HLTV_HEADER_SIZE];
+    let mut header = [0_u8; crate::patch::HLTV_HEADER_SIZE];
     file.read_exact(&mut header)?;
 
     if header.len() >= crate::patch::HLTV_HEADER_SIZE {
@@ -123,14 +123,52 @@ pub fn scan_demo_for_highlights(
 
         for kill_streak in &player.kill_streaks {
 
-            // Phase B — resolve tick and abs_time directly from GameTime.
-            // frame_index: the 1-based frame counter captured during use_timing_updates.
-            // real_offset: wall-clock Duration used by update_visuals for timeline strings.
             let kills_raw: Vec<(i32, f32, String)> = kill_streak.kills.iter()
                 .map(|(time, weapon, _victim)| {
                     let abs_time = time.real_offset.as_secs_f32();
                     let tick = time.frame_index as i32;
-                    (tick, abs_time, format!("{:?}", weapon))
+                    let weapon_str = match weapon {
+                        analysis::Weapon::Unknown => "Unknown",
+                        analysis::Weapon::Kabar => "Kabar",
+                        analysis::Weapon::GermanKnife => "GermanKnife",
+                        analysis::Weapon::M1911 => "M1911",
+                        analysis::Weapon::Luger => "Luger",
+                        analysis::Weapon::Garand => "Garand",
+                        analysis::Weapon::ScopedK98 => "ScopedK98",
+                        analysis::Weapon::Thompson => "Thompson",
+                        analysis::Weapon::Stg44 => "Stg44",
+                        analysis::Weapon::Springfield => "Springfield",
+                        analysis::Weapon::K98 => "K98",
+                        analysis::Weapon::Bar => "Bar",
+                        analysis::Weapon::Mp40 => "Mp40",
+                        analysis::Weapon::Mk2Grenade => "Mk2Grenade",
+                        analysis::Weapon::StickGrenade => "StickGrenade",
+                        analysis::Weapon::Mg42 => "Mg42",
+                        analysis::Weapon::Browning30Cal => "Browning30Cal",
+                        analysis::Weapon::Spade => "Spade",
+                        analysis::Weapon::M1Carbine => "M1Carbine",
+                        analysis::Weapon::Mg34 => "Mg34",
+                        analysis::Weapon::GreaseGun => "GreaseGun",
+                        analysis::Weapon::Fg42 => "Fg42",
+                        analysis::Weapon::K43 => "K43",
+                        analysis::Weapon::LeeEnfield => "LeeEnfield",
+                        analysis::Weapon::Sten => "Sten",
+                        analysis::Weapon::Bren => "Bren",
+                        analysis::Weapon::Webley => "Webley",
+                        analysis::Weapon::Bazooka => "Bazooka",
+                        analysis::Weapon::Panzerschreck => "Panzerschreck",
+                        analysis::Weapon::Piat => "Piat",
+                        analysis::Weapon::Mortar => "Mortar",
+                        analysis::Weapon::ScopedFg42 => "ScopedFg42",
+                        analysis::Weapon::M1A1Carbine => "M1A1Carbine",
+                        analysis::Weapon::K98Bayonet => "K98Bayonet",
+                        analysis::Weapon::ScopedLeeEnfield => "ScopedLeeEnfield",
+                        analysis::Weapon::MillsBomb => "MillsBomb",
+                        analysis::Weapon::BritishKnife => "BritishKnife",
+                        analysis::Weapon::ButtStock => "ButtStock",
+                        analysis::Weapon::EnfieldBayonet => "EnfieldBayonet",
+                    };
+                    (tick, abs_time, weapon_str.to_string())
                 })
                 .collect();
 
