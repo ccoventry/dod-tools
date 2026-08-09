@@ -11,7 +11,7 @@ pub fn render_bulk_actions(
 ) -> bool {
     let mut clicked = false;
     ui.horizontal(|ui| {
-        if ui.button(crate::strings::capture::BTN_CLEAR_DISCOVERED).clicked() {
+        if ui.button(crate::strings::capture::btn_clear_discovered()).clicked() {
             let mut guard = match queued_demos_shared.lock() {
                 Ok(g) => g,
                 Err(p) => p.into_inner(),
@@ -20,7 +20,7 @@ pub fn render_bulk_actions(
             queued.clear();
             clicked = true;
         }
-        if ui.button(crate::strings::workspace::BTN_SELECT_ALL).clicked() {
+        if ui.button(crate::strings::workspace::btn_select_all()).clicked() {
             let mut guard = match queued_demos_shared.lock() {
                 Ok(g) => g,
                 Err(p) => p.into_inner(),
@@ -36,7 +36,7 @@ pub fn render_bulk_actions(
             }
             clicked = true;
         }
-        if ui.button(crate::strings::workspace::BTN_DESELECT_ALL).clicked() {
+        if ui.button(crate::strings::workspace::btn_deselect_all()).clicked() {
             let mut guard = match queued_demos_shared.lock() {
                 Ok(g) => g,
                 Err(p) => p.into_inner(),
@@ -72,7 +72,7 @@ pub fn render_primary_actions(
     }.clone();
     ui.horizontal(|ui| {
         let can_preview = !is_running && !queued_demos.is_empty();
-        if ui.add_enabled(can_preview, egui::Button::new(crate::strings::capture::BTN_GENERATE_PREVIEWS))
+        if ui.add_enabled(can_preview, egui::Button::new(crate::strings::capture::btn_generate_previews()))
             .on_hover_text(crate::views::t("tooltip.patch_preview_desc"))
             .clicked()
         {
@@ -149,7 +149,7 @@ pub fn render_primary_actions(
 
         ui.add_space(8.0);
 
-        if ui.button(crate::strings::capture::BTN_CLEAR_PREVIEWS).clicked() {
+        if ui.button(crate::strings::capture::btn_clear_previews()).clicked() {
             let mut verified_previews = Vec::new();
             let mut dirs_to_scan = std::collections::HashSet::new();
             let game_path_buf = std::path::PathBuf::from(&patcher_config.game_path);
@@ -332,7 +332,7 @@ pub fn render_primary_actions(
                         }
                         ctx.data_mut(|d| d.remove_temp::<Vec<std::path::PathBuf>>(temp_id));
                     }
-                    if ui.button(crate::strings::global::BTN_CANCEL).clicked() {
+                    if ui.button(crate::strings::global::btn_cancel()).clicked() {
                         ctx.data_mut(|d| d.remove_temp::<Vec<std::path::PathBuf>>(temp_id));
                     }
                 });
@@ -365,7 +365,7 @@ pub fn render_error_banner(
                     ui.add_space(8.0);
                     ui.label(&error);
                     ui.add_space(12.0);
-                    if ui.button(crate::strings::global::BTN_DISMISS).clicked() {
+                    if ui.button(crate::strings::global::btn_dismiss()).clicked() {
                         dismiss = true;
                     }
                 });
@@ -398,6 +398,7 @@ pub fn render_path_row(
 }
 
 /// Extended variant used by callers that have access to the GUI message channel.
+#[allow(dead_code)]
 pub fn render_path_row_with_tx(
     ui: &mut egui::Ui,
     ctx: &egui::Context,
@@ -431,7 +432,7 @@ fn render_path_row_inner(
     #[cfg(not(target_arch = "wasm32"))]
     if let Some(ctx) = ctx {
         let pending_id = egui::Id::new(format!("path_picker_pending_{}", picker_key));
-        if let Some(picked): Option<String> = ctx.data_mut(|d| d.get_temp(pending_id)) {
+        if let Some(picked) = ctx.data_mut(|d| d.get_temp::<String>(pending_id)) {
             // Validate and apply.
             let apply = if let Some(expected) = expected_filename {
                 let is_ok = std::path::Path::new(&picked)
@@ -459,7 +460,7 @@ fn render_path_row_inner(
         ui.add(egui::TextEdit::singleline(value).desired_width(ui.available_width() - 80.0));
         #[cfg(not(target_arch = "wasm32"))]
         {
-            if ui.button(crate::strings::global::BTN_BROWSE).clicked() {
+            if ui.button(crate::strings::global::btn_browse()).clicked() {
                 match (ctx, tx) {
                     (Some(ctx_ref), Some(tx_sender)) => {
                         // Non-blocking path: spawn picker on a background thread.
@@ -560,7 +561,7 @@ pub fn render_command_list(
             for (i, cmd) in commands.iter_mut().enumerate() {
                 ui.horizontal(|ui| {
                     ui.add(egui::TextEdit::singleline(cmd).desired_width(ui.available_width() - 40.0));
-                    if ui.button(crate::strings::global::BTN_DELETE).clicked() {
+                    if ui.button(crate::strings::global::btn_delete()).clicked() {
                         delete_idx = Some(i);
                     }
                 });
@@ -570,7 +571,7 @@ pub fn render_command_list(
     if let Some(i) = delete_idx {
         commands.remove(i);
     }
-    if ui.button(crate::strings::capture::BTN_ADD_COMMAND).clicked() {
+    if ui.button(crate::strings::capture::btn_add_command()).clicked() {
         commands.push("".to_string());
     }
 }
@@ -600,7 +601,7 @@ pub fn render_custom_command_list(
                     }
                     
                     ui.add(egui::DragValue::new(&mut cmd.offset).speed(0.1).range(0.0..=60.0).suffix("s"));
-                    if ui.button(crate::strings::global::BTN_DELETE).clicked() {
+                    if ui.button(crate::strings::global::btn_delete()).clicked() {
                         delete_idx = Some(i);
                     }
                 });
@@ -610,7 +611,7 @@ pub fn render_custom_command_list(
     if let Some(i) = delete_idx {
         commands.remove(i);
     }
-    if ui.button(crate::strings::capture::BTN_ADD_DEFAULT).clicked() {
+    if ui.button(crate::strings::capture::btn_add_default()).clicked() {
         commands.push(native::patch::CustomCommand {
             command: "".to_string(),
             offset: 2.0,

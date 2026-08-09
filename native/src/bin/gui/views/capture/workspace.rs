@@ -210,7 +210,7 @@ pub fn render(
         .min_height(150.0)
         .show_inside(ui, |ui| {
             ui.vertical(|ui| {
-                ui.heading(crate::strings::workspace::HEADER_MASTER_LIST);
+                ui.heading(crate::strings::workspace::header_master_list());
                 ui.add_space(4.0);
 
                 // Import buttons (RFD)
@@ -228,7 +228,7 @@ pub fn render(
                         Err(p) => p.into_inner(),
                     };
 
-                    if ui.add_enabled(!ingesting, egui::Button::new(crate::strings::workspace::BTN_ADD_DEMO_FILES)).clicked() {
+                    if ui.add_enabled(!ingesting, egui::Button::new(crate::strings::workspace::btn_add_demo_files())).clicked() {
                         *loading_ptr = true;
                         let ctx_clone = ctx.clone();
                         let rules_clone = rules.clone();
@@ -453,7 +453,7 @@ pub fn render(
             .frame(egui::Frame::NONE.inner_margin(egui::Margin::same(8)))
             .show_inside(ui, |ui| {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button(crate::strings::workspace::BTN_SAVE_GLOBAL_SETTINGS).clicked() {
+                    if ui.button(crate::strings::workspace::btn_save_global_settings()).clicked() {
                         let patcher_config = match patcher_config_mutex.lock() {
                             Ok(g) => g,
                             Err(p) => p.into_inner(),
@@ -461,7 +461,7 @@ pub fn render(
                         crate::settings::save_patcher_config(&patcher_config);
                         crate::settings::save_settings(settings);
                     }
-                    if ui.button(crate::strings::workspace::BTN_RESET_TO_DEFAULTS).clicked() {
+                    if ui.button(crate::strings::workspace::btn_reset_to_defaults()).clicked() {
                         let mut patcher_config = match patcher_config_mutex.lock() {
                             Ok(g) => g,
                             Err(p) => p.into_inner(),
@@ -510,7 +510,7 @@ pub fn render(
                                     }
                                     ui.add_space(4.0);
 
-                                    ui.strong(crate::strings::workspace::LBL_DISCOVERED_HIGHLIGHTS);
+                                    ui.strong(crate::strings::workspace::lbl_discovered_highlights());
                                     ui.add_space(4.0);
 
                                     ui.push_id(&demo.demo_name, |ui| {
@@ -525,13 +525,13 @@ pub fn render(
                                                     ui.add_space(4.0);
 
                                                     ui.horizontal(|ui| {
-                                                        if ui.button(crate::strings::workspace::BTN_SELECT_ALL).clicked() {
+                                                        if ui.button(crate::strings::workspace::btn_select_all()).clicked() {
                                                             actions_to_apply.push(DemoAction::SelectAll(d_idx));
                                                         }
-                                                        if ui.button(crate::strings::workspace::BTN_DESELECT_ALL).clicked() {
+                                                        if ui.button(crate::strings::workspace::btn_deselect_all()).clicked() {
                                                             actions_to_apply.push(DemoAction::DeselectAll(d_idx));
                                                         }
-                                                        if ui.button(crate::strings::workspace::BTN_PREVIEW).clicked() {
+                                                        if ui.button(crate::strings::workspace::btn_preview()).clicked() {
                                                             let target_path = demo.path.clone();
                                                             let target_name = demo.demo_name.clone();
                                                             let demo_clone = demo.clone();
@@ -624,7 +624,7 @@ pub fn render(
                                                             }
                                                         }
                                                         ui.add_space(4.0);
-                                                        if ui.button(crate::strings::global::BTN_REMOVE_DEMO)
+                                                        if ui.button(crate::strings::global::btn_remove_demo())
                                                             .on_hover_text(crate::views::t("tooltip.remove_demo"))
                                                             .clicked()
                                                         {
@@ -899,16 +899,16 @@ pub fn render(
                                 ui.label(format!("{}:", idx + 1));
                                 ui.label(dir.to_string_lossy());
                                 if idx > 0 {
-                                    if ui.button(crate::strings::global::BTN_UP).clicked() {
+                                    if ui.button(crate::strings::global::btn_up()).clicked() {
                                         swap_indices = Some((idx, idx - 1));
                                     }
                                 }
                                 if idx < dirs_len.saturating_sub(1) {
-                                    if ui.button(crate::strings::global::BTN_DOWN).clicked() {
+                                    if ui.button(crate::strings::global::btn_down()).clicked() {
                                         swap_indices = Some((idx, idx + 1));
                                     }
                                 }
-                                if ui.button(crate::strings::global::BTN_REMOVE).clicked() {
+                                if ui.button(crate::strings::global::btn_remove()).clicked() {
                                     to_remove = Some(idx);
                                 }
                             });
@@ -931,7 +931,7 @@ pub fn render(
                             Err(p) => p.into_inner(),
                         };
 
-                        if ui.button(crate::strings::workspace::BTN_ADD_DRIVE).clicked() {
+                        if ui.button(crate::strings::workspace::btn_add_drive()).clicked() {
                             drive_picker.pick_directory();
                         }
 
@@ -1020,7 +1020,7 @@ pub fn render(
                 let demo_name: String = ctx.data(|d| d.get_temp(egui::Id::new("dodtools_preview_target_demo_name"))).unwrap_or_default();
 
                 ui.horizontal(|ui| {
-                    if ui.button(crate::strings::workspace::BTN_FORCE_RELAUNCH).clicked() {
+                    if ui.button(crate::strings::workspace::btn_force_relaunch()).clicked() {
                         let demo_path_clone = demo_path.clone();
                         let demo_name_clone = demo_name.clone();
                         let patcher_config_clone = match patcher_config_mutex.lock() {
@@ -1044,7 +1044,7 @@ pub fn render(
                         });
                     }
 
-                    if ui.button(crate::strings::workspace::BTN_COPY_VIEW_COMMAND).clicked() {
+                    if ui.button(crate::strings::workspace::btn_copy_view_command()).clicked() {
                         let name_without_ext = std::path::Path::new(&demo_name)
                             .file_stem()
                             .and_then(|s| s.to_str())

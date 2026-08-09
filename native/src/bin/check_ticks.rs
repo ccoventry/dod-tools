@@ -1,4 +1,5 @@
 // check_ticks.rs — Diagnostic binary for verifying injected command tick positions.
+#![allow(unused_variables)]
 //
 // Usage:
 //   cargo run --bin check_ticks -- demos/wsod25-grp_r1-dyelife_gskill_armory_h1.dem
