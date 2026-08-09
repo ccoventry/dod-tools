@@ -142,9 +142,9 @@ fn build_safe_echos(tick: i32, message: &str) -> Vec<(i32, String)> {
 
 pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig, global_arrays: &std::collections::HashMap<std::path::PathBuf, std::sync::Arc<Vec<f32>>>) -> Result<Vec<PatchJob>, std::io::Error> {
     // tickrate is extracted dynamically from streaks per-demo
-    let mut grouped: std::collections::HashMap<(String, Option<String>), Vec<CaptureStreak>> = std::collections::HashMap::new();
-    for streak in raw_streaks {
-        grouped.entry((streak.source_demo.clone(), streak.target_player.clone())).or_default().push(streak);
+    let mut grouped: std::collections::HashMap<(&str, Option<&str>), Vec<&CaptureStreak>> = std::collections::HashMap::new();
+    for streak in &raw_streaks {
+        grouped.entry((streak.source_demo.as_str(), streak.target_player.as_deref())).or_default().push(streak);
     }
 
     // Sort grouped chronologically by the start_tick of their first streak
@@ -231,7 +231,7 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
 
     // 1. Primer Job
     if total_jobs > 0 {
-        let first_source = sorted_groups[0].0.0.clone();
+        let first_source = sorted_groups[0].0.0.to_string();
         let mut primer_init = config.init_commands.clone();
         primer_init.push("sys_autodir".to_string());
         
@@ -267,9 +267,10 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
     // 2. Chained Jobs
     let mut utilized_drives = std::collections::HashSet::new();
     let mut chronological_drive_idx = 0;
-    for (job_idx, ((source_demo, target_player), mut streaks)) in sorted_groups.into_iter().enumerate() {
+    for (job_idx, ((source_demo, target_player), mut streak_refs)) in sorted_groups.into_iter().enumerate() {
         // Sort by start_tick in ascending order
-        streaks.sort_by_key(|s| s.start_tick);
+        streak_refs.sort_by_key(|s| s.start_tick);
+        let streaks: Vec<CaptureStreak> = streak_refs.into_iter().cloned().collect();
 
         let total_demo_frames = streaks.first().map(|s| s.total_demo_frames).unwrap_or(0);
 
@@ -583,10 +584,10 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
         final_init_commands.push(format!("mirv_movie_separate_hud {}", separate_hud_str));
 
         jobs.push(PatchJob {
-            source_demo,
+            source_demo: source_demo.to_string(),
             output_demo,
             streaks: merged_streaks,
-            target_player: target_player.clone(),
+            target_player: target_player.map(|s| s.to_string()),
             init_commands: final_init_commands,
             scheduled_commands,
             director_events,
