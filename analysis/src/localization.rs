@@ -23,11 +23,18 @@ pub fn set_active_language(lang: &'static str) {
 }
 
 pub fn translate_key(key: &str) -> Option<String> {
+    let lower_key = key.to_lowercase();
+    let hash_key = if !lower_key.starts_with('#') {
+        format!("#{}", lower_key)
+    } else {
+        lower_key.clone()
+    };
+
     // 1. Try to read from cache first with a read lock
     {
         let read_lock = LOCALIZATIONS.read().unwrap();
         if let Some(ref map) = *read_lock {
-            return map.get(key).cloned();
+            return map.get(&hash_key).or_else(|| map.get(key)).cloned();
         }
     }
 
@@ -37,7 +44,7 @@ pub fn translate_key(key: &str) -> Option<String> {
         let active = *ACTIVE_LANGUAGE.read().unwrap();
         *write_lock = Some(load_localizations_from_disk(active));
     }
-    write_lock.as_ref().unwrap().get(key).cloned()
+    write_lock.as_ref().unwrap().get(&hash_key).or_else(|| write_lock.as_ref().unwrap().get(key)).cloned()
 }
 
 fn get_amxx_code(lang: &str) -> &str {
@@ -124,21 +131,13 @@ fn parse_localization_content(content: &str, map: &mut HashMap<String, String>, 
 
         // Try parsing as Valve KeyValues first (quoted key and value)
         if let Some((key, val)) = parse_kv_line(trimmed) {
-            let mut key_clean = key.trim().to_lowercase();
-            if !key_clean.starts_with('#') {
-                key_clean.insert(0, '#');
-            }
+            let key_clean = key.trim().to_lowercase();
             map.insert(key_clean, val);
         } else if current_lang == target_lang {
             if let Some(pos) = trimmed.find('=') {
                 let key = trimmed[..pos].trim().to_lowercase();
                 let val = trimmed[pos + 1..].trim().to_string();
                 if !key.is_empty() {
-                    let mut key_with_hash = key.clone();
-                    if !key_with_hash.starts_with('#') {
-                        key_with_hash.insert(0, '#');
-                    }
-                    map.insert(key_with_hash, val.clone());
                     map.insert(key, val);
                 }
             }
