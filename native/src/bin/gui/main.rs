@@ -863,8 +863,8 @@ impl eframe::App for Gui {
                 .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
                 .show(ctx, |ui| {
                     ui.add_space(4.0);
-                    ui.label("The previous session did not exit cleanly.");
-                    ui.label("An autosave of the capture queue was found (.autosave.json).");
+                    ui.label(crate::views::t("label.session_not_clean"));
+                    ui.label(crate::views::t("label.autosave_found"));
                     ui.add_space(8.0);
                     ui.horizontal(|ui| {
                         if ui.button("🔄 Recover Session").clicked() {
@@ -984,7 +984,7 @@ impl eframe::App for Gui {
                 .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
                 .show(ctx, |ui| {
                     ui.add_space(4.0);
-                    ui.label("A render batch did not complete cleanly.");
+                    ui.label(crate::views::t("label.render_batch_not_clean"));
                     ui.label(format!("Source: {}", source_folder));
                     ui.add_space(6.0);
                     ui.label(format!("✅ Completed: {}   ⏳ Pending: {}", completed_count, pending_count));
@@ -1100,7 +1100,7 @@ impl eframe::App for Gui {
                     let analyzer_active = self.active_sidebar_tab == SidebarTab::Analyzer;
                     let analyzer_btn = egui::Button::new(egui::RichText::new("🔍").size(18.0))
                         .selected(analyzer_active);
-                    if ui.add(analyzer_btn).on_hover_text("Demo Analyzer").clicked() {
+                    if ui.add(analyzer_btn).on_hover_text(crate::views::t("tab.demo_analyzer")).clicked() {
                         self.active_sidebar_tab = SidebarTab::Analyzer;
                     }
 
@@ -1110,7 +1110,7 @@ impl eframe::App for Gui {
                         let auditor_active = self.active_sidebar_tab == SidebarTab::Auditor;
                         let auditor_btn = egui::Button::new(egui::RichText::new("📋").size(18.0))
                             .selected(auditor_active);
-                        if ui.add(auditor_btn).on_hover_text("Demo Auditor").clicked() {
+                        if ui.add(auditor_btn).on_hover_text(crate::views::t("tab.demo_auditor")).clicked() {
                             self.active_sidebar_tab = SidebarTab::Auditor;
                         }
                     }
@@ -1120,7 +1120,7 @@ impl eframe::App for Gui {
                     let capture_studio_active = self.active_sidebar_tab == SidebarTab::CaptureStudio;
                     let capture_studio_btn = egui::Button::new(egui::RichText::new("🎬").size(18.0))
                         .selected(capture_studio_active);
-                    if ui.add(capture_studio_btn).on_hover_text("Capture Studio").clicked() {
+                    if ui.add(capture_studio_btn).on_hover_text(crate::views::t("tab.capture_studio")).clicked() {
                         self.active_sidebar_tab = SidebarTab::CaptureStudio;
                     }
 
@@ -1129,7 +1129,7 @@ impl eframe::App for Gui {
                     let settings_active = self.active_sidebar_tab == SidebarTab::Settings;
                     let settings_btn = egui::Button::new(egui::RichText::new("⚙").size(18.0))
                         .selected(settings_active);
-                    if ui.add(settings_btn).on_hover_text("Settings").clicked() {
+                    if ui.add(settings_btn).on_hover_text(crate::views::t("tab.settings")).clicked() {
                         self.active_sidebar_tab = SidebarTab::Settings;
                     }
                 });
@@ -1911,7 +1911,7 @@ impl eframe::App for Gui {
                                     let display_path = display_path.replace('\\', "/");
 
                                     ui.horizontal(|ui| {
-                                        if ui.selectable_label(true, "📌").on_hover_text("Unpin this folder").clicked() {
+                                        if ui.selectable_label(true, "📌").on_hover_text(crate::views::t("tooltip.unpin_folder")).clicked() {
                                             self.settings.pinned_folders.retain(|p| p != &folder);
                                             save_settings(&self.settings);
                                         }
@@ -1960,7 +1960,7 @@ impl eframe::App for Gui {
                                     let display_path = display_path.replace('\\', "/");
 
                                     ui.horizontal(|ui| {
-                                        if ui.selectable_label(false, "📌").on_hover_text("Pin this folder").clicked() {
+                                        if ui.selectable_label(false, "📌").on_hover_text(crate::views::t("tooltip.pin_folder")).clicked() {
                                             self.settings.pinned_folders.push(folder.clone());
                                             save_settings(&self.settings);
                                         }
@@ -2005,7 +2005,7 @@ impl eframe::App for Gui {
                                     let display_path = display_path.replace('\\', "/");
 
                                     ui.horizontal(|ui| {
-                                        if ui.selectable_label(false, "📌").on_hover_text("Pin this folder").clicked() {
+                                        if ui.selectable_label(false, "📌").on_hover_text(crate::views::t("tooltip.pin_folder")).clicked() {
                                             self.settings.pinned_folders.push(folder.clone());
                                             save_settings(&self.settings);
                                         }

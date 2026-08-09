@@ -23,7 +23,7 @@ pub fn player_details_ui(
 
     let players = &analysis.state.players;
     if players.is_empty() {
-        ui.label("No players found in this demo.");
+        ui.label(crate::views::t("label.no_players_found"));
         return;
     }
 
@@ -197,7 +197,7 @@ pub fn player_details_ui(
                 .min_scrolled_height(avail_h)
                 .show(ui_right, |ui| {
                     if active_player.kill_streaks.is_empty() {
-                        ui.label("No kill streaks found for this player.");
+                        ui.label(crate::views::t("label.no_kill_streaks"));
                     } else {
                         let filtered = cache.filtered_streaks.clone();
                         render_kill_streaks_table(
@@ -259,11 +259,11 @@ fn render_hero_card(p: &Player, ui: &mut Ui) {
                                 let steam_url = format!("https://steamcommunity.com/profiles/{}", p.id);
                                 let lp_url = format!("https://www.legit-proof.com/search?q={}", steam_id);
 
-                                if ui.link("Legit-Proof").on_hover_text("Search Legit-Proof for this Steam ID").clicked() {
+                                if ui.link(crate::views::t("link.legit_proof")).on_hover_text(crate::views::t("tooltip.search_legit_proof")).clicked() {
                                     ui.ctx().open_url(egui::OpenUrl::new_tab(lp_url));
                                 }
                                 ui.label("/");
-                                if ui.link("Steam").on_hover_text("Open Steam Community Profile").clicked() {
+                                if ui.link(crate::views::t("link.steam")).on_hover_text(crate::views::t("tooltip.open_steam_profile")).clicked() {
                                     ui.ctx().open_url(egui::OpenUrl::new_tab(steam_url));
                                 }
                             }
@@ -286,7 +286,7 @@ fn render_hero_card(p: &Player, ui: &mut Ui) {
                     };
                     ui.weak("Steam ID:");
                     ui.monospace(&id_text);
-                    if ui.small_button("📋").on_hover_text("Copy Steam ID").clicked() {
+                    if ui.small_button("📋").on_hover_text(crate::views::t("tooltip.copy_steam_id")).clicked() {
                         ui.ctx().copy_text(id_text);
                     }
 

@@ -51,7 +51,7 @@ pub fn render(
 
     if *loading_ptr {
         log::info!("UI: State is in Loading");
-        ui.label("Loading...");
+        ui.label(crate::views::t("label.loading"));
         return;
     } else {
         log::info!("UI: State transition to DisplayList");
@@ -375,7 +375,7 @@ pub fn render(
                                     });
                                     row.col(|ui| {
                                         ui.horizontal(|ui| {
-                                            ui.label("Scanned");
+                                            ui.label(crate::views::t("label.scanned"));
                                             if ui.button("🗑").clicked() {
                                                 pending_demo_to_remove = Some(index);
                                             }
@@ -480,7 +480,7 @@ pub fn render(
                     SelectTab::Highlights => {
                         ui.heading("🎬 Step 2: Detail View & Selection");
                         ui.add_space(4.0);
-                        ui.label("Review and tweak target play events for the active demo file.");
+                        ui.label(crate::views::t("label.review_target_events"));
                         ui.add_space(8.0);
 
                         let active_demo_idx = match super::get_active_demo_selection().lock() {
@@ -625,7 +625,7 @@ pub fn render(
                                                         }
                                                         ui.add_space(4.0);
                                                         if ui.button(crate::strings::global::BTN_REMOVE_DEMO)
-                                                            .on_hover_text("Remove this demo from the queue")
+                                                            .on_hover_text(crate::views::t("tooltip.remove_demo"))
                                                             .clicked()
                                                         {
                                                             actions_to_apply.push(DemoAction::RemoveDemo(d_idx));
@@ -740,7 +740,7 @@ pub fn render(
                                                                         });
 
                                                                         if is_modified && ui.button("↺")
-                                                                            .on_hover_text("Reset to full range")
+                                                                            .on_hover_text(crate::views::t("tooltip.reset_full_range"))
                                                                             .clicked()
                                                                         {
                                                                             let mut guard = match queued_demos_arc.lock() {
@@ -867,7 +867,7 @@ pub fn render(
                     SelectTab::Configuration => {
                         ui.heading("⚙ Capture Configuration");
                         ui.add_space(4.0);
-                        ui.label("Configure target codecs, folders, and resolution options.");
+                        ui.label(crate::views::t("label.configure_target_codecs"));
                         ui.add_space(8.0);
 
                         let mut patcher_config = match patcher_config_mutex.lock() {
@@ -963,7 +963,7 @@ pub fn render(
                     SelectTab::Advanced => {
                         ui.heading("⚡ Advanced Adjustments & Dev Settings");
                         ui.add_space(4.0);
-                        ui.label("Configure precision buffers, scripting commands, and debugging variables.");
+                        ui.label(crate::views::t("label.configure_precision_buffers"));
                         ui.add_space(8.0);
 
                         let mut patcher_config = match patcher_config_mutex.lock() {
@@ -1013,7 +1013,7 @@ pub fn render(
             .collapsible(false)
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
             .show(ctx, |ui| {
-                ui.label("Half-Life is already running. How would you like to proceed?");
+                ui.label(crate::views::t("label.hl_already_running"));
                 ui.add_space(8.0);
 
                 let demo_path: std::path::PathBuf = ctx.data(|d| d.get_temp(egui::Id::new("dodtools_preview_target_demo_path"))).unwrap_or_default();

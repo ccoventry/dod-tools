@@ -72,7 +72,7 @@ pub fn render_highlight_settings_panel(
     tree_demo_cache: &mut HashMap<PathBuf, usize>,
 ) -> bool {
     let mut changed = false;
-    ui.label("Init Commands (startup):");
+    ui.label(crate::views::t("label.init_commands"));
     ui.add_space(4.0);
     widgets::render_command_list(
         ui,
@@ -82,7 +82,7 @@ pub fn render_highlight_settings_panel(
     );
     
     ui.add_space(8.0);
-    ui.label("Default Custom Commands:");
+    ui.label(crate::views::t("label.default_custom_commands"));
     ui.add_space(4.0);
     widgets::render_custom_command_list(
         ui,
@@ -97,14 +97,14 @@ pub fn render_highlight_settings_panel(
     ui.strong("Timeline Buffers");
     ui.add_space(4.0);
 
-    ui.label("Initial Load Delay:");
+    ui.label(crate::views::t("label.initial_load_delay"));
     let mut val = config.initial_delay;
     if ui.add(egui::Slider::new(&mut val, 0.0..=30.0).step_by(0.5).suffix("s")).changed() {
         config.initial_delay = val;
         changed = true;
     }
 
-    ui.label("Fast-Forward Speed:");
+    ui.label(crate::views::t("label.fast_forward_speed"));
     ui.add_enabled_ui(false, |ui| {
         let mut val = config.fast_forward_speed;
         if ui.add(egui::Slider::new(&mut val, 0.01..=5.0).step_by(0.05)).changed() {
@@ -112,28 +112,28 @@ pub fn render_highlight_settings_panel(
         }
     });
 
-    ui.label("Pre-Record Buffer:");
+    ui.label(crate::views::t("label.pre_record_buffer"));
     let mut val = config.pre_roll_seconds;
     if ui.add(egui::Slider::new(&mut val, 0.0..=30.0).step_by(0.5).suffix("s")).changed() {
         config.pre_roll_seconds = val;
         changed = true;
     }
 
-    ui.label("Record Start Lead:");
+    ui.label(crate::views::t("label.record_start_lead"));
     let mut val = config.record_start_lead;
     if ui.add(egui::Slider::new(&mut val, 0.0..=10.0).step_by(0.5).suffix("s")).changed() {
         config.record_start_lead = val;
         changed = true;
     }
 
-    ui.label("Record Stop Trail:");
+    ui.label(crate::views::t("label.record_stop_trail"));
     let mut val = config.record_stop_trail;
     if ui.add(egui::Slider::new(&mut val, 0.0..=10.0).step_by(0.5).suffix("s")).changed() {
         config.record_stop_trail = val;
         changed = true;
     }
 
-    ui.label("Post-Record Buffer:");
+    ui.label(crate::views::t("label.post_record_buffer"));
     let mut val = config.post_roll_seconds;
     if ui.add(egui::Slider::new(&mut val, 0.0..=30.0).step_by(0.5).suffix("s")).changed() {
         config.post_roll_seconds = val;
@@ -271,17 +271,17 @@ pub fn render_capture_config_panel(
 
     // Row 4: Resolution & Capture FPS
     ui.horizontal(|ui| {
-        ui.label("Width:");
+        ui.label(crate::views::t("label.width"));
         let r1 = ui.add(egui::DragValue::new(&mut config.resolution_width)
             .range(640..=7680).speed(1));
         changed |= r1.changed();
         ui.add_space(10.0);
-        ui.label("Height:");
+        ui.label(crate::views::t("label.height"));
         let r2 = ui.add(egui::DragValue::new(&mut config.resolution_height)
             .range(480..=4320).speed(1));
         changed |= r2.changed();
         ui.add_space(10.0);
-        ui.label("Capture FPS:");
+        ui.label(crate::views::t("label.capture_fps"));
         let r3 = ui.add(egui::DragValue::new(&mut config.capture_fps)
             .range(30..=1000).speed(1));
         changed |= r3.changed();
@@ -290,14 +290,14 @@ pub fn render_capture_config_panel(
     // Row 5: Separate HUD
     ui.horizontal(|ui| {
         let r4 = ui.checkbox(&mut config.separate_hud, "Separate HUD (Alpha & Color)")
-            .on_hover_text("This toggle acts as the absolute source of truth and will override any separate_hud settings in your movie.cfg.");
+            .on_hover_text(crate::views::t("tooltip.override_separate_hud"));
         changed |= r4.changed();
     });
 
     // Row 5.5: Exit on Finish
     ui.horizontal(|ui| {
         let r5 = ui.checkbox(&mut config.exit_on_finish, "Auto-Quit Game on Completion")
-            .on_hover_text("If enabled, the game will automatically inject the 'quit' command after the final clip to close the game.");
+            .on_hover_text(crate::views::t("tooltip.auto_quit"));
         changed |= r5.changed();
     });
 
@@ -305,7 +305,7 @@ pub fn render_capture_config_panel(
 
     // Row 5.75: Movie Config
     ui.horizontal(|ui| {
-        ui.label("Movie Config (Optional):");
+        ui.label(crate::views::t("label.movie_config"));
         let r6 = ui.add(egui::TextEdit::singleline(&mut config.movie_config)
             .hint_text("e.g., movie.cfg"));
         if r6.changed() {
@@ -321,7 +321,7 @@ pub fn render_capture_config_panel(
 
     // Row 5.8: Drive Allocation Strategy
     ui.horizontal(|ui| {
-        ui.label("Drive Allocation Strategy:");
+        ui.label(crate::views::t("label.drive_allocation"));
         egui::ComboBox::from_id_salt("drive_allocation_strategy_combo")
             .selected_text(match config.allocation_strategy {
                 DriveAllocationStrategy::MaximizeSpace => "Maximize Space (First Fit)",
@@ -345,27 +345,27 @@ pub fn render_debug_panel(
     
     ui.horizontal(|ui| {
         ui.checkbox(&mut config.add_condebug, "Add Condebug to Launch Commands")
-            .on_hover_text("If enabled, '-condebug' will be added to the launch arguments to generate a qconsole.log file.");
+            .on_hover_text(crate::views::t("tooltip.condebug"));
     });
     
     ui.horizontal(|ui| {
         ui.checkbox(&mut config.save_local_patched_copy, "Save a copy of patched demo to ./demos/")
-            .on_hover_text("If enabled, a copy of the patched .dem file will be saved to the workspace's demos/ folder for debugging.");
+            .on_hover_text(crate::views::t("tooltip.save_patched_demo"));
     });
 
     ui.horizontal(|ui| {
         ui.checkbox(&mut config.auto_clear_logs, "Auto-Clear Logs & CFGs")
-            .on_hover_text("If enabled, helper config files and log files are deleted automatically on exit.");
+            .on_hover_text(crate::views::t("tooltip.clean_helper_files"));
     });
 
     ui.horizontal(|ui| {
         ui.checkbox(&mut config.auto_clear_previews, "Auto-Clear Previews")
-            .on_hover_text("If enabled, generated preview demos are deleted automatically on exit.");
+            .on_hover_text(crate::views::t("tooltip.clean_preview_demos"));
     });
 
     ui.horizontal(|ui| {
         ui.checkbox(&mut config.auto_clear_temp_demos, "Auto-Clear Temporary Demos")
-            .on_hover_text("If enabled, transient copy and chained demos from the game folder are deleted automatically on exit.");
+            .on_hover_text(crate::views::t("tooltip.clean_transient_demos"));
     });
 }
 
@@ -375,7 +375,7 @@ pub fn render_export_config_panel(
     render_config: &mut native::hlcr::config::RenderConfig,
 ) {
     ui.horizontal(|ui| {
-        ui.label("Render Codec:");
+        ui.label(crate::views::t("label.render_codec"));
         egui::ComboBox::from_id_salt("render_codec_combo")
             .selected_text(format!("{:?}", render_config.target_codec))
             .show_ui(ui, |ui| {
