@@ -127,7 +127,7 @@ impl Gui {
                 let mut index_to_remove = None;
                 for (i, folder) in self.draft_settings.pinned_folders.iter().enumerate() {
                     ui.horizontal(|ui| {
-                        if ui.button("🗑").on_hover_text("Remove Pin").clicked() {
+                        if ui.button("🗑").on_hover_text(crate::views::t("tooltip.remove_pin")).clicked() {
                             index_to_remove = Some(i);
                         }
                         ui.label(folder.to_string_lossy());

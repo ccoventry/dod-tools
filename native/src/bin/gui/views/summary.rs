@@ -16,7 +16,7 @@ pub fn header_ui(file_info: Option<&FileInfo>, analysis: Option<&Analysis>, ui: 
             ui.monospace(name_str);
             if !name_str.is_empty() {
                 ui.add_space(6.0);
-                if ui.link(egui::RichText::new("[copy]").small()).on_hover_text("Copy filename").clicked() {
+                if ui.link(egui::RichText::new("[copy]").small()).on_hover_text(crate::views::t("tooltip.copy_filename")).clicked() {
                     ui.ctx().copy_text(name_str.to_string());
                 }
             }
@@ -32,13 +32,13 @@ pub fn header_ui(file_info: Option<&FileInfo>, analysis: Option<&Analysis>, ui: 
                     .unwrap_or(&fi.path);
                 ui.monospace(parent_dir);
                 ui.add_space(6.0);
-                if ui.link(egui::RichText::new("[copy]").small()).on_hover_text("Copy path").clicked() {
+                if ui.link(egui::RichText::new("[copy]").small()).on_hover_text(crate::views::t("tooltip.copy_path")).clicked() {
                     ui.ctx().copy_text(parent_dir.to_string());
                 }
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     ui.add_space(6.0);
-                    if ui.link(egui::RichText::new("[open folder]").small()).on_hover_text("Open folder").clicked() {
+                    if ui.link(egui::RichText::new(crate::views::t("link.open_folder")).small()).on_hover_text(crate::views::t("tooltip.open_folder")).clicked() {
                         let _ = std::process::Command::new("explorer")
                             .arg(parent_dir)
                             .spawn();
@@ -164,7 +164,7 @@ pub fn header_ui(file_info: Option<&FileInfo>, analysis: Option<&Analysis>, ui: 
                 ui.label(addr);
                 if !addr.is_empty() {
                     ui.add_space(6.0);
-                    if ui.link(egui::RichText::new("[copy]").small()).on_hover_text("Copy server address").clicked() {
+                    if ui.link(egui::RichText::new("[copy]").small()).on_hover_text(crate::views::t("tooltip.copy_server_address")).clicked() {
                         ui.ctx().copy_text(addr.to_string());
                     }
                 }

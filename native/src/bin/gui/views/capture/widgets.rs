@@ -73,7 +73,7 @@ pub fn render_primary_actions(
     ui.horizontal(|ui| {
         let can_preview = !is_running && !queued_demos.is_empty();
         if ui.add_enabled(can_preview, egui::Button::new(crate::strings::capture::BTN_GENERATE_PREVIEWS))
-            .on_hover_text("Patches all detected highlights as viewdemo Event List entries into a _preview.dem copy of each demo. No capture is triggered.")
+            .on_hover_text(crate::views::t("tooltip.patch_preview_desc"))
             .clicked()
         {
             let hl_exe_str = patcher_config.game_path.trim();
@@ -592,10 +592,10 @@ pub fn render_custom_command_list(
                     ui.add(egui::TextEdit::singleline(&mut cmd.command).desired_width(120.0));
                     
                     let is_after = cmd.relation == native::patch::CommandRelation::After;
-                    if ui.selectable_label(!is_after, "B").on_hover_text("Before Highlight").clicked() {
+                    if ui.selectable_label(!is_after, "B").on_hover_text(crate::views::t("tooltip.before_highlight")).clicked() {
                         cmd.relation = native::patch::CommandRelation::Before;
                     }
-                    if ui.selectable_label(is_after, "A").on_hover_text("After Highlight").clicked() {
+                    if ui.selectable_label(is_after, "A").on_hover_text(crate::views::t("tooltip.after_highlight")).clicked() {
                         cmd.relation = native::patch::CommandRelation::After;
                     }
                     

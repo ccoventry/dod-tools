@@ -68,7 +68,7 @@ pub fn team_details_ui(analysis: Option<&Analysis>, ui: &mut Ui) {
             // Headers
             ui.label("");
             ui.colored_label(allies_color, egui::RichText::new(allies_label).strong());
-            ui.colored_label(AXIS_COLOR, egui::RichText::new("Axis").strong());
+            ui.colored_label(AXIS_COLOR, egui::RichText::new(crate::views::t("team.axis")).strong());
             ui.end_row();
 
             // Round Score

@@ -1,38 +1,38 @@
 pub mod global {
-    pub const BTN_SAVE_SETTINGS: &str = "💾 Save Settings";
-    pub const BTN_REVERT_SETTINGS: &str = "🔄 Revert Settings";
-    pub const BTN_CANCEL: &str = "Cancel";
-    pub const BTN_DISMISS: &str = "Dismiss";
-    pub const BTN_BROWSE: &str = "Browse...";
-    pub const BTN_REMOVE: &str = "🗑 Remove";
-    pub const BTN_UP: &str = "⬆";
-    pub const BTN_DOWN: &str = "⬇";
-    pub const BTN_DELETE: &str = "🗑";
-    pub const BTN_REMOVE_DEMO: &str = "🗑 Remove Demo";
+    pub fn btn_save_settings() -> String { crate::views::t("action.save_settings") }
+    pub fn btn_revert_settings() -> String { crate::views::t("action.revert_settings") }
+    pub fn btn_cancel() -> String { crate::views::t("action.cancel") }
+    pub fn btn_dismiss() -> String { crate::views::t("action.dismiss") }
+    pub fn btn_browse() -> String { crate::views::t("action.browse") }
+    pub fn btn_remove() -> String { crate::views::t("action.remove") }
+    pub fn btn_up() -> String { crate::views::t("action.up") }
+    pub fn btn_down() -> String { crate::views::t("action.down") }
+    pub fn btn_delete() -> String { crate::views::t("action.delete") }
+    pub fn btn_remove_demo() -> String { crate::views::t("action.remove_demo") }
 }
 
 pub mod workspace {
-    pub const HEADER_MASTER_LIST: &str = "📂 Master List: Scan & Discover Highlights";
-    pub const BTN_ADD_DEMO_FILES: &str = "➕ Add Demo Files";
-    pub const BTN_SAVE_GLOBAL_SETTINGS: &str = "Save Global Settings";
-    pub const BTN_RESET_TO_DEFAULTS: &str = "Reset to Defaults";
-    pub const LBL_DISCOVERED_HIGHLIGHTS: &str = "Discovered Highlight Streaks";
-    pub const BTN_SELECT_ALL: &str = "Select All";
-    pub const BTN_DESELECT_ALL: &str = "Deselect All";
-    pub const BTN_PREVIEW: &str = "▶ Preview";
-    pub const BTN_ADD_DRIVE: &str = "➕ Add Drive";
-    pub const BTN_FORCE_RELAUNCH: &str = "Force Relaunch";
-    pub const BTN_COPY_VIEW_COMMAND: &str = "Copy View Command";
+    pub fn header_master_list() -> String { crate::views::t("workspace.header_master_list") }
+    pub fn btn_add_demo_files() -> String { crate::views::t("workspace.btn_add_demo_files") }
+    pub fn btn_save_global_settings() -> String { crate::views::t("workspace.btn_save_global_settings") }
+    pub fn btn_reset_to_defaults() -> String { crate::views::t("workspace.btn_reset_to_defaults") }
+    pub fn lbl_discovered_highlights() -> String { crate::views::t("workspace.lbl_discovered_highlights") }
+    pub fn btn_select_all() -> String { crate::views::t("workspace.btn_select_all") }
+    pub fn btn_deselect_all() -> String { crate::views::t("workspace.btn_deselect_all") }
+    pub fn btn_preview() -> String { crate::views::t("workspace.btn_preview") }
+    pub fn btn_add_drive() -> String { crate::views::t("workspace.btn_add_drive") }
+    pub fn btn_force_relaunch() -> String { crate::views::t("workspace.btn_force_relaunch") }
+    pub fn btn_copy_view_command() -> String { crate::views::t("workspace.btn_copy_view_command") }
 }
 
 pub mod capture {
-    pub const BTN_GENERATE_PREVIEWS: &str = "🔍 Generate Previews";
-    pub const BTN_CLEAR_DISCOVERED: &str = "Clear All Discovered";
-    pub const BTN_CLEAR_PREVIEWS: &str = "🗑️ Clear Previews";
-    pub const BTN_ADD_COMMAND: &str = "➕ Add Command";
-    pub const BTN_ADD_DEFAULT: &str = "➕ Add Default";
-    pub const BTN_ADD_EXPORT_DRIVE: &str = "➕ Add Export Drive";
-    pub const BTN_LOAD_PROJECT: &str = "📂 Load Project";
-    pub const BTN_SAVE: &str = "💾 Save";
-    pub const BTN_SAVE_AS: &str = "💾 Save As...";
+    pub fn btn_generate_previews() -> String { crate::views::t("capture.btn_generate_previews") }
+    pub fn btn_clear_discovered() -> String { crate::views::t("capture.btn_clear_discovered") }
+    pub fn btn_clear_previews() -> String { crate::views::t("capture.btn_clear_previews") }
+    pub fn btn_add_command() -> String { crate::views::t("capture.btn_add_command") }
+    pub fn btn_add_default() -> String { crate::views::t("capture.btn_add_default") }
+    pub fn btn_add_export_drive() -> String { crate::views::t("capture.btn_add_export_drive") }
+    pub fn btn_load_project() -> String { crate::views::t("capture.btn_load_project") }
+    pub fn btn_save() -> String { crate::views::t("capture.btn_save") }
+    pub fn btn_save_as() -> String { crate::views::t("capture.btn_save_as") }
 }
