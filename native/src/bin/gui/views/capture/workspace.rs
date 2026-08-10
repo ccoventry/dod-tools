@@ -40,37 +40,6 @@ pub fn render(
     subdir_cache: &mut std::collections::HashMap<std::path::PathBuf, Vec<std::path::PathBuf>>,
     tree_demo_cache: &mut std::collections::HashMap<std::path::PathBuf, usize>,
 ) {
-    // 1. Loading guard: ingestion thread may still be finishing its final write.
-    if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-        let mut guard = match super::get_active_demo_selection().lock() {
-            Ok(g) => g,
-            Err(p) => p.into_inner(),
-        };
-        *guard = None;
-    }
-
-    if *loading_ptr {
-        log::info!("UI: State is in Loading");
-        ui.label(crate::views::t("label.loading"));
-        return;
-    } else {
-        log::info!("UI: State transition to DisplayList");
-    }
-
-    let queued_demos_shared = {
-        let guard = match queued_demos_arc.lock() {
-            Ok(g) => g,
-            Err(p) => p.into_inner(),
-        };
-        guard.clone()
-    };
-    let data = &*queued_demos_shared;
-
-    // Persist active tab selection in temp memory
-    let mut active_tab = ctx.data_mut(|d| {
-        *d.get_temp_mut_or_insert_with(egui::Id::new("dodtools_select_tab"), || SelectTab::Highlights)
-    });
-
     // Compute disk warning visibility state beforehand to feed the global footer warnings
     let mut show_disk_warning = false;
     {
@@ -78,8 +47,12 @@ pub fn render(
             Ok(g) => g,
             Err(p) => p.into_inner(),
         };
-        if !data.is_empty() {
-            let total_sequence_duration = calculate_merged_duration(data, &patcher_config);
+        let latest_demos = match queued_demos_arc.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        if !latest_demos.is_empty() {
+            let total_sequence_duration = calculate_merged_duration(&latest_demos, &patcher_config);
             let w = patcher_config.resolution_width;
             let h = patcher_config.resolution_height;
             let fps = patcher_config.capture_fps;
@@ -203,6 +176,33 @@ pub fn render(
             }
         });
     });
+
+    // 1. Loading guard: ingestion thread may still be finishing its final write.
+    if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+        let mut guard = match super::get_active_demo_selection().lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        *guard = None;
+    }
+
+    // Persist active tab selection in temp memory
+    let mut active_tab = ctx.data_mut(|d| {
+        *d.get_temp_mut_or_insert_with(egui::Id::new("dodtools_select_tab"), || SelectTab::Highlights)
+    });
+
+    if *loading_ptr && active_tab == SelectTab::Highlights {
+        ui.disable();
+    }
+
+    let queued_demos_shared = {
+        let guard = match queued_demos_arc.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        guard.clone()
+    };
+    let data = &*queued_demos_shared;
 
     // ── [STEP 1] Master List Table (Top Panel) ──────────────────────────────────────
     egui::TopBottomPanel::top("master_list_panel")

@@ -89,6 +89,7 @@ pub mod team_details;
 pub mod timeline;
 pub mod settings;
 pub mod capture_studio;
+pub mod export_manager;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod browser;
 

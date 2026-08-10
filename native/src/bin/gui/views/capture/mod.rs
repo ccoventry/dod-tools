@@ -81,6 +81,22 @@ pub(crate) fn set_is_patching(val: bool) {
     IS_PATCHING.store(val, Ordering::Release);
 }
 
+// ── Live atomic: cancels the active ingestion worker loop ──
+
+pub(crate) static INGESTION_CANCEL: AtomicBool = AtomicBool::new(false);
+
+pub(crate) fn request_ingestion_cancel() {
+    INGESTION_CANCEL.store(true, Ordering::Release);
+}
+
+fn clear_ingestion_cancel() {
+    INGESTION_CANCEL.store(false, Ordering::Release);
+}
+
+fn is_ingestion_cancelled() -> bool {
+    INGESTION_CANCEL.load(Ordering::Acquire)
+}
+
 pub static ACTIVE_PROJECT_PATH: std::sync::OnceLock<std::sync::Mutex<Option<std::path::PathBuf>>> = std::sync::OnceLock::new();
 
 pub fn get_active_project_path() -> Option<std::path::PathBuf> {
@@ -201,6 +217,12 @@ pub fn render_patch_ui(
                     ui.horizontal(|ui| {
                         ui.spinner();
                         ui.label(format!("{}...", msg));
+                        ui.add_space(16.0);
+                        if ui.button("❌ Cancel Scan").clicked() {
+                            request_ingestion_cancel();
+                            *loading_ptr = false;
+                            let _ = tx.send(crate::types::GuiMessage::IngestionFinished);
+                        }
                     });
                 });
             });
@@ -357,9 +379,9 @@ pub fn render_patch_ui(
                 cancel_token,
             );
         }
-        _ => {}
     }
 }
+
 
 // ── Ingestion thread ─────────────────────────────────────────────────────────────
 
@@ -373,6 +395,7 @@ pub(crate) fn spawn_ingestion_thread(
     ctx: egui::Context,
     tx: std::sync::mpsc::Sender<crate::types::GuiMessage>,
 ) {
+    clear_ingestion_cancel();
     {
         let mut state = match get_capture_state().lock() {
             Ok(g) => g,
@@ -427,6 +450,10 @@ pub(crate) fn spawn_ingestion_thread(
 
             let total_files = files.len();
             for (index, (file, orig_file)) in files.into_iter().enumerate() {
+                if is_ingestion_cancelled() {
+                    log_markdown("Ingestion cancelled by user.");
+                    break;
+                }
                 {
                     let mut state = match get_capture_state().lock() {
                         Ok(g) => g,

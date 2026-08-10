@@ -9,6 +9,17 @@ use std::time::Instant;
 use crate::{AuditorState, Gui};
 
 pub fn render(gui: &mut Gui, ui: &mut Ui, ctx: &Context) {
+    egui::TopBottomPanel::bottom("demo_auditor_footer").show_inside(ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.label("Duplicates Found: 0 | Wasted Space: 0.00 GB");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button("Delete Selected Demos").clicked() {
+                    // TODO: Wire deletion dispatch
+                }
+            });
+        });
+    });
+
     ui.vertical(|ui| {
         ui.horizontal(|ui| {
             ui.heading("📋 Demo Auditor");
