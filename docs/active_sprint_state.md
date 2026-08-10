@@ -1,7 +1,7 @@
 ## Web AI State
-* **Current Goal:** Frontend Migration (Tauri & Vite Integration on branch `feature/tauri-migration`).
-* **Last Evaluated:** AI workflow standardization, `.cursorrules` alignment, and `docs/` canonical file deduplication.
-* **Next Step:** Resume implementation of frontend execution logic for the capture and render batch queues.
+- **Overarching Goal:** "Localization & Zero-Allocation Refactor" epic is officially closed. Next phase is architectural/UI decoupling (moving baked-in features to a global toolkit/main menu).
+- **Last Edited:** `localizations/dod_tools_english.txt` (added missing `#label.*` keys) and `native/src/patch/builder.rs` (fixed mock grouping assertions).
+- **Unresolved Errors/Bugs:** None. The native workspace is fully localized, all GUI fallbacks are resolved, and the test suite passes 100% green. Tauri/Vite frontend integration remains paused.
 
 ## Active Epics
 - **HLTV Active Frame Injection:** COMPLETED
@@ -15,8 +15,8 @@
   - **UI/UX Polish:** Integrated dynamic vector list reordering (⬆/⬇ swap controls), removed deprecated individual directory pickers, and mounted a global "Total Export Pool Free" indicator on the Render view.
 
 ## IDE AI State
-* **Current Goal:** Frontend Migration (Tauri & Vite Integration on branch `feature/tauri-migration`).
-* **Last Evaluated:** `docs/active_sprint_state.md` updated and `docs/` documentation files deduplicated across the workspace.
-* **Status:** Workspace documentation deduplicated; Tauri backend and Vite frontend IPC bridges ready for batch queue processing.
-* **Next Command:** `cd desktop-studio && npm run tauri dev`
-* **Next File to Edit:** `desktop-studio/src/main.js` (Batch execution & IPC progress event listeners).
+- **Current Goal:** Architectural/UI decoupling (extracting baked-in tools into a global main menu).
+- **Last Evaluated:** Appended session lessons to `docs/staging_lessons.md` and updated sprint state.
+- **Status:** Context handoff complete. All legacy tests passing and UI fully localized. Ready to refactor architecture.
+- **Next File to Open:** `native/src/bin/gui/main.rs` (to begin scaffolding the global toolkit/main menu UI).
+- **Next Command:** `cargo run --bin dod-tools-gui` (to verify menu rendering).
