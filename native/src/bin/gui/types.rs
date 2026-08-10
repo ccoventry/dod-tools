@@ -77,8 +77,6 @@ pub fn default_capture_phase() -> CapturePhase {
 pub enum CaptureStudioState {
     Workspace,
     Capture,
-    Render,
-    Finish,
 }
 
 #[derive(Clone, Debug)]
@@ -158,7 +156,9 @@ pub enum SidebarTab {
     Auditor,
     CaptureStudio,
     Settings,
+    ExportManager,
 }
+
 
 #[cfg(not(target_arch = "wasm32"))]
 pub enum AuditorState {

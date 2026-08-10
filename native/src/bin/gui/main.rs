@@ -1053,7 +1053,8 @@ impl eframe::App for Gui {
                             format!("Recovered: {} pending, {} completed.",
                                 pending_count, completed_count);
                         self.active_sidebar_tab = SidebarTab::CaptureStudio;
-                        self.capture_studio_state = CaptureStudioState::Render;
+                        self.active_sidebar_tab = SidebarTab::ExportManager;
+
                     }
                 }
                 let _ = std::fs::remove_file(&render_autosave_path);
@@ -1083,10 +1084,8 @@ impl eframe::App for Gui {
         let mut parse_file_target = None;
 
         #[cfg(not(target_arch = "wasm32"))]
-        // Left-most narrow Navigation Sidebar
-        SidePanel::left("navigation_sidebar")
-            .resizable(false)
-            .exact_width(48.0)
+        // Top Global Navigation Bar
+        TopBottomPanel::top("global_nav")
             .frame(Frame::side_top_panel(&ctx.style())
                 .fill(ctx.style().visuals.extreme_bg_color)
                 .inner_margin(egui::Margin::same(4_i8)))
@@ -1094,44 +1093,106 @@ impl eframe::App for Gui {
                 if modal_open {
                     ui.disable();
                 }
-                ui.vertical_centered(|ui| {
-                    ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    ui.add_space(4.0);
 
-                    let analyzer_active = self.active_sidebar_tab == SidebarTab::Analyzer;
-                    let analyzer_btn = egui::Button::new(egui::RichText::new("🔍").size(18.0))
-                        .selected(analyzer_active);
-                    if ui.add(analyzer_btn).on_hover_text(crate::views::t("tab.demo_analyzer")).clicked() {
+                    // Capture Studio
+                    let cap_active = self.active_sidebar_tab == SidebarTab::CaptureStudio;
+                    let cap_btn = egui::Button::new(egui::RichText::new("🎬 Capture Studio").size(16.0)).selected(cap_active);
+                    if ui.add_sized([160.0, 32.0], cap_btn).clicked() {
+                        self.active_sidebar_tab = SidebarTab::CaptureStudio;
+                    }
+
+                    ui.add_space(4.0);
+
+                    // Demo Analyzer
+                    let an_active = self.active_sidebar_tab == SidebarTab::Analyzer;
+                    let an_btn = egui::Button::new(egui::RichText::new("📊 Demo Analyzer").size(16.0)).selected(an_active);
+                    if ui.add_sized([160.0, 32.0], an_btn).clicked() {
                         self.active_sidebar_tab = SidebarTab::Analyzer;
                     }
 
                     #[cfg(not(target_arch = "wasm32"))]
                     {
-                        ui.add_space(8.0);
+                        ui.add_space(4.0);
                         let auditor_active = self.active_sidebar_tab == SidebarTab::Auditor;
-                        let auditor_btn = egui::Button::new(egui::RichText::new("📋").size(18.0))
-                            .selected(auditor_active);
-                        if ui.add(auditor_btn).on_hover_text(crate::views::t("tab.demo_auditor")).clicked() {
+                        let auditor_btn = egui::Button::new(egui::RichText::new("🔍 Demo Auditor").size(16.0)).selected(auditor_active);
+                        if ui.add_sized([160.0, 32.0], auditor_btn).clicked() {
                             self.active_sidebar_tab = SidebarTab::Auditor;
                         }
                     }
 
-                    ui.add_space(8.0);
+                    ui.add_space(4.0);
 
-                    let capture_studio_active = self.active_sidebar_tab == SidebarTab::CaptureStudio;
-                    let capture_studio_btn = egui::Button::new(egui::RichText::new("🎬").size(18.0))
-                        .selected(capture_studio_active);
-                    if ui.add(capture_studio_btn).on_hover_text(crate::views::t("tab.capture_studio")).clicked() {
-                        self.active_sidebar_tab = SidebarTab::CaptureStudio;
+                    // Export Manager
+                    let export_active = self.active_sidebar_tab == SidebarTab::ExportManager;
+                    let export_btn = egui::Button::new(egui::RichText::new("🎥 Export Manager").size(16.0)).selected(export_active);
+                    if ui.add_sized([160.0, 32.0], export_btn).clicked() {
+                        self.active_sidebar_tab = SidebarTab::ExportManager;
                     }
 
-                    ui.add_space(8.0);
+                    ui.add_space(4.0);
 
+                    // Settings
                     let settings_active = self.active_sidebar_tab == SidebarTab::Settings;
-                    let settings_btn = egui::Button::new(egui::RichText::new("⚙").size(18.0))
-                        .selected(settings_active);
-                    if ui.add(settings_btn).on_hover_text(crate::views::t("tab.settings")).clicked() {
+                    let settings_btn = egui::Button::new(egui::RichText::new("⚙ Settings").size(16.0)).selected(settings_active);
+                    if ui.add_sized([160.0, 32.0], settings_btn).clicked() {
                         self.active_sidebar_tab = SidebarTab::Settings;
                     }
+
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        egui::widgets::global_theme_preference_buttons(ui);
+
+                        ui.add_space(8.0);
+
+                        ui.menu_button(format!("{} ⏷", t("#app_menu_help")), |ui| {
+                            if ui.button(t("#app_menu_about")).clicked() {
+                                self.show_about_window = true;
+                                ui.close();
+                            }
+                        });
+
+                        ui.menu_button(format!("{} ⏷", t("#app_menu_file")), |ui| {
+                            #[cfg(target_arch = "wasm32")]
+                            if ui.button(t("#app_menu_select_folder")).clicked() {
+                                pick_web_folder(ctx.clone(), self.tx.clone());
+                                ui.close();
+                            }
+
+                            ui.separator();
+
+                            if ui.button(t("#app_menu_clear_cache")).clicked() {
+                                self.analyses.clear();
+                                self.selected_analysis_path = None;
+                                #[cfg(not(target_arch = "wasm32"))]
+                                {
+                                    self.subdir_cache.clear();
+                                    self.tree_demo_cache.clear();
+                                    self.demo_folders.clear();
+                                    self.settings.demo_folder_history.clear();
+                                    save_settings(&self.settings);
+                                }
+                                #[cfg(target_arch = "wasm32")]
+                                {
+                                    self.web_files.clear();
+                                    self.web_tree = None;
+                                    self.selected_web_folder = ".".to_string();
+                                    self.demo_folders.clear();
+                                }
+                                ui.close();
+                            }
+
+                            if ui.button(t("#app_menu_preferences")).clicked() {
+                                self.active_sidebar_tab = SidebarTab::Settings;
+                                ui.close();
+                            }
+
+                            #[cfg(not(target_arch = "wasm32"))]
+                            if ui.button(t("#app_menu_quit")).clicked() {
+                                std::process::exit(0);
+                            }
+                        });
+                    });
                 });
             });
 
@@ -1517,7 +1578,8 @@ impl eframe::App for Gui {
                 }
                 #[cfg(not(target_arch = "wasm32"))]
                 GuiMessage::CaptureStudioFinished => {
-                    self.capture_studio_state = CaptureStudioState::Render;
+                    self.active_sidebar_tab = SidebarTab::ExportManager;
+
                     let mut session_dir = std::path::PathBuf::new();
                     
                     let config_guard = crate::views::capture::get_patcher_config().lock();
@@ -1756,69 +1818,7 @@ impl eframe::App for Gui {
             }
         });
 
-        // Top control Panel
-        TopBottomPanel::top("controls")
-            .frame(Frame::side_top_panel(&ctx.style()).inner_margin(6.))
-            .show(ctx, |ui| {
-                if modal_open {
-                    ui.disable();
-                }
-                ui.horizontal(|ui| {
-                    ui.menu_button(format!("{} ⏷", t("#app_menu_file")), |ui| {
-                        #[cfg(target_arch = "wasm32")]
-                        if ui.button(t("#app_menu_select_folder")).clicked() {
-                            pick_web_folder(ctx.clone(), self.tx.clone());
-                            ui.close();
-                        }
 
-                        ui.separator();
-
-                        if ui.button(t("#app_menu_clear_cache")).clicked() {
-                            self.analyses.clear();
-                            self.selected_analysis_path = None;
-                            #[cfg(not(target_arch = "wasm32"))]
-                            {
-                                self.subdir_cache.clear();
-                                self.tree_demo_cache.clear();
-                                self.demo_folders.clear();
-                                self.settings.demo_folder_history.clear();
-                                save_settings(&self.settings);
-                            }
-                            #[cfg(target_arch = "wasm32")]
-                            {
-                                self.web_files.clear();
-                                self.web_tree = None;
-                                self.selected_web_folder = ".".to_string();
-                                self.demo_folders.clear();
-                            }
-                            ui.close();
-                        }
-
-                        if ui.button(t("#app_menu_preferences")).clicked() {
-                            self.active_sidebar_tab = SidebarTab::Settings;
-                            ui.close();
-                        }
-
-                        #[cfg(not(target_arch = "wasm32"))]
-                        if ui.button(t("#app_menu_quit")).clicked() {
-                            std::process::exit(0);
-                        }
-                    });
-
-                    ui.menu_button(format!("{} ⏷", t("#app_menu_help")), |ui| {
-                        if ui.button(t("#app_menu_about")).clicked() {
-                            self.show_about_window = true;
-                            ui.close();
-                        }
-                    });
-
-
-
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        egui::widgets::global_theme_preference_buttons(ui);
-                    });
-                });
-            });
 
         #[cfg(target_arch = "wasm32")]
         let mut filtered_web_files = vec![];
@@ -2588,6 +2588,17 @@ impl eframe::App for Gui {
             }
                 match self.active_sidebar_tab {
                     SidebarTab::Analyzer => {
+                        egui::TopBottomPanel::bottom("demo_analyzer_footer").show_inside(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label("Loaded Demos: 0 | Total Parsed Events: 0");
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    if ui.button("Export to CSV").clicked() {
+                                        // TODO: Wire CSV export dispatch
+                                    }
+                                });
+                            });
+                        });
+
                         self.check_scoreboard_cache();
                         let show_blank = if let Some(path) = &self.selected_analysis_path {
                             !self.analyses.contains_key(path)
@@ -2639,6 +2650,9 @@ impl eframe::App for Gui {
                     }
                     #[cfg(not(target_arch = "wasm32"))]
                     SidebarTab::Auditor => {}
+                    SidebarTab::ExportManager => {
+                        crate::views::export_manager::show(self, ctx, ui);
+                    }
                 }
         });
         }

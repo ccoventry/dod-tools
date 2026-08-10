@@ -1,7 +1,8 @@
 ## Web AI State
-- **Overarching Goal:** "Localization & Zero-Allocation Refactor" epic is officially closed. Next phase is architectural/UI decoupling (moving baked-in features to a global toolkit/main menu).
-- **Last Edited:** `localizations/dod_tools_english.txt` (added missing `#label.*` keys) and `native/src/patch/builder.rs` (fixed mock grouping assertions).
-- **Unresolved Errors/Bugs:** None. The native workspace is fully localized, all GUI fallbacks are resolved, and the test suite passes 100% green. Tauri/Vite frontend integration remains paused.
+- **Overarching Goal:** Architectural UI decoupling complete (Export Manager extracted, Top Navigation bar unified, contextual footers scaffolded, non-destructive loading state implemented). Next phase: Wire functional cancellation channels and finish remaining `TODO` dispatches.
+- **Last Edited:** `native/src/bin/gui/views/capture/mod.rs`, `native/src/bin/gui/views/capture/workspace.rs`, `native/src/bin/gui/main.rs`.
+- **Unresolved Errors/Bugs:** The "Cancel Scan" button in `CaptureState::Scanning` requires proper background channel signaling or atomic flag abort handling to stop the underlying ingestion thread.
+
 
 ## Active Epics
 - **HLTV Active Frame Injection:** COMPLETED
@@ -15,8 +16,8 @@
   - **UI/UX Polish:** Integrated dynamic vector list reordering (⬆/⬇ swap controls), removed deprecated individual directory pickers, and mounted a global "Total Export Pool Free" indicator on the Render view.
 
 ## IDE AI State
-- **Current Goal:** Architectural/UI decoupling (extracting baked-in tools into a global main menu).
-- **Last Evaluated:** Appended session lessons to `docs/staging_lessons.md` and updated sprint state.
-- **Status:** Context handoff complete. All legacy tests passing and UI fully localized. Ready to refactor architecture.
-- **Next File to Open:** `native/src/bin/gui/main.rs` (to begin scaffolding the global toolkit/main menu UI).
-- **Next Command:** `cargo run --bin dod-tools-gui` (to verify menu rendering).
+- **Current Goal:** Wire functional scan cancellation (INGESTION_CANCEL AtomicBool implemented) and finish remaining `TODO` dispatches across Export Manager, Demo Auditor, and Demo Analyzer footers.
+- **Last Evaluated:** Appended 3 new session lessons to `docs/staging_lessons.md`; updated both state sections in `docs/active_sprint_state.md`.
+- **Status:** Cancellation infrastructure landed in `mod.rs` (`INGESTION_CANCEL` atomic, `request_ingestion_cancel()`, per-file break check). Redundant workspace banner removed. All panels compile and run.
+- **Next File to Open:** `native/src/bin/gui/views/capture/mod.rs` (to verify cancellation resets `CaptureState` to `Idle` after break, ensuring the Scanning spinner dismisses correctly).
+- **Next Command:** `cargo run --bin dod-tools-gui` (to verify UI renders correctly after ingestion cancellation).

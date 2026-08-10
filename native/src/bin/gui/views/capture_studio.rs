@@ -30,19 +30,6 @@ impl Gui {
                         self.capture_studio_state = CaptureStudioState::Capture;
                     }
 
-                    ui.label(" ➤ ");
-                    let step3_active = phase == CaptureStudioState::Render;
-                    let step3_btn = ui.selectable_label(step3_active, "3. Render");
-                    if step3_btn.clicked() {
-                        self.capture_studio_state = CaptureStudioState::Render;
-                    }
-
-                    ui.label(" ➤ ");
-                    let step4_active = phase == CaptureStudioState::Finish;
-                    let step4_btn = ui.selectable_label(step4_active, "4. Finish");
-                    if step4_btn.clicked() {
-                        self.capture_studio_state = CaptureStudioState::Finish;
-                    }
                 }
             });
 
@@ -84,34 +71,8 @@ impl Gui {
                         ui.label("Not supported in WASM");
                     }
                 }
-                CaptureStudioState::Render => {
-                    #[cfg(not(target_arch = "wasm32"))]
-                    {
-                        let config_guard = match crate::views::capture::get_patcher_config().lock() {
-                            Ok(guard) => guard,
-                            Err(poisoned) => poisoned.into_inner(),
-                        };
-                        if let Ok(resolved_path) = crate::settings::resolve_ffmpeg_path(config_guard.ffmpeg_override_path.as_ref()) {
-                            self.hlcr_state.config.ffmpeg_path = resolved_path.to_string_lossy().to_string();
-                        }
-                        self.hlcr_state.draw_ui(ui, ctx);
-                    }
-                    #[cfg(target_arch = "wasm32")]
-                    {
-                        ui.label("HLCR rendering is not supported in the WASM target.");
-                    }
-                }
-                CaptureStudioState::Finish => {
-                    ui.vertical_centered(|ui| {
-                        ui.heading("Capture Studio Complete");
-                        ui.add_space(10.0);
-                        ui.label("All recording and rendering processes have finished.");
-                        if ui.button("Return to Workspace").clicked() {
-                            self.capture_studio_state = CaptureStudioState::Workspace;
-                        }
-                    });
-                }
             }
         });
     }
 }
+

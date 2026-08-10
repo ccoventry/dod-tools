@@ -14,7 +14,7 @@
 /// - `capture_engine_running` — read to gate Launch/Proceed; written eagerly before spawn
 /// - `engine_msg/progress/done/total` — display-only progress fields
 /// - `tx`                    — GuiMessage sender for the relay thread
-/// - `studio_state`          — written to CaptureStudioState::Render on Proceed
+/// - `studio_state`          — navigates to ExportManager tab on Proceed
 #[cfg(not(target_arch = "wasm32"))]
 pub fn render(
     ui: &mut egui::Ui,
@@ -25,7 +25,8 @@ pub fn render(
     engine_jobs_done: usize,
     engine_jobs_total: usize,
     tx: std::sync::mpsc::Sender<crate::types::GuiMessage>,
-    studio_state: &mut crate::types::CaptureStudioState,
+    _studio_state: &mut crate::types::CaptureStudioState,
+
     cancel_token: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) {
     ui.vertical(|ui| {
@@ -186,9 +187,10 @@ pub fn render(
             // (Stage 1 fix #2).
             if ui.add_enabled(
                 !*capture_engine_running,
-                egui::Button::new("Proceed to Render ->"),
+                egui::Button::new("Proceed to Export Manager ->"),
             ).clicked() {
-                *studio_state = crate::types::CaptureStudioState::Render;
+                // Render pipeline has moved to the global Export Manager view.
+                // We only need the GUI to navigate there; no capture-state mutation needed.
             }
 
             // Cancel Capture — only enabled while the engine is running.
