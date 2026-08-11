@@ -1,3 +1,4 @@
+#![allow(unused_mut, unused_variables, unused_assignments, dead_code)]
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Read, Write, Seek, SeekFrom};
 use std::path::Path;

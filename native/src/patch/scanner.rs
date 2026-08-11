@@ -10,7 +10,7 @@ use crate::patch::{MAX_PAYLOAD_LIMIT_BYTES, NETWORK_HEADER_ALIGNMENT, SCANNER_SE
 pub fn is_hltv_demo(path: &std::path::Path) -> Result<bool, std::io::Error> {
     use std::io::Read;
     let mut file = std::fs::File::open(path)?;
-    let mut header = vec![0u8; crate::patch::HLTV_HEADER_SIZE];
+    let mut header = [0_u8; crate::patch::HLTV_HEADER_SIZE];
     file.read_exact(&mut header)?;
 
     if header.len() >= crate::patch::HLTV_HEADER_SIZE {
@@ -123,14 +123,52 @@ pub fn scan_demo_for_highlights(
 
         for kill_streak in &player.kill_streaks {
 
-            // Phase B — resolve tick and abs_time directly from GameTime.
-            // frame_index: the 1-based frame counter captured during use_timing_updates.
-            // real_offset: wall-clock Duration used by update_visuals for timeline strings.
             let kills_raw: Vec<(i32, f32, String)> = kill_streak.kills.iter()
                 .map(|(time, weapon, _victim)| {
                     let abs_time = time.real_offset.as_secs_f32();
                     let tick = time.frame_index as i32;
-                    (tick, abs_time, format!("{:?}", weapon))
+                    let weapon_str = match weapon {
+                        analysis::Weapon::Unknown => analysis::translate_key("weapon.unknown").unwrap_or_default(),
+                        analysis::Weapon::Kabar => analysis::translate_key("weapon.kabar").unwrap_or_default(),
+                        analysis::Weapon::GermanKnife => analysis::translate_key("weapon.germanknife").unwrap_or_default(),
+                        analysis::Weapon::M1911 => analysis::translate_key("weapon.m1911").unwrap_or_default(),
+                        analysis::Weapon::Luger => analysis::translate_key("weapon.luger").unwrap_or_default(),
+                        analysis::Weapon::Garand => analysis::translate_key("weapon.garand").unwrap_or_default(),
+                        analysis::Weapon::ScopedK98 => analysis::translate_key("weapon.scopedk98").unwrap_or_default(),
+                        analysis::Weapon::Thompson => analysis::translate_key("weapon.thompson").unwrap_or_default(),
+                        analysis::Weapon::Stg44 => analysis::translate_key("weapon.stg44").unwrap_or_default(),
+                        analysis::Weapon::Springfield => analysis::translate_key("weapon.springfield").unwrap_or_default(),
+                        analysis::Weapon::K98 => analysis::translate_key("weapon.k98").unwrap_or_default(),
+                        analysis::Weapon::Bar => analysis::translate_key("weapon.bar").unwrap_or_default(),
+                        analysis::Weapon::Mp40 => analysis::translate_key("weapon.mp40").unwrap_or_default(),
+                        analysis::Weapon::Mk2Grenade => analysis::translate_key("weapon.mk2grenade").unwrap_or_default(),
+                        analysis::Weapon::StickGrenade => analysis::translate_key("weapon.stickgrenade").unwrap_or_default(),
+                        analysis::Weapon::Mg42 => analysis::translate_key("weapon.mg42").unwrap_or_default(),
+                        analysis::Weapon::Browning30Cal => analysis::translate_key("weapon.browning30cal").unwrap_or_default(),
+                        analysis::Weapon::Spade => analysis::translate_key("weapon.spade").unwrap_or_default(),
+                        analysis::Weapon::M1Carbine => analysis::translate_key("weapon.m1carbine").unwrap_or_default(),
+                        analysis::Weapon::Mg34 => analysis::translate_key("weapon.mg34").unwrap_or_default(),
+                        analysis::Weapon::GreaseGun => analysis::translate_key("weapon.greasegun").unwrap_or_default(),
+                        analysis::Weapon::Fg42 => analysis::translate_key("weapon.fg42").unwrap_or_default(),
+                        analysis::Weapon::K43 => analysis::translate_key("weapon.k43").unwrap_or_default(),
+                        analysis::Weapon::LeeEnfield => analysis::translate_key("weapon.leeenfield").unwrap_or_default(),
+                        analysis::Weapon::Sten => analysis::translate_key("weapon.sten").unwrap_or_default(),
+                        analysis::Weapon::Bren => analysis::translate_key("weapon.bren").unwrap_or_default(),
+                        analysis::Weapon::Webley => analysis::translate_key("weapon.webley").unwrap_or_default(),
+                        analysis::Weapon::Bazooka => analysis::translate_key("weapon.bazooka").unwrap_or_default(),
+                        analysis::Weapon::Panzerschreck => analysis::translate_key("weapon.panzerschreck").unwrap_or_default(),
+                        analysis::Weapon::Piat => analysis::translate_key("weapon.piat").unwrap_or_default(),
+                        analysis::Weapon::Mortar => analysis::translate_key("weapon.mortar").unwrap_or_default(),
+                        analysis::Weapon::ScopedFg42 => analysis::translate_key("weapon.scopedfg42").unwrap_or_default(),
+                        analysis::Weapon::M1A1Carbine => analysis::translate_key("weapon.m1a1carbine").unwrap_or_default(),
+                        analysis::Weapon::K98Bayonet => analysis::translate_key("weapon.k98bayonet").unwrap_or_default(),
+                        analysis::Weapon::ScopedLeeEnfield => analysis::translate_key("weapon.scopedleeenfield").unwrap_or_default(),
+                        analysis::Weapon::MillsBomb => analysis::translate_key("weapon.millsbomb").unwrap_or_default(),
+                        analysis::Weapon::BritishKnife => analysis::translate_key("weapon.britishknife").unwrap_or_default(),
+                        analysis::Weapon::ButtStock => analysis::translate_key("weapon.buttstock").unwrap_or_default(),
+                        analysis::Weapon::EnfieldBayonet => analysis::translate_key("weapon.enfieldbayonet").unwrap_or_default(),
+                    };
+                    (tick, abs_time, weapon_str)
                 })
                 .collect();
 

@@ -29,6 +29,10 @@ sysinfo = "0.29"
 keepawake = "0.6"
 
 [[bin]]
+name = "preview_cli"
+path = "src/bin/cli/main.rs"
+
+[[bin]]
 name = "dod-tools-cli"
 path = "src/bin/cli.rs"
 

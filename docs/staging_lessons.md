@@ -1,25 +1,6 @@
-# Staging Lessons & Architectural Rules
-
-- **Vite Default Styling Override:** When migrating from immediate-mode GUIs (`egui`) to Vite/Tauri, Vite's default browser styling completely overrides native application aesthetics. A strict CSS reset wiping default margins/padding and redefining custom panel/border variables is mandatory to achieve visual parity.
-- **UI Layout Desync:** Do not assume backend IPC integration automatically resolves missing frontend DOM components. When migrating complex state machines, explicitly validate that all required input fields (e.g., Export Configurations) and native folder pickers are scaffolded in the DOM before declaring frontend feature parity complete.
-- **UI Parity Friction:** Frontend migrations must establish a 1:1 structural baseline with the legacy dev branch (e.g., preserving configuration tabs and advanced settings) before introducing new widgets.
-- **Scope Hallucination:** Unprompted feature additions (Match Telemetry, Canvas Timelines) created workflow bloat and broke the required layout.
-- **Core Guardrail:** Do not invent missing UI components; always audit the source of truth layout prior to DOM generation.
-- **Smart App Control Hard Block (Windows 11):** Windows 11 "Smart App Control" enforces strict signature checking on executables, differing from standard Windows SmartScreen. Smart App Control directly blocks unsigned Tauri development binaries (e.g., `target/debug/desktop-studio.exe`, OS error 4551) without providing a standard "Run anyway" UI bypass option. For local development execution, developers must either disable Smart App Control via Windows Security (App & browser control -> Smart App Control) or configure local code self-signing certificates for the Tauri bundler.
-- **Smart App Control Cloud Reputation Block (Windows 11):** Even when a self-signed CodeSigning certificate is generated and explicitly added to the `Cert:\CurrentUser\Root` (Trusted Root Certification Authorities) store via PowerShell (`Set-AuthenticodeSignature`), Windows 11 Smart App Control will still outright block local Tauri development binaries (`target/debug/desktop-studio.exe`, exit code 1 / `ApplicationFailedException`). Smart App Control requires cloud-based reputation lookup or an officially trusted publisher signature; local root certificates do not bypass Smart App Control's cloud reputation checks.
-- **Null-Harvest:** No additional friction categories detected.
-
-## WSL2 & Cargo Feature Unification Lessons
-
-### WSL2 NTFS Metadata Boundary Errors
-- **Issue:** Tauri v2 build scripts fail with `Operation not permitted (os error 1)` when attempting to manipulate file metadata/permissions in `/mnt/c/` directory targets.
-- **Resolution:** Projects compiling native Linux binaries under WSL2 must reside in the native Linux ext4 filesystem (`~/dod-tools`), bypassing the Windows NTFS bridge entirely.
-
-### Git NTFS-to-ext4 Copy Locks
-- **Issue:** Copying `.git/objects/` across the WSL mount causes `Permission denied` because Git marks internal object files as read-only on Windows.
-- **Resolution:** Perform recursive copies with `sudo cp -r` and immediately restore UNIX user ownership via `sudo chown -R $USER:$USER ~/dod-tools`.
-
-### Cargo v2 Host-Target Feature Resolver Split
-- **Issue:** Injecting a missing feature (e.g., `indexmap/std`) into standard `[dependencies]` only updates the target build graph, leaving proc-macro / build-script crates (host graph) starved of the feature and failing with `E0107`.
-- **Resolution:** Feature unification for build macros must be explicitly declared under `[build-dependencies]` in the apex crate (`desktop-studio/src-tauri/Cargo.toml`).
-
+- **PatcherConfig Mocking:** When mocking `PatcherConfig` for tests evaluating `build_batch_queue()`, `config.primary_media_dir` must be explicitly populated with a valid `Some(PathBuf)` (e.g., pointing to a temporary directory). Failing to provide this specific field triggers a "Target game output directory not found" panic, which is easily misattributed to `config.game_path`.
+- **Batch Queue Primer Injection:** When writing assertions against the output vector of `build_batch_queue()`, always account for the engine unconditionally injecting a `Primer` job at index 0 (if `total_jobs > 0`). If your test mocks `X` distinct groups of `CaptureStreak`s, the resulting `PatchJob` vector length will always be `X + 1`.
+- **Localization Loader Prefixing:** `dod_tools_english.txt` strict KeyValues format requires all keys to explicitly include the `#` prefix. The loader (`localization.rs`) reads keys literally without mutation. The runtime router (`translate_key`) handles normalizing and prepending the `#` prefix for any incoming UI queries to prevent double-hashing.
+- **Immediate-Mode Panel Hoisting:** Contextual footers (`TopBottomPanel::bottom(...).show_inside(...)`) and overlay panels must be hoisted to the absolute top of the rendering function to avoid being short-circuited or hidden by modal file pickers or asynchronous loading early returns.
+- **Immediate-Mode UI Dialog Concurrency:** Asynchronous background tasks (such as mass file ingestion loops) that yield control to OS-level file dialogs require persistent, dedicated status panels or background worker cancellation channels rather than relying on inline layout components that disappear during modal yields.
+- **Closure & Delimiter Safety in egui:** Large immediate-mode refactors involving nested closures (`ui.add_enabled_ui`, `TopBottomPanel`) are prone to unclosed delimiters; verify closing braces explicitly against open bracket counts to prevent EOF errors.
