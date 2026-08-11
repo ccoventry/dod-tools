@@ -1,8 +1,85 @@
 mod capture_manager;
 mod render_manager;
+mod settings_manager;
+mod audit_manager;
 
+use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 use capture_manager::{CaptureManager, CapturePayload};
 use render_manager::{RenderManager, scan_render_directories, execute_render_batch, render_status, cancel_render_batch};
+use settings_manager::{AppSettings, SettingsManager};
+use audit_manager::{AuditManager, SerializedDuplicateGroup};
+
+// ── ScanManager ────────────────────────────────────────────────────────────────
+
+pub struct ScanManager {
+    pub is_scanning: Arc<AtomicBool>,
+    pub cancel_token: Arc<AtomicBool>,
+}
+
+impl Default for ScanManager {
+    fn default() -> Self {
+        Self {
+            is_scanning: Arc::new(AtomicBool::new(false)),
+            cancel_token: Arc::new(AtomicBool::new(false)),
+        }
+    }
+}
+
+// ── Settings IPC Commands ──────────────────────────────────────────────────────
+
+#[tauri::command]
+async fn get_settings(state: tauri::State<'_, SettingsManager>) -> Result<AppSettings, String> {
+    let inner_arc = Arc::clone(&state.inner);
+    tokio::task::spawn_blocking(move || {
+        let guard = inner_arc.lock().unwrap_or_else(|p| p.into_inner());
+        Ok(guard.clone())
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
+}
+
+#[tauri::command]
+async fn save_settings(
+    state: tauri::State<'_, SettingsManager>,
+    settings: AppSettings,
+) -> Result<(), String> {
+    let inner_arc = Arc::clone(&state.inner);
+    tokio::task::spawn_blocking(move || {
+        settings.save()?;
+        let mut guard = inner_arc.lock().unwrap_or_else(|p| p.into_inner());
+        *guard = settings;
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
+}
+
+// ── Auditor IPC Commands ───────────────────────────────────────────────────────
+
+#[tauri::command]
+async fn run_demo_audit(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AuditManager>,
+    paths: Vec<String>,
+) -> Result<Vec<SerializedDuplicateGroup>, String> {
+    audit_manager::run_demo_audit_impl(
+        app_handle,
+        Arc::clone(&state.is_running),
+        Arc::clone(&state.cancel_token),
+        paths,
+    ).await
+}
+
+#[tauri::command]
+fn delete_audit_files(paths: Vec<String>) -> Result<(), String> {
+    audit_manager::delete_audit_files_impl(paths)
+}
+
+#[tauri::command]
+fn cancel_audit(state: tauri::State<'_, AuditManager>) -> Result<(), String> {
+    state.cancel_token.store(true, Ordering::SeqCst);
+    Ok(())
+}
 
 // ── Tauri commands ─────────────────────────────────────────────────────────────
 
@@ -13,10 +90,26 @@ use render_manager::{RenderManager, scan_render_directories, execute_render_batc
 /// via `tokio::task::spawn_blocking`.
 #[tauri::command]
 async fn start_capture_batch(
+    app_handle: tauri::AppHandle,
     state: tauri::State<'_, CaptureManager>,
     payload: CapturePayload,
 ) -> Result<(), String> {
-    capture_manager::start_capture_batch_impl(&state, payload).await
+    capture_manager::start_capture_batch_impl(app_handle, &state, payload).await
+}
+
+#[tauri::command]
+fn simulate_aot_capacity(
+    streaks: Vec<f32>,
+    fps: u32,
+    bytes_per_frame: u64,
+    available_bytes: u64,
+) -> Result<(u64, bool), String> {
+    Ok(capture_manager::simulate_aot_capacity(
+        streaks,
+        fps,
+        bytes_per_frame,
+        available_bytes,
+    ))
 }
 
 /// Cancel a running capture batch.
@@ -41,13 +134,37 @@ fn test_bridge(path: String) -> String {
 }
 
 #[tauri::command]
-async fn scan_directory(paths: Vec<String>) -> Result<Vec<capture_manager::SerializedDemo>, String> {
-    capture_manager::scan_directory_impl(paths).await
+async fn scan_directory(
+    app_handle: tauri::AppHandle,
+    scan_state: tauri::State<'_, ScanManager>,
+    paths: Vec<String>,
+) -> Result<Vec<capture_manager::SerializedDemo>, String> {
+    capture_manager::scan_directory_impl(
+        app_handle,
+        Arc::clone(&scan_state.is_scanning),
+        Arc::clone(&scan_state.cancel_token),
+        paths,
+    ).await
 }
 
 #[tauri::command]
-async fn scan_demos(paths: Vec<String>) -> Result<Vec<capture_manager::SerializedDemo>, String> {
-    capture_manager::scan_directory_impl(paths).await
+async fn scan_demos(
+    app_handle: tauri::AppHandle,
+    scan_state: tauri::State<'_, ScanManager>,
+    paths: Vec<String>,
+) -> Result<Vec<capture_manager::SerializedDemo>, String> {
+    capture_manager::scan_directory_impl(
+        app_handle,
+        Arc::clone(&scan_state.is_scanning),
+        Arc::clone(&scan_state.cancel_token),
+        paths,
+    ).await
+}
+
+#[tauri::command]
+fn cancel_scan(scan_state: tauri::State<'_, ScanManager>) -> Result<(), String> {
+    scan_state.cancel_token.store(true, Ordering::SeqCst);
+    Ok(())
 }
 
 #[tauri::command]
@@ -147,6 +264,9 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .manage(CaptureManager::new())
         .manage(RenderManager::new())
+        .manage(ScanManager::default())
+        .manage(SettingsManager::new())
+        .manage(AuditManager::default())
         .invoke_handler(tauri::generate_handler![
             test_bridge,
             validate_paths,
@@ -156,11 +276,18 @@ pub fn run() {
             capture_status,
             scan_directory,
             scan_demos,
+            cancel_scan,
             calculate_export_pool_space,
+            simulate_aot_capacity,
             scan_render_directories,
             execute_render_batch,
             render_status,
             cancel_render_batch,
+            get_settings,
+            save_settings,
+            run_demo_audit,
+            delete_audit_files,
+            cancel_audit,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

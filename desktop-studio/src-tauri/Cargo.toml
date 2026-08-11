@@ -30,7 +30,9 @@ tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 log = "0.4"
 dod = { path = "../../dod" }
 analysis = { path = "../../analysis" }
+hl-demo-auditor = { path = "../../hl-demo-auditor" }
 indexmap = { version = "1.9.3", features = ["std"] }
+dirs = "5"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

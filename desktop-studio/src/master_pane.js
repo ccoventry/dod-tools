@@ -22,6 +22,39 @@ export function initMasterPane(onDeleteDemo) {
       renderMasterList(currentDemos, null, currentOnSelectDemo);
     });
   }
+
+  window.addEventListener('keydown', (e) => {
+    const activeTab = document.querySelector('.nav-tab-btn.active')?.dataset.nav;
+    if (activeTab !== 'workspace') return;
+
+    const rows = Array.from(document.querySelectorAll('#master-demo-table-body tr'));
+    if (!rows.length || rows[0].querySelector('.table-empty')) return;
+
+    let currentIndex = rows.findIndex(r => r.classList.contains('keyboard-selected'));
+    
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (currentIndex < rows.length - 1) {
+        if (currentIndex >= 0) rows[currentIndex].classList.remove('keyboard-selected');
+        currentIndex++;
+        rows[currentIndex].classList.add('keyboard-selected');
+        rows[currentIndex].scrollIntoView({ block: 'nearest' });
+      }
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (currentIndex > 0) {
+        rows[currentIndex].classList.remove('keyboard-selected');
+        currentIndex--;
+        rows[currentIndex].classList.add('keyboard-selected');
+        rows[currentIndex].scrollIntoView({ block: 'nearest' });
+      }
+    } else if (e.key === 'Enter') {
+      if (currentIndex >= 0 && currentIndex < rows.length) {
+        e.preventDefault();
+        rows[currentIndex].click();
+      }
+    }
+  });
 }
 
 // ── Status helpers ────────────────────────────────────────────────────────────

@@ -1,7 +1,8 @@
-import { startCaptureBatch, cancelCaptureBatch, getCaptureStatus, validatePaths } from './ipc_bridge.js';
+import { startCaptureBatch, cancelCaptureBatch, validatePaths, simulateAotCapacity, calculateExportPoolSpace } from './ipc_bridge.js';
+import { listen } from '@tauri-apps/api/event';
 import { showToast } from './toast.js';
 
-let statusInterval = null;
+let unlistenCaptureStatus = null;
 
 function updateRowBadges(statusText, colorHex) {
   const tableBody = document.querySelector('#master-demo-table-body');
@@ -14,13 +15,6 @@ function updateRowBadges(statusText, colorHex) {
   }
 }
 
-function stopStatusPolling() {
-  if (statusInterval) {
-    clearInterval(statusInterval);
-    statusInterval = null;
-  }
-}
-
 export function initCaptureUI(getState) {
   const startBtn = document.querySelector('#start-capture-btn') || document.querySelector('#start-batch-btn');
   const cancelBtn = document.querySelector('#cancel-batch-btn');
@@ -28,35 +22,49 @@ export function initCaptureUI(getState) {
   const progressContainer = document.querySelector('#capture-progress-container');
   const progressBar = document.querySelector('#capture-progress-bar');
 
-  function startStatusPolling() {
-    stopStatusPolling();
+  if (!unlistenCaptureStatus) {
+    listen('capture_status', (event) => {
+      const payload = event.payload || {};
+      if (payload.running) {
+        if (progressContainer) progressContainer.style.display = 'block';
+        if (progressBar) {
+          if (payload.index !== undefined && payload.total && payload.total > 0) {
+            const pct = Math.min(100, Math.round((payload.index / payload.total) * 100));
+            progressBar.style.width = `${pct}%`;
+          } else {
+            progressBar.style.width = '50%';
+          }
+        }
+        const statusText = payload.name ? `${payload.status || "Capturing"}: ${payload.name}` : (payload.status || "Capturing...");
+        if (statusEl) statusEl.textContent = statusText;
+        updateRowBadges(payload.status || "Capturing...", "#ff9800");
+        if (startBtn) startBtn.disabled = true;
+        if (cancelBtn) cancelBtn.disabled = false;
+      } else {
+        if (startBtn) startBtn.disabled = false;
+        if (cancelBtn) cancelBtn.disabled = true;
 
-    if (progressContainer) progressContainer.style.display = 'block';
-    if (progressBar) progressBar.style.width = '25%';
-
-    statusInterval = setInterval(async () => {
-      try {
-        const isRunning = await getCaptureStatus();
-        if (isRunning) {
-          updateRowBadges("Capturing...", "#ff9800");
-          if (progressBar) progressBar.style.width = '65%';
+        if (payload.error) {
+          showToast(`Capture error: ${payload.status || "Unknown error"}`, "error");
+          updateRowBadges("Error", "#f44336");
+          if (statusEl) statusEl.textContent = `Error: ${payload.status || "Capture failed"}`;
+        } else if (payload.status === "Cancelled") {
+          showToast("Batch capture cancelled.", "info");
+          updateRowBadges("Cancelled", "#f44336");
+          if (progressBar) progressBar.style.width = '0%';
+          if (statusEl) statusEl.textContent = "Cancelled";
         } else {
-          stopStatusPolling();
           showToast("Batch capture completed successfully!", "success");
           updateRowBadges("Completed", "#4caf50");
           if (progressBar) progressBar.style.width = '100%';
-          if (startBtn) startBtn.disabled = false;
-          if (cancelBtn) cancelBtn.disabled = true;
+          if (statusEl) statusEl.textContent = "Completed";
         }
-      } catch (err) {
-        console.error("IPC Error polling capture status:", err);
-        stopStatusPolling();
-        showToast("Error checking capture status: " + err, "error");
-        updateRowBadges("Error", "#f44336");
-        if (startBtn) startBtn.disabled = false;
-        if (cancelBtn) cancelBtn.disabled = true;
       }
-    }, 500);
+    }).then(unlistenFn => {
+      unlistenCaptureStatus = unlistenFn;
+    }).catch(err => {
+      console.error("Failed to register capture_status listener:", err);
+    });
   }
 
   if (startBtn) {
@@ -144,6 +152,29 @@ export function initCaptureUI(getState) {
         auto_clear_temp_demos: autoClearTempDemosVal
       };
 
+      try {
+        const availableBytes = await calculateExportPoolSpace(state.targetDrives || []);
+        const streakDurations = selectedStreaks.map(s => {
+          const baseDuration = (s.end_tick - s.start_tick) / (s.demo_fps || 100);
+          return baseDuration + preRollVal + postRollVal;
+        });
+        const bytesPerFrame = resWidthVal * resHeightVal * 3;
+        
+        const [projectedBytes, hasEnoughSpace] = await simulateAotCapacity(
+          streakDurations,
+          captureFpsVal,
+          bytesPerFrame,
+          availableBytes
+        );
+
+        if (!hasEnoughSpace && availableBytes > 0) {
+          showToast(`Insufficient disk space. Projected: ${(projectedBytes / 1e9).toFixed(2)} GB, Available: ${(availableBytes / 1e9).toFixed(2)} GB`, 'warning');
+          return;
+        }
+      } catch (err) {
+        console.error("AOT capacity simulation failed:", err);
+      }
+
       showToast("Initializing capture batch...", "info");
       startBtn.disabled = true;
       if (cancelBtn) cancelBtn.disabled = false;
@@ -152,11 +183,11 @@ export function initCaptureUI(getState) {
       startCaptureBatch(activePayload)
         .then(() => {
           showToast("Batch capture queued successfully!", "success");
-          startStatusPolling();
+          if (progressContainer) progressContainer.style.display = 'block';
+          if (progressBar) progressBar.style.width = '10%';
         })
         .catch((err) => {
           console.error("IPC Execution Error (start_capture_batch):", err);
-          stopStatusPolling();
           showToast("Error starting batch: " + err, "error");
           updateRowBadges("Failed", "#f44336");
           if (startBtn) startBtn.disabled = false;
@@ -171,14 +202,12 @@ export function initCaptureUI(getState) {
       cancelBtn.disabled = true;
       cancelCaptureBatch()
         .then(() => {
-          stopStatusPolling();
           updateRowBadges("Cancelled", "#f44336");
           if (startBtn) startBtn.disabled = false;
           if (progressBar) progressBar.style.width = '0%';
         })
         .catch((err) => {
           console.error("IPC Execution Error (cancel_capture_batch):", err);
-          stopStatusPolling();
           if (startBtn) startBtn.disabled = false;
         });
     });

@@ -24,6 +24,7 @@ export async function analyzeDemo(demoPath) {
   return await invoke('analyze_demo', { demoPath })
     .catch((err) => {
       console.error("IPC Execution Error (analyze_demo):", err);
+      showToast(`Analysis error: ${err}`, 'error');
       throw err;
     });
 }
@@ -60,6 +61,19 @@ export async function calculateExportPoolSpace(paths) {
     });
 }
 
+export async function simulateAotCapacity(streaks, fps, bytesPerFrame, availableBytes) {
+  return invoke("simulate_aot_capacity", { 
+    streaks, 
+    fps, 
+    bytesPerFrame, 
+    availableBytes 
+  }).catch((err) => {
+    console.error("IPC Execution Error (simulate_aot_capacity):", err);
+    showToast(`Simulation error: ${err}`, 'error');
+    throw err;
+  });
+}
+
 export async function scanRenderDirectories(renderFolders) {
   return invoke("scan_render_directories", { paths: renderFolders })
     .catch((err) => {
@@ -82,6 +96,51 @@ export async function cancelRenderBatch() {
   return invoke("cancel_render_batch")
     .catch((err) => {
       console.error("IPC Execution Error (cancel_render_batch):", err);
+      throw err;
+    });
+}
+
+export async function cancelScan() {
+  return invoke("cancel_scan")
+    .catch((err) => {
+      console.error("IPC Execution Error (cancel_scan):", err);
+      showToast(`Cancel scan error: ${err}`, 'error');
+      throw err;
+    });
+}
+
+export async function getSettings() {
+  return invoke("get_settings")
+    .catch((err) => {
+      console.error("IPC Execution Error (get_settings):", err);
+      showToast(`Failed to load settings: ${err}`, 'error');
+      throw err;
+    });
+}
+
+export async function saveSettings(settings) {
+  return invoke("save_settings", { settings })
+    .catch((err) => {
+      console.error("IPC Execution Error (save_settings):", err);
+      showToast(`Failed to save settings: ${err}`, 'error');
+      throw err;
+    });
+}
+
+export async function runDemoAudit(paths) {
+  return invoke("run_demo_audit", { paths })
+    .catch((err) => {
+      console.error("IPC Execution Error (run_demo_audit):", err);
+      showToast(`Audit failed: ${err}`, 'error');
+      throw err;
+    });
+}
+
+export async function deleteAuditFiles(paths) {
+  return invoke("delete_audit_files", { paths })
+    .catch((err) => {
+      console.error("IPC Execution Error (delete_audit_files):", err);
+      showToast(`Deletion failed: ${err}`, 'error');
       throw err;
     });
 }
