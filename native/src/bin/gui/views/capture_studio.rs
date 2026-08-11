@@ -7,30 +7,8 @@ impl Gui {
         ui.vertical(|ui| {
             ui.add_space(8.0);
             
-            // Stepper UI
             ui.horizontal(|ui| {
                 ui.heading("🎬 Capture Studio");
-                ui.separator();
-
-                let phase = self.capture_studio_state;
-                let _is_wasm = cfg!(target_arch = "wasm32");
-
-                let step1_active = phase == CaptureStudioState::Workspace;
-                let step1_btn = ui.selectable_label(step1_active, "1. Workspace");
-                if step1_btn.clicked() {
-                    self.capture_studio_state = CaptureStudioState::Workspace;
-                }
-
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                    ui.label(" ➤ ");
-                    let step2_active = phase == CaptureStudioState::Capture;
-                    let step2_btn = ui.selectable_label(step2_active, "2. Capture");
-                    if step2_btn.clicked() {
-                        self.capture_studio_state = CaptureStudioState::Capture;
-                    }
-
-                }
             });
 
             ui.separator();

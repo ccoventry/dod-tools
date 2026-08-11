@@ -15,7 +15,6 @@
 // ============================================================
 
 pub mod workspace;
-pub mod capture;
 pub mod widgets;
 pub mod payload;
 pub mod panels;
@@ -119,7 +118,17 @@ pub fn set_active_project_path(path: Option<std::path::PathBuf>) {
 
 // ── Wizard field string state ─────────────────────────────────────────────────
 
-// ── Core ingestion and discovery state ──────────────────────────────────────────
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CaptureMode {
+    Preview,
+    Capture,
+}
+
+static CAPTURE_MODE: OnceLock<Mutex<CaptureMode>> = OnceLock::new();
+
+pub fn get_capture_mode() -> &'static Mutex<CaptureMode> {
+    CAPTURE_MODE.get_or_init(|| Mutex::new(CaptureMode::Capture))
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CaptureState {
@@ -185,7 +194,7 @@ pub fn render_patch_ui(
     ui: &mut egui::Ui,
     ctx: &egui::Context,
     _export_queue: &mut Vec<QueuedStreakExport>,
-    current_state: CaptureStudioState,
+    _current_state: CaptureStudioState,
     state_ptr: &mut CaptureStudioState,
     tx: std::sync::mpsc::Sender<crate::types::GuiMessage>,
     loading_ptr: &mut bool,
@@ -195,12 +204,12 @@ pub fn render_patch_ui(
     error_message: &mut Option<String>,
     subdir_cache: &mut std::collections::HashMap<std::path::PathBuf, Vec<std::path::PathBuf>>,
     tree_demo_cache: &mut std::collections::HashMap<std::path::PathBuf, usize>,
-    capture_engine_running: &mut bool,
-    engine_msg: &str,
-    engine_progress: f32,
-    engine_jobs_done: usize,
-    engine_jobs_total: usize,
-    cancel_token: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    _capture_engine_running: &mut bool,
+    _engine_msg: &str,
+    _engine_progress: f32,
+    _engine_jobs_done: usize,
+    _engine_jobs_total: usize,
+    _cancel_token: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) {
     // If the ingestion worker is actively scanning, show a blocking spinner and
     // return early — no other UI should be interactive during file I/O.
@@ -349,37 +358,19 @@ pub fn render_patch_ui(
     });
     ui.add_space(4.0);
 
-    match current_state {
-        CaptureStudioState::Workspace => {
-            workspace::render(
-                ui, ctx, state_ptr, tx, loading_ptr,
-                get_highlight_rules(),
-                get_capture_state(),
-                get_queued_demos(),
-                get_patcher_config(),
-                get_render_config(),
-                settings,
-                draft_settings,
-                error_message,
-                subdir_cache,
-                tree_demo_cache,
-            );
-        }
-        CaptureStudioState::Capture => {
-            capture::render(
-                ui,
-                ctx,
-                capture_engine_running,
-                engine_msg,
-                engine_progress,
-                engine_jobs_done,
-                engine_jobs_total,
-                tx,
-                state_ptr,
-                cancel_token,
-            );
-        }
-    }
+    workspace::render(
+        ui, ctx, state_ptr, tx, loading_ptr,
+        get_highlight_rules(),
+        get_capture_state(),
+        get_queued_demos(),
+        get_patcher_config(),
+        get_render_config(),
+        settings,
+        draft_settings,
+        error_message,
+        subdir_cache,
+        tree_demo_cache,
+    );
 }
 
 

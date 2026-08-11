@@ -36,6 +36,32 @@ pub fn render_engine_config_panel(
 
     ui.add_space(8.0);
 
+    // Target Output Directory (primary_media_dir)
+    let mut primary_dir_str = config.primary_media_dir.as_ref().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+    widgets::render_path_row(
+        ui,
+        "Target Output Directory (primary_media_dir):",
+        &mut primary_dir_str,
+        "Folders",
+        &[],
+        None,
+        error_message,
+    );
+    if primary_dir_str.trim().is_empty() {
+        if config.primary_media_dir.is_some() {
+            config.primary_media_dir = None;
+            crate::settings::save_patcher_config(config);
+        }
+    } else {
+        let p = std::path::PathBuf::from(primary_dir_str.trim());
+        if config.primary_media_dir.as_ref() != Some(&p) {
+            config.primary_media_dir = Some(p);
+            crate::settings::save_patcher_config(config);
+        }
+    }
+
+    ui.add_space(8.0);
+
     // Custom FFmpeg Path configuration
     let mut ffmpeg_str = config.ffmpeg_override_path.clone().unwrap_or_default();
     widgets::render_path_row(
@@ -374,90 +400,94 @@ pub fn render_export_config_panel(
     ctx: &egui::Context,
     render_config: &mut native::hlcr::config::RenderConfig,
 ) {
-    ui.horizontal(|ui| {
-        ui.label(crate::views::t("label.render_codec"));
-        egui::ComboBox::from_id_salt("render_codec_combo")
-            .selected_text(format!("{:?}", render_config.target_codec))
-            .show_ui(ui, |ui| {
-                let mut changed = false;
-                changed |= ui.selectable_value(&mut render_config.target_codec, native::hlcr::config::RenderCodec::ProRes, "ProRes").changed();
-                changed |= ui.selectable_value(&mut render_config.target_codec, native::hlcr::config::RenderCodec::NvencH264, "NvencH264").changed();
-                changed |= ui.selectable_value(&mut render_config.target_codec, native::hlcr::config::RenderCodec::DnxHr, "DnxHr").changed();
-                if changed {
+    egui::ScrollArea::vertical()
+        .id_salt("export_config_scroll")
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(crate::views::t("label.render_codec"));
+                egui::ComboBox::from_id_salt("render_codec_combo")
+                    .selected_text(format!("{:?}", render_config.target_codec))
+                    .show_ui(ui, |ui| {
+                        let mut changed = false;
+                        changed |= ui.selectable_value(&mut render_config.target_codec, native::hlcr::config::RenderCodec::ProRes, "ProRes").changed();
+                        changed |= ui.selectable_value(&mut render_config.target_codec, native::hlcr::config::RenderCodec::NvencH264, "NvencH264").changed();
+                        changed |= ui.selectable_value(&mut render_config.target_codec, native::hlcr::config::RenderCodec::DnxHr, "DnxHr").changed();
+                        if changed {
+                            let _ = native::hlcr::config::save_config(render_config);
+                        }
+                    });
+            });
+
+            ui.add_space(8.0);
+
+            #[cfg(not(target_arch = "wasm32"))]
+            ui.add_enabled_ui(!super::is_patching(), |ui| {
+                use std::sync::Mutex;
+                let mut total_export_free_bytes: u64 = 0;
+                for dir in &render_config.export_directories {
+                    let free = native::sys::disk::get_available_bytes(dir);
+                    if free != u64::MAX {
+                        total_export_free_bytes += free;
+                    }
+                }
+                let total_export_free_gb = total_export_free_bytes as f64 / 1_073_741_824.0;
+                
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.strong("Total Export Pool Free:");
+                    ui.label(format!("{:.1} GB", total_export_free_gb));
+                });
+                ui.add_space(4.0);
+
+                ui.strong("Mapped Export Output Drives (Failover Priority Vector):");
+                ui.add_space(4.0);
+
+                let mut to_remove = None;
+                let mut swap_indices = None;
+                let dirs_len = render_config.export_directories.len();
+                for (idx, dir) in render_config.export_directories.iter().enumerate() {
+                    ui.horizontal(|ui| {
+                        ui.label(format!("{}:", idx + 1));
+                        ui.label(dir.to_string_lossy());
+                        if idx > 0 {
+                            if ui.button("⬆").clicked() {
+                                swap_indices = Some((idx, idx - 1));
+                            }
+                        }
+                        if idx < dirs_len.saturating_sub(1) {
+                            if ui.button("⬇").clicked() {
+                                swap_indices = Some((idx, idx + 1));
+                            }
+                        }
+                        if ui.button("🗑 Remove").clicked() {
+                            to_remove = Some(idx);
+                        }
+                    });
+                }
+
+                if let Some((i, j)) = swap_indices {
+                    render_config.export_directories.swap(i, j);
+                    let _ = native::hlcr::config::save_config(render_config);
+                } else if let Some(idx) = to_remove {
+                    render_config.export_directories.remove(idx);
+                    let _ = native::hlcr::config::save_config(render_config);
+                }
+
+                static EXPORT_DRIVE_PICKER: std::sync::OnceLock<Mutex<egui_file_dialog::FileDialog>> = std::sync::OnceLock::new();
+                let mut drive_picker = match EXPORT_DRIVE_PICKER.get_or_init(|| Mutex::new(egui_file_dialog::FileDialog::new())).lock() {
+                    Ok(g) => g,
+                    Err(p) => p.into_inner(),
+                };
+
+                if ui.button("➕ Add Export Drive").clicked() {
+                    drive_picker.pick_directory();
+                }
+
+                drive_picker.update(ctx);
+                if let Some(path) = drive_picker.take_picked() {
+                    render_config.export_directories.push(path);
                     let _ = native::hlcr::config::save_config(render_config);
                 }
             });
-    });
-
-    ui.add_space(8.0);
-
-    #[cfg(not(target_arch = "wasm32"))]
-    ui.add_enabled_ui(!super::is_patching(), |ui| {
-        use std::sync::Mutex;
-        let mut total_export_free_bytes: u64 = 0;
-        for dir in &render_config.export_directories {
-            let free = native::sys::disk::get_available_bytes(dir);
-            if free != u64::MAX {
-                total_export_free_bytes += free;
-            }
-        }
-        let total_export_free_gb = total_export_free_bytes as f64 / 1_073_741_824.0;
-        
-        ui.add_space(4.0);
-        ui.horizontal(|ui| {
-            ui.strong("Total Export Pool Free:");
-            ui.label(format!("{:.1} GB", total_export_free_gb));
         });
-        ui.add_space(4.0);
-
-        ui.strong("Mapped Export Output Drives (Failover Priority Vector):");
-        ui.add_space(4.0);
-
-        let mut to_remove = None;
-        let mut swap_indices = None;
-        let dirs_len = render_config.export_directories.len();
-        for (idx, dir) in render_config.export_directories.iter().enumerate() {
-            ui.horizontal(|ui| {
-                ui.label(format!("{}:", idx + 1));
-                ui.label(dir.to_string_lossy());
-                if idx > 0 {
-                    if ui.button("⬆").clicked() {
-                        swap_indices = Some((idx, idx - 1));
-                    }
-                }
-                if idx < dirs_len.saturating_sub(1) {
-                    if ui.button("⬇").clicked() {
-                        swap_indices = Some((idx, idx + 1));
-                    }
-                }
-                if ui.button("🗑 Remove").clicked() {
-                    to_remove = Some(idx);
-                }
-            });
-        }
-
-        if let Some((i, j)) = swap_indices {
-            render_config.export_directories.swap(i, j);
-            let _ = native::hlcr::config::save_config(render_config);
-        } else if let Some(idx) = to_remove {
-            render_config.export_directories.remove(idx);
-            let _ = native::hlcr::config::save_config(render_config);
-        }
-
-        static EXPORT_DRIVE_PICKER: std::sync::OnceLock<Mutex<egui_file_dialog::FileDialog>> = std::sync::OnceLock::new();
-        let mut drive_picker = match EXPORT_DRIVE_PICKER.get_or_init(|| Mutex::new(egui_file_dialog::FileDialog::new())).lock() {
-            Ok(g) => g,
-            Err(p) => p.into_inner(),
-        };
-
-        if ui.button("➕ Add Export Drive").clicked() {
-            drive_picker.pick_directory();
-        }
-
-        drive_picker.update(ctx);
-        if let Some(path) = drive_picker.take_picked() {
-            render_config.export_directories.push(path);
-            let _ = native::hlcr::config::save_config(render_config);
-        }
-    });
 }

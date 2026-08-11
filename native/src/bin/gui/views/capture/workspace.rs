@@ -170,9 +170,6 @@ pub fn render(
                     &queued_demos_arc,
                     ctx,
                 );
-                if ui.button("Launch Game (HLAE)").clicked() {
-                    launch_game_hlae(&patcher_config);
-                }
             }
         });
     });
@@ -202,6 +199,34 @@ pub fn render(
         };
         guard.clone()
     };
+    let mut mode = match super::get_capture_mode().lock() {
+        Ok(g) => *g,
+        Err(p) => *p.into_inner(),
+    };
+
+    ui.horizontal(|ui| {
+        ui.label("Action Mode:");
+        if ui.radio_value(&mut mode, super::CaptureMode::Capture, "Full Capture").changed() {
+            if let Ok(mut g) = super::get_capture_mode().lock() {
+                *g = mode;
+            }
+        }
+        if ui.radio_value(&mut mode, super::CaptureMode::Preview, "Generate Previews").changed() {
+            if let Ok(mut g) = super::get_capture_mode().lock() {
+                *g = mode;
+            }
+        }
+    });
+    ui.separator();
+
+    if let Some(err) = error_message {
+        ui.add_space(4.0);
+        ui.group(|ui| {
+            ui.colored_label(egui::Color32::RED, format!("⚠ Error: {}", err));
+        });
+        ui.add_space(4.0);
+    }
+
     let data = &*queued_demos_shared;
 
     // ── [STEP 1] Master List Table (Top Panel) ──────────────────────────────────────
@@ -865,100 +890,117 @@ pub fn render(
                         }
                     }
                     SelectTab::Configuration => {
-                        ui.heading("⚙ Capture Configuration");
-                        ui.add_space(4.0);
-                        ui.label(crate::views::t("label.configure_target_codecs"));
-                        ui.add_space(8.0);
+                        if mode == super::CaptureMode::Capture {
+                            ui.heading("⚙ Capture Configuration");
+                            ui.add_space(4.0);
+                            ui.label(crate::views::t("label.configure_target_codecs"));
+                            ui.add_space(8.0);
 
-                        let mut patcher_config = match patcher_config_mutex.lock() {
-                            Ok(g) => g,
-                            Err(p) => p.into_inner(),
-                        };
+                            let mut patcher_config = match patcher_config_mutex.lock() {
+                                Ok(g) => g,
+                                Err(p) => p.into_inner(),
+                            };
 
-                        // Engine paths (HLAE / hl.exe)
-                        {
-                            ui.horizontal(|ui| {
-                                ui.strong("Recording Engine Paths:");
-                            });
-                            panels::render_engine_config_panel(ui, &mut patcher_config, error_message);
-                        }
+                            // Engine paths (HLAE / hl.exe)
+                            {
+                                ui.horizontal(|ui| {
+                                    ui.strong("Recording Engine Paths:");
+                                });
+                                panels::render_engine_config_panel(ui, &mut patcher_config, error_message);
+                            }
 
-                        ui.add_space(8.0);
-                        ui.separator();
-                        ui.add_space(8.0);
+                            ui.add_space(8.0);
+                            ui.separator();
+                            ui.add_space(8.0);
 
-                        // Capture Output Drives failover prioritization vector
-                        ui.strong("Mapped Capture Output Drives (Failover Priority Vector):");
-                        ui.add_space(4.0);
+                            // Capture Output Drives failover prioritization vector
+                            ui.strong("Mapped Capture Output Drives (Failover Priority Vector):");
+                            ui.add_space(4.0);
 
-                        let mut to_remove = None;
-                        let mut swap_indices = None;
-                        let dirs_len = patcher_config.capture_directories.len();
-                        for (idx, dir) in patcher_config.capture_directories.iter().enumerate() {
-                            ui.horizontal(|ui| {
-                                ui.label(format!("{}:", idx + 1));
-                                ui.label(dir.to_string_lossy());
-                                if idx > 0 {
-                                    if ui.button(crate::strings::global::btn_up()).clicked() {
-                                        swap_indices = Some((idx, idx - 1));
+                            let mut to_remove = None;
+                            let mut swap_indices = None;
+                            let dirs_len = patcher_config.capture_directories.len();
+                            for (idx, dir) in patcher_config.capture_directories.iter().enumerate() {
+                                ui.horizontal(|ui| {
+                                    ui.label(format!("{}:", idx + 1));
+                                    ui.label(dir.to_string_lossy());
+                                    if idx > 0 {
+                                        if ui.button(crate::strings::global::btn_up()).clicked() {
+                                            swap_indices = Some((idx, idx - 1));
+                                        }
                                     }
-                                }
-                                if idx < dirs_len.saturating_sub(1) {
-                                    if ui.button(crate::strings::global::btn_down()).clicked() {
-                                        swap_indices = Some((idx, idx + 1));
+                                    if idx < dirs_len.saturating_sub(1) {
+                                        if ui.button(crate::strings::global::btn_down()).clicked() {
+                                            swap_indices = Some((idx, idx + 1));
+                                        }
                                     }
-                                }
-                                if ui.button(crate::strings::global::btn_remove()).clicked() {
-                                    to_remove = Some(idx);
-                                }
-                            });
+                                    if ui.button(crate::strings::global::btn_remove()).clicked() {
+                                        to_remove = Some(idx);
+                                    }
+                                });
+                            }
+
+                            let mut dir_changed = false;
+                            if let Some((i, j)) = swap_indices {
+                                patcher_config.capture_directories.swap(i, j);
+                                crate::settings::save_patcher_config(&patcher_config);
+                                dir_changed = true;
+                            } else if let Some(idx) = to_remove {
+                                patcher_config.capture_directories.remove(idx);
+                                crate::settings::save_patcher_config(&patcher_config);
+                                dir_changed = true;
+                            }
+
+                            static DRIVE_PICKER: std::sync::OnceLock<Mutex<egui_file_dialog::FileDialog>> = std::sync::OnceLock::new();
+                            let mut drive_picker = match DRIVE_PICKER.get_or_init(|| Mutex::new(egui_file_dialog::FileDialog::new())).lock() {
+                                Ok(g) => g,
+                                Err(p) => p.into_inner(),
+                            };
+
+                            if ui.button(crate::strings::workspace::btn_add_drive()).clicked() {
+                                drive_picker.pick_directory();
+                            }
+
+                            drive_picker.update(ctx);
+                            if let Some(path) = drive_picker.take_picked() {
+                                patcher_config.capture_directories.push(path);
+                                crate::settings::save_patcher_config(&patcher_config);
+                                dir_changed = true;
+                            }
+
+                            let config_changed = panels::render_capture_config_panel(ui, ctx, &mut patcher_config);
+                            if dir_changed || config_changed {
+                                ctx.data_mut(|d| d.insert_temp(egui::Id::new("dodtools_disk_estimate_dirty"), true));
+                            }
+
+                            ui.add_space(8.0);
+                            ui.separator();
+                            ui.add_space(8.0);
+
+                            // Export profiles & codecs
+                            ui.strong("Export Configuration");
+                            ui.add_space(4.0);
+                            let mut render_config = match render_config_mutex.lock() {
+                                Ok(g) => g,
+                                Err(p) => p.into_inner(),
+                            };
+                            panels::render_export_config_panel(ui, ctx, &mut render_config);
+
+                            let progress_msg: Option<String> = ctx.data(|d| d.get_temp(egui::Id::new("dodtools_patch_progress")));
+                            if let Some(msg) = progress_msg {
+                                ui.add_space(8.0);
+                                ui.group(|ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.spinner();
+                                        ui.label(msg);
+                                    });
+                                });
+                            }
+                        } else {
+                            ui.heading("⚙ Capture Configuration");
+                            ui.add_space(4.0);
+                            ui.label("Configuration options are hidden during Preview Mode.");
                         }
-
-                        let mut dir_changed = false;
-                        if let Some((i, j)) = swap_indices {
-                            patcher_config.capture_directories.swap(i, j);
-                            crate::settings::save_patcher_config(&patcher_config);
-                            dir_changed = true;
-                        } else if let Some(idx) = to_remove {
-                            patcher_config.capture_directories.remove(idx);
-                            crate::settings::save_patcher_config(&patcher_config);
-                            dir_changed = true;
-                        }
-
-                        static DRIVE_PICKER: std::sync::OnceLock<Mutex<egui_file_dialog::FileDialog>> = std::sync::OnceLock::new();
-                        let mut drive_picker = match DRIVE_PICKER.get_or_init(|| Mutex::new(egui_file_dialog::FileDialog::new())).lock() {
-                            Ok(g) => g,
-                            Err(p) => p.into_inner(),
-                        };
-
-                        if ui.button(crate::strings::workspace::btn_add_drive()).clicked() {
-                            drive_picker.pick_directory();
-                        }
-
-                        drive_picker.update(ctx);
-                        if let Some(path) = drive_picker.take_picked() {
-                            patcher_config.capture_directories.push(path);
-                            crate::settings::save_patcher_config(&patcher_config);
-                            dir_changed = true;
-                        }
-
-                        let config_changed = panels::render_capture_config_panel(ui, ctx, &mut patcher_config);
-                        if dir_changed || config_changed {
-                            ctx.data_mut(|d| d.insert_temp(egui::Id::new("dodtools_disk_estimate_dirty"), true));
-                        }
-
-                        ui.add_space(8.0);
-                        ui.separator();
-                        ui.add_space(8.0);
-
-                        // Export profiles & codecs
-                        ui.strong("Export Configuration");
-                        ui.add_space(4.0);
-                        let mut render_config = match render_config_mutex.lock() {
-                            Ok(g) => g,
-                            Err(p) => p.into_inner(),
-                        };
-                        panels::render_export_config_panel(ui, ctx, &mut render_config);
                     }
                     SelectTab::Advanced => {
                         ui.heading("⚡ Advanced Adjustments & Dev Settings");

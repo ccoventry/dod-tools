@@ -6,6 +6,9 @@
 - [ ] Feature: Tauri & Vite Integration — Audit existing scaffolding in `desktop-studio/` and `src-tauri/` on branch `feature/tauri-migration`.
 
 ## Completed
+- [x] **Headless Preview CLI Generator:** Built secondary `preview_cli` binary target ([main.rs](file:///c:/Users/Chris%20Coventry/Repos/dod-tools/native/src/bin/cli/main.rs)). Supports drag-and-drop folder/file execution, localized terminal output, and interactive/headless modes.
+- [x] **Top Navigation Bar Migration & Non-Destructive Scan Cancellation:** Extracted Export Manager view, migrated sidebar to Top Navigation Bar, implemented non-destructive scan cancellation (`INGESTION_CANCEL`), and scaffolded localized footers across views.
+- [x] **Localization System & Complete String Audit:** Localized all GUI, scanner weapon names, and CLI string literals. Updated `analysis::localization` to resolve both hashed (`#key`) and un-hashed (`key`) localization entries seamlessly.
 - [x] Task: Magic Number Audit - Scan the codebase for hardcoded magic numbers (e.g., buffer sizes, static offsets, byte limits) and extract them into shared module-level constants.
 - [x] Refactor: Isolate native engine stream slicing mechanisms behind explicit `target_arch` macro controls.
 - [x] **HLTV Active Frame Injection:** Implemented and verified active standalone `DRC_CMD_INEYE` frame injection in `native/src/patch/engine.rs` (StreamPatcher `NetworkMessage` match arm) with dynamic `target_player_id` extraction from capture streaks.
@@ -33,7 +36,6 @@
 - **External Demo Playback:** Investigate if DoD `.dem` files can be parsed and rendered outside the game engine (e.g., a web browser or lightweight desktop app) to preview killstreaks quickly.
 - **Mode Toggle:** Add functionality to Capture Studio to switch between "Timing Mode" and "Capture Mode".
 - **[Optimization] Session Compression & Modular Export:** Add options for Gzip/Zstd compression for JSON and "Selective Export" feature flags (e.g., export demos only vs. export full project metadata).
-- **Headless Preview CLI Generator:** Build a secondary `preview_cli` binary target. Enable drag-and-drop folder execution (`std::env::args()`) to scan directories for `.dem` files and automatically generate `_preview` copies with injected director events into a localized `previews/` subdirectory. Include standard output terminal logging for file routing audit trails.
 
 
 
