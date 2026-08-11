@@ -17,6 +17,7 @@ use std::sync::{Arc, Mutex};
 use native::patch::{PatcherConfig, CaptureStreak, PatchJob, build_batch_queue, DriveAllocationStrategy};
 use native::capture_engine::{spawn_capture_engine, CaptureJob, EngineEvent};
 use serde::{Deserialize, Serialize};
+use tauri::Emitter;
 
 // ── IPC payload type ───────────────────────────────────────────────────────────
 
@@ -179,6 +180,7 @@ fn expected_take_folder(job: &PatchJob, dod_dir: &PathBuf) -> PathBuf {
 
 /// Async entry point called by the Tauri `start_capture_batch` command.
 pub async fn start_capture_batch_impl(
+    app_handle: tauri::AppHandle,
     manager: &CaptureManager,
     payload: CapturePayload,
 ) -> Result<(), String> {
@@ -222,6 +224,11 @@ pub async fn start_capture_batch_impl(
             .lock()
             .unwrap_or_else(|p| p.into_inner());
         *running = false;
+        let _ = app_handle.emit("capture_status", serde_json::json!({
+            "running": false,
+            "error": true,
+            "status": "No streaks in payload"
+        }));
         return Err("No streaks in payload".to_string());
     }
 
@@ -235,6 +242,8 @@ pub async fn start_capture_batch_impl(
         .map(|p| p.join("dod"))
         .unwrap_or_else(|| PathBuf::from("dod"));
 
+    let app_handle_clone = app_handle.clone();
+
     // ── Offload blocking I/O to a dedicated thread ────────────────────────────
     tokio::task::spawn_blocking(move || {
         let patch_jobs = match build_batch_queue(raw_streaks, &patcher_config, &std::collections::HashMap::new()) {
@@ -243,6 +252,11 @@ pub async fn start_capture_batch_impl(
                 log::error!("build_batch_queue failed: {}", e);
                 let mut running = is_running_arc.lock().unwrap_or_else(|p| p.into_inner());
                 *running = false;
+                let _ = app_handle_clone.emit("capture_status", serde_json::json!({
+                    "running": false,
+                    "error": true,
+                    "status": format!("build_batch_queue failed: {}", e)
+                }));
                 return;
             }
         };
@@ -251,6 +265,10 @@ pub async fn start_capture_batch_impl(
             log::warn!("build_batch_queue produced no jobs");
             let mut running = is_running_arc.lock().unwrap_or_else(|p| p.into_inner());
             *running = false;
+            let _ = app_handle_clone.emit("capture_status", serde_json::json!({
+                "running": false,
+                "status": "No jobs produced"
+            }));
             return;
         }
 
@@ -267,17 +285,82 @@ pub async fn start_capture_batch_impl(
 
         let (engine_tx, engine_rx) = std::sync::mpsc::channel();
 
-        // Spawn a listener to clear the running flag when the batch terminates
+        // Spawn a listener to clear the running flag when the batch terminates and forward events to frontend
         let is_running_clone = Arc::clone(&is_running_arc);
+        let app_emitter = app_handle_clone.clone();
         std::thread::spawn(move || {
+            let mut total_jobs: u32 = 0;
+            let mut current_idx: u32 = 0;
             while let Ok(event) = engine_rx.recv() {
                 match event {
-                    EngineEvent::AllCompleted | EngineEvent::Cancelled | EngineEvent::Error(_) => {
+                    EngineEvent::Starting(total) => {
+                        total_jobs = total as u32;
+                        current_idx = 0;
+                        let _ = app_emitter.emit("capture_status", serde_json::json!({
+                            "running": true,
+                            "index": current_idx,
+                            "total": total_jobs,
+                            "status": "Starting"
+                        }));
+                    }
+                    EngineEvent::Launching(name) => {
+                        current_idx += 1;
+                        let _ = app_emitter.emit("capture_status", serde_json::json!({
+                            "running": true,
+                            "index": current_idx,
+                            "total": total_jobs,
+                            "name": name,
+                            "status": "Launching"
+                        }));
+                    }
+                    EngineEvent::Finished(name) => {
+                        let _ = app_emitter.emit("capture_status", serde_json::json!({
+                            "running": true,
+                            "index": current_idx,
+                            "total": total_jobs,
+                            "name": name,
+                            "status": "Finished"
+                        }));
+                    }
+                    EngineEvent::Verified(name) => {
+                        let _ = app_emitter.emit("capture_status", serde_json::json!({
+                            "running": true,
+                            "index": current_idx,
+                            "total": total_jobs,
+                            "name": name,
+                            "status": "Verified"
+                        }));
+                    }
+                    EngineEvent::Error(msg) => {
                         let mut running = is_running_clone.lock().unwrap_or_else(|p| p.into_inner());
                         *running = false;
+                        let _ = app_emitter.emit("capture_status", serde_json::json!({
+                            "running": false,
+                            "error": true,
+                            "status": msg
+                        }));
                         break;
                     }
-                    _ => {}
+                    EngineEvent::AllCompleted => {
+                        let mut running = is_running_clone.lock().unwrap_or_else(|p| p.into_inner());
+                        *running = false;
+                        let _ = app_emitter.emit("capture_status", serde_json::json!({
+                            "running": false,
+                            "status": "Complete",
+                            "index": total_jobs,
+                            "total": total_jobs
+                        }));
+                        break;
+                    }
+                    EngineEvent::Cancelled => {
+                        let mut running = is_running_clone.lock().unwrap_or_else(|p| p.into_inner());
+                        *running = false;
+                        let _ = app_emitter.emit("capture_status", serde_json::json!({
+                            "running": false,
+                            "status": "Cancelled"
+                        }));
+                        break;
+                    }
                 }
             }
         });
@@ -332,19 +415,39 @@ impl From<CaptureStreak> for SerializedStreak {
     }
 }
 
-pub async fn scan_directory_impl(paths: Vec<String>) -> Result<Vec<SerializedDemo>, String> {
-    tokio::task::spawn_blocking(move || {
+pub async fn scan_directory_impl(
+    app_handle: tauri::AppHandle,
+    is_scanning: Arc<std::sync::atomic::AtomicBool>,
+    cancel_token: Arc<std::sync::atomic::AtomicBool>,
+    paths: Vec<String>,
+) -> Result<Vec<SerializedDemo>, String> {
+    // ── Reset state flags ─────────────────────────────────────────────────────
+    cancel_token.store(false, std::sync::atomic::Ordering::SeqCst);
+    is_scanning.store(true, std::sync::atomic::Ordering::SeqCst);
+
+    let is_scanning_end = Arc::clone(&is_scanning);
+
+    let result = tokio::task::spawn_blocking(move || {
         use native::patch::scan_demo_for_highlights;
+        use tauri::Emitter;
 
         let mut list = Vec::new();
         let mut dir_stack = Vec::new();
-        
+
+        // ── Phase 1: collect all .dem file paths ─────────────────────────────
         for path_str in paths {
             let path_buf = PathBuf::from(path_str);
             if path_buf.is_dir() {
                 dir_stack.push(path_buf);
-            } else if path_buf.is_file() && path_buf.extension().map(|ext| ext == "dem").unwrap_or(false) {
-                let insert_idx = list.binary_search_by(|p: &PathBuf| p.file_name().unwrap_or_default().cmp(&path_buf.file_name().unwrap_or_default()))
+            } else if path_buf.is_file()
+                && path_buf.extension().map(|ext| ext == "dem").unwrap_or(false)
+            {
+                let insert_idx = list
+                    .binary_search_by(|p: &PathBuf| {
+                        p.file_name()
+                            .unwrap_or_default()
+                            .cmp(&path_buf.file_name().unwrap_or_default())
+                    })
                     .unwrap_or_else(|pos| pos);
                 list.insert(insert_idx, path_buf);
             }
@@ -359,7 +462,12 @@ pub async fn scan_directory_impl(paths: Vec<String>) -> Result<Vec<SerializedDem
                     } else if path.is_file()
                         && path.extension().map(|ext| ext == "dem").unwrap_or(false)
                     {
-                        let insert_idx = list.binary_search_by(|p: &PathBuf| p.file_name().unwrap_or_default().cmp(&path.file_name().unwrap_or_default()))
+                        let insert_idx = list
+                            .binary_search_by(|p: &PathBuf| {
+                                p.file_name()
+                                    .unwrap_or_default()
+                                    .cmp(&path.file_name().unwrap_or_default())
+                            })
                             .unwrap_or_else(|pos| pos);
                         list.insert(insert_idx, path);
                     }
@@ -367,8 +475,44 @@ pub async fn scan_directory_impl(paths: Vec<String>) -> Result<Vec<SerializedDem
             }
         }
 
+        let total_files = list.len() as u32;
+
+        // ── Phase 2: parse each .dem file ────────────────────────────────────
         let mut results = Vec::new();
+        let mut scanned: u32 = 0;
+
         for file in list {
+            // Honour cancellation before each parse (I/O can be slow)
+            if cancel_token.load(std::sync::atomic::Ordering::SeqCst) {
+                let _ = app_handle.emit(
+                    "scan_progress",
+                    serde_json::json!({
+                        "scanned": scanned,
+                        "found": results.len() as u32,
+                        "status": "Cancelled",
+                        "cancelled": true
+                    }),
+                );
+                return Ok(results);
+            }
+
+            scanned += 1;
+            let file_name = file
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+
+            let _ = app_handle.emit(
+                "scan_progress",
+                serde_json::json!({
+                    "scanned": scanned,
+                    "found": results.len() as u32,
+                    "status": format!("Scanning {} / {} — {}", scanned, total_files, file_name),
+                    "cancelled": false
+                }),
+            );
+
             if let Ok((
                 tickrate,
                 streaks,
@@ -382,12 +526,6 @@ pub async fn scan_directory_impl(paths: Vec<String>) -> Result<Vec<SerializedDem
                 let serialized_streaks: Vec<SerializedStreak> = streaks
                     .into_iter()
                     .map(|mut s| {
-                        // Propagate per-demo fields that the scanner attaches
-                        // to the demo level, not to each individual streak.
-                        // frame_times_arc is Arc<Vec<f32>>; CaptureStreak.frame_times
-                        // is the same type, so a cheap Arc clone is correct here.
-                        // SerializedStreak::from() then deref-clones it to Vec<f32>
-                        // for JSON transport.
                         s.match_start_tick = match_start_tick;
                         s.frame_times = frame_times_arc.clone();
                         SerializedStreak::from(s)
@@ -410,6 +548,32 @@ pub async fn scan_directory_impl(paths: Vec<String>) -> Result<Vec<SerializedDem
             }
         }
 
+        // ── Final progress event (complete) ───────────────────────────────────
+        let _ = app_handle.emit(
+            "scan_progress",
+            serde_json::json!({
+                "scanned": scanned,
+                "found": results.len() as u32,
+                "status": "Complete",
+                "cancelled": false
+            }),
+        );
+
         Ok(results)
-    }).await.map_err(|e| format!("Task failed: {}", e))?
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?;
+
+    is_scanning_end.store(false, std::sync::atomic::Ordering::SeqCst);
+    result
+}
+
+pub fn simulate_aot_capacity(streaks: Vec<f32>, fps: u32, bytes_per_frame: u64, available_bytes: u64) -> (u64, bool) {
+    let mut total_projected_bytes: u64 = 0;
+    for duration in streaks {
+        let frames = (duration * fps as f32).ceil() as u64;
+        total_projected_bytes += frames * bytes_per_frame;
+    }
+    let has_enough_space = total_projected_bytes <= available_bytes;
+    (total_projected_bytes, has_enough_space)
 }

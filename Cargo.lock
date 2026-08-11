@@ -978,7 +978,9 @@ name = "desktop-studio"
 version = "0.1.0"
 dependencies = [
  "analysis",
+ "dirs 5.0.1",
  "dod",
+ "hl-demo-auditor",
  "indexmap 1.9.3",
  "log",
  "native",

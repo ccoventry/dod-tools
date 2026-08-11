@@ -3,9 +3,9 @@
 ## 📋 General Backlog (Future Roadmap Items)
 
 ## Immediate Tasks (Next Session)
-- [ ] Feature: Tauri & Vite Integration — Audit existing scaffolding in `desktop-studio/` and `src-tauri/` on branch `feature/tauri-migration`.
 
 ## Completed
+- [x] **Feature: Tauri & Vite Integration:** Migrated frontend stack from native `egui` to Tauri + Vite, establishing async IPC boundaries for demo ingestion, settings persistence, demo auditor, and AOT simulation.
 - [x] **Headless Preview CLI Generator:** Built secondary `preview_cli` binary target ([main.rs](file:///c:/Users/Chris%20Coventry/Repos/dod-tools/native/src/bin/cli/main.rs)). Supports drag-and-drop folder/file execution, localized terminal output, and interactive/headless modes.
 - [x] **Top Navigation Bar Migration & Non-Destructive Scan Cancellation:** Extracted Export Manager view, migrated sidebar to Top Navigation Bar, implemented non-destructive scan cancellation (`INGESTION_CANCEL`), and scaffolded localized footers across views.
 - [x] **Localization System & Complete String Audit:** Localized all GUI, scanner weapon names, and CLI string literals. Updated `analysis::localization` to resolve both hashed (`#key`) and un-hashed (`key`) localization entries seamlessly.

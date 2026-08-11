@@ -1,14 +1,19 @@
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
+import { listen } from '@tauri-apps/api/event';
 import {
   scanDirectory,
-  calculateExportPoolSpace
+  calculateExportPoolSpace,
+  cancelScan,
+  getSettings,
+  saveSettings
 } from './ipc_bridge.js';
 import { renderMasterList, initMasterPane } from './master_pane.js';
 import { renderDetailView } from './detail_pane.js';
 import { initCaptureUI } from './capture_pane.js';
 import { initRenderUI } from './render_pane.js';
 import { initTelemetryPane, renderTelemetry } from './telemetry_pane.js';
+import { initAuditorPane } from './auditor_pane.js';
 import { analyzeDemo } from './ipc_bridge.js';
 import { showToast } from './toast.js';
 
@@ -18,6 +23,70 @@ window.addEventListener("DOMContentLoaded", async () => {
   let renderFolders = [];
   let currentScannedDemos = [];
   let selectedDemoIdx = null;
+
+  // Initialize modular UI panes
+  initAuditorPane(() => scanPaths);
+
+  // Helper to persist application settings
+  async function persistAppSettings() {
+    const hlaePath = document.querySelector('#hlae-path-input')?.value?.trim() || "";
+    const hlPath = document.querySelector('#hl-path-input')?.value?.trim() || "";
+    const ffmpegPath = document.querySelector('#ffmpeg-override-path-input')?.value?.trim() || null;
+    const captureFps = parseInt(document.querySelector('#config-capture-fps')?.value, 10) || 300;
+    const preRoll = parseFloat(document.querySelector('#config-pre-roll')?.value) || 2.0;
+    const postRoll = parseFloat(document.querySelector('#config-post-roll')?.value) || 0.6;
+    const settingsPayload = {
+      hlae_path: hlaePath,
+      hl_path: hlPath,
+      ffmpeg_path: ffmpegPath,
+      pinned_folders: scanPaths,
+      language: "en",
+      capture_fps: captureFps,
+      pre_roll_seconds: preRoll,
+      post_roll_seconds: postRoll
+    };
+    try {
+      await saveSettings(settingsPayload);
+    } catch (err) {
+      console.error("Error auto-saving settings:", err);
+    }
+  }
+
+  // Load persistent settings on startup
+  try {
+    const settings = await getSettings();
+    if (settings) {
+      if (settings.hlae_path) {
+        const inputEl = document.querySelector('#hlae-path-input');
+        if (inputEl) inputEl.value = settings.hlae_path;
+      }
+      if (settings.hl_path) {
+        const inputEl = document.querySelector('#hl-path-input');
+        if (inputEl) inputEl.value = settings.hl_path;
+      }
+      if (settings.ffmpeg_path) {
+        const inputEl = document.querySelector('#ffmpeg-override-path-input');
+        if (inputEl) inputEl.value = settings.ffmpeg_path;
+      }
+      if (settings.capture_fps) {
+        const inputEl = document.querySelector('#config-capture-fps');
+        if (inputEl) inputEl.value = settings.capture_fps;
+      }
+      if (settings.pre_roll_seconds) {
+        const inputEl = document.querySelector('#config-pre-roll');
+        if (inputEl) inputEl.value = settings.pre_roll_seconds;
+      }
+      if (settings.post_roll_seconds) {
+        const inputEl = document.querySelector('#config-post-roll');
+        if (inputEl) inputEl.value = settings.post_roll_seconds;
+      }
+      if (Array.isArray(settings.pinned_folders) && settings.pinned_folders.length > 0) {
+        scanPaths = [...settings.pinned_folders];
+      }
+    }
+  } catch (err) {
+    console.error("Error loading startup settings:", err);
+  }
 
   // Save Project Session
   const saveProjectBtn = document.querySelector('#save-project-btn');
@@ -109,6 +178,7 @@ window.addEventListener("DOMContentLoaded", async () => {
           const path = Array.isArray(selected) ? selected[0] : selected;
           const inputEl = document.querySelector('#hlae-path-input');
           if (inputEl) inputEl.value = path;
+          await persistAppSettings();
         }
       } catch (err) {
         console.error("Error selecting HLAE executable:", err);
@@ -129,6 +199,7 @@ window.addEventListener("DOMContentLoaded", async () => {
           const path = Array.isArray(selected) ? selected[0] : selected;
           const inputEl = document.querySelector('#hl-path-input');
           if (inputEl) inputEl.value = path;
+          await persistAppSettings();
         }
       } catch (err) {
         console.error("Error selecting Half-Life executable:", err);
@@ -149,6 +220,7 @@ window.addEventListener("DOMContentLoaded", async () => {
           const path = Array.isArray(selected) ? selected[0] : selected;
           const inputEl = document.querySelector('#ffmpeg-override-path-input');
           if (inputEl) inputEl.value = path;
+          await persistAppSettings();
         }
       } catch (err) {
         console.error("Error selecting FFmpeg executable:", err);
@@ -196,6 +268,47 @@ window.addEventListener("DOMContentLoaded", async () => {
     });
   }
 
+  // ── Demo list footer helper ────────────────────────────────────────────────
+  function updateDemoFooter(demos) {
+    const footerEl = document.querySelector('#demo-list-footer');
+    if (!footerEl) return;
+    const totalStreaks = (demos || []).reduce((sum, d) => sum + (d.streaks ? d.streaks.length : 0), 0);
+    footerEl.textContent = `Loaded Demos: ${(demos || []).length} | Total Streaks: ${totalStreaks}`;
+  }
+
+  // ── scan_progress event listener (registered once on load) ────────────────
+  let unlistenScanProgress = null;
+  listen('scan_progress', (event) => {
+    const p = event.payload || {};
+    const scanStatusEl = document.querySelector('#scan-status');
+    const cancelScanBtn = document.querySelector('#cancel-scan-btn');
+    const masterTableBody = document.querySelector('#master-demo-table-body');
+
+    if (p.cancelled) {
+      if (scanStatusEl) scanStatusEl.textContent = `Status: Cancelled — ${p.found} demo(s) found before cancel`;
+      if (cancelScanBtn) cancelScanBtn.disabled = true;
+    } else if (p.status === 'Complete') {
+      if (scanStatusEl) scanStatusEl.textContent = `Status: Ready — ${p.found} demo(s) found`;
+      if (cancelScanBtn) cancelScanBtn.disabled = true;
+    } else {
+      if (scanStatusEl) scanStatusEl.textContent = `Status: ${p.status}`;
+      if (cancelScanBtn) cancelScanBtn.disabled = false;
+    }
+  }).then(fn => { unlistenScanProgress = fn; });
+
+  // ── Cancel Scan button ────────────────────────────────────────────────────
+  const cancelScanBtn = document.querySelector('#cancel-scan-btn');
+  if (cancelScanBtn) {
+    cancelScanBtn.disabled = true;
+    cancelScanBtn.addEventListener('click', async () => {
+      cancelScanBtn.disabled = true;
+      try {
+        await cancelScan();
+        showToast('Scan cancellation requested.', 'info');
+      } catch (_) { /* already toasted in ipc_bridge */ }
+    });
+  }
+
   // Auto-scan helper function
   async function triggerAutoScan() {
     if (scanPaths.length === 0) return;
@@ -203,17 +316,23 @@ window.addEventListener("DOMContentLoaded", async () => {
     const scanStatusEl = document.querySelector('#scan-status');
     const addFilesBtn = document.querySelector('#add-files-btn');
     const addFolderBtn = document.querySelector('#add-folder-btn');
+    const cancelScanBtnInner = document.querySelector('#cancel-scan-btn');
 
     if (addFilesBtn) addFilesBtn.disabled = true;
     if (addFolderBtn) addFolderBtn.disabled = true;
+    if (cancelScanBtnInner) cancelScanBtnInner.disabled = false;
+    if (scanStatusEl) scanStatusEl.textContent = 'Status: Scanning...';
     showToast("Scanning directories...", 'info');
-    
+
     const masterTableBody = document.querySelector('#master-demo-table-body');
-    if (masterTableBody) masterTableBody.innerHTML = '<tr style="text-align:center"><td colspan="7">Loading... scanning directories...</td></tr>';
+    if (masterTableBody) masterTableBody.innerHTML = '<tr style="text-align:center"><td colspan="7">Scanning... please wait.</td></tr>';
 
     try {
       const demos = await scanDirectory(scanPaths);
       currentScannedDemos = demos;
+      // footer is also updated on the Complete scan_progress event, but set
+      // it here in case the event arrives before renderMasterList finishes.
+      updateDemoFooter(demos);
       showToast(`Scan complete (${demos.length} demos found)`, 'success');
       selectedDemoIdx = demos.length > 0 ? 0 : null;
       renderMasterList(demos, selectedDemoIdx, async (demo, idx) => {
@@ -225,6 +344,8 @@ window.addEventListener("DOMContentLoaded", async () => {
           telemBtn.dataset.demoPath = demo.path;
           telemBtn.disabled = false;
         }
+        const telemContainer = document.getElementById('telemetry-container');
+        if (telemContainer) telemContainer.innerHTML = '<p style="color: #888; padding: 6px;">Analyzing demo...</p>';
         try {
           const telemetryData = await analyzeDemo(demo.path);
           renderTelemetry(telemetryData);
@@ -242,14 +363,21 @@ window.addEventListener("DOMContentLoaded", async () => {
           telemBtn.dataset.demoPath = firstDemo.path;
           telemBtn.disabled = false;
         }
-        analyzeDemo(firstDemo.path).then(renderTelemetry).catch(() => renderTelemetry(null));
+        const telemContainer = document.getElementById('telemetry-container');
+        if (telemContainer) telemContainer.innerHTML = '<p style="color: #888; padding: 6px;">Analyzing demo...</p>';
+        analyzeDemo(firstDemo.path).then(renderTelemetry).catch((err) => {
+          console.error("Analysis failed for first demo:", err);
+          renderTelemetry(null);
+        });
       }
     } catch (err) {
       console.error("Error scanning directories:", err);
       showToast("Error: " + err, 'error');
+      if (scanStatusEl) scanStatusEl.textContent = `Status: Error — ${err}`;
     } finally {
       if (addFilesBtn) addFilesBtn.disabled = false;
       if (addFolderBtn) addFolderBtn.disabled = false;
+      if (cancelScanBtnInner) cancelScanBtnInner.disabled = true;
     }
   }
 
@@ -270,6 +398,7 @@ window.addEventListener("DOMContentLoaded", async () => {
               scanPaths.push(f);
             }
           });
+          await persistAppSettings();
           await triggerAutoScan();
         }
       } catch (err) {
@@ -292,6 +421,7 @@ window.addEventListener("DOMContentLoaded", async () => {
           const folder = Array.isArray(selected) ? selected[0] : selected;
           if (!scanPaths.includes(folder)) {
             scanPaths.push(folder);
+            await persistAppSettings();
             await triggerAutoScan();
           }
         }
@@ -432,6 +562,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     const advancedPanel = document.querySelector('#advanced-diagnostics-details');
     const exportPanel = document.querySelector('#export-config-panel');
     const renderPanel = document.querySelector('#render-studio-panel');
+    const auditorPane = document.querySelector('#pane-demo-auditor');
 
     // Strict display override to hide all panels initially
     if (workspacePane) workspacePane.style.display = 'none';
@@ -440,6 +571,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     if (advancedPanel) advancedPanel.style.display = 'none';
     if (exportPanel) exportPanel.style.display = 'none';
     if (renderPanel) renderPanel.style.display = 'none';
+    if (auditorPane) auditorPane.style.display = 'none';
 
     // Selectively display panels based on wizard step
     if (navKey === 'workspace') {
@@ -453,6 +585,8 @@ window.addEventListener("DOMContentLoaded", async () => {
     } else if (navKey === 'render-studio') {
       if (detailsPane) detailsPane.style.display = 'flex';
       if (renderPanel) renderPanel.style.display = 'block';
+    } else if (navKey === 'demo-auditor') {
+      if (auditorPane) auditorPane.style.display = 'flex';
     }
   }
 
@@ -514,4 +648,27 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   initMasterPane(onDeleteDemo);
   initTelemetryPane();
+
+  // Context-Aware Shortcut Dispatcher
+  window.addEventListener('keydown', (e) => {
+    const activeTab = document.querySelector('.nav-tab-btn.active')?.dataset.nav;
+    const isCtrlO = (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'o';
+    const isCtrlS = (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's';
+    const isCtrlN = (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'n';
+    const isCtrlW = (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'w';
+
+    if (isCtrlO || isCtrlS || isCtrlN || isCtrlW) {
+      e.preventDefault();
+    }
+
+    if (activeTab === 'workspace') {
+      if (isCtrlO) document.querySelector('#add-files-btn')?.click();
+      // Only allow save/new project from workspace context? Wait, spec says:
+      // "If export-config is active, map Ctrl+O to 'Load Project'"
+      if (isCtrlS) document.querySelector('#save-project-btn')?.click();
+    } else if (activeTab === 'export-config') {
+      if (isCtrlO) document.querySelector('#load-project-btn')?.click();
+      if (isCtrlS) document.querySelector('#save-project-btn')?.click();
+    }
+  });
 });

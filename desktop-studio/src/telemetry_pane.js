@@ -137,7 +137,10 @@ function _buildCompactSummary(data) {
 
   let scoreLine = '';
   if (Array.isArray(data.scoreboard) && data.scoreboard.length > 0) {
-    scoreLine = `<span style="color:#aaa;">${data.scoreboard.length} scoreboard entries</span>`;
+    const allies_score = data.allies_score || 0;
+    const axis_score = data.axis_score || 0;
+    const cmp = allies_score > axis_score ? '>' : (allies_score === axis_score ? '=' : '<');
+    scoreLine = `<span style="color:#aaa;">${data.scoreboard.length} scoreboard entries (${allies_score} ${cmp} ${axis_score})</span>`;
   } else if (data.scoreboard && typeof data.scoreboard === 'object') {
     scoreLine = `<span style="color:#aaa;">Scoreboard data present</span>`;
   }

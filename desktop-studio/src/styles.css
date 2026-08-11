@@ -401,3 +401,25 @@ button.primary-btn:hover:not(:disabled) {
   flex-direction: column;
   gap: 8px;
 }
+
+.toast-fade-out {
+  animation: toastFadeOut 0.5s ease-in-out forwards;
+}
+
+@keyframes toastFadeOut {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+
+/* Keyboard Navigation Highlight */
+tr.keyboard-selected {
+  outline: 1px solid #4a90e2;
+  outline-offset: -1px;
+  background-color: rgba(74, 144, 226, 0.1) !important;
+}

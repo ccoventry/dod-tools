@@ -20,13 +20,15 @@ export function showToast(message, type = 'info', duration = 3000) {
 
   container.appendChild(toast);
 
+  const fadeOutDuration = 500;
+  const displayDuration = Math.max(0, duration - fadeOutDuration);
+
   setTimeout(() => {
-    toast.style.opacity = '0';
-    toast.style.transform = 'translateY(10px)';
+    toast.classList.add('toast-fade-out');
     setTimeout(() => {
       if (toast.parentNode === container) {
         container.removeChild(toast);
       }
-    }, 300);
-  }, duration);
+    }, fadeOutDuration);
+  }, displayDuration);
 }

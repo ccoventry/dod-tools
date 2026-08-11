@@ -1,7 +1,7 @@
 ## Web AI State
-- **Overarching Goal:** Architectural UI decoupling, Top Navigation migration, and scan cancellation completed. Preview CLI target operational with interactive and headless execution. Next phase: Tauri & Vite frontend migration (`feature/tauri-migration`).
-- **Last Edited:** `native/src/bin/cli/main.rs`, `analysis/src/localization.rs`, `docs/engineering_backlog.md`.
-- **Unresolved Errors/Bugs:** None.
+- **Overarching Goal:** Tauri + Vite Architecture Migration. Successfully bridged async IPC boundaries and mapped UX constraints across 7 phases (Push events, Scan Cancellation, Settings Persistence, Demo Auditor, AOT Simulation, Keyboard Nav, Window Config).
+- **Last Edited:** `desktop-studio/src/ipc_bridge.js`, `desktop-studio/src/telemetry_pane.js`, `desktop-studio/src-tauri/tauri.conf.json`.
+- **Unresolved Errors/Bugs:** None blocking compilation. Awaiting manual user validation of all async IPC pathways and native execution.
 
 ## Active Epics
 - **Headless Preview CLI:** COMPLETED
@@ -18,10 +18,10 @@
   - AOT capture routing, duration math parity, JIT render routing, and UI/UX export pool indicators with dynamic vector list reordering.
 
 ## IDE AI State
-- **Current Goal:** Frontend migration audit & Tauri/Vite integration (`feature/tauri-migration`).
-- **Last Evaluated:** Updated `docs/engineering_backlog.md` and `docs/active_sprint_state.md` with complete backlog statuses.
-- **Status:** All workspace tests and localization test suites passing. `preview_cli` binary target fully functioning in both headless and interactive modes.
-- **Next Task:** Audit scaffolding in `desktop-studio/` and `src-tauri/` on branch `feature/tauri-migration`.
+- **Current Goal:** Conclude Tauri/Vite frontend migration integration and document architectural lessons.
+- **Last Evaluated:** Updated `docs/staging_lessons.md`, `docs/active_sprint_state.md`, and `docs/engineering_backlog.md`.
+- **Status:** All requested IPC boundary mapping and frontend modifications are complete. Syntax/EOF errors in Vite bridge have been corrected.
+- **Next Task:** Manual user testing of Vite and Tauri dev servers.
 
 ## Sprint Takeaways & Architectural Rules
 * **Standalone CLI Portability:** Strictly avoid dynamic disk-based localization lookups for headless binaries (`preview_cli`). Hardcoded literals prevent silent failures on target machines missing dictionary files.

@@ -20,6 +20,7 @@
           <button class="nav-tab-btn active" data-nav="workspace">1. Workspace & Master Queue</button>
           <button class="nav-tab-btn" data-nav="export-config">2. Batch Capture Config</button>
           <button class="nav-tab-btn" data-nav="render-studio">3. Render Studio</button>
+          <button class="nav-tab-btn" data-nav="demo-auditor">4. Demo Auditor</button>
         </div>
         <div class="nav-actions">
           <button id="save-project-btn" title="Save Project Session">Save Session</button>
@@ -40,6 +41,7 @@
               <div class="row-inputs">
                 <button id="add-files-btn">+ Add Demo Files</button>
                 <button id="add-folder-btn">+ Add Folder</button>
+                <button id="cancel-scan-btn" disabled title="Cancel the running directory scan">Cancel Scan</button>
               </div>
               <p id="scan-status" class="status-indicator">Status: Ready</p>
             </div>
@@ -69,6 +71,7 @@
                   </tr>
                 </tbody>
               </table>
+              <div id="demo-list-footer" style="padding: 4px 8px; font-size: 11px; color: var(--text-muted); border-top: 1px solid var(--border-color);">Loaded Demos: 0 | Total Streaks: 0</div>
             </div>
           </div>
         </section>
@@ -305,6 +308,46 @@
             </div>
           </div>
 
+        </section>
+
+        <!-- Demo Auditor Split Pane -->
+        <section id="pane-demo-auditor" class="content-pane" style="display: none;">
+          <div class="egui-panel">
+            <div class="panel-header">
+              <h3>Demo Auditor (Deduplication)</h3>
+            </div>
+            <div class="panel-body">
+              <div class="row-inputs">
+                <button id="run-audit-btn" class="primary-btn">Run Audit on Scan Paths</button>
+              </div>
+              <p id="audit-status" class="status-indicator">Status: Ready to audit</p>
+            </div>
+          </div>
+          
+          <div id="auditor-results-pane" class="egui-panel" style="margin-top: 10px;">
+            <div class="panel-header flex-between">
+              <h3>Duplicate Groups Found</h3>
+              <button id="delete-selected-audits-btn" style="color: #ff5555; border-color: #ff5555;" disabled>Delete Selected Files</button>
+            </div>
+            <div class="table-wrapper" style="max-height: 400px;">
+              <table id="audit-results-table">
+                <thead>
+                  <tr>
+                    <th><input type="checkbox" id="audit-select-all" /></th>
+                    <th>Group / File</th>
+                    <th>Size</th>
+                    <th>Hash</th>
+                  </tr>
+                </thead>
+                <tbody id="audit-results-body">
+                  <tr>
+                    <td colspan="4" class="table-empty">Run audit to find duplicate demo files.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div id="audit-list-footer" style="padding: 4px 8px; font-size: 11px; color: var(--text-muted); border-top: 1px solid var(--border-color);">Duplicates Found: 0 | Wasted Space: 0.00 GB</div>
+          </div>
         </section>
       </main>
 
