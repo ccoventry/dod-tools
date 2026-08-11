@@ -6,10 +6,9 @@
 - [ ] Feature: Tauri & Vite Integration — Audit existing scaffolding in `desktop-studio/` and `src-tauri/` on branch `feature/tauri-migration`.
 
 ## Completed
-- [x] **Tauri & Vite Scaffolding Audit & IPC Capability Wiring:** Validated capability permissions (`fs:default`, `dialog:default`), enforced eager layout gating, wired native dialog folder pickers, and registered `tauri-plugin-fs` backend dependency.
-- [x] **Rendering & Finalization:** Native FFmpeg transcoding pipeline, image sequence take ingestion, and render queue execution via Tauri IPC (`execute_render_batch`, `render_status`).
-- [x] **Tauri & Vite Integration:** Built native IPC bridge in `desktop-studio/src-tauri/src/lib.rs`, Master-Detail Vite workspace UI layout in `desktop-studio/src/main.js` & `index.html`, native system directory dialogs via `@tauri-apps/plugin-dialog`, and project session JSON persistence using `@tauri-apps/plugin-fs` (`readTextFile`/`writeTextFile`).
-- [x] **Vite Master-Detail Workspace UI:** Implemented top-pane Master List Table and bottom-pane Detail View in `desktop-studio/src/main.js` and `index.html`.
+- [x] **Headless Preview CLI Generator:** Built secondary `preview_cli` binary target ([main.rs](file:///c:/Users/Chris%20Coventry/Repos/dod-tools/native/src/bin/cli/main.rs)). Supports drag-and-drop folder/file execution, localized terminal output, and interactive/headless modes.
+- [x] **Top Navigation Bar Migration & Non-Destructive Scan Cancellation:** Extracted Export Manager view, migrated sidebar to Top Navigation Bar, implemented non-destructive scan cancellation (`INGESTION_CANCEL`), and scaffolded localized footers across views.
+- [x] **Localization System & Complete String Audit:** Localized all GUI, scanner weapon names, and CLI string literals. Updated `analysis::localization` to resolve both hashed (`#key`) and un-hashed (`key`) localization entries seamlessly.
 - [x] Task: Magic Number Audit - Scan the codebase for hardcoded magic numbers (e.g., buffer sizes, static offsets, byte limits) and extract them into shared module-level constants.
 - [x] Refactor: Isolate native engine stream slicing mechanisms behind explicit `target_arch` macro controls.
 - [x] **HLTV Active Frame Injection:** Implemented and verified active standalone `DRC_CMD_INEYE` frame injection in `native/src/patch/engine.rs` (StreamPatcher `NetworkMessage` match arm) with dynamic `target_player_id` extraction from capture streaks.

@@ -140,11 +140,11 @@ fn build_safe_echos(tick: i32, message: &str) -> Vec<(i32, String)> {
 
 // ── Batch queue builder ───────────────────────────────────────────────────────
 
-pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig, global_arrays: &std::collections::HashMap<String, std::sync::Arc<Vec<f32>>>) -> Result<Vec<PatchJob>, std::io::Error> {
+pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig, global_arrays: &std::collections::HashMap<std::path::PathBuf, std::sync::Arc<Vec<f32>>>) -> Result<Vec<PatchJob>, std::io::Error> {
     // tickrate is extracted dynamically from streaks per-demo
-    let mut grouped: std::collections::HashMap<(String, Option<String>), Vec<CaptureStreak>> = std::collections::HashMap::new();
-    for streak in raw_streaks {
-        grouped.entry((streak.source_demo.clone(), streak.target_player.clone())).or_default().push(streak);
+    let mut grouped: std::collections::HashMap<(&str, Option<&str>), Vec<&CaptureStreak>> = std::collections::HashMap::new();
+    for streak in &raw_streaks {
+        grouped.entry((streak.source_demo.as_str(), streak.target_player.as_deref())).or_default().push(streak);
     }
 
     // Sort grouped chronologically by the start_tick of their first streak
@@ -160,7 +160,10 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
     let game_path_buf = std::path::PathBuf::from(&config.game_path);
     let dod_dir = match game_path_buf.parent() {
         Some(parent) => parent.join("dod"),
-        None => std::path::PathBuf::from("dod"),
+        None => return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "Target game output directory not found"
+        )),
     };
 
     // Remove stale config from dod_dir
@@ -193,10 +196,13 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
         drive_free.push(u64::MAX);
     }
     
-    let active_export_dir = config.primary_media_dir.clone().unwrap_or_else(|| {
-        let exe_path = std::env::current_exe().expect("Failed to resolve absolute exe path");
-        exe_path.parent().expect("Exe has no parent directory").to_path_buf()
-    });
+    let active_export_dir = match config.primary_media_dir.clone() {
+        Some(dir) => dir,
+        None => return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "Target game output directory not found"
+        )),
+    };
     let session_dir = if !config.session_id.is_empty() {
         active_export_dir.join(&config.session_id)
     } else {
@@ -225,7 +231,7 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
 
     // 1. Primer Job
     if total_jobs > 0 {
-        let first_source = sorted_groups[0].0.0.clone();
+        let first_source = sorted_groups[0].0.0.to_string();
         let mut primer_init = config.init_commands.clone();
         primer_init.push("sys_autodir".to_string());
         
@@ -261,9 +267,10 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
     // 2. Chained Jobs
     let mut utilized_drives = std::collections::HashSet::new();
     let mut chronological_drive_idx = 0;
-    for (job_idx, ((source_demo, target_player), mut streaks)) in sorted_groups.into_iter().enumerate() {
+    for (job_idx, ((source_demo, target_player), mut streak_refs)) in sorted_groups.into_iter().enumerate() {
         // Sort by start_tick in ascending order
-        streaks.sort_by_key(|s| s.start_tick);
+        streak_refs.sort_by_key(|s| s.start_tick);
+        let streaks: Vec<CaptureStreak> = streak_refs.into_iter().cloned().collect();
 
         let total_demo_frames = streaks.first().map(|s| s.total_demo_frames).unwrap_or(0);
 
@@ -417,12 +424,8 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
         for (i, streak) in merged_streaks.iter().enumerate() {
 
 
-            let streak_demo_filename = std::path::Path::new(&streak.source_demo)
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default();
             let frame_times_ref = global_arrays
-                .get(&streak_demo_filename)
+                .get(std::path::Path::new(&streak.source_demo))
                 .map(|a| a.as_slice())
                 .unwrap_or_else(|| streak.frame_times.as_slice());
 
@@ -581,10 +584,10 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
         final_init_commands.push(format!("mirv_movie_separate_hud {}", separate_hud_str));
 
         jobs.push(PatchJob {
-            source_demo,
+            source_demo: source_demo.to_string(),
             output_demo,
             streaks: merged_streaks,
-            target_player: target_player.clone(),
+            target_player: target_player.map(|s| s.to_string()),
             init_commands: final_init_commands,
             scheduled_commands,
             director_events,
@@ -965,7 +968,11 @@ mod tests {
 
     #[test]
     fn test_build_batch_queue_merging() {
-        let config = PatcherConfig::default(); // pre = 200, post = 60
+        let mut config = PatcherConfig::default(); // pre = 200, post = 60
+        let temp_game_path = std::env::temp_dir().join("dod_test_mock");
+        std::fs::create_dir_all(temp_game_path.join("dod")).expect("Failed to create dummy dod dir");
+        config.game_path = temp_game_path.to_string_lossy().to_string();
+        config.primary_media_dir = Some(temp_game_path.clone());
         let raw_streaks = vec![
             CaptureStreak {
                 start_tick: 1000,
@@ -983,6 +990,8 @@ mod tests {
                 demo_fps: 100.0,
                 viewdemo_times: Vec::new(),
                 frame_times: std::sync::Arc::new(Vec::new()),
+                match_start_tick: None,
+                status: Default::default(),
             },
             CaptureStreak {
                 start_tick: 1300,
@@ -1000,6 +1009,8 @@ mod tests {
                 demo_fps: 100.0,
                 viewdemo_times: Vec::new(),
                 frame_times: std::sync::Arc::new(Vec::new()),
+                match_start_tick: None,
+                status: Default::default(),
             },
             CaptureStreak {
                 start_tick: 2000,
@@ -1017,6 +1028,8 @@ mod tests {
                 demo_fps: 100.0,
                 viewdemo_times: Vec::new(),
                 frame_times: std::sync::Arc::new(Vec::new()),
+                match_start_tick: None,
+                status: Default::default(),
             },
         ];
 
@@ -1035,5 +1048,87 @@ mod tests {
         assert_eq!(job.streaks[0].end_tick, 1500); // Merged 1000-1200 and 1300-1500
         assert_eq!(job.streaks[1].start_tick, 2000);
         assert_eq!(job.streaks[1].end_tick, 2200);
+    }
+}
+
+#[cfg(test)]
+mod builder_grouping_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn test_build_batch_queue_grouping() {
+        let mut config = PatcherConfig::default();
+        let temp_game_path = std::env::temp_dir().join("dod_test_mock");
+        std::fs::create_dir_all(temp_game_path.join("dod")).expect("Failed to create dummy dod dir");
+        config.game_path = temp_game_path.to_string_lossy().to_string();
+        config.primary_media_dir = Some(temp_game_path.clone());
+
+        let streak1 = CaptureStreak {
+            start_tick: 100,
+            end_tick: 200,
+            source_demo: "demo_A.dem".to_string(),
+            target_player: Some("Player1".to_string()),
+            kill_count: 2,
+            timeline_string: String::new(),
+            duration_string: String::new(),
+            player_index: 1,
+            kills: vec![],
+            start_index: 0,
+            end_index: 0,
+            total_demo_frames: 1000,
+            demo_fps: 100.0,
+            viewdemo_times: vec![],
+            frame_times: Arc::new(vec![]),
+            status: crate::patch::types::HighlightStatus::None,
+            match_start_tick: None,
+        };
+
+        let streak2 = CaptureStreak {
+            start_tick: 300,
+            end_tick: 400,
+            source_demo: "demo_A.dem".to_string(),
+            target_player: Some("Player1".to_string()),
+            kill_count: 2,
+            timeline_string: String::new(),
+            duration_string: String::new(),
+            player_index: 1,
+            kills: vec![],
+            start_index: 0,
+            end_index: 0,
+            total_demo_frames: 1000,
+            demo_fps: 100.0,
+            viewdemo_times: vec![],
+            frame_times: Arc::new(vec![]),
+            status: crate::patch::types::HighlightStatus::None,
+            match_start_tick: None,
+        };
+
+        let streak3 = CaptureStreak {
+            start_tick: 100,
+            end_tick: 200,
+            source_demo: "demo_B.dem".to_string(),
+            target_player: Some("Player2".to_string()),
+            kill_count: 2,
+            timeline_string: String::new(),
+            duration_string: String::new(),
+            player_index: 2,
+            kills: vec![],
+            start_index: 0,
+            end_index: 0,
+            total_demo_frames: 1000,
+            demo_fps: 100.0,
+            viewdemo_times: vec![],
+            frame_times: Arc::new(vec![]),
+            status: crate::patch::types::HighlightStatus::None,
+            match_start_tick: None,
+        };
+
+        let raw_streaks = vec![streak1, streak2, streak3];
+        let global_arrays = HashMap::new();
+
+        let jobs = build_batch_queue(raw_streaks, &config, &global_arrays).unwrap();
+        
+        assert_eq!(jobs.len(), 3, "Expected exactly 3 patch jobs (1 primer + 2 grouped chains) after grouping by source demo and player");
     }
 }

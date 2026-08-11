@@ -1,30 +1,31 @@
 ## Web AI State
-- **Current Goal:** Tauri Migration - Desktop Studio Workspace & Master Queue Audit
-- **Active Environment Path:** `~/dod-tools/desktop-studio` (Native WSL ext4)
-- **Build Status:** Compiling and launching cleanly via `npx tauri dev`.
-- **Pending Engineering Backlog (Workspace & Master Queue):**
-  - [TASK-01] Replace broken status glyph with functional SVG/CSS trash button in Master Queue.
-  - [TASK-02] Restrict demo parser strictly to local recording player POV (SteamID/Name).
-  - [TASK-03] Connect Telemetry IPC parser outputs to Match Telemetry Analysis modal.
-  - [TASK-04] Move visual density timeline barcode chart into Advanced Diagnostics drawer.
-  - [TASK-05] Remove redundant "POV Only" top-bar toggle.
-  - [TASK-06] Implement 1-based sequential row indexing in Highlights table.
-  - [TASK-07] Add interactive selection checkboxes to "Sel" column.
-  - [TASK-08] Implement editable Kill Range (validation, undo button, dynamic recalculation of Kills & Time).
-  - [TASK-09] Convert Status column to interactive dropdown (`N/A`, `Pending`, `Captured`, `Rendered`).
-  - [TASK-10] Format Details column to show kill sequence and interval offsets (`(+0:05)`).
-  - [TASK-11] Prevent `Min Kills` filter from hiding or unchecking user-selected rows.
+- **Overarching Goal:** Architectural UI decoupling, Top Navigation migration, and scan cancellation completed. Preview CLI target operational with interactive and headless execution. Next phase: Tauri & Vite frontend migration (`feature/tauri-migration`).
+- **Last Edited:** `native/src/bin/cli/main.rs`, `analysis/src/localization.rs`, `docs/engineering_backlog.md`.
+- **Unresolved Errors/Bugs:** None.
 
 ## Active Epics
-- **Rendering & Finalization:** COMPLETED (Branch: `feature/tauri-migration`)
-  - **FFmpeg Transcoding & Render Studio:** Native FFmpeg encoding pipeline, `RenderBatchPayload` deserialization, lock-free atomic progress tracking, and live render status event emissions implemented in `render_manager.rs`.
-- **Frontend Migration:** COMPLETED (Branch: `feature/tauri-migration`)
-  - **Tauri & Vite Integration:** Core IPC pipeline, native commands, Telemetry modal, Master List search filter, bulk streak selection, and proportional streak timeline canvas fully operational with 1:1 parity against legacy egui implementation.
+- **Headless Preview CLI:** COMPLETED
+  - Secondary binary target `preview_cli` built and tested. Supports interactive prompt fallback (`is_interactive = true`), drag-and-drop file/folder inputs, and automatic localized `previews/` folder generation.
+- **Top Navigation & Functional Cancellation:** COMPLETED
+  - Migrated vertical navigation to top bar, extracted Export Manager view, implemented non-destructive `INGESTION_CANCEL` thread interruption, and unified localized view footers.
+- **Localization Infrastructure:** COMPLETED
+  - Migrated hardcoded GUI/CLI/scanner strings to localizations. Updated `analysis::localization` to support transparent dual-key lookups (`#key` and `key`) for Valve KeyValues and AMXX files.
+- **HLTV Active Frame Injection:** COMPLETED
+  - Standalone `DRC_CMD_INEYE` frame injection implemented in `native/src/patch/engine.rs`.
+- **Frontend Migration:** IN PROGRESS (Branch: `feature/tauri-migration`)
+  - Transitioning frontend stack to Tauri + Vite architecture in the `desktop-studio/` workspace (`src-tauri/`).
 - **Dynamic Drive Failover:** COMPLETED
-  - **AOT Capture Routing:** Automated Ahead-Of-Time capacity simulation loop that calculates disk footprint before execution and deploys NTFS directory junctions to swap output drives when a disk drops below 15 GB.
-  - **Duration Math Parity:** Abstracted a unified `calculate_total_capture_duration` method on `PatcherConfig` to ensure UI disk estimates and backend AOT math accurately isolate recording boundaries and exclude non-capturing engine phases.
-  - **JIT Render Routing:** Just-In-Time threshold polling loop for the FFmpeg pipeline that guarantees a target export drive has >20 GB of free space prior to spawning a high-framerate mezzanine transcode.
-  - **UI/UX Polish:** Integrated dynamic vector list reordering (⬆/⬇ swap controls), removed deprecated individual directory pickers, mounted global export free indicators, and implemented floating toast notification controller.
+  - AOT capture routing, duration math parity, JIT render routing, and UI/UX export pool indicators with dynamic vector list reordering.
 
 ## IDE AI State
-* **Current Action:** Workspace migrated to WSL ext4 filesystem (`~/dod-tools/desktop-studio`). Build friction rules documented in `staging_lessons.md`. Ready to proceed with Desktop Studio Workspace & Master Queue backlog tasks.
+- **Current Goal:** Frontend migration audit & Tauri/Vite integration (`feature/tauri-migration`).
+- **Last Evaluated:** Updated `docs/engineering_backlog.md` and `docs/active_sprint_state.md` with complete backlog statuses.
+- **Status:** All workspace tests and localization test suites passing. `preview_cli` binary target fully functioning in both headless and interactive modes.
+- **Next Task:** Audit scaffolding in `desktop-studio/` and `src-tauri/` on branch `feature/tauri-migration`.
+
+## Sprint Takeaways & Architectural Rules
+* **Standalone CLI Portability:** Strictly avoid dynamic disk-based localization lookups for headless binaries (`preview_cli`). Hardcoded literals prevent silent failures on target machines missing dictionary files.
+* **Drag-and-Drop Tokenization:** Windows Terminal and PowerShell format drag-and-drop paths. `stdin` parsers must explicitly strip the `& ` evaluation operator and handle single (`'`) and double (`"`) quote wrapping to prevent path fragmentation.
+* **Immediate-Mode UI (egui) Consolidation:** Never silo shared data types (e.g., `.dem` queues) across separate UI tabs. Use state-driven UI swaps (e.g., `CaptureMode` toggle) within a unified workspace. Always wrap vertically expanding configuration panels in `egui::ScrollArea::vertical().id_salt(...)` to prevent off-screen clipping.
+* **Egui Ownership Safety:** Chaining builder methods that consume `self` (like `Response::on_hover_text`) triggers `E0382` errors. Declare the response as mutable and reassign it before evaluating `.clicked()`.
+* **AI Git Hygiene:** Always audit `git show --name-only HEAD` before pushing. Autonomous IDE agents can hallucinate commit messages and silently contaminate unrelated files.

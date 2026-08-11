@@ -138,7 +138,7 @@ impl Drop for CaptureCleanupGuard {
 
 pub fn spawn_capture_engine(
     jobs: Vec<CaptureJob>,
-    hlae_path: Arc<PathBuf>,
+    _hlae_path: Arc<PathBuf>,
     hl_path: Arc<PathBuf>,
     tx: Sender<EngineEvent>,
     cancel_token: Arc<AtomicBool>,
@@ -179,13 +179,7 @@ pub fn spawn_capture_engine(
             };
             let dod_dir = hl_exe_parent.join("dod");
 
-            let dll_path = match hlae_path.parent() {
-                Some(parent) => parent.join("AfxHookGoldSrc.dll"),
-                None => {
-                    log_crash_abort!(tx, "Invalid hlae.exe path: hlae_path has no parent");
-                    return;
-                }
-            };
+
 
             let mut active_dest_paths = Vec::new();
             let dummy_path = hl_exe_parent.join("DOD_BATCH_DONE");
@@ -419,15 +413,8 @@ pub fn spawn_capture_engine(
                 }
             }
 
-            let width_str = config.resolution_width.to_string();
-            let height_str = config.resolution_height.to_string();
-
             let condebug_flag = if config.add_condebug { "-condebug " } else { "" };
-
-            let cmd_line_str = format!(
-                "-game dod {}-insecure -windowed -w {} -h {} +exec dodtools_helper.cfg +playdemo primer",
-                condebug_flag, width_str, height_str
-            );
+            let extra_args = format!("{}+exec dodtools_helper.cfg +playdemo primer", condebug_flag);
 
             let primary_dir = config.primary_media_dir.clone().unwrap_or_else(|| {
                 let exe_path = std::env::current_exe().expect("Failed to resolve absolute exe path");
@@ -436,17 +423,11 @@ pub fn spawn_capture_engine(
             let dummy_path = primary_dir.join("DOD_BATCH_DONE");
             let _ = std::fs::remove_dir_all(&dummy_path);
 
-            let mut cmd = std::process::Command::new(hlae_path.as_ref());
+            let mut cmd = config.build_hlae_process(&extra_args);
+
+            let width_str = config.resolution_width.to_string();
+            let height_str = config.resolution_height.to_string();
             cmd.args([
-                "-customLoader",
-                "-noGui",
-                "-autoStart",
-                "-hookDllPath",
-                &dll_path.to_string_lossy(),
-                "-programPath",
-                &hl_path.to_string_lossy(),
-                "-cmdLine",
-                &cmd_line_str,
                 "-w",
                 &width_str,
                 "-h",
@@ -462,11 +443,6 @@ pub fn spawn_capture_engine(
                 }
                 cmd.arg("+exec");
                 cmd.arg(format!("{}.cfg", cfg_name));
-            }
-            cmd.env("SteamAppId", "30");
-
-            if let Some(parent) = hlae_path.parent() {
-                cmd.current_dir(parent);
             }
 
             let cfg_path = dod_dir.join("dod_quit.cfg");

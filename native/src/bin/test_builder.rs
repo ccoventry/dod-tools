@@ -18,7 +18,7 @@ fn main() {
             config.capture_directories = vec![std::path::PathBuf::from("demos")];
             config.fast_forward_speed = 0.05;
 
-            let global_arrays: std::collections::HashMap<String, std::sync::Arc<Vec<f32>>> = std::collections::HashMap::new();
+            let global_arrays: std::collections::HashMap<std::path::PathBuf, std::sync::Arc<Vec<f32>>> = std::collections::HashMap::new();
             let jobs = build_batch_queue(streaks, &config, &global_arrays).unwrap();
             println!("Generated {} jobs", jobs.len());
             for job in jobs {

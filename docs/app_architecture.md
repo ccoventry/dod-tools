@@ -10,9 +10,6 @@
 - `src/ui/`: Contains the immediate-mode GUI modules. Standard native threading and direct `std::fs` operations are strictly forbidden inside this module.
 - `shared/`: Holds immutable type definitions, message schemas, and atomic communication channels passing events between native loops and the UI thread.
 
-## OS & Security Constraints
-- **Windows 11 Smart App Control (SAC):** Native Windows binary compilation (`desktop-studio.exe`) is blocked on Windows 11 systems with SAC enabled due to strict cloud reputation and signature enforcement. Self-signed certificates (`sign_and_run.ps1`) are ignored by SAC. Local development and binary execution must be routed through a WSL 2 (Ubuntu) container to bypass host-level SAC enforcement.
-
 ## State, Memory, & Concurrency Rules
 - **State Ingestion:** Immediate-mode execution. Telemetry data feeds sequentially from native processes into active UI state tracking blocks via bounded sync channels.
 - **Micro-Stutter Protection:** Highly accessed internal asset catalogs are wrapped in `std::sync::RwLock`. Under no circumstances should blocking mutex synchronization primitives be introduced directly on the UI frame loop thread.
