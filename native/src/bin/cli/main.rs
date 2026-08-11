@@ -1,56 +1,57 @@
-// native/src/bin/cli/main.rs
-// Headless Preview Generator — secondary binary target (`preview_cli`).
-//
-// Usage: Drag and drop any mix of .dem files and/or folders directly onto this executable.
-// For each directory input, scans for .dem files and writes `_preview.dem` copies to a
-// `previews/` subdirectory relative to that directory.
-// For each individual .dem file input, writes `_preview.dem` to a `previews/`
-// subdirectory relative to that file's parent directory.
+use std::io::{self, Write};
 
 fn main() {
-    let mut input_paths: Vec<String> = std::env::args().skip(1).collect();
-    let is_interactive = false;
+    let args: Vec<String> = std::env::args().collect();
+    let mut input_paths: Vec<String> = Vec::new();
+    let mut is_interactive = false;
 
-    if input_paths.is_empty() {
-        println!("{}", analysis::translate_key("cli.prompt.drag_and_drop").unwrap_or_default());
+    if args.len() <= 1 {
+        is_interactive = true;
+        println!("Drag and drop demo files or directories into this window and press Enter.");
+        println!("(To exit without processing, leave blank and press Enter)");
+        print!("> ");
+        io::stdout().flush().unwrap();
 
-        let mut buffer = String::new();
-        if std::io::stdin().read_line(&mut buffer).is_ok() {
-            let trimmed = buffer.trim();
+        let mut input = String::new();
+        if io::stdin().read_line(&mut input).is_ok() {
+            let mut trimmed = input.trim();
+
+            // Strip PowerShell evaluation operator if present
+            if trimmed.starts_with("& ") {
+                trimmed = trimmed[2..].trim();
+            }
+
             let mut current = String::new();
-            let mut in_quotes = false;
+            let mut active_quote: Option<char> = None;
 
-            for ch in trimmed.chars() {
-                match ch {
-                    '"' => {
-                        if in_quotes {
-                            let item = current.trim().to_string();
-                            if !item.is_empty() {
-                                input_paths.push(item);
-                            }
-                            current.clear();
-                            in_quotes = false;
-                        } else {
-                            in_quotes = true;
-                        }
+            for c in trimmed.chars() {
+                if let Some(q) = active_quote {
+                    if c == q {
+                        active_quote = None; // Closing quote
+                    } else {
+                        current.push(c);
                     }
-                    ' ' if !in_quotes => {
-                        let item = current.trim().to_string();
-                        if !item.is_empty() {
-                            input_paths.push(item);
-                        }
+                } else if c == '"' || c == '\'' {
+                    active_quote = Some(c); // Opening quote
+                } else if c == ' ' {
+                    if !current.is_empty() {
+                        input_paths.push(current.clone());
                         current.clear();
                     }
-                    _ => {
-                        current.push(ch);
-                    }
+                } else {
+                    current.push(c);
                 }
             }
-            let item = current.trim().to_string();
-            if !item.is_empty() {
-                input_paths.push(item);
+            if !current.is_empty() {
+                input_paths.push(current);
             }
         }
+
+        if input_paths.is_empty() {
+            return;
+        }
+    } else {
+        input_paths = args[1..].to_vec();
     }
 
     let patcher_config = native::patch::PatcherConfig::default();
@@ -66,15 +67,15 @@ fn main() {
             // ── Directory input: scan all .dem files inside ──────────────────
             let output_dir = path.join("previews");
             if let Err(e) = std::fs::create_dir_all(&output_dir) {
-                eprintln!("{}: {:?} - {}", analysis::translate_key("cli.error.directory_creation").unwrap_or_default(), output_dir, e);
+                eprintln!("Error creating output directory: {:?} - {}", output_dir, e);
                 continue;
             }
-            println!("{}: {:?}", analysis::translate_key("cli.status.directory_created").unwrap_or_default(), output_dir);
+            println!("Created directory: {:?}", output_dir);
 
             let entries = match std::fs::read_dir(&path) {
                 Ok(e) => e,
                 Err(e) => {
-                    eprintln!("{}: {:?} - {}", analysis::translate_key("cli.error.read_directory").unwrap_or_default(), path, e);
+                    eprintln!("Failed to read directory: {:?} - {}", path, e);
                     continue;
                 }
             };
@@ -94,7 +95,7 @@ fn main() {
             // ── Individual file input ────────────────────────────────────────
             let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
             if ext.to_lowercase() != "dem" {
-                eprintln!("{}: {:?} — {}", analysis::translate_key("cli.status.skipped").unwrap_or_default(), path.file_name().unwrap_or_default(), analysis::translate_key("cli.error.not_a_dem_file").unwrap_or_default());
+                eprintln!("Skipped: {:?} — Not a .dem file", path.file_name().unwrap_or_default());
                 skipped += 1;
                 continue;
             }
@@ -105,30 +106,26 @@ fn main() {
                 .join("previews");
 
             if let Err(e) = std::fs::create_dir_all(&output_dir) {
-                eprintln!("{}: {:?} - {}", analysis::translate_key("cli.error.directory_creation").unwrap_or_default(), output_dir, e);
+                eprintln!("Error creating output directory: {:?} - {}", output_dir, e);
                 skipped += 1;
                 continue;
             }
-            println!("{}: {:?}", analysis::translate_key("cli.status.directory_created").unwrap_or_default(), output_dir);
+            println!("Created directory: {:?}", output_dir);
 
             process_demo(&path, &output_dir, &patcher_config, &cancel_token, &mut processed, &mut skipped);
         } else {
-            eprintln!("{}: {:?} — {}", analysis::translate_key("cli.status.skipped").unwrap_or_default(), path, analysis::translate_key("cli.error.path_not_accessible").unwrap_or_default());
+            eprintln!("Skipped: {:?} — Path not accessible", path);
             skipped += 1;
         }
     }
 
     println!(
-        "\n{}\n  {}: {}  |  {}: {}",
-        analysis::translate_key("cli.summary.batch_complete").unwrap_or_default(),
-        analysis::translate_key("cli.summary.processed").unwrap_or_default(),
-        processed,
-        analysis::translate_key("cli.summary.skipped").unwrap_or_default(),
-        skipped
+        "\nBatch Complete\n  Processed: {}  |  Skipped: {}",
+        processed, skipped
     );
 
     if is_interactive {
-        println!("\n{}", analysis::translate_key("cli.prompt.press_enter").unwrap_or_default());
+        println!("\nPress Enter to exit...");
         let _ = std::io::stdin().read_line(&mut String::new());
     }
 }
@@ -145,13 +142,13 @@ fn process_demo(
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_default();
-    println!("{}: {}", analysis::translate_key("cli.status.processing").unwrap_or_default(), original_filename);
+    println!("Processing: {}", original_filename);
 
     let (_tickrate, mut streaks, is_pov, local_player_idx, _playback_frames, _match_start, _frame_times) =
         match native::patch::scan_demo_for_highlights(path) {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("  {}: {} — {}: {}", analysis::translate_key("cli.status.skipped").unwrap_or_default(), original_filename, analysis::translate_key("cli.error.scan_error").unwrap_or_default(), e);
+                eprintln!("  Skipped: {} — Scan error: {}", original_filename, e);
                 *skipped += 1;
                 return;
             }
@@ -162,7 +159,7 @@ fn process_demo(
     }
 
     if streaks.is_empty() {
-        println!("  {}: {} — {}", analysis::translate_key("cli.status.skipped").unwrap_or_default(), original_filename, analysis::translate_key("cli.error.no_highlights").unwrap_or_default());
+        println!("  Skipped: {} — No highlights found", original_filename);
         *skipped += 1;
         return;
     }
@@ -178,11 +175,11 @@ fn process_demo(
         let patcher = native::patch::StreamPatcher::new(&job.source_demo, &job.output_demo);
         match patcher.patch(job, patcher_config, cancel_token) {
             Ok(()) => {
-                println!("  {}: {}", analysis::translate_key("cli.status.saved").unwrap_or_default(), new_filename);
+                println!("  Saved: {}", new_filename);
                 *processed += 1;
             }
             Err(e) => {
-                eprintln!("  {}: {} - {}", analysis::translate_key("cli.error.writing_file").unwrap_or_default(), new_filename, e);
+                eprintln!("  Error writing file {}: {}", new_filename, e);
                 *skipped += 1;
             }
         }

@@ -56,7 +56,7 @@ pub fn render_bulk_actions(
 pub fn render_primary_actions(
     ui: &mut egui::Ui,
     patcher_config: &mut PatcherConfig,
-    state_ptr: &mut CaptureStudioState,
+    _state_ptr: &mut CaptureStudioState,
     _loading_ptr: &mut bool,
     tx: &std::sync::mpsc::Sender<crate::types::GuiMessage>,
     queued_demos_shared: &Arc<Mutex<Arc<Vec<DemoData>>>>,
@@ -70,241 +70,253 @@ pub fn render_primary_actions(
         Ok(g) => g,
         Err(p) => p.into_inner(),
     }.clone();
+    let mode = match super::get_capture_mode().lock() {
+        Ok(g) => *g,
+        Err(p) => *p.into_inner(),
+    };
+
     ui.horizontal(|ui| {
-        let can_preview = !is_running && !queued_demos.is_empty();
-        if ui.add_enabled(can_preview, egui::Button::new(crate::strings::capture::btn_generate_previews()))
-            .on_hover_text(crate::views::t("tooltip.patch_preview_desc"))
-            .clicked()
-        {
-            let hl_exe_str = patcher_config.game_path.trim();
-            let hl_exe = std::path::Path::new(hl_exe_str);
-            if hl_exe_str.is_empty() || !hl_exe.exists() || !hl_exe.is_file() {
-                let _ = tx.send(crate::types::GuiMessage::ShowToast {
-                    message: "Invalid DoD Game Path (hl.exe)".to_string(),
-                    level: crate::types::ToastLevel::Warning,
-                });
-                return;
-            }
+        match mode {
+            super::CaptureMode::Capture => {
+                let cache_id = egui::Id::new("dodtools_disk_estimate_cache");
+                let required_bytes = ctx.data(|d| d.get_temp::<u64>(cache_id)).unwrap_or(0);
+                let mut available_bytes: u64 = 0;
+                for path in &patcher_config.capture_directories {
+                    let free_bytes = native::sys::disk::get_available_bytes(path);
+                    if free_bytes != u64::MAX {
+                        available_bytes += free_bytes;
+                    }
+                }
 
-            let preview_payload = build_capture_streak_payload(
-                &queued_demos,
-                StreakFilter {
-                    selected_only: false,
-                    pov_local_only: true,
-                },
-            );
-
-            if !preview_payload.is_empty() {
-                use native::patch::build_preview_patch_jobs;
-                let dod_dir = hl_exe.parent().unwrap().join("dod");
-
-                let jobs = build_preview_patch_jobs(
-                    preview_payload,
-                    Some(dod_dir.as_path()),
-                );
-                let tx_clone = tx.clone();
-                let ctx_clone = ctx.clone();
-                let cancel_token = Arc::new(AtomicBool::new(false));
-
-                super::log_markdown(&format!("[PREVIEW PATCH] Injecting director events into {} demo(s).", jobs.len()));
-
-                set_is_patching(true);
-                std::thread::Builder::new()
-                    .name("preview_patch_worker".into())
-                    .spawn(move || {
-                        for job in &jobs {
-                            super::log_markdown(&format!("[PREVIEW PATCH] Writing: {}", job.output_demo.display()));
-                            let patcher = native::patch::StreamPatcher::new(
-                                &job.source_demo,
-                                &job.output_demo,
-                            );
-                            match patcher.patch(job, &native::patch::PatcherConfig::default(), &cancel_token) {
-                                Ok(()) => {
-                                    super::log_markdown(&format!("[PREVIEW PATCH] ✅ Done: {}", job.output_demo.display()));
-                                    let sidecar_path = job.output_demo.with_extension("dodtools_preview");
-                                    let _ = (|| -> std::io::Result<()> {
-                                        #[cfg(windows)]
-                                        use std::os::windows::fs::OpenOptionsExt;
-                                        use std::fs::OpenOptions;
-
-                                        let mut options = OpenOptions::new();
-                                        options.write(true).create(true).truncate(true);
-
-                                        #[cfg(windows)]
-                                        options.custom_flags(0x00000002); // FILE_ATTRIBUTE_HIDDEN
-
-                                        let _file = options.open(&sidecar_path)?;
-                                        Ok(())
-                                    })();
+                ui.add_enabled_ui(required_bytes <= available_bytes, |ui| {
+                    let btn = egui::Button::new("Launch Capture Batch");
+                    let is_enabled = !is_running && !queued_demos.is_empty() && !patcher_config.capture_directories.is_empty();
+                    let mut response = ui.add_enabled(is_enabled, btn);
+                    if !is_enabled {
+                        response = response.on_hover_text("Cannot launch: Queue is empty or Target Output Directory is missing.");
+                    }
+                    if response.clicked() {
+                        #[cfg(not(target_arch = "wasm32"))]
+                        {
+                            use sysinfo::{System, SystemExt, DiskExt};
+                            let mut sys = System::new_all();
+                            sys.refresh_disks_list();
+                            
+                            let active_export_dir = patcher_config.primary_media_dir.clone().unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+                            let mut available_space = u64::MAX;
+                            let mut disk_found = false;
+                            for disk in sys.disks() {
+                                if active_export_dir.starts_with(disk.mount_point()) {
+                                    available_space = disk.available_space();
+                                    disk_found = true;
+                                    break;
                                 }
-                                Err(e) => super::log_markdown(&format!("[PREVIEW PATCH] ❌ Error: {}", e)),
+                            }
+
+                            if disk_found && available_space < 15_u64 * 1024 * 1024 * 1024 {
+                                log::warn!("Capture aborted: Target drive has less than 15GB free space.");
+                                return;
                             }
                         }
-                        let _ = tx_clone.send(crate::types::GuiMessage::PreviewPatchingComplete);
-                        ctx_clone.request_repaint();
-                    })
-                    .unwrap();
+
+                        set_is_patching(true);
+
+                        crate::settings::save_patcher_config(&patcher_config);
+
+                        patcher_config.session_id = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
+
+                        // Build the flat payload from all selected, filter-passing streaks.
+                        let payload = build_capture_streak_payload(
+                            &queued_demos,
+                            StreakFilter {
+                                selected_only: true,
+                                pov_local_only: true,
+                            },
+                        );
+
+                        if !payload.is_empty() {
+                            let cancel_token = Arc::new(AtomicBool::new(false));
+
+                            super::log_markdown(&format!("[CAPTURE CONFIG PAYLOAD] Pre: {}, Lead: {}, Trail: {}, Post: {}, FPS: {}, Auto-Quit: {}",
+                                patcher_config.pre_roll_seconds,
+                                patcher_config.record_start_lead,
+                                patcher_config.record_stop_trail,
+                                patcher_config.post_roll_seconds,
+                                patcher_config.capture_fps,
+                                patcher_config.exit_on_finish
+                            ));
+                            
+                            let tx_clone = tx.clone();
+                            let ctx_clone = ctx.clone();
+                            let config_clone = patcher_config.clone();
+                            let mut global_arrays: std::collections::HashMap<std::path::PathBuf, std::sync::Arc<Vec<f32>>> = std::collections::HashMap::new();
+                            for demo in queued_demos.iter() {
+                                global_arrays.insert(demo.path.clone(), demo.frame_times.clone());
+                            }
+
+                            std::thread::Builder::new()
+                                .spawn(move || {
+                                    let jobs = match build_batch_queue(payload, &config_clone, &global_arrays) {
+                                        Ok(jobs) => jobs,
+                                        Err(e) => {
+                                            let err_msg = format!("Failed to build batch queue (capacity simulation may have failed): {}", e);
+                                            log::error!("{}", err_msg);
+                                            let _ = tx_clone.send(crate::types::GuiMessage::CaptureEngineEvent(crate::types::EngineEvent::Error(err_msg)));
+                                            ctx_clone.request_repaint();
+                                            return;
+                                        }
+                                    };
+
+                                    let total_jobs = jobs.len();
+                                    for (i, job) in jobs.into_iter().enumerate() {
+                                        ctx_clone.data_mut(|d| d.insert_temp(egui::Id::new("dodtools_patch_progress"), format!("Patching demo {} of {}... Please wait.", i + 1, total_jobs)));
+                                        ctx_clone.request_repaint();
+
+                                        let patcher = native::patch::StreamPatcher::new(
+                                            &job.source_demo,
+                                            &job.output_demo,
+                                        );
+                                        if let Err(e) = patcher.patch(&job, &config_clone, &cancel_token) {
+                                            let _ = tx_clone.send(crate::types::GuiMessage::CaptureEngineEvent(crate::types::EngineEvent::Error(format!(
+                                                "Patching failed for {}: {}",
+                                                job.source_demo, e
+                                            ))));
+                                            ctx_clone.request_repaint();
+                                            return;
+                                        }
+                                    }
+                                    let _ = tx_clone.send(crate::types::GuiMessage::PatchingComplete);
+                                    ctx_clone.request_repaint();
+                                })
+                                .unwrap();
+                        } else {
+                            set_is_patching(false);
+                        }
+                    }
+                });
+
+                ui.add_space(8.0);
+
+                if ui.button("Launch Game (HLAE)").clicked() {
+                    let mut cmd = patcher_config.build_hlae_process("");
+                    match cmd.spawn() {
+                        Ok(_) => log::info!("Successfully launched hlae.exe"),
+                        Err(e) => log::error!("Failed to launch hlae.exe: {}", e),
+                    }
+                }
             }
-        }
+            super::CaptureMode::Preview => {
+                let can_preview = !is_running && !queued_demos.is_empty();
+                if ui.add_enabled(can_preview, egui::Button::new(crate::strings::capture::btn_generate_previews()))
+                    .on_hover_text(crate::views::t("tooltip.patch_preview_desc"))
+                    .clicked()
+                {
+                    let hl_exe_str = patcher_config.game_path.trim();
+                    let hl_exe = std::path::Path::new(hl_exe_str);
+                    if hl_exe_str.is_empty() || !hl_exe.exists() || !hl_exe.is_file() {
+                        let _ = tx.send(crate::types::GuiMessage::ShowToast {
+                            message: "Invalid DoD Game Path (hl.exe)".to_string(),
+                            level: crate::types::ToastLevel::Warning,
+                        });
+                        return;
+                    }
 
-        ui.add_space(8.0);
+                    let preview_payload = build_capture_streak_payload(
+                        &queued_demos,
+                        StreakFilter {
+                            selected_only: false,
+                            pov_local_only: true,
+                        },
+                    );
 
-        if ui.button(crate::strings::capture::btn_clear_previews()).clicked() {
-            let mut verified_previews = Vec::new();
-            let mut dirs_to_scan = std::collections::HashSet::new();
-            let game_path_buf = std::path::PathBuf::from(&patcher_config.game_path);
-            let dod_dir = game_path_buf.parent().unwrap_or(std::path::Path::new("")).join("dod");
-            dirs_to_scan.insert(dod_dir);
-            for dir in dirs_to_scan {
-                if let Ok(entries) = std::fs::read_dir(dir) {
-                    for entry in entries.flatten() {
-                        let path = entry.path();
-                        if path.is_file() {
-                            if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
-                                if filename.ends_with("_preview.dem") {
-                                    let sidecar = path.with_extension("dodtools_preview");
-                                    if sidecar.exists() {
-                                        verified_previews.push(path);
+                    if !preview_payload.is_empty() {
+                        use native::patch::build_preview_patch_jobs;
+                        let dod_dir = hl_exe.parent().unwrap().join("dod");
+
+                        let jobs = build_preview_patch_jobs(
+                            preview_payload,
+                            Some(dod_dir.as_path()),
+                        );
+                        let tx_clone = tx.clone();
+                        let ctx_clone = ctx.clone();
+                        let cancel_token = Arc::new(AtomicBool::new(false));
+
+                        super::log_markdown(&format!("[PREVIEW PATCH] Injecting director events into {} demo(s).", jobs.len()));
+
+                        set_is_patching(true);
+                        std::thread::Builder::new()
+                            .name("preview_patch_worker".into())
+                            .spawn(move || {
+                                for job in &jobs {
+                                    super::log_markdown(&format!("[PREVIEW PATCH] Writing: {}", job.output_demo.display()));
+                                    let patcher = native::patch::StreamPatcher::new(
+                                        &job.source_demo,
+                                        &job.output_demo,
+                                    );
+                                    match patcher.patch(job, &native::patch::PatcherConfig::default(), &cancel_token) {
+                                        Ok(()) => {
+                                            super::log_markdown(&format!("[PREVIEW PATCH] ✅ Done: {}", job.output_demo.display()));
+                                            let sidecar_path = job.output_demo.with_extension("dodtools_preview");
+                                            let _ = (|| -> std::io::Result<()> {
+                                                #[cfg(windows)]
+                                                use std::os::windows::fs::OpenOptionsExt;
+                                                use std::fs::OpenOptions;
+
+                                                let mut options = OpenOptions::new();
+                                                options.write(true).create(true).truncate(true);
+
+                                                #[cfg(windows)]
+                                                options.custom_flags(0x00000002); // FILE_ATTRIBUTE_HIDDEN
+
+                                                let _file = options.open(&sidecar_path)?;
+                                                Ok(())
+                                            })();
+                                        }
+                                        Err(e) => super::log_markdown(&format!("[PREVIEW PATCH] ❌ Error: {}", e)),
+                                    }
+                                }
+                                let _ = tx_clone.send(crate::types::GuiMessage::PreviewPatchingComplete);
+                                ctx_clone.request_repaint();
+                            })
+                            .unwrap();
+                    }
+                }
+
+                ui.add_space(8.0);
+
+                if ui.button(crate::strings::capture::btn_clear_previews()).clicked() {
+                    let mut verified_previews = Vec::new();
+                    let mut dirs_to_scan = std::collections::HashSet::new();
+                    let game_path_buf = std::path::PathBuf::from(&patcher_config.game_path);
+                    let dod_dir = game_path_buf.parent().unwrap_or(std::path::Path::new("")).join("dod");
+                    dirs_to_scan.insert(dod_dir);
+                    for dir in dirs_to_scan {
+                        if let Ok(entries) = std::fs::read_dir(dir) {
+                            for entry in entries.flatten() {
+                                let path = entry.path();
+                                if path.is_file() {
+                                    if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
+                                        if filename.ends_with("_preview.dem") {
+                                            let sidecar = path.with_extension("dodtools_preview");
+                                            if sidecar.exists() {
+                                                verified_previews.push(path);
+                                            }
+                                        }
                                     }
                                 }
                             }
                         }
                     }
+                    ctx.data_mut(|d| d.insert_temp(temp_id, verified_previews));
                 }
-            }
-            ctx.data_mut(|d| d.insert_temp(temp_id, verified_previews));
-        }
-
-        ui.add_space(16.0);
-
-        let cache_id = egui::Id::new("dodtools_disk_estimate_cache");
-        let required_bytes = ctx.data(|d| d.get_temp::<u64>(cache_id)).unwrap_or(0);
-        let mut available_bytes: u64 = 0;
-        for path in &patcher_config.capture_directories {
-            let free_bytes = native::sys::disk::get_available_bytes(path);
-            if free_bytes != u64::MAX {
-                available_bytes += free_bytes;
             }
         }
-
-        ui.add_enabled_ui(required_bytes <= available_bytes, |ui| {
-            let btn = egui::Button::new("Proceed to Capture ->");
-            if ui.add_enabled(!is_running && !queued_demos.is_empty() && !patcher_config.capture_directories.is_empty(), btn).clicked() {
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                    use sysinfo::{System, SystemExt, DiskExt};
-                    let mut sys = System::new_all();
-                    sys.refresh_disks_list();
-                    
-                    let active_export_dir = patcher_config.primary_media_dir.clone().unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
-                    let mut available_space = u64::MAX;
-                    let mut disk_found = false;
-                    for disk in sys.disks() {
-                        if active_export_dir.starts_with(disk.mount_point()) {
-                            available_space = disk.available_space();
-                            disk_found = true;
-                            break;
-                        }
-                    }
-
-                    if disk_found && available_space < 15_u64 * 1024 * 1024 * 1024 {
-                        log::warn!("Capture aborted: Target drive has less than 15GB free space.");
-                        return;
-                    }
-                }
-
-                set_is_patching(true);
-
-                crate::settings::save_patcher_config(&patcher_config);
-
-                patcher_config.session_id = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
-
-                // Build the flat payload from all selected, filter-passing streaks.
-                let payload = build_capture_streak_payload(
-                    &queued_demos,
-                    StreakFilter {
-                        selected_only: true,
-                        pov_local_only: true,
-                    },
-                );
-
-                if !payload.is_empty() {
-                    let cancel_token = Arc::new(AtomicBool::new(false));
-
-                    super::log_markdown(&format!("[CAPTURE CONFIG PAYLOAD] Pre: {}, Lead: {}, Trail: {}, Post: {}, FPS: {}, Auto-Quit: {}",
-                        patcher_config.pre_roll_seconds,
-                        patcher_config.record_start_lead,
-                        patcher_config.record_stop_trail,
-                        patcher_config.post_roll_seconds,
-                        patcher_config.capture_fps,
-                        patcher_config.exit_on_finish
-                    ));
-                    
-                    let tx_clone = tx.clone();
-                    let ctx_clone = ctx.clone();
-                    let config_clone = patcher_config.clone();
-                    let mut global_arrays: std::collections::HashMap<std::path::PathBuf, std::sync::Arc<Vec<f32>>> = std::collections::HashMap::new();
-                    for demo in queued_demos.iter() {
-                        global_arrays.insert(demo.path.clone(), demo.frame_times.clone());
-                    }
-
-                    std::thread::Builder::new()
-                        .spawn(move || {
-                            let jobs = match build_batch_queue(payload, &config_clone, &global_arrays) {
-                                Ok(jobs) => jobs,
-                                Err(e) => {
-                                    let err_msg = format!("Failed to build batch queue (capacity simulation may have failed): {}", e);
-                                    log::error!("{}", err_msg);
-                                    let _ = tx_clone.send(crate::types::GuiMessage::CaptureEngineEvent(crate::types::EngineEvent::Error(err_msg)));
-                                    ctx_clone.request_repaint();
-                                    return;
-                                }
-                            };
-
-                            let total_jobs = jobs.len();
-                            for (i, job) in jobs.into_iter().enumerate() {
-                                ctx_clone.data_mut(|d| d.insert_temp(egui::Id::new("dodtools_patch_progress"), format!("Patching demo {} of {}... Please wait.", i + 1, total_jobs)));
-                                ctx_clone.request_repaint();
-
-                                let patcher = native::patch::StreamPatcher::new(
-                                    &job.source_demo,
-                                    &job.output_demo,
-                                );
-                                if let Err(e) = patcher.patch(&job, &config_clone, &cancel_token) {
-                                    let _ = tx_clone.send(crate::types::GuiMessage::CaptureEngineEvent(crate::types::EngineEvent::Error(format!(
-                                        "Patching failed for {}: {}",
-                                        job.source_demo, e
-                                    ))));
-                                    ctx_clone.request_repaint();
-                                    return;
-                                }
-                            }
-                            let _ = tx_clone.send(crate::types::GuiMessage::PatchingComplete);
-                            ctx_clone.request_repaint();
-                        })
-                        .unwrap();
-                } else {
-                    // No selectable payload - skip patching and jump straight to Capture.
-                    set_is_patching(false);
-                    *state_ptr = CaptureStudioState::Capture;
-                }
-            }
-        });
-
 
         if is_running {
             ui.add_space(10.0);
             ui.spinner();
             let progress_msg = ctx.data(|d| d.get_temp::<String>(egui::Id::new("dodtools_patch_progress"))).unwrap_or_else(|| "Patching Demos... Please wait for a few minutes now.".to_string());
             ui.label(progress_msg);
-        }
-
-        let current_state = *state_ptr;
-        if current_state == CaptureStudioState::Workspace {
-            if let Some(err) = ctx.data(|d| d.get_temp::<String>(egui::Id::new("dodtools_patch_error"))) {
-                ui.add_space(4.0);
-                ui.colored_label(egui::Color32::RED, format!("⚠ {}", err));
-            }
         }
     });
 
