@@ -28,6 +28,7 @@ IMMUTABLE MILESTONES ARCHITECTURE RULES:
 
 ### Frontend Migration
 - [x] Feature: Tauri & Vite Integration — Completed frontend stack migration from native `egui` to Tauri + Vite architecture with full Master-Detail UI feature parity, IPC bridge, native folder pickers, and `@tauri-apps/plugin-fs` project session persistence.
+- [ ] Task: Verify feature/migrate-tauri branch functionality for dev merge.
 
 ### UI/UX Polish
 - [x] Feature: Workspace Layout Updates - Transposed paths and disk space estimators, added highlight status columns to the Master List, removed legacy folder pickers, and mounted a global "Total Export Pool Free" indicator with dynamic vector list reordering.

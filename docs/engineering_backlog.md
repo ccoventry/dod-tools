@@ -3,6 +3,7 @@
 ## 📋 General Backlog (Future Roadmap Items)
 
 ## Immediate Tasks (Next Session)
+- [ ] Task: Verify feature/migrate-tauri branch functionality for dev merge.
 
 ## Completed
 - [x] **Feature: Tauri & Vite Integration:** Migrated frontend stack from native `egui` to Tauri + Vite, establishing async IPC boundaries for demo ingestion, settings persistence, demo auditor, and AOT simulation.
