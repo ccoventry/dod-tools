@@ -8,9 +8,14 @@ let currentDemoIdx = null;
 // Getter supplied by main.js so "Generate All Previews" can aggregate selected
 // streaks across every loaded demo, not just the one currently displayed.
 let currentGetAllDemos = null;
+// Optional callback supplied by main.js — re-runs capture_pane.js's disk
+// space launch guard, since toggling a streak's selection changes the
+// required-bytes side of that comparison.
+let currentOnSelectionChange = null;
 
-export function initDetailPane(getAllDemos) {
+export function initDetailPane(getAllDemos, onSelectionChange) {
   currentGetAllDemos = getAllDemos;
+  currentOnSelectionChange = onSelectionChange || null;
 }
 
 /** Reflects current selection state onto the Launch Preview (per-demo) and
@@ -28,6 +33,7 @@ function updatePreviewButtonStates() {
     const hasGlobalSelection = (allDemos || []).some(d => (d.streaks || []).some(s => s.selected));
     generateAllBtn.disabled = !hasGlobalSelection;
   }
+  if (currentOnSelectionChange) currentOnSelectionChange();
 }
 
 /**

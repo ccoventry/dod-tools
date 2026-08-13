@@ -1,8 +1,15 @@
-import { startCaptureBatch, cancelCaptureBatch, validatePaths, simulateAotCapacity, calculateExportPoolSpace } from './ipc_bridge.js';
+import { startCaptureBatch, cancelCaptureBatch, validatePaths, calculateExportPoolSpace } from './ipc_bridge.js';
 import { listen } from '@tauri-apps/api/event';
 import { showToast } from './toast.js';
 
 let unlistenCaptureStatus = null;
+// Tracks whether a batch is actively running so refreshLaunchGuard() never
+// re-enables Start Capture out from under the capture_status "running" lock.
+let capturingInFlight = false;
+// getState callback captured from initCaptureUI() so refreshLaunchGuard()
+// can be called with no args from other panes (e.g. main.js after a target
+// drive is added, or detail_pane.js after a streak selection changes).
+let currentGetState = null;
 
 /** Generates a `session_YYYYMMDD_HHMMSS` id so each batch routes into its own
  *  output subfolder instead of colliding in the export root (mirrors dev's
@@ -22,6 +29,135 @@ function updateRowBadges(statusText, colorHex) {
       span.style.color = colorHex;
     });
   }
+}
+
+// ── Pre-Flight Disk Space Estimator ───────────────────────────────────────────
+
+/**
+ * Sums required capture bytes across every selected streak, merging
+ * overlapping (or touching) pre/post-roll windows *within each source demo*
+ * before billing them for disk space — two highlights that share footage
+ * must not be double-counted, since the engine records that overlap once.
+ * Base cost is `w * h * 3` bytes/frame at the configured capture FPS;
+ * `separate_hud` triples the total (HUD pass recorded as its own stream).
+ */
+function computeRequiredCaptureBytes(currentScannedDemos, opts) {
+  const { preRollSeconds, postRollSeconds, captureFps, resWidth, resHeight, separateHud } = opts;
+  let totalSeconds = 0;
+
+  (currentScannedDemos || []).forEach(demo => {
+    const intervals = (demo.streaks || [])
+      .filter(streak => streak.selected === true || streak.selected === undefined)
+      .map(streak => {
+        const fps = streak.demo_fps || 100;
+        const startSec = (streak.start_tick / fps) - preRollSeconds;
+        const endSec = (streak.end_tick / fps) + postRollSeconds;
+        return [startSec, endSec];
+      })
+      .sort((a, b) => a[0] - b[0]);
+
+    let mergedStart = null;
+    let mergedEnd = null;
+    intervals.forEach(([start, end]) => {
+      if (mergedStart === null) {
+        mergedStart = start;
+        mergedEnd = end;
+      } else if (start <= mergedEnd) {
+        mergedEnd = Math.max(mergedEnd, end);
+      } else {
+        totalSeconds += (mergedEnd - mergedStart);
+        mergedStart = start;
+        mergedEnd = end;
+      }
+    });
+    if (mergedStart !== null) {
+      totalSeconds += (mergedEnd - mergedStart);
+    }
+  });
+
+  const frames = Math.ceil(Math.max(0, totalSeconds) * captureFps);
+  const bytesPerFrame = resWidth * resHeight * 3;
+  let requiredBytes = frames * bytesPerFrame;
+  if (separateHud) requiredBytes *= 3;
+  return requiredBytes;
+}
+
+/**
+ * Recomputes required-vs-available disk space and hard-locks the Launch
+ * button (rather than just toasting at click time) whenever the capture
+ * pool can't cover it — including the zero-drive case, which previously
+ * bypassed the check entirely because `availableBytes > 0` gated the old
+ * warning. Safe to call with no args once `initCaptureUI` has run; other
+ * panes (main.js, detail_pane.js) call it after anything that can move
+ * required/available bytes: streak selection, target drives, timing/res
+ * config fields.
+ */
+export async function refreshLaunchGuard(state) {
+  const startBtn = document.querySelector('#start-capture-btn') || document.querySelector('#start-batch-btn');
+  const warningEl = document.querySelector('#disk-space-warning-banner');
+  if (!startBtn) return null;
+
+  const resolvedState = state || (currentGetState ? currentGetState() : null) || { targetDrives: [], currentScannedDemos: [] };
+
+  const preRollVal = parseFloat(document.querySelector("#config-pre-roll")?.value) || 2.0;
+  const postRollVal = parseFloat(document.querySelector("#config-post-roll")?.value) || 0.6;
+  const captureFpsVal = parseInt(document.querySelector("#config-capture-fps")?.value, 10) || 300;
+  const resWidthVal = parseInt(document.querySelector("#config-res-width")?.value, 10) || 1280;
+  const resHeightVal = parseInt(document.querySelector("#config-res-height")?.value, 10) || 720;
+  const separateHudVal = document.querySelector("#config-separate-hud")?.checked || false;
+
+  const requiredBytes = computeRequiredCaptureBytes(resolvedState.currentScannedDemos, {
+    preRollSeconds: preRollVal,
+    postRollSeconds: postRollVal,
+    captureFps: captureFpsVal,
+    resWidth: resWidthVal,
+    resHeight: resHeightVal,
+    separateHud: separateHudVal,
+  });
+
+  // Mirrors buildCapturePayload's outputDrivePool: the Target Output Drives
+  // pool takes precedence, falling back to Primary/Backup Media Dir so a
+  // guard check doesn't block a setup that buildCapturePayload would accept.
+  const primaryMediaDirVal = document.querySelector('#primary-media-dir-input')?.value?.trim() || null;
+  const backupMediaDirVal = document.querySelector('#backup-media-dir-input')?.value?.trim() || null;
+  const driveDirs = (resolvedState.targetDrives || []).filter(Boolean);
+  const effectiveDrivePool = driveDirs.length > 0
+    ? driveDirs
+    : [primaryMediaDirVal, backupMediaDirVal].filter(Boolean);
+
+  let availableBytes = 0;
+  if (effectiveDrivePool.length > 0) {
+    try {
+      availableBytes = await calculateExportPoolSpace(effectiveDrivePool);
+    } catch (err) {
+      console.error("Error calculating export pool space for launch guard:", err);
+    }
+  }
+
+  // Zero configured (or zero-space) drives must lock the button on its own —
+  // `requiredBytes > availableBytes` alone would pass with requiredBytes 0.
+  const noDrivesConfigured = effectiveDrivePool.length === 0 || availableBytes === 0;
+  const insufficientSpace = !noDrivesConfigured && requiredBytes > availableBytes;
+  const blocked = noDrivesConfigured || insufficientSpace;
+
+  if (!capturingInFlight) {
+    startBtn.disabled = blocked;
+  }
+
+  if (warningEl) {
+    if (noDrivesConfigured) {
+      warningEl.textContent = "No target output drives configured — add at least one Target Output Drive with free space before starting a capture.";
+      warningEl.style.display = 'block';
+    } else if (insufficientSpace) {
+      warningEl.textContent = `Insufficient disk space: capture needs ~${(requiredBytes / 1e9).toFixed(2)} GB, only ${(availableBytes / 1e9).toFixed(2)} GB available across the export pool.`;
+      warningEl.style.display = 'block';
+    } else {
+      warningEl.style.display = 'none';
+      warningEl.textContent = '';
+    }
+  }
+
+  return { requiredBytes, availableBytes, blocked };
 }
 
 // ── Custom Engine Commands (Init / Before-After) ──────────────────────────────
@@ -127,6 +263,8 @@ export function initCaptureUI(getState) {
   const progressContainer = document.querySelector('#capture-progress-container');
   const progressBar = document.querySelector('#capture-progress-bar');
 
+  currentGetState = getState;
+
   renderInitCommandsList();
   renderCustomCommandsList();
 
@@ -146,10 +284,22 @@ export function initCaptureUI(getState) {
     });
   }
 
+  // Any config field that feeds computeRequiredCaptureBytes recomputes the
+  // hard launch guard on change, so the Start button's disabled state stays
+  // live instead of only being checked at click time.
+  ['#config-res-width', '#config-res-height', '#config-separate-hud',
+   '#config-pre-roll', '#config-post-roll', '#config-capture-fps',
+   '#primary-media-dir-input', '#backup-media-dir-input'].forEach(selector => {
+    const el = document.querySelector(selector);
+    if (el) el.addEventListener('input', () => refreshLaunchGuard());
+  });
+  refreshLaunchGuard();
+
   if (!unlistenCaptureStatus) {
     listen('capture_status', (event) => {
       const payload = event.payload || {};
       if (payload.running) {
+        capturingInFlight = true;
         if (progressContainer) progressContainer.style.display = 'block';
         if (progressBar) {
           if (payload.index !== undefined && payload.total && payload.total > 0) {
@@ -165,8 +315,9 @@ export function initCaptureUI(getState) {
         if (startBtn) startBtn.disabled = true;
         if (cancelBtn) cancelBtn.disabled = false;
       } else {
-        if (startBtn) startBtn.disabled = false;
+        capturingInFlight = false;
         if (cancelBtn) cancelBtn.disabled = true;
+        refreshLaunchGuard();
 
         if (payload.error) {
           showToast(`Capture error: ${payload.status || "Unknown error"}`, "error");
@@ -308,15 +459,24 @@ export function initCaptureUI(getState) {
   if (startBtn) {
     startBtn.addEventListener('click', async () => {
       const state = getState ? getState() : { scanPaths: [], targetDrives: [], currentScannedDemos: [] };
+
+      // Hard safety gate — recomputed fresh on every click regardless of the
+      // button's current disabled state, so a stale/unrefreshed guard can
+      // never let a capture start without sufficient disk space (this is
+      // also what closes the old zero-drive bypass: `availableBytes === 0`
+      // now blocks unconditionally instead of skipping the check).
+      const guard = await refreshLaunchGuard(state);
+      if (guard && guard.blocked) {
+        if (guard.availableBytes === 0) {
+          showToast("Configure at least one Target Output Drive (or Primary Media Directory) with free space before starting a capture.", 'error');
+        } else {
+          showToast(`Insufficient disk space. Required: ${(guard.requiredBytes / 1e9).toFixed(2)} GB, Available: ${(guard.availableBytes / 1e9).toFixed(2)} GB`, 'error');
+        }
+        return;
+      }
+
       const activePayload = buildCapturePayload(state);
       if (!activePayload) return; // buildCapturePayload already toasted the reason
-
-      const preRollVal = activePayload.pre_roll_seconds;
-      const postRollVal = activePayload.post_roll_seconds;
-      const captureFpsVal = activePayload.capture_fps;
-      const resWidthVal = activePayload.resolution_width;
-      const resHeightVal = activePayload.resolution_height;
-      const selectedStreaks = activePayload.streaks;
 
       try {
         await validatePaths(activePayload.hlae_path, activePayload.game_path);
@@ -324,29 +484,6 @@ export function initCaptureUI(getState) {
         console.error("Executable path validation failed:", err);
         showToast(String(err), 'error');
         return;
-      }
-
-      try {
-        const availableBytes = await calculateExportPoolSpace(state.targetDrives || []);
-        const streakDurations = selectedStreaks.map(s => {
-          const baseDuration = (s.end_tick - s.start_tick) / (s.demo_fps || 100);
-          return baseDuration + preRollVal + postRollVal;
-        });
-        const bytesPerFrame = resWidthVal * resHeightVal * 3;
-        
-        const [projectedBytes, hasEnoughSpace] = await simulateAotCapacity(
-          streakDurations,
-          captureFpsVal,
-          bytesPerFrame,
-          availableBytes
-        );
-
-        if (!hasEnoughSpace && availableBytes > 0) {
-          showToast(`Insufficient disk space. Projected: ${(projectedBytes / 1e9).toFixed(2)} GB, Available: ${(availableBytes / 1e9).toFixed(2)} GB`, 'warning');
-          return;
-        }
-      } catch (err) {
-        console.error("AOT capacity simulation failed:", err);
       }
 
       showToast("Initializing capture batch...", "info");
@@ -364,8 +501,9 @@ export function initCaptureUI(getState) {
           console.error("IPC Execution Error (start_capture_batch):", err);
           showToast("Error starting batch: " + err, "error");
           updateRowBadges("Failed", "#f44336");
-          if (startBtn) startBtn.disabled = false;
           if (cancelBtn) cancelBtn.disabled = true;
+          capturingInFlight = false;
+          refreshLaunchGuard(state);
         });
     });
   }
@@ -377,12 +515,14 @@ export function initCaptureUI(getState) {
       cancelCaptureBatch()
         .then(() => {
           updateRowBadges("Cancelled", "#f44336");
-          if (startBtn) startBtn.disabled = false;
           if (progressBar) progressBar.style.width = '0%';
+          capturingInFlight = false;
+          refreshLaunchGuard();
         })
         .catch((err) => {
           console.error("IPC Execution Error (cancel_capture_batch):", err);
-          if (startBtn) startBtn.disabled = false;
+          capturingInFlight = false;
+          refreshLaunchGuard();
         });
     });
   }
