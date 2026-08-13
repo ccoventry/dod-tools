@@ -4,7 +4,7 @@ mod settings_manager;
 mod audit_manager;
 
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
-use capture_manager::{CaptureManager, CapturePayload, launch_demo_preview, generate_all_previews, check_engine_processes, kill_engine_processes};
+use capture_manager::{CaptureManager, CapturePayload, launch_demo_preview, generate_all_previews, check_engine_processes, kill_engine_processes, scan_orphaned_previews, delete_orphaned_previews};
 use render_manager::{RenderManager, scan_render_directories, execute_render_batch, render_status, cancel_render_batch};
 use settings_manager::{AppSettings, SettingsManager};
 use audit_manager::{AuditManager, SerializedDuplicateGroup};
@@ -337,6 +337,8 @@ pub fn run() {
             generate_all_previews,
             check_engine_processes,
             kill_engine_processes,
+            scan_orphaned_previews,
+            delete_orphaned_previews,
             cancel_capture_batch,
             capture_status,
             scan_directory,

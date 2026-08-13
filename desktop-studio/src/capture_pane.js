@@ -1,4 +1,4 @@
-import { startCaptureBatch, cancelCaptureBatch, validatePaths, calculateExportPoolSpace } from './ipc_bridge.js';
+import { startCaptureBatch, cancelCaptureBatch, validatePaths, calculateExportPoolSpace, scanOrphanedPreviews, deleteOrphanedPreviews } from './ipc_bridge.js';
 import { listen } from '@tauri-apps/api/event';
 import { showToast } from './toast.js';
 
@@ -256,6 +256,148 @@ function renderCustomCommandsList() {
   });
 }
 
+// ── Clear Previews audit modal ─────────────────────────────────────────────
+//
+// Audits `<hl>/dod` for orphaned `*_preview.dem` bookmark previews (see the
+// block comment above `patch_bookmark_previews` in capture_manager.rs) left
+// behind across capture sessions, and lets the user purge them.
+
+let currentPreviewScanResults = [];
+
+function formatPreviewSize(bytes) {
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+function updateClearPreviewsDeleteButtonState() {
+  const deleteBtn = document.querySelector('#clear-previews-delete-btn');
+  if (!deleteBtn) return;
+  const checked = document.querySelectorAll('.clear-previews-row-cb:checked');
+  deleteBtn.disabled = checked.length === 0;
+  deleteBtn.textContent = checked.length > 0 ? `Delete ${checked.length} Selected` : 'Delete Selected';
+}
+
+function renderClearPreviewsResults() {
+  const tbody = document.querySelector('#clear-previews-body');
+  const footerEl = document.querySelector('#clear-previews-footer');
+  if (!tbody) return;
+
+  if (currentPreviewScanResults.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="4" class="table-empty">No orphaned preview demos found.</td></tr>';
+    if (footerEl) footerEl.textContent = 'Found: 0 | Reclaimable: 0.00 GB';
+    updateClearPreviewsDeleteButtonState();
+    return;
+  }
+
+  tbody.innerHTML = '';
+  let totalBytes = 0;
+
+  currentPreviewScanResults.forEach((entry) => {
+    totalBytes += entry.size_bytes;
+
+    const tr = document.createElement('tr');
+
+    const tdCb = document.createElement('td');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.className = 'clear-previews-row-cb';
+    cb.dataset.path = entry.demo_path;
+    cb.checked = true;
+    cb.addEventListener('change', updateClearPreviewsDeleteButtonState);
+    tdCb.appendChild(cb);
+
+    const tdFile = document.createElement('td');
+    tdFile.textContent = entry.file_name;
+
+    const tdSize = document.createElement('td');
+    tdSize.textContent = formatPreviewSize(entry.size_bytes);
+
+    const tdModified = document.createElement('td');
+    tdModified.textContent = entry.modified_unix_secs
+      ? new Date(entry.modified_unix_secs * 1000).toLocaleString()
+      : '—';
+
+    tr.appendChild(tdCb);
+    tr.appendChild(tdFile);
+    tr.appendChild(tdSize);
+    tr.appendChild(tdModified);
+    tbody.appendChild(tr);
+  });
+
+  const totalGb = (totalBytes / (1024 * 1024 * 1024)).toFixed(2);
+  if (footerEl) footerEl.textContent = `Found: ${currentPreviewScanResults.length} | Reclaimable: ${totalGb} GB`;
+  updateClearPreviewsDeleteButtonState();
+}
+
+function initClearPreviewsModal() {
+  const openBtn = document.querySelector('#open-clear-previews-btn');
+  const modal = document.querySelector('#clear-previews-modal');
+  if (!openBtn || !modal) return;
+
+  const statusEl = document.querySelector('#clear-previews-status');
+  const closeBtn = document.querySelector('#clear-previews-close-btn');
+  const deleteBtn = document.querySelector('#clear-previews-delete-btn');
+  const selectAllBtn = document.querySelector('#clear-previews-select-all-btn');
+  const tbody = document.querySelector('#clear-previews-body');
+
+  openBtn.addEventListener('click', async () => {
+    const gameDir = document.querySelector('#hl-path-input')?.value?.trim() || '';
+    if (!gameDir) {
+      showToast("Configure the Half-Life Executable (hl.exe) path before auditing previews.", 'error');
+      return;
+    }
+
+    modal.style.display = 'flex';
+    currentPreviewScanResults = [];
+    if (statusEl) statusEl.textContent = 'Scanning for orphaned preview demos...';
+    if (tbody) tbody.innerHTML = '<tr><td colspan="4" class="table-empty">Scanning...</td></tr>';
+    updateClearPreviewsDeleteButtonState();
+
+    try {
+      currentPreviewScanResults = await scanOrphanedPreviews(gameDir);
+      if (statusEl) statusEl.textContent = 'Scan complete.';
+      renderClearPreviewsResults();
+    } catch (e) {
+      if (statusEl) statusEl.textContent = 'Scan failed.';
+      if (tbody) tbody.innerHTML = `<tr><td colspan="4" class="table-empty">Scan failed: ${e}</td></tr>`;
+    }
+  });
+
+  if (closeBtn) {
+    closeBtn.addEventListener('click', () => {
+      modal.style.display = 'none';
+    });
+  }
+
+  if (selectAllBtn) {
+    selectAllBtn.addEventListener('click', () => {
+      const boxes = document.querySelectorAll('.clear-previews-row-cb');
+      const allChecked = boxes.length > 0 && Array.from(boxes).every(cb => cb.checked);
+      boxes.forEach(cb => { cb.checked = !allChecked; });
+      updateClearPreviewsDeleteButtonState();
+    });
+  }
+
+  if (deleteBtn) {
+    deleteBtn.addEventListener('click', async () => {
+      const checked = document.querySelectorAll('.clear-previews-row-cb:checked');
+      const pathsToDelete = Array.from(checked).map(cb => cb.dataset.path);
+      if (pathsToDelete.length === 0) return;
+      if (!confirm(`Permanently delete ${pathsToDelete.length} orphaned preview demo(s)?`)) return;
+
+      deleteBtn.disabled = true;
+      try {
+        const deletedCount = await deleteOrphanedPreviews(pathsToDelete);
+        showToast(`Deleted ${deletedCount} orphaned preview demo(s).`, 'success');
+        currentPreviewScanResults = currentPreviewScanResults.filter(entry => !pathsToDelete.includes(entry.demo_path));
+        renderClearPreviewsResults();
+      } catch (e) {
+        showToast(`Deletion failed: ${e}`, 'error');
+        updateClearPreviewsDeleteButtonState();
+      }
+    });
+  }
+}
+
 export function initCaptureUI(getState) {
   const startBtn = document.querySelector('#start-capture-btn') || document.querySelector('#start-batch-btn');
   const cancelBtn = document.querySelector('#cancel-batch-btn');
@@ -267,6 +409,7 @@ export function initCaptureUI(getState) {
 
   renderInitCommandsList();
   renderCustomCommandsList();
+  initClearPreviewsModal();
 
   const addInitCommandBtn = document.querySelector('#add-init-command-btn');
   if (addInitCommandBtn) {

@@ -200,6 +200,29 @@ export async function deleteAuditFiles(paths) {
     });
 }
 
+/** Sweeps `<hl>/dod` for orphaned `*_preview.dem` bookmark previews (files
+ *  that still carry their `.dodtools_preview` sidecar) left behind by prior
+ *  capture sessions. `gameDir` is the configured hl.exe path. */
+export async function scanOrphanedPreviews(gameDir) {
+  return invoke("scan_orphaned_previews", { gameDir })
+    .catch((err) => {
+      console.error("IPC Execution Error (scan_orphaned_previews):", err);
+      showToast(`Preview scan failed: ${err}`, 'error');
+      throw err;
+    });
+}
+
+/** Deletes the given orphaned preview demos (and their sidecars). Resolves
+ *  to the number of preview demos actually removed. */
+export async function deleteOrphanedPreviews(filePaths) {
+  return invoke("delete_orphaned_previews", { filePaths })
+    .catch((err) => {
+      console.error("IPC Execution Error (delete_orphaned_previews):", err);
+      showToast(`Preview deletion failed: ${err}`, 'error');
+      throw err;
+    });
+}
+
 // NOTE: onRenderStatus and initRenderProgressListener have been intentionally
 // removed from this module. render_pane.js registers a single
 // listen('render_status', ...) listener directly to avoid double-registration
