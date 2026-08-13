@@ -1,7 +1,40 @@
-import { loadAndShowTelemetry } from './telemetry_pane.js';
+import { switchNavTab } from './nav.js';
+import { loadAnalyzerDemo } from './analyzer_pane.js';
 
 let currentDemo = null;
 let currentDemoIdx = null;
+
+/**
+ * Recomputes start_tick/end_tick/kill_count/duration_string/timeline_string
+ * from streak.kills[start_index..=end_index]. Mirrors
+ * `CaptureStreak::update_visuals` in native/src/patch/types.rs — must be
+ * called after any mutation of start_index/end_index so the display and the
+ * eventual capture payload (which is built from these same fields) agree.
+ */
+function updateStreakVisuals(streak) {
+  if (!streak.kills || streak.kills.length === 0) return;
+
+  const end = Math.min(streak.end_index, streak.kills.length - 1);
+  const start = Math.min(streak.start_index, end);
+  streak.start_index = start;
+  streak.end_index = end;
+
+  const slice = streak.kills.slice(start, end + 1);
+  streak.start_tick = slice[0][0];
+  streak.end_tick = slice[slice.length - 1][0];
+  streak.kill_count = slice.length;
+
+  const totalSecs = Math.round(Math.max(slice[slice.length - 1][1] - slice[0][1], 0));
+  streak.duration_string = `${Math.floor(totalSecs / 60)}:${String(totalSecs % 60).padStart(2, '0')}`;
+
+  const parts = slice.map(([, absTime, weapon], i) => {
+    const weaponClean = String(weapon || '').replace(/^Weapon::/, '');
+    if (i === 0) return weaponClean;
+    const gapSec = Math.round(Math.max(absTime - slice[i - 1][1], 0));
+    return `(+${Math.floor(gapSec / 60)}:${String(gapSec % 60).padStart(2, '0')}) ${weaponClean}`;
+  });
+  streak.timeline_string = parts.join(', ');
+}
 
 // Initialize event listeners for detail pane buttons
 window.addEventListener("DOMContentLoaded", () => {
@@ -52,7 +85,8 @@ export function renderDetailView(demo, selectedDemoIdx) {
     } else {
       telemetryBtn.disabled = false;
       telemetryBtn.onclick = () => {
-        loadAndShowTelemetry(demo.path);
+        switchNavTab('demo-analyzer');
+        loadAnalyzerDemo(demo.path);
       };
     }
   }
@@ -96,25 +130,21 @@ export function renderDetailView(demo, selectedDemoIdx) {
   `;
   const tbody = table.querySelector('tbody');
 
-  demo.streaks.forEach((streak, streakIdx) => {
-    // 1. POV Filter
-    if ((demo.is_pov || demo.recording_player) && streak.player !== demo.recording_player) {
-      if (demo.is_pov !== false) { // Assuming if HLTV, we don't skip unless we want strictly recording_player
-          // The prompt says: "If demo.pov === true or demo.recording_player exists, filter demo.streaks to only include streaks where streak.player === demo.recording_player. (If HLTV, display all)."
-          // But actually, demo might use player_index instead of player name, wait.
-      }
-    }
+  // Sequential display numbering is tracked separately from the streak's
+  // position in demo.streaks — POV/min-kills filtering below skips entries,
+  // and Row # must count only rows actually rendered (matches dev's
+  // `filtered_indices` + `row_idx + 1` behavior), not the raw array index.
+  let renderedRowNum = 0;
 
-    // Checking prompt again: "If demo.pov === true or demo.recording_player exists, filter demo.streaks to only include streaks where streak.player === demo.recording_player. (If HLTV, display all)."
-    // Let's implement exact logic:
+  demo.streaks.forEach((streak) => {
+    // 1. POV Filter
     const isHLTV = !demo.is_pov && !demo.recording_player;
     if (!isHLTV) {
-       // if we have recording_player, we filter. But in `detail_pane.js` it previously used `streak.player_index !== demo.local_player_index`. Let's use `streak.player === demo.recording_player` as requested. If not present, fallback to local_player_index.
        const recPlayer = demo.recording_player || demo.local_player_index;
        const strPlayer = streak.player || streak.player_index;
        if (strPlayer !== recPlayer) return;
     }
-    
+
     // 2. Min Kills filter
     if (streak.kill_count < minKills) {
       return;
@@ -124,24 +154,30 @@ export function renderDetailView(demo, selectedDemoIdx) {
     if (streak.selected === undefined) {
       streak.selected = false;
     }
+    if (streak.start_index === undefined) streak.start_index = 0;
+    if (streak.end_index === undefined) {
+      streak.end_index = Math.max((streak.kills || []).length - 1, 0);
+    }
+
+    renderedRowNum++;
+    const rowNum = renderedRowNum;
 
     const tr = document.createElement('tr');
     tr.style.borderBottom = '1px solid #333';
-    
-    const rowNum = streakIdx + 1;
+
     const durTicks = streak.end_tick - streak.start_tick;
     const tickrate = demo.tickrate || 100;
     const durSecs = (durTicks / tickrate).toFixed(1);
-    
+
     // Time logic
     const total_seconds = Math.floor(streak.start_tick / (demo.tickrate || 100));
     const mins = Math.floor(total_seconds / 60);
     const secs = Math.floor(total_seconds % 60).toString().padStart(2, '0');
     const timeStr = `${mins}:${secs}`;
-    
-    // Kill Range: use the precomputed timeline_string from the backend
+
+    // Details: precomputed weapon/timing chain from the backend
     // (e.g. "Rifle (+0:03) Rifle" — first kill weapon + gap + weapon chain).
-    const killRange = streak.timeline_string || `${streak.kill_count} kills`;
+    const timelineText = streak.timeline_string || `${streak.kill_count} kills`;
 
     // Status badge colours matching HighlightStatus enum
     const statusColors = {
@@ -153,28 +189,80 @@ export function renderDetailView(demo, selectedDemoIdx) {
     const statusLabel = streak.status || 'Pending';
     const statusColor = statusColors[statusLabel] || '#888';
 
+    const maxKillIdx = Math.max((streak.kills || []).length - 1, 0);
+    const isRangeModified = streak.start_index > 0 || streak.end_index < maxKillIdx;
+
     tr.innerHTML = `
       <td style="padding: 8px;">${rowNum}</td>
       <td style="padding: 8px;">
         <input type="checkbox" class="streak-select-cb" ${streak.selected ? 'checked' : ''} />
       </td>
-      <td style="padding: 8px; font-size: 0.8em; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${killRange}">${killRange}</td>
+      <td style="padding: 8px;">
+        <div style="display:flex;align-items:center;gap:4px;${isRangeModified ? 'color:#ff9800;' : ''}">
+          <input type="number" class="kr-start-input" min="1" max="${maxKillIdx + 1}"
+                 value="${streak.start_index + 1}" style="width:38px;background:#1a1a1a;color:inherit;border:1px solid #444;border-radius:2px;" />
+          <span>-</span>
+          <input type="number" class="kr-end-input" min="1" max="${maxKillIdx + 1}"
+                 value="${streak.end_index + 1}" style="width:38px;background:#1a1a1a;color:inherit;border:1px solid #444;border-radius:2px;" />
+          ${isRangeModified ? '<button type="button" class="kr-reset-btn" title="Reset to full range" style="background:transparent;border:1px solid #555;border-radius:2px;color:#aaa;cursor:pointer;">↺</button>' : ''}
+        </div>
+      </td>
       <td style="padding: 8px; font-weight: bold;">${streak.kill_count}</td>
       <td style="padding: 8px;">${timeStr}</td>
       <td style="padding: 8px;">${durSecs}s</td>
       <td style="padding: 8px;">
-        <span style="color: ${statusColor}; font-size: 0.85em;">${statusLabel}</span>
+        <select class="streak-status-select" style="background: #1a1a1a; color: ${statusColor}; border: 1px solid #444; border-radius: 3px; padding: 2px; font-size: 0.85em;">
+          ${['None', 'Pending', 'Captured', 'Rendered'].map(s =>
+            `<option value="${s}" ${s === statusLabel ? 'selected' : ''}>${s}</option>`
+          ).join('')}
+        </select>
       </td>
       <td style="padding: 8px;">
-        <input type="text" placeholder="Add note..." style="background: #1a1a1a; color: #fff; border: 1px solid #444; border-radius: 3px; padding: 2px; width: 100%;" />
+        <input type="text" class="streak-notes-input" placeholder="Add note..." value="${(streak.notes || '').replace(/"/g, '&quot;')}" style="background: #1a1a1a; color: #fff; border: 1px solid #444; border-radius: 3px; padding: 2px; width: 100%;" />
       </td>
-      <td style="padding: 8px; font-size: 0.8em;">${(streak.kills || []).map(k => k[2] || 'kill').join(', ')}</td>
+      <td style="padding: 8px; font-size: 0.8em; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${timelineText}">${timelineText}</td>
     `;
 
     const cb = tr.querySelector('.streak-select-cb');
     cb.addEventListener('change', (e) => {
       streak.selected = e.target.checked;
       renderTimeline(currentDemo);
+    });
+
+    const startInput = tr.querySelector('.kr-start-input');
+    const endInput = tr.querySelector('.kr-end-input');
+    startInput.addEventListener('change', () => {
+      const v = Math.min(Math.max(parseInt(startInput.value, 10) - 1, 0), streak.end_index);
+      streak.start_index = Number.isNaN(v) ? 0 : v;
+      updateStreakVisuals(streak);
+      renderDetailView(currentDemo, currentDemoIdx);
+    });
+    endInput.addEventListener('change', () => {
+      const v = Math.max(Math.min(parseInt(endInput.value, 10) - 1, maxKillIdx), streak.start_index);
+      streak.end_index = Number.isNaN(v) ? maxKillIdx : v;
+      updateStreakVisuals(streak);
+      renderDetailView(currentDemo, currentDemoIdx);
+    });
+
+    const resetBtn = tr.querySelector('.kr-reset-btn');
+    if (resetBtn) {
+      resetBtn.addEventListener('click', () => {
+        streak.start_index = 0;
+        streak.end_index = maxKillIdx;
+        updateStreakVisuals(streak);
+        renderDetailView(currentDemo, currentDemoIdx);
+      });
+    }
+
+    const statusSelect = tr.querySelector('.streak-status-select');
+    statusSelect.addEventListener('change', (e) => {
+      streak.status = e.target.value;
+      statusSelect.style.color = statusColors[e.target.value] || '#888';
+    });
+
+    const notesInput = tr.querySelector('.streak-notes-input');
+    notesInput.addEventListener('input', (e) => {
+      streak.notes = e.target.value;
     });
 
     tbody.appendChild(tr);
