@@ -1,3 +1,4 @@
+use crate::capture_manager::CustomCommandPayload;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -13,7 +14,47 @@ pub struct AppSettings {
     pub capture_fps: i32,
     pub pre_roll_seconds: f32,
     pub post_roll_seconds: f32,
+    #[serde(default = "default_resolution_width")]
+    pub resolution_width: i32,
+    #[serde(default = "default_resolution_height")]
+    pub resolution_height: i32,
+    #[serde(default)]
+    pub separate_hud: bool,
+    #[serde(default = "default_add_condebug")]
+    pub add_condebug: bool,
+    #[serde(default)]
+    pub auto_clear_logs: bool,
+    #[serde(default)]
+    pub auto_clear_previews: bool,
+    #[serde(default)]
+    pub auto_clear_temp_demos: bool,
+    #[serde(default)]
+    pub record_start_lead: f32,
+    #[serde(default)]
+    pub record_stop_trail: f32,
+    #[serde(default = "default_initial_delay")]
+    pub initial_delay: f32,
+    #[serde(default = "default_fast_forward_speed")]
+    pub fast_forward_speed: f32,
+    #[serde(default)]
+    pub primary_media_dir: Option<String>,
+    #[serde(default)]
+    pub backup_media_dir: Option<String>,
+    /// Target Output Drives pool — separate from `primary_media_dir` /
+    /// `backup_media_dir` (see capture_pane.js's driveDirs fallback chain).
+    #[serde(default)]
+    pub target_drives: Vec<String>,
+    #[serde(default)]
+    pub init_commands: Vec<String>,
+    #[serde(default)]
+    pub custom_commands: Vec<CustomCommandPayload>,
 }
+
+fn default_resolution_width() -> i32 { 1280 }
+fn default_resolution_height() -> i32 { 720 }
+fn default_add_condebug() -> bool { true }
+fn default_initial_delay() -> f32 { 3.0 }
+fn default_fast_forward_speed() -> f32 { 0.05 }
 
 impl Default for AppSettings {
     fn default() -> Self {
@@ -26,6 +67,22 @@ impl Default for AppSettings {
             capture_fps: 300,
             pre_roll_seconds: 2.0,
             post_roll_seconds: 0.6,
+            resolution_width: default_resolution_width(),
+            resolution_height: default_resolution_height(),
+            separate_hud: false,
+            add_condebug: default_add_condebug(),
+            auto_clear_logs: false,
+            auto_clear_previews: false,
+            auto_clear_temp_demos: false,
+            record_start_lead: 0.0,
+            record_stop_trail: 0.0,
+            initial_delay: default_initial_delay(),
+            fast_forward_speed: default_fast_forward_speed(),
+            primary_media_dir: None,
+            backup_media_dir: None,
+            target_drives: Vec::new(),
+            init_commands: Vec::new(),
+            custom_commands: Vec::new(),
         }
     }
 }

@@ -10,7 +10,7 @@ import {
 } from './ipc_bridge.js';
 import { renderMasterList, initMasterPane } from './master_pane.js';
 import { renderDetailView, initDetailPane } from './detail_pane.js';
-import { initCaptureUI } from './capture_pane.js';
+import { initCaptureUI, getCommandsState, hydrateCommandsState } from './capture_pane.js';
 import { initRenderUI } from './render_pane.js';
 import { renderTelemetry } from './telemetry_pane.js';
 import { initAuditorPane } from './auditor_pane.js';
@@ -37,6 +37,26 @@ window.addEventListener("DOMContentLoaded", async () => {
     const captureFps = parseInt(document.querySelector('#config-capture-fps')?.value, 10) || 300;
     const preRoll = parseFloat(document.querySelector('#config-pre-roll')?.value) || 2.0;
     const postRoll = parseFloat(document.querySelector('#config-post-roll')?.value) || 0.6;
+
+    const resWidth = parseInt(document.querySelector('#config-res-width')?.value, 10) || 1280;
+    const resHeight = parseInt(document.querySelector('#config-res-height')?.value, 10) || 720;
+    const separateHud = document.querySelector('#config-separate-hud')?.checked || false;
+    const addCondebug = document.querySelector('#config-add-condebug')?.checked || false;
+
+    const autoClearLogs = document.querySelector('#config-auto-clear-logs')?.checked || false;
+    const autoClearPreviews = document.querySelector('#config-auto-clear-previews')?.checked || false;
+    const autoClearTempDemos = document.querySelector('#config-auto-clear-temp-demos')?.checked || false;
+
+    const recordStartLead = parseFloat(document.querySelector('#config-record-start-lead')?.value) || 0.0;
+    const recordStopTrail = parseFloat(document.querySelector('#config-record-stop-trail')?.value) || 0.0;
+    const initialDelay = parseFloat(document.querySelector('#config-initial-delay')?.value) || 3.0;
+    const fastForwardSpeed = parseFloat(document.querySelector('#config-fast-forward-speed')?.value) || 0.05;
+
+    const primaryMediaDir = document.querySelector('#primary-media-dir-input')?.value?.trim() || null;
+    const backupMediaDir = document.querySelector('#backup-media-dir-input')?.value?.trim() || null;
+
+    const { init_commands, custom_commands } = getCommandsState();
+
     const settingsPayload = {
       hlae_path: hlaePath,
       hl_path: hlPath,
@@ -45,7 +65,23 @@ window.addEventListener("DOMContentLoaded", async () => {
       language: "en",
       capture_fps: captureFps,
       pre_roll_seconds: preRoll,
-      post_roll_seconds: postRoll
+      post_roll_seconds: postRoll,
+      resolution_width: resWidth,
+      resolution_height: resHeight,
+      separate_hud: separateHud,
+      add_condebug: addCondebug,
+      auto_clear_logs: autoClearLogs,
+      auto_clear_previews: autoClearPreviews,
+      auto_clear_temp_demos: autoClearTempDemos,
+      record_start_lead: recordStartLead,
+      record_stop_trail: recordStopTrail,
+      initial_delay: initialDelay,
+      fast_forward_speed: fastForwardSpeed,
+      primary_media_dir: primaryMediaDir,
+      backup_media_dir: backupMediaDir,
+      target_drives: targetDrives,
+      init_commands,
+      custom_commands
     };
     try {
       await saveSettings(settingsPayload);
@@ -82,9 +118,64 @@ window.addEventListener("DOMContentLoaded", async () => {
         const inputEl = document.querySelector('#config-post-roll');
         if (inputEl) inputEl.value = settings.post_roll_seconds;
       }
+      if (settings.resolution_width) {
+        const inputEl = document.querySelector('#config-res-width');
+        if (inputEl) inputEl.value = settings.resolution_width;
+      }
+      if (settings.resolution_height) {
+        const inputEl = document.querySelector('#config-res-height');
+        if (inputEl) inputEl.value = settings.resolution_height;
+      }
+      const separateHudEl = document.querySelector('#config-separate-hud');
+      if (separateHudEl) separateHudEl.checked = !!settings.separate_hud;
+      const addCondebugEl = document.querySelector('#config-add-condebug');
+      if (addCondebugEl) addCondebugEl.checked = !!settings.add_condebug;
+      const autoClearLogsEl = document.querySelector('#config-auto-clear-logs');
+      if (autoClearLogsEl) autoClearLogsEl.checked = !!settings.auto_clear_logs;
+      const autoClearPreviewsEl = document.querySelector('#config-auto-clear-previews');
+      if (autoClearPreviewsEl) autoClearPreviewsEl.checked = !!settings.auto_clear_previews;
+      const autoClearTempDemosEl = document.querySelector('#config-auto-clear-temp-demos');
+      if (autoClearTempDemosEl) autoClearTempDemosEl.checked = !!settings.auto_clear_temp_demos;
+      if (settings.record_start_lead) {
+        const inputEl = document.querySelector('#config-record-start-lead');
+        if (inputEl) inputEl.value = settings.record_start_lead;
+      }
+      if (settings.record_stop_trail) {
+        const inputEl = document.querySelector('#config-record-stop-trail');
+        if (inputEl) inputEl.value = settings.record_stop_trail;
+      }
+      if (settings.initial_delay) {
+        const inputEl = document.querySelector('#config-initial-delay');
+        if (inputEl) inputEl.value = settings.initial_delay;
+      }
+      if (settings.fast_forward_speed) {
+        const inputEl = document.querySelector('#config-fast-forward-speed');
+        if (inputEl) inputEl.value = settings.fast_forward_speed;
+      }
+      if (settings.primary_media_dir) {
+        const inputEl = document.querySelector('#primary-media-dir-input');
+        if (inputEl) inputEl.value = settings.primary_media_dir;
+      }
+      if (settings.backup_media_dir) {
+        const inputEl = document.querySelector('#backup-media-dir-input');
+        if (inputEl) inputEl.value = settings.backup_media_dir;
+      }
       if (Array.isArray(settings.pinned_folders) && settings.pinned_folders.length > 0) {
         scanPaths = [...settings.pinned_folders];
       }
+      if (Array.isArray(settings.target_drives) && settings.target_drives.length > 0) {
+        targetDrives = [...settings.target_drives];
+        const driveListEl = document.querySelector('#target-drive-list');
+        if (driveListEl) {
+          targetDrives.forEach(drivePath => {
+            const li = document.createElement('li');
+            li.textContent = drivePath;
+            driveListEl.appendChild(li);
+          });
+        }
+        updateExportPoolIndicator();
+      }
+      hydrateCommandsState(settings.init_commands, settings.custom_commands);
     }
   } catch (err) {
     console.error("Error loading startup settings:", err);

@@ -31,6 +31,35 @@ function updateRowBadges(statusText, colorHex) {
 let initCommands = [];
 let customCommands = [];
 
+/** Scrapes the current Init/Custom Commands state for settings persistence
+ *  (raw, untrimmed — mirrors in-progress edits rather than the filtered
+ *  shape `buildCapturePayload` sends to `start_capture_batch`). */
+export function getCommandsState() {
+  return {
+    init_commands: [...initCommands],
+    custom_commands: customCommands.map(c => ({
+      command: c.command,
+      relation: c.relation === 'After' ? 'After' : 'Before',
+      offset_seconds: c.offsetSeconds,
+    })),
+  };
+}
+
+/** Hydrates Init/Custom Commands state from persisted settings and
+ *  re-renders both lists so they appear in the UI on boot. */
+export function hydrateCommandsState(persistedInitCommands, persistedCustomCommands) {
+  initCommands = Array.isArray(persistedInitCommands) ? [...persistedInitCommands] : [];
+  customCommands = Array.isArray(persistedCustomCommands)
+    ? persistedCustomCommands.map(c => ({
+        command: c.command || '',
+        relation: c.relation === 'After' ? 'After' : 'Before',
+        offsetSeconds: typeof c.offset_seconds === 'number' ? c.offset_seconds : 2.0,
+      }))
+    : [];
+  renderInitCommandsList();
+  renderCustomCommandsList();
+}
+
 function escAttr(s) {
   return String(s ?? '').replace(/"/g, '&quot;');
 }
