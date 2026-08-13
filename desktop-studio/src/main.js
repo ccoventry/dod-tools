@@ -309,9 +309,15 @@ window.addEventListener("DOMContentLoaded", async () => {
     });
   }
 
-  // Auto-scan helper function
-  async function triggerAutoScan() {
-    if (scanPaths.length === 0) return;
+  // Scans only the given paths and merges the results into the existing
+  // master list (replacing entries with matching `path`, appending new ones).
+  // `scanPaths` itself is a separately-persisted "known library" list reused
+  // by the capture batch payload (`capture_directories`) — it must NOT be
+  // re-walked on every add, or every scan re-processes every folder ever
+  // added across the app's lifetime (dev only ever re-ingests the paths just
+  // picked in that action; see views/capture/workspace.rs Add Files/Add Folder).
+  async function triggerAutoScan(pathsToScan) {
+    if (!pathsToScan || pathsToScan.length === 0) return;
 
     const scanStatusEl = document.querySelector('#scan-status');
     const addFilesBtn = document.querySelector('#add-files-btn');
@@ -328,14 +334,31 @@ window.addEventListener("DOMContentLoaded", async () => {
     if (masterTableBody) masterTableBody.innerHTML = '<tr style="text-align:center"><td colspan="7">Scanning... please wait.</td></tr>';
 
     try {
-      const demos = await scanDirectory(scanPaths);
-      currentScannedDemos = demos;
+      const newlyScanned = await scanDirectory(pathsToScan);
+
+      // Merge: replace any existing demo with the same path, append new ones.
+      // (Prior behavior replaced the whole master list with the result of
+      // re-scanning everything in `scanPaths`, which is what caused a single
+      // "Add Demo Files" click to report hundreds of demos.)
+      const indexByPath = new Map(currentScannedDemos.map((d, i) => [d.path, i]));
+      newlyScanned.forEach((demo) => {
+        const existingIdx = indexByPath.get(demo.path);
+        if (existingIdx !== undefined) {
+          currentScannedDemos[existingIdx] = demo;
+        } else {
+          indexByPath.set(demo.path, currentScannedDemos.length);
+          currentScannedDemos.push(demo);
+        }
+      });
+
       // footer is also updated on the Complete scan_progress event, but set
       // it here in case the event arrives before renderMasterList finishes.
-      updateDemoFooter(demos);
-      showToast(`Scan complete (${demos.length} demos found)`, 'success');
-      selectedDemoIdx = demos.length > 0 ? 0 : null;
-      renderMasterList(demos, selectedDemoIdx, async (demo, idx) => {
+      updateDemoFooter(currentScannedDemos);
+      showToast(`Scan complete (${newlyScanned.length} demo(s) found)`, 'success');
+      selectedDemoIdx = newlyScanned.length > 0
+        ? currentScannedDemos.indexOf(newlyScanned[0])
+        : (currentScannedDemos.length > 0 ? 0 : null);
+      renderMasterList(currentScannedDemos, selectedDemoIdx, async (demo, idx) => {
         selectedDemoIdx = idx;
         renderDetailView(demo, selectedDemoIdx);
         // Update the View Telemetry button with the selected demo path.
@@ -354,19 +377,19 @@ window.addEventListener("DOMContentLoaded", async () => {
           renderTelemetry(null);
         }
       });
-      if (demos.length > 0) {
-        const firstDemo = demos[0];
-        renderDetailView(firstDemo, selectedDemoIdx);
-        // Prime the telemetry button for the auto-selected first demo.
+      if (selectedDemoIdx !== null) {
+        const selectedDemo = currentScannedDemos[selectedDemoIdx];
+        renderDetailView(selectedDemo, selectedDemoIdx);
+        // Prime the telemetry button for the auto-selected demo.
         const telemBtn = document.querySelector('#view-telemetry-btn');
         if (telemBtn) {
-          telemBtn.dataset.demoPath = firstDemo.path;
+          telemBtn.dataset.demoPath = selectedDemo.path;
           telemBtn.disabled = false;
         }
         const telemContainer = document.getElementById('telemetry-container');
         if (telemContainer) telemContainer.innerHTML = '<p style="color: #888; padding: 6px;">Analyzing demo...</p>';
-        analyzeDemo(firstDemo.path).then(renderTelemetry).catch((err) => {
-          console.error("Analysis failed for first demo:", err);
+        analyzeDemo(selectedDemo.path).then(renderTelemetry).catch((err) => {
+          console.error("Analysis failed for selected demo:", err);
           renderTelemetry(null);
         });
       }
@@ -399,7 +422,9 @@ window.addEventListener("DOMContentLoaded", async () => {
             }
           });
           await persistAppSettings();
-          await triggerAutoScan();
+          // Scan only the files just picked, not the full accumulated
+          // scanPaths history — see triggerAutoScan's doc comment.
+          await triggerAutoScan(files);
         }
       } catch (err) {
         console.error("Error opening demo files dialog:", err);
@@ -422,7 +447,7 @@ window.addEventListener("DOMContentLoaded", async () => {
           if (!scanPaths.includes(folder)) {
             scanPaths.push(folder);
             await persistAppSettings();
-            await triggerAutoScan();
+            await triggerAutoScan([folder]);
           }
         }
       } catch (err) {
