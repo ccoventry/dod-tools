@@ -9,7 +9,7 @@ import {
   saveSettings
 } from './ipc_bridge.js';
 import { renderMasterList, initMasterPane } from './master_pane.js';
-import { renderDetailView } from './detail_pane.js';
+import { renderDetailView, initDetailPane } from './detail_pane.js';
 import { initCaptureUI } from './capture_pane.js';
 import { initRenderUI } from './render_pane.js';
 import { renderTelemetry } from './telemetry_pane.js';
@@ -624,6 +624,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   };
 
   initMasterPane(onDeleteDemo);
+  initDetailPane(() => currentScannedDemos);
   initAnalyzerPane();
 
   // Context-Aware Shortcut Dispatcher

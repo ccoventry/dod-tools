@@ -28,9 +28,9 @@ IMMUTABLE MILESTONES ARCHITECTURE RULES:
 
 ### Frontend Migration & Capture Studio Parity
 - [x] Feature: Tauri & Vite Core Migration — Completed initial frontend stack migration from native `egui` to Tauri + Vite architecture in `desktop-studio/`.
-- [ ] Task: Fix Capture Output Drives & Session ID Pipeline Defect — Rebind `capture_directories` to output drive paths and stamp `session_id` timestamp in payload.
-- [ ] Feature: Restore Global & Per-Demo `viewdemo` Bookmark Previews — Patch `BOOKMARK` director events and launch HLAE against `viewdemo` for single demos or batch queues.
-- [ ] Task: Capture Studio UI Polish & Defect Fixes — Rename tab to "Capture Studio", fix detail pane leading comma / missing weapon string bugs, restore "Sel" checkboxes, and add dropdown chevrons.
+- [x] Task: Fix Capture Output Drives & Session ID Pipeline Defect — Rebound `capture_directories` to the Target Output Drives pool (with Primary/Backup Media Dir fallback) and stamped a `session_YYYYMMDD_HHMMSS` `session_id` in the payload, extracted into `PatcherConfig` on the Rust side.
+- [x] Feature: Restore Global & Per-Demo `viewdemo` Bookmark Previews — Patched per-highlight `svc_director` bookmark events via `build_preview_patch_jobs` and launch HLAE directly against `viewdemo` for a single demo, or generate bookmarked preview files across the whole selection without launching.
+- [x] Task: Capture Studio UI Polish & Defect Fixes — Renamed tab to "Capture Studio"; fixed the leading-comma/missing-weapon bug at its root (a `localizations/` path-resolution failure in the Tauri app's runtime working directory, not the JS join logic); restored visible "Sel" checkboxes (a global `appearance: none` CSS reset had stripped native checkbox rendering app-wide); added dropdown chevrons; removed the dead "POV Only" toggle.
 - [ ] Task: Verify `feature/tauri-migration` branch functionality for `dev` merge.
 
 ### UI/UX Polish

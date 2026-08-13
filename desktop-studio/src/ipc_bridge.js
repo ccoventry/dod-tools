@@ -46,11 +46,26 @@ export async function startCaptureBatch(payload) {
     });
 }
 
-export async function launchLivePreview(demoPath, hlaePath, gamePath, streak) {
-  return invoke("launch_live_preview", { demoPath, hlaePath, gamePath, streak })
+/** Patches the given demo's selected highlights into a single `<stem>_preview.dem`
+ *  (BOOKMARK/director events at each highlight) and immediately launches it in
+ *  HLAE via `+viewdemo`. */
+export async function launchDemoPreview(hlaePath, gamePath, streaks) {
+  return invoke("launch_demo_preview", { hlaePath, gamePath, streaks })
     .catch((err) => {
-      console.error("IPC Execution Error (launch_live_preview):", err);
+      console.error("IPC Execution Error (launch_demo_preview):", err);
       showToast(`Preview failed: ${err}`, 'error');
+      throw err;
+    });
+}
+
+/** Patches every demo with selected highlights into its own `<stem>_preview.dem`
+ *  (grouped server-side by source demo) without launching HLAE. Resolves to the
+ *  number of preview demos generated. */
+export async function generateAllPreviews(hlaePath, gamePath, streaks) {
+  return invoke("generate_all_previews", { hlaePath, gamePath, streaks })
+    .catch((err) => {
+      console.error("IPC Execution Error (generate_all_previews):", err);
+      showToast(`Batch preview generation failed: ${err}`, 'error');
       throw err;
     });
 }

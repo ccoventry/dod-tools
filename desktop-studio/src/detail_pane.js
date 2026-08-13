@@ -1,10 +1,34 @@
 import { switchNavTab } from './nav.js';
 import { loadAnalyzerDemo } from './analyzer_pane.js';
-import { launchLivePreview } from './ipc_bridge.js';
+import { launchDemoPreview, generateAllPreviews } from './ipc_bridge.js';
 import { showToast } from './toast.js';
 
 let currentDemo = null;
 let currentDemoIdx = null;
+// Getter supplied by main.js so "Generate All Previews" can aggregate selected
+// streaks across every loaded demo, not just the one currently displayed.
+let currentGetAllDemos = null;
+
+export function initDetailPane(getAllDemos) {
+  currentGetAllDemos = getAllDemos;
+}
+
+/** Reflects current selection state onto the Launch Preview (per-demo) and
+ *  Generate All Previews (global) buttons — disabled whenever there are zero
+ *  selected highlights in their respective scope. */
+function updatePreviewButtonStates() {
+  const launchBtn = document.querySelector('#btn-launch-preview');
+  if (launchBtn) {
+    const hasLocalSelection = !!(currentDemo && currentDemo.streaks && currentDemo.streaks.some(s => s.selected));
+    launchBtn.disabled = !hasLocalSelection;
+  }
+  const generateAllBtn = document.querySelector('#btn-generate-all-previews');
+  if (generateAllBtn) {
+    const allDemos = currentGetAllDemos ? currentGetAllDemos() : [];
+    const hasGlobalSelection = (allDemos || []).some(d => (d.streaks || []).some(s => s.selected));
+    generateAllBtn.disabled = !hasGlobalSelection;
+  }
+}
 
 /**
  * Recomputes start_tick/end_tick/kill_count/duration_string/timeline_string
@@ -30,7 +54,11 @@ function updateStreakVisuals(streak) {
   streak.duration_string = `${Math.floor(totalSecs / 60)}:${String(totalSecs % 60).padStart(2, '0')}`;
 
   const parts = slice.map(([, absTime, weapon], i) => {
-    const weaponClean = String(weapon || '').replace(/^Weapon::/, '');
+    // Falls back to a labelled placeholder rather than an empty string so an
+    // unresolved weapon name (e.g. a missing localization key) can never
+    // leave a blank array element — `Array.prototype.join` would otherwise
+    // render that as an orphaned leading/embedded separator with no name.
+    const weaponClean = String(weapon || '').replace(/^Weapon::/, '').trim() || 'Unknown';
     if (i === 0) return weaponClean;
     const gapSec = Math.round(Math.max(absTime - slice[i - 1][1], 0));
     return `(+${Math.floor(gapSec / 60)}:${String(gapSec % 60).padStart(2, '0')}) ${weaponClean}`;
@@ -43,7 +71,8 @@ window.addEventListener("DOMContentLoaded", () => {
   const btnSelectAll = document.querySelector('#btn-select-all');
   const btnDeselectAll = document.querySelector('#btn-deselect-all');
   const inputMinKills = document.querySelector('#input-min-kills');
-  const hideNonPovCheckbox = document.querySelector('#config-hide-non-pov');
+  const btnLaunchPreview = document.querySelector('#btn-launch-preview');
+  const btnGenerateAllPreviews = document.querySelector('#btn-generate-all-previews');
 
   if (btnSelectAll) {
     btnSelectAll.addEventListener('click', () => {
@@ -70,11 +99,66 @@ window.addEventListener("DOMContentLoaded", () => {
       renderDetailView(currentDemo, currentDemoIdx);
     });
   }
+
+  if (btnLaunchPreview) {
+    btnLaunchPreview.addEventListener('click', async () => {
+      const hlaePath = document.querySelector('#hlae-path-input')?.value?.trim();
+      const hlPath = document.querySelector('#hl-path-input')?.value?.trim();
+      if (!hlaePath || !hlPath) {
+        showToast('Configure the HLAE and Half-Life executable paths in Batch Capture Config before previewing.', 'error');
+        return;
+      }
+      if (!currentDemo || !currentDemo.streaks) return;
+      const selected = currentDemo.streaks.filter(s => s.selected);
+      if (selected.length === 0) return;
+
+      btnLaunchPreview.disabled = true;
+      const originalLabel = btnLaunchPreview.textContent;
+      btnLaunchPreview.textContent = 'Launching…';
+      try {
+        await launchDemoPreview(hlaePath, hlPath, selected);
+        showToast('Preview launching in HLAE...', 'info');
+      } catch (err) {
+        // Already toasted by ipc_bridge.js.
+      } finally {
+        btnLaunchPreview.textContent = originalLabel;
+        updatePreviewButtonStates();
+      }
+    });
+  }
+
+  if (btnGenerateAllPreviews) {
+    btnGenerateAllPreviews.addEventListener('click', async () => {
+      const hlaePath = document.querySelector('#hlae-path-input')?.value?.trim();
+      const hlPath = document.querySelector('#hl-path-input')?.value?.trim();
+      if (!hlaePath || !hlPath) {
+        showToast('Configure the HLAE and Half-Life executable paths in Batch Capture Config before previewing.', 'error');
+        return;
+      }
+      const allDemos = currentGetAllDemos ? currentGetAllDemos() : [];
+      const allSelected = (allDemos || []).flatMap(d => (d.streaks || []).filter(s => s.selected));
+      if (allSelected.length === 0) return;
+
+      btnGenerateAllPreviews.disabled = true;
+      const originalLabel = btnGenerateAllPreviews.textContent;
+      btnGenerateAllPreviews.textContent = 'Generating…';
+      try {
+        const count = await generateAllPreviews(hlaePath, hlPath, allSelected);
+        showToast(`Generated ${count} preview demo(s). Load them manually via HLAE.`, 'success');
+      } catch (err) {
+        // Already toasted by ipc_bridge.js.
+      } finally {
+        btnGenerateAllPreviews.textContent = originalLabel;
+        updatePreviewButtonStates();
+      }
+    });
+  }
 });
 
 export function renderDetailView(demo, selectedDemoIdx) {
   currentDemo = demo;
   currentDemoIdx = selectedDemoIdx;
+  updatePreviewButtonStates();
 
   const titleEl = document.querySelector('#detail-demo-title');
   const container = document.querySelector('#detail-streaks-container');
@@ -138,7 +222,7 @@ export function renderDetailView(demo, selectedDemoIdx) {
   // `filtered_indices` + `row_idx + 1` behavior), not the raw array index.
   let renderedRowNum = 0;
 
-  demo.streaks.forEach((streak) => {
+  demo.streaks.forEach((streak, streakIdx) => {
     // 1. POV Filter
     const isHLTV = !demo.is_pov && !demo.recording_player;
     if (!isHLTV) {
@@ -196,9 +280,8 @@ export function renderDetailView(demo, selectedDemoIdx) {
 
     tr.innerHTML = `
       <td style="padding: 8px;">${rowNum}</td>
-      <td style="padding: 8px; white-space: nowrap;">
-        <input type="checkbox" class="streak-select-cb" ${streak.selected ? 'checked' : ''} />
-        <button type="button" class="streak-preview-btn" title="Launch a live HLAE preview of this highlight" style="margin-left: 4px; padding: 1px 5px; font-size: 11px;">▶</button>
+      <td style="padding: 8px;">
+        <input type="checkbox" class="streak-select-cb" data-index="${streakIdx}" ${streak.selected ? 'checked' : ''} />
       </td>
       <td style="padding: 8px;">
         <div style="display:flex;align-items:center;gap:4px;${isRangeModified ? 'color:#ff9800;' : ''}">
@@ -214,7 +297,7 @@ export function renderDetailView(demo, selectedDemoIdx) {
       <td style="padding: 8px;">${timeStr}</td>
       <td style="padding: 8px;">${durSecs}s</td>
       <td style="padding: 8px;">
-        <select class="streak-status-select" style="background: #1a1a1a; color: ${statusColor}; border: 1px solid #444; border-radius: 3px; padding: 2px; font-size: 0.85em;">
+        <select class="streak-status-select" style="color: ${statusColor}; font-size: 0.85em;">
           ${['None', 'Pending', 'Captured', 'Rendered'].map(s =>
             `<option value="${s}" ${s === statusLabel ? 'selected' : ''}>${s}</option>`
           ).join('')}
@@ -223,35 +306,14 @@ export function renderDetailView(demo, selectedDemoIdx) {
       <td style="padding: 8px;">
         <input type="text" class="streak-notes-input" placeholder="Add note..." value="${(streak.notes || '').replace(/"/g, '&quot;')}" style="background: #1a1a1a; color: #fff; border: 1px solid #444; border-radius: 3px; padding: 2px; width: 100%;" />
       </td>
-      <td style="padding: 8px; font-size: 0.8em; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${timelineText}">${timelineText}</td>
+      <td class="details-cell" title="${timelineText}">${timelineText}</td>
     `;
 
     const cb = tr.querySelector('.streak-select-cb');
     cb.addEventListener('change', (e) => {
       streak.selected = e.target.checked;
       renderTimeline(currentDemo);
-    });
-
-    const previewBtn = tr.querySelector('.streak-preview-btn');
-    previewBtn.addEventListener('click', async () => {
-      const hlaePath = document.querySelector('#hlae-path-input')?.value?.trim();
-      const hlPath = document.querySelector('#hl-path-input')?.value?.trim();
-      if (!hlaePath || !hlPath) {
-        showToast('Configure the HLAE and Half-Life executable paths in Batch Capture Config before previewing.', 'error');
-        return;
-      }
-      previewBtn.disabled = true;
-      const originalLabel = previewBtn.textContent;
-      previewBtn.textContent = '…';
-      try {
-        await launchLivePreview(currentDemo.path, hlaePath, hlPath, streak);
-        showToast('Preview launching in HLAE...', 'info');
-      } catch (err) {
-        // Already toasted by ipc_bridge.js.
-      } finally {
-        previewBtn.disabled = false;
-        previewBtn.textContent = originalLabel;
-      }
+      updatePreviewButtonStates();
     });
 
     const startInput = tr.querySelector('.kr-start-input');
