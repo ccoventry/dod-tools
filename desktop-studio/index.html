@@ -245,6 +245,9 @@
                   <input type="checkbox" id="config-auto-clear-temp-demos" />
                   <label for="config-auto-clear-temp-demos">Auto-clear Temp Demos</label>
                 </div>
+                <div class="control-group">
+                  <button id="open-clear-previews-btn">Clear Previews...</button>
+                </div>
               </div>
               <ul id="target-drive-list" style="margin-top: 8px;"></ul>
             </div>
@@ -419,6 +422,41 @@
           <button id="process-modal-force-relaunch-btn" class="primary-btn">Force Relaunch</button>
           <button id="process-modal-copy-command-btn">Copy View Command</button>
           <button id="process-modal-cancel-btn">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Clear Previews — audits <hl>/dod for orphaned *_preview.dem bookmark
+         previews (identified by their hidden .dodtools_preview sidecar) and
+         lets the user purge them. -->
+    <div id="clear-previews-modal" class="modal" style="display: none;">
+      <div class="modal-content" style="max-width: 640px; padding: 20px;">
+        <div class="panel-header flex-between">
+          <h2>Clear Previews</h2>
+          <button id="clear-previews-select-all-btn">Select All</button>
+        </div>
+        <p id="clear-previews-status" class="status-text">Scanning for orphaned preview demos...</p>
+        <div class="table-wrapper" style="max-height: 360px;">
+          <table id="clear-previews-table">
+            <thead>
+              <tr>
+                <th></th>
+                <th>File</th>
+                <th>Size</th>
+                <th>Modified</th>
+              </tr>
+            </thead>
+            <tbody id="clear-previews-body">
+              <tr>
+                <td colspan="4" class="table-empty">Scanning...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div id="clear-previews-footer" style="padding: 4px 8px; font-size: 11px; color: var(--text-muted); border-top: 1px solid var(--border-color);">Found: 0 | Reclaimable: 0.00 GB</div>
+        <div style="display: flex; gap: 8px; margin-top: 16px; justify-content: flex-end; flex-wrap: wrap;">
+          <button id="clear-previews-delete-btn" style="color: #ff5555; border-color: #ff5555;" disabled>Delete Selected</button>
+          <button id="clear-previews-close-btn">Close</button>
         </div>
       </div>
     </div>

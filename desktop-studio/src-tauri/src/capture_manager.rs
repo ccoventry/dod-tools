@@ -830,3 +830,138 @@ pub fn kill_engine_processes() -> Result<(), String> {
     }
     Ok(())
 }
+
+// ── Clear Previews audit (orphaned *_preview.dem sweep) ────────────────────────
+//
+// Bookmark previews (see the block comment above `patch_bookmark_previews`)
+// pile up in `<hl>/dod` across capture sessions when `auto_clear_previews`
+// is off. These two commands back the "Clear Previews" audit modal: scan for
+// leftovers and let the user purge them on confirmation. A file only counts
+// as an orphaned preview if it still carries its hidden `.dodtools_preview`
+// sidecar — the same marker `patch_bookmark_previews` stamps on every file
+// it generates — so a real demo that happens to end in `_preview.dem` is
+// never swept up.
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PreviewFileSummary {
+    pub demo_path: String,
+    pub sidecar_path: String,
+    pub file_name: String,
+    pub size_bytes: u64,
+    pub modified_unix_secs: f64,
+}
+
+/// Resolves the `dod` directory to sweep, accepting either an `hl.exe` path
+/// or the `dod` directory itself (mirrors `resolve_preview_env`'s
+/// hl.exe-relative resolution, but tolerates being pointed at the folder
+/// directly since the frontend may pass either).
+fn resolve_dod_dir_for_sweep(game_dir: &str) -> Result<PathBuf, String> {
+    let p = Path::new(game_dir);
+    if p.is_file() {
+        return p
+            .parent()
+            .map(|parent| parent.join("dod"))
+            .ok_or_else(|| "Could not resolve the 'dod' directory next to hl.exe".to_string());
+    }
+    if p.is_dir() {
+        let is_dod_dir = p
+            .file_name()
+            .map(|n| n.to_string_lossy().to_lowercase() == "dod")
+            .unwrap_or(false);
+        if is_dod_dir {
+            return Ok(p.to_path_buf());
+        }
+        return Ok(p.join("dod"));
+    }
+    Err(format!("Game directory not found: {}", game_dir))
+}
+
+/// Sweeps `<hl>/dod` for orphaned bookmark-preview demos and reports them
+/// (with combined demo + sidecar size) for the audit modal.
+#[tauri::command]
+pub async fn scan_orphaned_previews(game_dir: String) -> Result<Vec<PreviewFileSummary>, String> {
+    tokio::task::spawn_blocking(move || {
+        let dod_dir = resolve_dod_dir_for_sweep(&game_dir)?;
+        if !dod_dir.is_dir() {
+            return Ok(Vec::new());
+        }
+
+        let entries = std::fs::read_dir(&dod_dir)
+            .map_err(|e| format!("Failed to read dod directory: {}", e))?;
+
+        let mut results = Vec::new();
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            let file_name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+            if !file_name.to_lowercase().ends_with("_preview.dem") {
+                continue;
+            }
+
+            let sidecar_path = path.with_extension("dodtools_preview");
+            if !sidecar_path.is_file() {
+                continue;
+            }
+
+            let demo_meta = match std::fs::metadata(&path) {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            let sidecar_size = std::fs::metadata(&sidecar_path).map(|m| m.len()).unwrap_or(0);
+            let modified_unix_secs = demo_meta
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs_f64())
+                .unwrap_or(0.0);
+
+            results.push(PreviewFileSummary {
+                demo_path: path.to_string_lossy().to_string(),
+                sidecar_path: sidecar_path.to_string_lossy().to_string(),
+                file_name,
+                size_bytes: demo_meta.len() + sidecar_size,
+                modified_unix_secs,
+            });
+        }
+
+        results.sort_by(|a, b| a.file_name.cmp(&b.file_name));
+        Ok(results)
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
+}
+
+/// Deletes the given orphaned preview demos and their `.dodtools_preview`
+/// sidecars. `file_paths` must be `demo_path` values as reported by
+/// `scan_orphaned_previews` — anything not ending in `_preview.dem` is
+/// skipped rather than deleted. Returns the count of demo files removed; a
+/// missing sidecar does not fail the entry.
+#[tauri::command]
+pub async fn delete_orphaned_previews(file_paths: Vec<String>) -> Result<u32, String> {
+    tokio::task::spawn_blocking(move || {
+        let mut deleted: u32 = 0;
+        for demo_path in file_paths {
+            let path = PathBuf::from(&demo_path);
+            let file_name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
+            if !file_name.to_lowercase().ends_with("_preview.dem") {
+                continue;
+            }
+
+            let sidecar_path = path.with_extension("dodtools_preview");
+            let demo_removed = std::fs::remove_file(&path).is_ok();
+            let _ = std::fs::remove_file(&sidecar_path);
+
+            if demo_removed {
+                deleted += 1;
+            }
+        }
+        Ok(deleted)
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
+}
