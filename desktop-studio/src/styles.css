@@ -17,6 +17,18 @@ button, input, select, textarea {
   -webkit-appearance: none;
 }
 
+/* Checkboxes/radios need their native control box + checkmark — the reset
+   above strips it entirely with nothing to replace it, leaving an invisible
+   (but still clickable) hit area. Re-enable native rendering and theme it. */
+input[type="checkbox"], input[type="radio"] {
+  appearance: auto;
+  -webkit-appearance: auto;
+  accent-color: var(--primary-accent);
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+}
+
 /* Vite's index.css resets line-height to 1 which collapses egui-style rows. */
 html {
   line-height: 1.4;
@@ -198,6 +210,18 @@ input[type="text"]:focus, input[type="number"]:focus, select:focus {
   border-color: var(--primary-accent);
 }
 
+/* Custom dropdown chevron — the global `appearance: none` reset (top of this
+   file) strips the native arrow with nothing to replace it, so every
+   <select> otherwise looks indistinguishable from a plain text field. */
+select {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'><path d='M1 1l5 5 5-5' fill='none' stroke='%23aaaaaa' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  background-size: 10px 6px;
+  padding-right: 26px;
+  cursor: pointer;
+}
+
 button {
   background: #2a2a2a;
   color: #dddddd;
@@ -258,6 +282,16 @@ button.primary-btn:hover:not(:disabled) {
 
 #master-demo-table tr:hover {
   background: rgba(255, 255, 255, 0.04);
+}
+
+/* Highlight table "Details" column (weapon/timing chain) — wraps instead of
+   truncating so multi-kill timelines remain fully readable without relying
+   on the title="" hover tooltip. */
+.details-cell {
+  padding: 8px;
+  font-size: 0.8em;
+  white-space: normal;
+  word-break: break-word;
 }
 
 .table-row-selected {

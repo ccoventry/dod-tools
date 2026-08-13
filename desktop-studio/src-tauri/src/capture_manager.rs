@@ -11,10 +11,10 @@
 //     async Tauri command never parks the main thread.
 // ============================================================
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use native::patch::{PatcherConfig, CaptureStreak, PatchJob, StreamPatcher, build_batch_queue, build_preview_patch_jobs, DriveAllocationStrategy};
+use native::patch::{PatcherConfig, CaptureStreak, PatchJob, StreamPatcher, build_batch_queue, build_preview_patch_jobs, DriveAllocationStrategy, CustomCommand, CommandRelation};
 use native::capture_engine::{spawn_capture_engine, CaptureJob, EngineEvent};
 use serde::{Deserialize, Serialize};
 use tauri::Emitter;
@@ -75,6 +75,18 @@ pub struct CapturePayload {
     pub auto_clear_previews: bool,
     #[serde(default)]
     pub auto_clear_temp_demos: bool,
+    /// Timestamped batch id (e.g. `session_20260813_142233`) stamped by the
+    /// frontend before dispatch; routes capture output into its own
+    /// subfolder instead of colliding in the export root.
+    #[serde(default)]
+    pub session_id: String,
+    /// Raw console commands injected once at demo-load time, before any
+    /// scheduled/highlight commands.
+    #[serde(default)]
+    pub init_commands: Vec<String>,
+    /// User-defined commands scheduled relative to each highlight's bounds.
+    #[serde(default)]
+    pub custom_commands: Vec<CustomCommandPayload>,
 }
 
 fn default_initial_delay() -> f32 { 3.0 }
@@ -82,6 +94,18 @@ fn default_fast_forward_speed() -> f32 { 10.0 }
 fn default_resolution_width() -> i32 { 1280 }
 fn default_resolution_height() -> i32 { 720 }
 fn default_add_condebug() -> bool { true }
+
+/// One custom command row — serialisable across the Tauri IPC boundary.
+/// `relation` is a plain string ("Before" | "After") rather than
+/// `CommandRelation` directly so an unrecognised value fails safe (defaults
+/// to `Before` in `config_from_payload`) instead of rejecting the whole
+/// batch payload.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CustomCommandPayload {
+    pub command: String,
+    pub relation: String,
+    pub offset_seconds: f32,
+}
 
 /// One highlight streak — serialisable across the Tauri IPC boundary.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -192,6 +216,16 @@ fn config_from_payload(payload: &CapturePayload) -> PatcherConfig {
     cfg.auto_clear_logs = payload.auto_clear_logs;
     cfg.auto_clear_previews = payload.auto_clear_previews;
     cfg.auto_clear_temp_demos = payload.auto_clear_temp_demos;
+    cfg.session_id = payload.session_id.clone();
+    cfg.init_commands = payload.init_commands.clone();
+    cfg.custom_commands = payload.custom_commands.iter().map(|c| CustomCommand {
+        command: c.command.clone(),
+        offset: c.offset_seconds,
+        relation: match c.relation.as_str() {
+            "After" => CommandRelation::After,
+            _ => CommandRelation::Before,
+        },
+    }).collect();
     // Drive routing: explicit Primary/Backup Media Dir fields (from their own
     // UI inputs) take precedence; fall back to the Target Output Drives list.
     cfg.primary_media_dir = payload.primary_media_dir.as_ref()
@@ -622,29 +656,24 @@ pub fn simulate_aot_capacity(streaks: Vec<f32>, fps: u32, bytes_per_frame: u64, 
     (total_projected_bytes, has_enough_space)
 }
 
-// ── On-the-fly Preview (.dodtools_preview) ───────────────────────────────────
+// ── Bookmark Previews (.dodtools_preview) ─────────────────────────────────────
 //
-// Ports `dev`'s native/src/bin/gui/views/capture/workspace.rs::launch_preview,
-// which was GUI-binary-only and was never promoted to the library crate during
-// the Tauri migration (that whole binary target was dropped). The pieces it
-// depended on that DID survive in `native::patch` (`build_preview_patch_jobs`,
-// `StreamPatcher`, `PatchJob`, `PatcherConfig::build_hlae_process`) are reused
-// as-is here; only the primer-demo orchestration below is new.
+// `build_preview_patch_jobs` (native/src/patch/builder.rs) groups a flat list
+// of streaks by `source_demo` and, per demo, injects one `svc_director`
+// STUFFTEXT "bookmark" event per selected highlight (plus MATCH_START/DEMO_END)
+// into a copy of the original saved as `<stem>_preview.dem` — the events show
+// up as named markers when the file is loaded through GoldSrc's `viewdemo` VCR
+// UI. Each output file is marked with a hidden `.dodtools_preview` sidecar so
+// it's never mistaken for a real recorded demo.
 //
-// Two demos get patched:
-//   1. `<stem>_preview.dem` — the highlight itself (via build_preview_patch_jobs),
-//      marked with a hidden `.dodtools_preview` sidecar so it's never mistaken
-//      for a real recorded demo.
-//   2. `primer_preview.dem` — a copy of the ORIGINAL source demo carrying one
-//      scheduled console command, `viewdemo <stem>_preview`, fired at tick 500.
-//      HLAE is launched against this primer (`+playdemo primer_preview`); the
-//      primer's only job is to hand off into the real preview demo in-engine.
-//
-// `StreamPatcher::patch`'s `PatcherConfig` argument is unused by the function
-// itself (see native/src/patch/engine.rs) — it only matters here because
-// `build_hlae_process` reads `hlae_path`/`game_path`/`resolution_*` off it.
+// Two entry points share this core:
+//   - `launch_demo_preview`   — single demo, launches HLAE via `+viewdemo`
+//     directly against the patched preview once it's on disk.
+//   - `generate_all_previews` — arbitrary demos in one flat streak list (the
+//     grouping above splits them back out), patched to disk only; the user
+//     loads them manually afterwards.
 
-fn write_hidden_sidecar(path: &std::path::Path) -> std::io::Result<()> {
+fn write_hidden_sidecar(path: &Path) -> std::io::Result<()> {
     use std::fs::OpenOptions;
     let mut options = OpenOptions::new();
     options.write(true).create(true).truncate(true);
@@ -657,92 +686,109 @@ fn write_hidden_sidecar(path: &std::path::Path) -> std::io::Result<()> {
     Ok(())
 }
 
-#[tauri::command]
-pub async fn launch_live_preview(
-    demo_path: String,
-    hlae_path: String,
-    game_path: String,
-    streak: SerializedStreak,
-) -> Result<(), String> {
-    tokio::task::spawn_blocking(move || {
-        if hlae_path.trim().is_empty() || game_path.trim().is_empty() {
-            return Err("Configure the HLAE and Half-Life executable paths before previewing.".to_string());
-        }
-        let hlae_p = std::path::Path::new(&hlae_path);
-        let hl_p = std::path::Path::new(&game_path);
-        if !hlae_p.is_file() {
-            return Err("HLAE executable not found at the configured path.".to_string());
-        }
-        if !hl_p.is_file() {
-            return Err("Half-Life executable not found at the configured path.".to_string());
-        }
+/// Validates the HLAE/hl.exe paths, ensures `<hl_parent>/dod` exists, and
+/// builds a minimal `PatcherConfig` carrying just the fields
+/// `build_hlae_process` reads (hlae_path/game_path/resolution/separate_hud).
+fn resolve_preview_env(hlae_path: &str, game_path: &str) -> Result<(PatcherConfig, PathBuf), String> {
+    if hlae_path.trim().is_empty() || game_path.trim().is_empty() {
+        return Err("Configure the HLAE and Half-Life executable paths before previewing.".to_string());
+    }
+    let hlae_p = Path::new(hlae_path);
+    let hl_p = Path::new(game_path);
+    if !hlae_p.is_file() {
+        return Err("HLAE executable not found at the configured path.".to_string());
+    }
+    if !hl_p.is_file() {
+        return Err("Half-Life executable not found at the configured path.".to_string());
+    }
 
-        let dod_dir = hl_p
-            .parent()
-            .map(|p| p.join("dod"))
-            .ok_or_else(|| "Could not resolve the 'dod' directory next to hl.exe".to_string())?;
-        std::fs::create_dir_all(&dod_dir)
-            .map_err(|e| format!("Failed to create dod directory: {}", e))?;
+    let dod_dir = hl_p
+        .parent()
+        .map(|p| p.join("dod"))
+        .ok_or_else(|| "Could not resolve the 'dod' directory next to hl.exe".to_string())?;
+    std::fs::create_dir_all(&dod_dir)
+        .map_err(|e| format!("Failed to create dod directory: {}", e))?;
 
-        let mut capture_streak = CaptureStreak::from(streak);
-        capture_streak.source_demo = demo_path.clone();
+    let patcher_config = PatcherConfig {
+        hlae_path: hlae_path.to_string(),
+        game_path: game_path.to_string(),
+        ..PatcherConfig::default()
+    };
+    Ok((patcher_config, dod_dir))
+}
 
-        let patcher_config = PatcherConfig {
-            hlae_path: hlae_path.clone(),
-            game_path: game_path.clone(),
-            ..PatcherConfig::default()
-        };
-        let cancel_token = Arc::new(std::sync::atomic::AtomicBool::new(false));
+/// Builds and patches one bookmark-preview `PatchJob` per source demo present
+/// in `streaks`, writing the hidden `.dodtools_preview` sidecar for each.
+fn patch_bookmark_previews(
+    streaks: Vec<SerializedStreak>,
+    dod_dir: &Path,
+    patcher_config: &PatcherConfig,
+) -> Result<Vec<PatchJob>, String> {
+    if streaks.is_empty() {
+        return Err("No highlights selected to preview.".to_string());
+    }
+    let capture_streaks: Vec<CaptureStreak> = streaks.into_iter().map(CaptureStreak::from).collect();
+    let jobs = build_preview_patch_jobs(capture_streaks, Some(dod_dir));
+    if jobs.is_empty() {
+        return Err("Failed to build any preview patch jobs.".to_string());
+    }
 
-        // 1. Patch the trimmed highlight into its own preview demo.
-        let preview_jobs = build_preview_patch_jobs(vec![capture_streak], Some(dod_dir.as_path()));
-        let preview_job = preview_jobs
-            .first()
-            .ok_or_else(|| "Failed to build the preview patch job".to_string())?;
+    let cancel_token = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    for job in &jobs {
+        StreamPatcher::new(&job.source_demo, &job.output_demo)
+            .patch(job, patcher_config, &cancel_token)
+            .map_err(|e| format!("Failed to patch preview demo for {}: {}", job.source_demo, e))?;
 
-        StreamPatcher::new(&preview_job.source_demo, &preview_job.output_demo)
-            .patch(preview_job, &patcher_config, &cancel_token)
-            .map_err(|e| format!("Failed to patch preview demo: {}", e))?;
-
-        // 2. Mark it as a preview artifact via a hidden sidecar.
-        let sidecar_path = preview_job.output_demo.with_extension("dodtools_preview");
+        let sidecar_path = job.output_demo.with_extension("dodtools_preview");
         write_hidden_sidecar(&sidecar_path)
             .map_err(|e| format!("Failed to write preview sidecar: {}", e))?;
+    }
+    Ok(jobs)
+}
 
-        // 3. Patch the primer demo and launch HLAE against it.
-        let preview_stem = preview_job
+/// Patches the given demo's selected highlights into a single bookmarked
+/// `<stem>_preview.dem` and immediately launches HLAE against it via
+/// `+viewdemo <stem>_preview`.
+#[tauri::command]
+pub async fn launch_demo_preview(
+    hlae_path: String,
+    game_path: String,
+    streaks: Vec<SerializedStreak>,
+) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        let (patcher_config, dod_dir) = resolve_preview_env(&hlae_path, &game_path)?;
+        let jobs = patch_bookmark_previews(streaks, &dod_dir, &patcher_config)?;
+        let job = jobs.first().ok_or_else(|| "Failed to build the preview patch job".to_string())?;
+
+        let preview_stem = job
             .output_demo
             .file_stem()
             .and_then(|s| s.to_str())
-            .ok_or_else(|| "Could not resolve the preview demo's file stem".to_string())?
-            .to_string();
+            .ok_or_else(|| "Could not resolve the preview demo's file stem".to_string())?;
 
-        let mut primer_init = patcher_config.init_commands.clone();
-        primer_init.push(format!(
-            "mirv_movie_separate_hud {}",
-            if patcher_config.separate_hud { "1" } else { "0" }
-        ));
-
-        let primer_job = PatchJob {
-            source_demo: demo_path.clone(),
-            output_demo: dod_dir.join("primer_preview.dem"),
-            streaks: vec![],
-            target_player: None,
-            init_commands: primer_init,
-            scheduled_commands: vec![(500, format!("viewdemo {}", preview_stem))],
-            director_events: vec![],
-            block_routes: vec![],
-        };
-
-        StreamPatcher::new(&primer_job.source_demo, &primer_job.output_demo)
-            .patch(&primer_job, &patcher_config, &cancel_token)
-            .map_err(|e| format!("Failed to patch primer demo: {}", e))?;
-
-        let mut cmd = patcher_config.build_hlae_process("+playdemo primer_preview");
+        let mut cmd = patcher_config.build_hlae_process(&format!("+viewdemo {}", preview_stem));
         cmd.spawn()
             .map_err(|e| format!("Failed to launch HLAE for preview: {}", e))?;
 
         Ok(())
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
+}
+
+/// Patches every demo represented in `streaks` into its own bookmarked
+/// `<stem>_preview.dem` without launching HLAE. Resolves to the number of
+/// preview demos generated so the frontend can report a completion toast.
+#[tauri::command]
+pub async fn generate_all_previews(
+    hlae_path: String,
+    game_path: String,
+    streaks: Vec<SerializedStreak>,
+) -> Result<usize, String> {
+    tokio::task::spawn_blocking(move || {
+        let (patcher_config, dod_dir) = resolve_preview_env(&hlae_path, &game_path)?;
+        let jobs = patch_bookmark_previews(streaks, &dod_dir, &patcher_config)?;
+        Ok(jobs.len())
     })
     .await
     .map_err(|e| format!("Task join error: {}", e))?

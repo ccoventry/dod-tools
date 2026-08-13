@@ -17,7 +17,7 @@
           <span class="brand-title">DoD Tools Studio</span>
         </div>
         <div class="nav-tabs">
-          <button class="nav-tab-btn active" data-nav="workspace">Workspace & Master Queue</button>
+          <button class="nav-tab-btn active" data-nav="workspace">Capture Studio</button>
           <button class="nav-tab-btn" data-nav="export-config">Batch Capture Config</button>
           <button class="nav-tab-btn" data-nav="render-studio">Render Studio</button>
           <button class="nav-tab-btn" data-nav="demo-auditor">Demo Auditor</button>
@@ -83,18 +83,18 @@
           <!-- Detail View: Highlight Rules -->
           <div id="detail-pane" class="egui-panel">
             <div class="panel-header flex-between">
-              <h3 id="detail-demo-title">Highlight Details (Select a Demo)</h3>
+              <div class="header-title-group" style="display: flex; gap: 8px; align-items: center;">
+                <h3 id="detail-demo-title">Highlight Details (Select a Demo)</h3>
+                <button id="btn-launch-preview" disabled title="Patches this demo and immediately launches it in HLAE via viewdemo.">Launch Preview</button>
+              </div>
               <div class="header-controls" style="display: flex; gap: 8px; align-items: center;">
                 <button id="view-telemetry-btn" disabled>View Match Telemetry</button>
                 <button id="btn-select-all">Select All</button>
                 <button id="btn-deselect-all">Deselect All</button>
+                <button id="btn-generate-all-previews" disabled title="Generates _preview.dem files with BOOKMARK events for all selected highlights across all demos.">Generate All Previews</button>
                 <div class="control-group">
                   <label for="input-min-kills">Min Kills:</label>
                   <input type="number" id="input-min-kills" value="1" min="1" style="width: 50px;" />
-                </div>
-                <div class="control-group">
-                  <input type="checkbox" id="config-hide-non-pov" />
-                  <label for="config-hide-non-pov">POV Only</label>
                 </div>
               </div>
             </div>
@@ -129,6 +129,7 @@
               <button class="config-tab-btn active" data-tab="tab-path-routing">Path Routing</button>
               <button class="config-tab-btn" data-tab="tab-timing-options">Timing Options</button>
               <button class="config-tab-btn" data-tab="tab-drive-overrides">Drive Overrides</button>
+              <button class="config-tab-btn" data-tab="tab-custom-commands">Custom Commands</button>
             </div>
 
             <!-- Tab Content: Path Routing -->
@@ -248,6 +249,21 @@
               <ul id="target-drive-list" style="margin-top: 8px;"></ul>
             </div>
 
+            <!-- Tab Content: Custom Commands -->
+            <div id="tab-custom-commands" class="config-tab-content" style="display: none;">
+              <div class="input-row">
+                <strong>Initial Commands (executed once at demo load):</strong>
+              </div>
+              <div id="init-commands-list" style="display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px;"></div>
+              <button id="add-init-command-btn">+ Add Init Command</button>
+
+              <div class="input-row" style="margin-top: 16px;">
+                <strong>Custom Commands (scheduled relative to each highlight):</strong>
+              </div>
+              <div id="custom-commands-list" style="display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px;"></div>
+              <button id="add-custom-command-btn">+ Add Custom Command</button>
+            </div>
+
             <div class="action-footer flex-between" style="margin-top: 12px; border-top: 1px solid #383838; padding-top: 10px;">
               <div class="action-buttons">
                 <button id="start-capture-btn" class="primary-btn">Start Capture Batch</button>
@@ -276,7 +292,7 @@
             <div class="inline-controls" style="margin-top: 8px;">
               <div class="control-group">
                 <label for="render-codec-select">Codec:</label>
-                <select id="render-codec-select" style="background: #2a2a2a; color: #fff; border: 1px solid #444; border-radius: 3px; padding: 2px 4px;">
+                <select id="render-codec-select">
                   <option value="prores">ProRes 422 HQ</option>
                   <option value="dnxhr">DNxHR HQ</option>
                   <option value="h264">H.264 (MP4)</option>

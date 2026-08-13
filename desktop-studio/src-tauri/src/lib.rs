@@ -4,7 +4,7 @@ mod settings_manager;
 mod audit_manager;
 
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
-use capture_manager::{CaptureManager, CapturePayload, launch_live_preview};
+use capture_manager::{CaptureManager, CapturePayload, launch_demo_preview, generate_all_previews};
 use render_manager::{RenderManager, scan_render_directories, execute_render_batch, render_status, cancel_render_batch};
 use settings_manager::{AppSettings, SettingsManager};
 use audit_manager::{AuditManager, SerializedDuplicateGroup};
@@ -333,7 +333,8 @@ pub fn run() {
             analyze_demo,
             analyze_demo_full,
             start_capture_batch,
-            launch_live_preview,
+            launch_demo_preview,
+            generate_all_previews,
             cancel_capture_batch,
             capture_status,
             scan_directory,
