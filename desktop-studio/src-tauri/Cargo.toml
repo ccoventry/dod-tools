@@ -33,6 +33,7 @@ analysis = { path = "../../analysis" }
 hl-demo-auditor = { path = "../../hl-demo-auditor" }
 indexmap = { version = "1.9.3", features = ["std"] }
 dirs = "5"
+sysinfo = "0.30"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
