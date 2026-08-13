@@ -12,8 +12,10 @@ import { renderMasterList, initMasterPane } from './master_pane.js';
 import { renderDetailView } from './detail_pane.js';
 import { initCaptureUI } from './capture_pane.js';
 import { initRenderUI } from './render_pane.js';
-import { initTelemetryPane, renderTelemetry } from './telemetry_pane.js';
+import { renderTelemetry } from './telemetry_pane.js';
 import { initAuditorPane } from './auditor_pane.js';
+import { initAnalyzerPane } from './analyzer_pane.js';
+import { switchNavTab } from './nav.js';
 import { analyzeDemo } from './ipc_bridge.js';
 import { showToast } from './toast.js';
 
@@ -579,68 +581,18 @@ window.addEventListener("DOMContentLoaded", async () => {
     });
   });
 
-  // Wizard Navigation: top nav bar view routing
-  function activateWizardStep(navKey) {
-    const workspacePane = document.querySelector('#pane-workspace');
-    const detailsPane = document.querySelector('#pane-details-config');
-    const detailPane = document.querySelector('#detail-pane');
-    const advancedPanel = document.querySelector('#advanced-diagnostics-details');
-    const exportPanel = document.querySelector('#export-config-panel');
-    const renderPanel = document.querySelector('#render-studio-panel');
-    const auditorPane = document.querySelector('#pane-demo-auditor');
-
-    // Strict display override to hide all panels initially
-    if (workspacePane) workspacePane.style.display = 'none';
-    if (detailsPane) detailsPane.style.display = 'none';
-    if (detailPane) detailPane.style.display = 'none';
-    if (advancedPanel) advancedPanel.style.display = 'none';
-    if (exportPanel) exportPanel.style.display = 'none';
-    if (renderPanel) renderPanel.style.display = 'none';
-    if (auditorPane) auditorPane.style.display = 'none';
-
-    // Selectively display panels based on wizard step
-    if (navKey === 'workspace') {
-      if (workspacePane) workspacePane.style.display = 'flex';
-      if (detailsPane) detailsPane.style.display = 'flex';
-      if (detailPane) detailPane.style.display = 'block';
-      if (advancedPanel) advancedPanel.style.display = 'block';
-    } else if (navKey === 'export-config') {
-      if (detailsPane) detailsPane.style.display = 'flex';
-      if (exportPanel) exportPanel.style.display = 'block';
-    } else if (navKey === 'render-studio') {
-      if (detailsPane) detailsPane.style.display = 'flex';
-      if (renderPanel) renderPanel.style.display = 'block';
-    } else if (navKey === 'demo-auditor') {
-      if (auditorPane) auditorPane.style.display = 'flex';
-    }
-  }
-
-  // Set initial wizard state
-  activateWizardStep('workspace');
+  // Top nav bar view routing (shared with detail_pane.js — see nav.js)
+  switchNavTab('workspace');
 
   const navTabBtns = document.querySelectorAll('.nav-tab-btn');
   navTabBtns.forEach(btn => {
-    btn.addEventListener('click', () => {
-      navTabBtns.forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      activateWizardStep(btn.getAttribute('data-nav'));
-    });
+    btn.addEventListener('click', () => switchNavTab(btn.getAttribute('data-nav')));
   });
 
   // Proceed to Capture button in footer
   const proceedBtn = document.querySelector('#proceed-capture-nav-btn');
   if (proceedBtn) {
-    proceedBtn.addEventListener('click', () => {
-      const captureNavBtn = document.querySelector('.nav-tab-btn[data-nav="export-config"]');
-      navTabBtns.forEach(b => {
-        if (b === captureNavBtn) {
-          b.classList.add('active');
-        } else {
-          b.classList.remove('active');
-        }
-      });
-      activateWizardStep('export-config');
-    });
+    proceedBtn.addEventListener('click', () => switchNavTab('export-config'));
   }
 
   // Initialize Capture Batch UI
@@ -672,7 +624,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   };
 
   initMasterPane(onDeleteDemo);
-  initTelemetryPane();
+  initAnalyzerPane();
 
   // Context-Aware Shortcut Dispatcher
   window.addEventListener('keydown', (e) => {

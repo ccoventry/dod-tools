@@ -21,6 +21,7 @@
           <button class="nav-tab-btn" data-nav="export-config">Batch Capture Config</button>
           <button class="nav-tab-btn" data-nav="render-studio">Render Studio</button>
           <button class="nav-tab-btn" data-nav="demo-auditor">Demo Auditor</button>
+          <button class="nav-tab-btn" data-nav="demo-analyzer">Demo Analyzer</button>
         </div>
         <div class="nav-actions">
           <button id="save-project-btn" title="Save Project Session">Save Session</button>
@@ -349,6 +350,31 @@
             <div id="audit-list-footer" style="padding: 4px 8px; font-size: 11px; color: var(--text-muted); border-top: 1px solid var(--border-color);">Duplicates Found: 0 | Wasted Space: 0.00 GB</div>
           </div>
         </section>
+
+        <!-- Demo Analyzer: standalone per-demo report (Summary/Scoreboard/Player/Team/Timeline/Rounds/Chat) -->
+        <section id="pane-demo-analyzer" class="content-pane" style="display: none;">
+          <div class="egui-panel" style="flex: 1; display: flex; flex-direction: column; overflow: hidden;">
+            <div class="panel-header flex-between">
+              <h3>Demo Analyzer</h3>
+              <div style="display: flex; gap: 10px; align-items: center;">
+                <span id="analyzer-current-file" class="status-text"></span>
+                <button id="analyzer-browse-btn">Browse Demo...</button>
+              </div>
+            </div>
+            <div class="analyzer-subtabs">
+              <button class="analyzer-subtab-btn active" data-subtab="summary">Summary</button>
+              <button class="analyzer-subtab-btn" data-subtab="scoreboard">Scoreboard</button>
+              <button class="analyzer-subtab-btn" data-subtab="player-details">Player Details</button>
+              <button class="analyzer-subtab-btn" data-subtab="team-details">Team Details</button>
+              <button class="analyzer-subtab-btn" data-subtab="timeline">Timeline</button>
+              <button class="analyzer-subtab-btn" data-subtab="rounds">Rounds</button>
+              <button class="analyzer-subtab-btn" data-subtab="chat">Chat Log</button>
+            </div>
+            <div id="analyzer-tab-content" class="analyzer-tab-content">
+              <p class="analyzer-empty">Browse for a demo file, or select one from the Workspace and click "View Match Telemetry".</p>
+            </div>
+          </div>
+        </section>
       </main>
 
       <!-- Pinned Bottom Action / Status Bar -->
@@ -362,39 +388,5 @@
     </div>
 
     <div id="toast-container"></div>
-
-    <!-- Telemetry Modal -->
-    <div id="telemetry-modal" class="modal" style="display: none;">
-      <div class="modal-content egui-panel" style="padding: 20px;">
-        <div class="modal-header flex-between" style="border-bottom: 1px solid #383838; padding-bottom: 10px; margin-bottom: 15px;">
-          <div>
-            <h2>Match Telemetry Analysis</h2>
-            <p id="telemetry-file-info" style="font-size: 11px; color: #888; margin-top: 3px;"></p>
-          </div>
-          <button id="telemetry-modal-close-btn">Close</button>
-        </div>
-        <div id="telemetry-loading-state" style="padding: 20px; text-align: center; color: #888; display: none;">
-          <p>Analyzing demo telemetry data...</p>
-        </div>
-        <div id="telemetry-content-container">
-          <div id="telemetry-scoreboard" style="margin-bottom: 20px;">
-            <h3 style="font-size: 13px; color: #ccc; margin-bottom: 6px;">Scoreboard</h3>
-            <div class="telemetry-data-box"></div>
-          </div>
-          <div id="telemetry-chat-logs" style="margin-bottom: 20px;">
-            <h3 style="font-size: 13px; color: #ccc; margin-bottom: 6px;">Chat Logs</h3>
-            <div class="telemetry-data-box"></div>
-          </div>
-          <div id="telemetry-mortality-metrics" style="margin-bottom: 20px;">
-            <h3 style="font-size: 13px; color: #ccc; margin-bottom: 6px;">Mortality Metrics</h3>
-            <div class="telemetry-data-box"></div>
-          </div>
-          <div id="telemetry-round-chronologies" style="margin-bottom: 20px;">
-            <h3 style="font-size: 13px; color: #ccc; margin-bottom: 6px;">Round Chronologies</h3>
-            <div class="telemetry-data-box"></div>
-          </div>
-        </div>
-      </div>
-    </div>
   </body>
 </html>
