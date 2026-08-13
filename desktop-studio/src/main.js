@@ -10,7 +10,7 @@ import {
 } from './ipc_bridge.js';
 import { renderMasterList, initMasterPane } from './master_pane.js';
 import { renderDetailView, initDetailPane } from './detail_pane.js';
-import { initCaptureUI, getCommandsState, hydrateCommandsState } from './capture_pane.js';
+import { initCaptureUI, getCommandsState, hydrateCommandsState, refreshLaunchGuard } from './capture_pane.js';
 import { initRenderUI } from './render_pane.js';
 import { renderTelemetry } from './telemetry_pane.js';
 import { initAuditorPane } from './auditor_pane.js';
@@ -567,7 +567,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   }
 
   // Target drives management
-  document.querySelector('#add-drive-btn').addEventListener('click', () => {
+  document.querySelector('#add-drive-btn').addEventListener('click', async () => {
     const driveEl = document.querySelector('#drive-path-input');
     const drivePath = driveEl.value.trim();
     if (drivePath && !targetDrives.includes(drivePath)) {
@@ -577,6 +577,8 @@ window.addEventListener("DOMContentLoaded", async () => {
       li.textContent = drivePath;
       document.querySelector('#target-drive-list').appendChild(li);
       updateExportPoolIndicator();
+      await persistAppSettings();
+      refreshLaunchGuard({ targetDrives, currentScannedDemos });
     }
   });
 
@@ -595,6 +597,8 @@ window.addEventListener("DOMContentLoaded", async () => {
           li.textContent = selected;
           document.querySelector('#target-drive-list').appendChild(li);
           updateExportPoolIndicator();
+          await persistAppSettings();
+          refreshLaunchGuard({ targetDrives, currentScannedDemos });
         }
       } catch (err) {
         console.error("Error opening target drive dialog:", err);
@@ -715,7 +719,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   };
 
   initMasterPane(onDeleteDemo);
-  initDetailPane(() => currentScannedDemos);
+  initDetailPane(() => currentScannedDemos, () => refreshLaunchGuard({ targetDrives, currentScannedDemos }));
   initAnalyzerPane();
 
   // Context-Aware Shortcut Dispatcher
