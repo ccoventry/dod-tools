@@ -1,5 +1,7 @@
 import { switchNavTab } from './nav.js';
 import { loadAnalyzerDemo } from './analyzer_pane.js';
+import { launchLivePreview } from './ipc_bridge.js';
+import { showToast } from './toast.js';
 
 let currentDemo = null;
 let currentDemoIdx = null;
@@ -194,8 +196,9 @@ export function renderDetailView(demo, selectedDemoIdx) {
 
     tr.innerHTML = `
       <td style="padding: 8px;">${rowNum}</td>
-      <td style="padding: 8px;">
+      <td style="padding: 8px; white-space: nowrap;">
         <input type="checkbox" class="streak-select-cb" ${streak.selected ? 'checked' : ''} />
+        <button type="button" class="streak-preview-btn" title="Launch a live HLAE preview of this highlight" style="margin-left: 4px; padding: 1px 5px; font-size: 11px;">▶</button>
       </td>
       <td style="padding: 8px;">
         <div style="display:flex;align-items:center;gap:4px;${isRangeModified ? 'color:#ff9800;' : ''}">
@@ -227,6 +230,28 @@ export function renderDetailView(demo, selectedDemoIdx) {
     cb.addEventListener('change', (e) => {
       streak.selected = e.target.checked;
       renderTimeline(currentDemo);
+    });
+
+    const previewBtn = tr.querySelector('.streak-preview-btn');
+    previewBtn.addEventListener('click', async () => {
+      const hlaePath = document.querySelector('#hlae-path-input')?.value?.trim();
+      const hlPath = document.querySelector('#hl-path-input')?.value?.trim();
+      if (!hlaePath || !hlPath) {
+        showToast('Configure the HLAE and Half-Life executable paths in Batch Capture Config before previewing.', 'error');
+        return;
+      }
+      previewBtn.disabled = true;
+      const originalLabel = previewBtn.textContent;
+      previewBtn.textContent = '…';
+      try {
+        await launchLivePreview(currentDemo.path, hlaePath, hlPath, streak);
+        showToast('Preview launching in HLAE...', 'info');
+      } catch (err) {
+        // Already toasted by ipc_bridge.js.
+      } finally {
+        previewBtn.disabled = false;
+        previewBtn.textContent = originalLabel;
+      }
     });
 
     const startInput = tr.querySelector('.kr-start-input');

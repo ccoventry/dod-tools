@@ -18,7 +18,7 @@ IMMUTABLE MILESTONES ARCHITECTURE RULES:
 - [x] Task: Packet Audit — Injected a strict 2MB bounds guard into the binary scanner to prevent memory overruns and alignment drift on extended demos.
 - [x] Chore: Cruft Purge — Aggressively pruned deprecated `target_player` and `min_kills` filters from configuration structs and ingestion loops.
 - [x] Chore: Standardize Milestones Architecture — Design and document a strict, immutable markdown layout for this file to completely prevent AI-driven format drift across future sessions.
-- [x] Task: Director Events Pipeline - Fixed premature DEMO_END assignment and properly anchored MATCH_START director events to the parsed frame times.
+- [x] Task: Director Events Pipeline — Fixed premature DEMO_END assignment and properly anchored MATCH_START director events to the parsed frame times.
 
 ### Rendering & Finalization
 - [x] Task: Rendering & Finalization — Native FFmpeg transcoding pipeline, raw `.mov` image sequence take ingestion, mezzanine export routing, and render queue execution via Tauri IPC.
@@ -26,12 +26,15 @@ IMMUTABLE MILESTONES ARCHITECTURE RULES:
 ### Dynamic Drive Failover
 - [x] Task: AOT Capture Routing & JIT Render Routing — Automated capacity simulation loop, unified duration math parity, FFmpeg mezzanine threshold polling (>20 GB guard), and NTFS directory junction drive swapping below 15 GB.
 
-### Frontend Migration
-- [x] Feature: Tauri & Vite Integration — Completed frontend stack migration from native `egui` to Tauri + Vite architecture with full Master-Detail UI feature parity, IPC bridge, native folder pickers, and `@tauri-apps/plugin-fs` project session persistence.
-- [ ] Task: Verify feature/migrate-tauri branch functionality for dev merge.
+### Frontend Migration & Capture Studio Parity
+- [x] Feature: Tauri & Vite Core Migration — Completed initial frontend stack migration from native `egui` to Tauri + Vite architecture in `desktop-studio/`.
+- [ ] Task: Fix Capture Output Drives & Session ID Pipeline Defect — Rebind `capture_directories` to output drive paths and stamp `session_id` timestamp in payload.
+- [ ] Feature: Restore Global & Per-Demo `viewdemo` Bookmark Previews — Patch `BOOKMARK` director events and launch HLAE against `viewdemo` for single demos or batch queues.
+- [ ] Task: Capture Studio UI Polish & Defect Fixes — Rename tab to "Capture Studio", fix detail pane leading comma / missing weapon string bugs, restore "Sel" checkboxes, and add dropdown chevrons.
+- [ ] Task: Verify `feature/tauri-migration` branch functionality for `dev` merge.
 
 ### UI/UX Polish
-- [x] Feature: Workspace Layout Updates - Transposed paths and disk space estimators, added highlight status columns to the Master List, removed legacy folder pickers, and mounted a global "Total Export Pool Free" indicator with dynamic vector list reordering.
+- [x] Feature: Workspace Layout Updates — Transposed paths and disk space estimators, added highlight status columns to the Master List, removed legacy folder pickers, and mounted a global "Total Export Pool Free" indicator with dynamic vector list reordering.
 
 ## 📋 General Backlog (Future Roadmap Items)
 
@@ -102,19 +105,6 @@ IMMUTABLE MILESTONES ARCHITECTURE RULES:
 - [x] Feature: Target Directory Selector — Implemented a UI directory picker to define where raw BMP/WAV takes are saved. Routed off the OS drive.
 - [x] Feature: Disk Space Pre-Flight Check — Integrated `sysinfo` check before launching engine to halt if target drive has < 15GB free space.
 - [x] Chore: Temp Demo Cleanup — Gated the `std::fs::remove_file` cleanup step inside `capture_engine.rs` behind `cfg(not(debug_assertions))` to automatically delete patched demos in release builds.
-
-### Capture Engine & Engine Quirk Fixes (June 30, 2026)
-- [x] Task: HLAE Dummy Folder Sandbox Escape — Bypassed GoldSrc's engine block on `exec` commands during playback by using `mirv_movie_filename` to create a dummy directory on the OS, triggering our Rust Reaper to safely terminate the batch.
-- [x] Task: Taskkill Reaper — Replaced the fragile `child.try_wait()` loop with an aggressive polling loop that explicitly runs `taskkill /F /IM hl.exe` when the dummy directory trigger is detected.
-- [x] Refactor: Absolute Time-to-Frame Mapping — Completely purged `demo_fps` average math. Fixed POV timeline drift by implementing a raw binary frame-parsing loop in the scanner to extract exact float timestamps (`Arc<Vec<f32>>`), mapping absolute times to precise frame indices via binary search.
-- [x] Refactor: UI Resolution & Defensive I/O — Upgraded the Capture Studio with reactive `width` and `height` resolution settings. Added defensive pathing with `std::fs::create_dir_all` session ID generation, piping I/O errors to the `CaptureState::Error` UI block.
-- [x] Feature: Reactive Disk Space Math — Replaced static disk caching with a dynamic frame size multiplication formula tied to the live resolution and `capture_fps` configuration.
-
-### Capture Engine & Engine Quirk Fixes (June 29, 2026)
-- [x] Task: Command Truncation Fix — Shortened injected `echo` commands and decoupled `mirv_recordmovie_stop` to respect the strict 64-byte payload limit inside GoldSrc `ConsoleCommand` frames.
-- [x] Feature: Local Demo Debug Output — Added a `save_local_patched_copy` UI toggle to the Capture Studio to easily duplicate patched `.dem` files to the workspace `demos/` directory.
-- [x] Task: GoldSrc Demo `quit` Filter Bypass — Fixed an issue where the game refused to close after recording because GoldSrc actively drops any `ConsoleCommand` containing the string `quit` during demo playback. Bypassed the security check by scheduling `dodtools_exit` in the `.dem` and mapping it to `+alias dodtools_exit quit` in the engine startup arguments.
-- [x] Refactor: Frame-based Tick Insertion — Moved from time-based offsets back to exact `file_tick` mapping for command insertion, ensuring reliable synchronization between highlight bounds and engine rendering frames.
 
 ## 📦 Completed Project Phases (Historical Archive)
 

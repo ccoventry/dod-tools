@@ -46,6 +46,15 @@ export async function startCaptureBatch(payload) {
     });
 }
 
+export async function launchLivePreview(demoPath, hlaePath, gamePath, streak) {
+  return invoke("launch_live_preview", { demoPath, hlaePath, gamePath, streak })
+    .catch((err) => {
+      console.error("IPC Execution Error (launch_live_preview):", err);
+      showToast(`Preview failed: ${err}`, 'error');
+      throw err;
+    });
+}
+
 export async function cancelCaptureBatch() {
   return invoke("cancel_capture_batch")
     .catch((err) => {

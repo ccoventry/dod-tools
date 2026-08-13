@@ -1,7 +1,7 @@
 ## Web AI State
-- **Overarching Goal:** Tauri + Vite Architecture Migration. Successfully bridged async IPC boundaries and mapped UX constraints across 7 phases (Push events, Scan Cancellation, Settings Persistence, Demo Auditor, AOT Simulation, Keyboard Nav, Window Config).
-- **Last Edited:** `desktop-studio/src/ipc_bridge.js`, `desktop-studio/src/telemetry_pane.js`, `desktop-studio/src-tauri/tauri.conf.json`.
-- **Unresolved Errors/Bugs:** None blocking compilation. Awaiting manual user validation of all async IPC pathways and native execution.
+- **Overarching Goal:** Tauri + Vite Architecture Migration (Capture Studio Parity & Pipeline Stabilization).
+- **Last Edited:** `desktop-studio/src/capture_pane.js`, `desktop-studio/src/detail_pane.js`, `desktop-studio/src-tauri/src/capture_manager.rs`.
+- **Unresolved Errors/Bugs:** Critical payload defect in `capture_directories` (junction abort on file paths) and un-stamped `session_id`.
 
 ## Active Epics
 - **Headless Preview CLI:** COMPLETED
@@ -12,16 +12,22 @@
   - Migrated hardcoded GUI/CLI/scanner strings to localizations. Updated `analysis::localization` to support transparent dual-key lookups (`#key` and `key`) for Valve KeyValues and AMXX files.
 - **HLTV Active Frame Injection:** COMPLETED
   - Standalone `DRC_CMD_INEYE` frame injection implemented in `native/src/patch/engine.rs`.
-- **Frontend Migration:** IN PROGRESS (Branch: `feature/tauri-migration`)
-  - Transitioning frontend stack to Tauri + Vite architecture in the `desktop-studio/` workspace (`src-tauri/`).
 - **Dynamic Drive Failover:** COMPLETED
   - AOT capture routing, duration math parity, JIT render routing, and UI/UX export pool indicators with dynamic vector list reordering.
+- **Frontend Migration & Capture Studio Parity:** IN PROGRESS (Branch: `feature/tauri-migration`)
+  - Transitioning frontend stack to Tauri + Vite architecture in `desktop-studio/`, restoring parity with legacy `dev` branch.
 
 ## IDE AI State
-- **Current Goal:** Conclude Tauri/Vite frontend migration integration and document architectural lessons.
-- **Last Evaluated:** Updated `docs/staging_lessons.md`, `docs/active_sprint_state.md`, and `docs/engineering_backlog.md`.
-- **Status:** All requested IPC boundary mapping and frontend modifications are complete. Syntax/EOF errors in Vite bridge have been corrected.
-- **Next Task:** Manual user testing of Vite and Tauri dev servers.
+- **Current Goal:** Resolve critical pipeline bugs, achieve Capture Studio feature parity, and prepare `feature/tauri-migration` for merge to `dev`.
+- **Last Evaluated:** 2026-08-13
+- **Status:** Audit complete; 2 critical execution blockers identified, micro-gaps cataloged in `engineering_backlog.md`.
+
+### Immediate Sprint Focus (Top Priorities)
+1. **[CRITICAL BUG] Fix `capture_directories` Drive Mapping:** `capture_pane.js` maps `scanPaths` (individual demo files) to output pools, causing `mklink /J` junction failures and batch aborts.
+2. **[CRITICAL BUG] Implement `session_id` Timestamping:** Stamp ISO timestamp (`session_YYYYMMDD_HHMMSS`) in payload so outputs route to dedicated subfolders instead of colliding in export root.
+3. **[FEATURE] Global & Per-Demo Bookmark Previews:** Implement `viewdemo` + `BOOKMARK` director event patching for single-demo and global "Preview All" actions (replacing per-streak preview).
+4. **[UI FIX] Detail Pane & Formatting:** Restore "Sel" checkboxes on highlight table; fix leading comma formatting bug and missing weapon name in details view.
+5. **[UI POLISH] Tab Branding & Custom Controls:** Rename "Workspace & Master Queue" back to "Capture Studio"; add CSS dropdown indicators/chevrons; remove/wire dead "POV Only" input field.
 
 ## Sprint Takeaways & Architectural Rules
 * **Standalone CLI Portability:** Strictly avoid dynamic disk-based localization lookups for headless binaries (`preview_cli`). Hardcoded literals prevent silent failures on target machines missing dictionary files.
