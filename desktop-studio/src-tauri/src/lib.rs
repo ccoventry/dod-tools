@@ -254,6 +254,66 @@ async fn analyze_demo(demo_path: String) -> Result<SerializedAnalysis, String> {
     .map_err(|e| format!("Task join error: {}", e))?
 }
 
+// ── Full-fidelity analysis payload for the standalone Demo Analyzer tab ─────────
+// Unlike `SerializedAnalysis` (which flattens a handful of sections into loose
+// JSON for the compact inline telemetry summary), this passes the typed
+// `analysis::DemoInfo`/`AnalyzerState` straight through so the frontend can
+// reconstruct every report sub-view (Summary/Scoreboard/Player Details/Team
+// Details/Timeline/Rounds/Chat) with full fidelity, matching the data the
+// egui report views on `dev` were built from.
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct AnalyzerReportPayload {
+    pub file_name: String,
+    pub file_path: String,
+    pub file_dir: String,
+    pub file_size_mb: f64,
+    pub file_created_unix_secs: f64,
+    pub demo_info: analysis::DemoInfo,
+    pub state: analysis::AnalyzerState,
+}
+
+#[tauri::command]
+async fn analyze_demo_full(demo_path: String) -> Result<AnalyzerReportPayload, String> {
+    tokio::task::spawn_blocking(move || {
+        let path = std::path::PathBuf::from(&demo_path);
+
+        if !path.exists() || !path.is_file() {
+            return Err(format!("Demo file not found: {}", demo_path));
+        }
+
+        match native::run_analyzer_with_progress(&path, |_, _| {}) {
+            Ok((file_info, analysis)) => {
+                // Independent metadata lookup (not `file_info.created_at`) to avoid
+                // depending on `web_time::SystemTime`'s exact type identity here.
+                let created_unix_secs = std::fs::metadata(&path)
+                    .ok()
+                    .and_then(|m| m.modified().ok())
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs_f64())
+                    .unwrap_or(0.0);
+
+                let file_dir = std::path::Path::new(&file_info.path)
+                    .parent()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_default();
+
+                Ok(AnalyzerReportPayload {
+                    file_name: file_info.name,
+                    file_path: file_info.path,
+                    file_dir,
+                    file_size_mb: file_info.size_bytes as f64 / 1_048_576.0,
+                    file_created_unix_secs: created_unix_secs,
+                    demo_info: analysis.demo_info,
+                    state: analysis.state,
+                })
+            }
+            Err(e) => Err(format!("Analyzer error: {}", e)),
+        }
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
+}
+
 // ── App entry point ────────────────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -271,6 +331,7 @@ pub fn run() {
             test_bridge,
             validate_paths,
             analyze_demo,
+            analyze_demo_full,
             start_capture_batch,
             cancel_capture_batch,
             capture_status,

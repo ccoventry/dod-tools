@@ -29,6 +29,15 @@ export async function analyzeDemo(demoPath) {
     });
 }
 
+export async function analyzeDemoFull(demoPath) {
+  return await invoke('analyze_demo_full', { demoPath })
+    .catch((err) => {
+      console.error("IPC Execution Error (analyze_demo_full):", err);
+      showToast(`Analysis error: ${err}`, 'error');
+      throw err;
+    });
+}
+
 export async function startCaptureBatch(payload) {
   return invoke("start_capture_batch", { payload: payload })
     .catch((err) => {
