@@ -1,7 +1,8 @@
 ## Web AI State
-- **Overarching Goal:** Tauri + Vite Architecture Migration (Capture Studio Parity & Pipeline Stabilization).
-- **Last Edited:** `desktop-studio/src/capture_pane.js`, `desktop-studio/src/detail_pane.js`, `desktop-studio/src/main.js`, `desktop-studio/src/ipc_bridge.js`, `desktop-studio/index.html`, `desktop-studio/src-tauri/src/capture_manager.rs`, `desktop-studio/src-tauri/src/lib.rs`, `desktop-studio/src-tauri/src/settings_manager.rs`, `desktop-studio/src-tauri/Cargo.toml`.
-- **Unresolved Errors/Bugs:** None blocking. All High-Priority Capture Studio parity gaps in `engineering_backlog.md` are now resolved — `feature/tauri-migration` is ready for end-to-end verification, testing, and merge to `dev`.
+- **Overarching Goal:** Tauri Frontend Migration - Capture Studio Parity. All High-Priority parity gaps (Custom Commands, Config Persistence, Disk Estimator, Process Guard) are now successfully resolved.
+- **Last Files Edited:** `desktop-studio/src-tauri/src/capture_manager.rs`, `desktop-studio/src-tauri/src/lib.rs`, `desktop-studio/src-tauri/src/settings_manager.rs`, `desktop-studio/src-tauri/Cargo.toml`, `Cargo.lock`, `desktop-studio/src/capture_pane.js`, `desktop-studio/src/detail_pane.js`, `desktop-studio/src/main.js`, `desktop-studio/src/ipc_bridge.js`, `desktop-studio/index.html` (the three High-Priority parity features, now split into three commits — `b3c47e1`/`f36196c`/`d9b9f10` — with the `sysinfo` `Process::name()` type fix folded into the process-guard commit rather than left as a separate broken-then-fixed commit); `docs/engineering_backlog.md`, `docs/active_sprint_state.md`, `docs/milestones.md` (documentation audit & sync); `docs/staging_lessons.md` (session lessons learned, in progress).
+- **Unresolved Errors:** None. `cargo check -p desktop-studio` is clean (verified before the commit split; content is byte-identical after, so the result still holds).
+- **Next Steps:** Branch `feature/tauri-migration` is stable and ready for end-to-end functional testing and merge to `dev`, or advancing to Medium Priority parity gaps (e.g., Clear Previews modal, Standalone Game Launch).
 
 ## Active Epics
 - **Headless Preview CLI:** COMPLETED
@@ -18,9 +19,9 @@
   - Transitioning frontend stack to Tauri + Vite architecture in `desktop-studio/`, restoring parity with legacy `dev` branch.
 
 ## IDE AI State
-- **Current Goal:** All High-Priority Capture Studio parity gaps in `engineering_backlog.md` are resolved — `PatcherConfig` Full Persistence, Pre-Flight Disk Allocation & Pre-Scan Estimator, and Running Process Guard & Detector Modal all closed 2026-08-13, on top of Custom Engine Commands Integration from earlier in the sprint. `feature/tauri-migration` is ready for end-to-end verification, testing, and merge to `dev`; only Medium/Low priority polish items remain in the backlog.
+- **Current Goal:** All High-Priority Capture Studio parity gaps in `engineering_backlog.md` are resolved — `PatcherConfig` Full Persistence, Pre-Flight Disk Allocation & Pre-Scan Estimator, and Running Process Guard & Detector Modal all closed 2026-08-13, on top of Custom Engine Commands Integration from earlier in the sprint. The three feature diffs (previously one uncommitted working-tree blob) have since been split into three scoped commits — `b3c47e1` (settings persistence), `f36196c` (disk estimator), `d9b9f10` (process guard) — on `feature/tauri-migration`. `feature/tauri-migration` is ready for end-to-end verification, testing, and merge to `dev`; only Medium/Low priority polish items remain in the backlog.
 - **Last Evaluated:** 2026-08-13
-- **Status:** Immediate Sprint Focus cleared (all items resolved, see below). All High Priority parity items in `engineering_backlog.md` are closed. Next step is branch verification/merge, not further feature work.
+- **Status:** Working tree is clean against `HEAD` except for `docs/staging_lessons.md` (three new engine-quirk/workflow bullets appended this pass, not yet committed) and this file being rewritten in the same pass. No open compile errors or IDE diagnostics; the last `cargo check -p desktop-studio` (pre-split) was clean. Immediate Sprint Focus is cleared (all items resolved, see below); all High Priority parity items in `engineering_backlog.md` are closed. Next step is branch verification/merge, not further feature work.
 
 ### Immediate Sprint Focus (Top Priorities)
 *(Cleared 2026-08-13 — every item previously tracked here, and every High Priority item in `engineering_backlog.md`'s parity backlog, is resolved. Full detail lives in `engineering_backlog.md`'s Completed Tasks section. Remaining work is Medium/Low priority polish plus end-to-end branch verification before merge.)*
