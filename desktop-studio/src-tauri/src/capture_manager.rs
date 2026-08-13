@@ -28,6 +28,25 @@ pub struct CapturePayload {
     pub hlae_path: String,
     /// Absolute path to hl.exe
     pub game_path: String,
+    /// Optional absolute path to ffmpeg.exe; falls back to bundled then PATH.
+    #[serde(default)]
+    pub ffmpeg_override_path: Option<String>,
+    /// Explicit primary capture output folder; takes precedence over `drives[0]`.
+    #[serde(default)]
+    pub primary_media_dir: Option<String>,
+    /// Explicit backup capture output folder; takes precedence over `drives[1]`.
+    #[serde(default)]
+    pub backup_media_dir: Option<String>,
+    #[serde(default = "default_resolution_width")]
+    pub resolution_width: i32,
+    #[serde(default = "default_resolution_height")]
+    pub resolution_height: i32,
+    #[serde(default)]
+    pub separate_hud: bool,
+    #[serde(default)]
+    pub save_local_patched_copy: bool,
+    #[serde(default = "default_add_condebug")]
+    pub add_condebug: bool,
     /// Highlight streaks to capture.
     pub streaks: Vec<SerializedStreak>,
     /// Pre-roll added before each streak (seconds). Converted → ticks at 100 Hz.
@@ -50,10 +69,19 @@ pub struct CapturePayload {
     pub initial_delay: f32,
     #[serde(default = "default_fast_forward_speed")]
     pub fast_forward_speed: f32,
+    #[serde(default)]
+    pub auto_clear_logs: bool,
+    #[serde(default)]
+    pub auto_clear_previews: bool,
+    #[serde(default)]
+    pub auto_clear_temp_demos: bool,
 }
 
 fn default_initial_delay() -> f32 { 3.0 }
 fn default_fast_forward_speed() -> f32 { 10.0 }
+fn default_resolution_width() -> i32 { 1280 }
+fn default_resolution_height() -> i32 { 720 }
+fn default_add_condebug() -> bool { true }
 
 /// One highlight streak — serialisable across the Tauri IPC boundary.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -155,9 +183,25 @@ fn config_from_payload(payload: &CapturePayload) -> PatcherConfig {
     cfg.record_stop_trail = payload.record_stop_trail;
     cfg.initial_delay = payload.initial_delay;
     cfg.fast_forward_speed = payload.fast_forward_speed;
-    // Drive routing
-    cfg.primary_media_dir = payload.drives.first().map(std::path::PathBuf::from);
-    cfg.backup_media_dir = payload.drives.get(1).map(std::path::PathBuf::from);
+    cfg.ffmpeg_override_path = payload.ffmpeg_override_path.clone();
+    cfg.resolution_width = payload.resolution_width;
+    cfg.resolution_height = payload.resolution_height;
+    cfg.separate_hud = payload.separate_hud;
+    cfg.save_local_patched_copy = payload.save_local_patched_copy;
+    cfg.add_condebug = payload.add_condebug;
+    cfg.auto_clear_logs = payload.auto_clear_logs;
+    cfg.auto_clear_previews = payload.auto_clear_previews;
+    cfg.auto_clear_temp_demos = payload.auto_clear_temp_demos;
+    // Drive routing: explicit Primary/Backup Media Dir fields (from their own
+    // UI inputs) take precedence; fall back to the Target Output Drives list.
+    cfg.primary_media_dir = payload.primary_media_dir.as_ref()
+        .filter(|s| !s.trim().is_empty())
+        .map(std::path::PathBuf::from)
+        .or_else(|| payload.drives.first().map(std::path::PathBuf::from));
+    cfg.backup_media_dir = payload.backup_media_dir.as_ref()
+        .filter(|s| !s.trim().is_empty())
+        .map(std::path::PathBuf::from)
+        .or_else(|| payload.drives.get(1).map(std::path::PathBuf::from));
     cfg.allocation_strategy = match payload.allocation_strategy.as_str() {
         "Chronological" => DriveAllocationStrategy::Chronological,
         _ => DriveAllocationStrategy::MaximizeSpace,
