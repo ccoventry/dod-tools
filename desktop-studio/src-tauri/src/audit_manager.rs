@@ -1,5 +1,5 @@
 use hl_demo_auditor::{find_duplicates, scan_dir, AuditProgress};
-use serde::{Deserialize, Serialize};
+use serde::{Serialize};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, mpsc};
