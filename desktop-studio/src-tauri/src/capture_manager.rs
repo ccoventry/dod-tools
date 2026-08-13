@@ -14,7 +14,7 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use native::patch::{PatcherConfig, CaptureStreak, PatchJob, build_batch_queue, DriveAllocationStrategy};
+use native::patch::{PatcherConfig, CaptureStreak, PatchJob, StreamPatcher, build_batch_queue, build_preview_patch_jobs, DriveAllocationStrategy};
 use native::capture_engine::{spawn_capture_engine, CaptureJob, EngineEvent};
 use serde::{Deserialize, Serialize};
 use tauri::Emitter;
@@ -620,4 +620,130 @@ pub fn simulate_aot_capacity(streaks: Vec<f32>, fps: u32, bytes_per_frame: u64, 
     }
     let has_enough_space = total_projected_bytes <= available_bytes;
     (total_projected_bytes, has_enough_space)
+}
+
+// ── On-the-fly Preview (.dodtools_preview) ───────────────────────────────────
+//
+// Ports `dev`'s native/src/bin/gui/views/capture/workspace.rs::launch_preview,
+// which was GUI-binary-only and was never promoted to the library crate during
+// the Tauri migration (that whole binary target was dropped). The pieces it
+// depended on that DID survive in `native::patch` (`build_preview_patch_jobs`,
+// `StreamPatcher`, `PatchJob`, `PatcherConfig::build_hlae_process`) are reused
+// as-is here; only the primer-demo orchestration below is new.
+//
+// Two demos get patched:
+//   1. `<stem>_preview.dem` — the highlight itself (via build_preview_patch_jobs),
+//      marked with a hidden `.dodtools_preview` sidecar so it's never mistaken
+//      for a real recorded demo.
+//   2. `primer_preview.dem` — a copy of the ORIGINAL source demo carrying one
+//      scheduled console command, `viewdemo <stem>_preview`, fired at tick 500.
+//      HLAE is launched against this primer (`+playdemo primer_preview`); the
+//      primer's only job is to hand off into the real preview demo in-engine.
+//
+// `StreamPatcher::patch`'s `PatcherConfig` argument is unused by the function
+// itself (see native/src/patch/engine.rs) — it only matters here because
+// `build_hlae_process` reads `hlae_path`/`game_path`/`resolution_*` off it.
+
+fn write_hidden_sidecar(path: &std::path::Path) -> std::io::Result<()> {
+    use std::fs::OpenOptions;
+    let mut options = OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        options.custom_flags(0x00000002); // FILE_ATTRIBUTE_HIDDEN
+    }
+    options.open(path)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn launch_live_preview(
+    demo_path: String,
+    hlae_path: String,
+    game_path: String,
+    streak: SerializedStreak,
+) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        if hlae_path.trim().is_empty() || game_path.trim().is_empty() {
+            return Err("Configure the HLAE and Half-Life executable paths before previewing.".to_string());
+        }
+        let hlae_p = std::path::Path::new(&hlae_path);
+        let hl_p = std::path::Path::new(&game_path);
+        if !hlae_p.is_file() {
+            return Err("HLAE executable not found at the configured path.".to_string());
+        }
+        if !hl_p.is_file() {
+            return Err("Half-Life executable not found at the configured path.".to_string());
+        }
+
+        let dod_dir = hl_p
+            .parent()
+            .map(|p| p.join("dod"))
+            .ok_or_else(|| "Could not resolve the 'dod' directory next to hl.exe".to_string())?;
+        std::fs::create_dir_all(&dod_dir)
+            .map_err(|e| format!("Failed to create dod directory: {}", e))?;
+
+        let mut capture_streak = CaptureStreak::from(streak);
+        capture_streak.source_demo = demo_path.clone();
+
+        let patcher_config = PatcherConfig {
+            hlae_path: hlae_path.clone(),
+            game_path: game_path.clone(),
+            ..PatcherConfig::default()
+        };
+        let cancel_token = Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+        // 1. Patch the trimmed highlight into its own preview demo.
+        let preview_jobs = build_preview_patch_jobs(vec![capture_streak], Some(dod_dir.as_path()));
+        let preview_job = preview_jobs
+            .first()
+            .ok_or_else(|| "Failed to build the preview patch job".to_string())?;
+
+        StreamPatcher::new(&preview_job.source_demo, &preview_job.output_demo)
+            .patch(preview_job, &patcher_config, &cancel_token)
+            .map_err(|e| format!("Failed to patch preview demo: {}", e))?;
+
+        // 2. Mark it as a preview artifact via a hidden sidecar.
+        let sidecar_path = preview_job.output_demo.with_extension("dodtools_preview");
+        write_hidden_sidecar(&sidecar_path)
+            .map_err(|e| format!("Failed to write preview sidecar: {}", e))?;
+
+        // 3. Patch the primer demo and launch HLAE against it.
+        let preview_stem = preview_job
+            .output_demo
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .ok_or_else(|| "Could not resolve the preview demo's file stem".to_string())?
+            .to_string();
+
+        let mut primer_init = patcher_config.init_commands.clone();
+        primer_init.push(format!(
+            "mirv_movie_separate_hud {}",
+            if patcher_config.separate_hud { "1" } else { "0" }
+        ));
+
+        let primer_job = PatchJob {
+            source_demo: demo_path.clone(),
+            output_demo: dod_dir.join("primer_preview.dem"),
+            streaks: vec![],
+            target_player: None,
+            init_commands: primer_init,
+            scheduled_commands: vec![(500, format!("viewdemo {}", preview_stem))],
+            director_events: vec![],
+            block_routes: vec![],
+        };
+
+        StreamPatcher::new(&primer_job.source_demo, &primer_job.output_demo)
+            .patch(&primer_job, &patcher_config, &cancel_token)
+            .map_err(|e| format!("Failed to patch primer demo: {}", e))?;
+
+        let mut cmd = patcher_config.build_hlae_process("+playdemo primer_preview");
+        cmd.spawn()
+            .map_err(|e| format!("Failed to launch HLAE for preview: {}", e))?;
+
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
 }
