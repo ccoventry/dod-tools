@@ -1,6 +1,6 @@
 import { switchNavTab } from './nav.js';
 import { loadAnalyzerDemo } from './analyzer_pane.js';
-import { launchDemoPreview, generateAllPreviews } from './ipc_bridge.js';
+import { launchDemoPreview, generateAllPreviews, checkEngineProcesses, killEngineProcesses } from './ipc_bridge.js';
 import { showToast } from './toast.js';
 
 let currentDemo = null;
@@ -16,6 +16,29 @@ let currentOnSelectionChange = null;
 export function initDetailPane(getAllDemos, onSelectionChange) {
   currentGetAllDemos = getAllDemos;
   currentOnSelectionChange = onSelectionChange || null;
+}
+
+// ── Running Process Guard (Half-Life Preview Detector) ────────────────────────
+// launch_demo_preview patches and immediately launches HLAE; doing that while
+// a prior hl.exe/hlae.exe is still alive corrupts the new session. When
+// checkEngineProcesses() reports a conflict, the launch is parked here until
+// the user resolves it via the modal (Force Relaunch / Copy View Command /
+// Cancel) instead of proceeding blind.
+let pendingLaunch = null;
+
+function demoStemFromPath(path) {
+  const base = String(path || '').split(/[\\/]/).pop() || '';
+  return base.replace(/\.dem$/i, '');
+}
+
+function showProcessDetectorModal() {
+  const modal = document.querySelector('#process-detector-modal');
+  if (modal) modal.style.display = 'flex';
+}
+
+function hideProcessDetectorModal() {
+  const modal = document.querySelector('#process-detector-modal');
+  if (modal) modal.style.display = 'none';
 }
 
 /** Reflects current selection state onto the Launch Preview (per-demo) and
@@ -106,6 +129,23 @@ window.addEventListener("DOMContentLoaded", () => {
     });
   }
 
+  /** Actually invokes launch_demo_preview — shared by the direct click path
+   *  (no conflicting process) and the modal's Force Relaunch path. */
+  async function performLaunchPreview(hlaePath, hlPath, selected) {
+    btnLaunchPreview.disabled = true;
+    const originalLabel = btnLaunchPreview.textContent;
+    btnLaunchPreview.textContent = 'Launching…';
+    try {
+      await launchDemoPreview(hlaePath, hlPath, selected);
+      showToast('Preview launching in HLAE...', 'info');
+    } catch (err) {
+      // Already toasted by ipc_bridge.js.
+    } finally {
+      btnLaunchPreview.textContent = originalLabel;
+      updatePreviewButtonStates();
+    }
+  }
+
   if (btnLaunchPreview) {
     btnLaunchPreview.addEventListener('click', async () => {
       const hlaePath = document.querySelector('#hlae-path-input')?.value?.trim();
@@ -118,18 +158,67 @@ window.addEventListener("DOMContentLoaded", () => {
       const selected = currentDemo.streaks.filter(s => s.selected);
       if (selected.length === 0) return;
 
-      btnLaunchPreview.disabled = true;
-      const originalLabel = btnLaunchPreview.textContent;
-      btnLaunchPreview.textContent = 'Launching…';
+      let engineAlreadyRunning = false;
       try {
-        await launchDemoPreview(hlaePath, hlPath, selected);
-        showToast('Preview launching in HLAE...', 'info');
+        engineAlreadyRunning = await checkEngineProcesses();
+      } catch (err) {
+        // Already toasted by ipc_bridge.js — fail open rather than blocking
+        // a legitimate launch just because the detector itself errored.
+      }
+
+      if (engineAlreadyRunning) {
+        pendingLaunch = { hlaePath, hlPath, selected };
+        showProcessDetectorModal();
+        return;
+      }
+
+      await performLaunchPreview(hlaePath, hlPath, selected);
+    });
+  }
+
+  const processModalForceRelaunchBtn = document.querySelector('#process-modal-force-relaunch-btn');
+  if (processModalForceRelaunchBtn) {
+    processModalForceRelaunchBtn.addEventListener('click', async () => {
+      if (!pendingLaunch) {
+        hideProcessDetectorModal();
+        return;
+      }
+      const { hlaePath, hlPath, selected } = pendingLaunch;
+      processModalForceRelaunchBtn.disabled = true;
+      try {
+        await killEngineProcesses();
       } catch (err) {
         // Already toasted by ipc_bridge.js.
-      } finally {
-        btnLaunchPreview.textContent = originalLabel;
-        updatePreviewButtonStates();
       }
+      await new Promise(resolve => setTimeout(resolve, 500));
+      processModalForceRelaunchBtn.disabled = false;
+      pendingLaunch = null;
+      hideProcessDetectorModal();
+      await performLaunchPreview(hlaePath, hlPath, selected);
+    });
+  }
+
+  const processModalCopyCommandBtn = document.querySelector('#process-modal-copy-command-btn');
+  if (processModalCopyCommandBtn) {
+    processModalCopyCommandBtn.addEventListener('click', async () => {
+      const stem = demoStemFromPath(currentDemo?.path);
+      const viewCommand = `viewdemo ${stem}_preview`;
+      try {
+        await navigator.clipboard.writeText(viewCommand);
+        showToast(`Copied "${viewCommand}" to clipboard.`, 'success');
+      } catch (err) {
+        console.error("Failed to copy view command to clipboard:", err);
+        showToast('Failed to copy the view command to clipboard.', 'error');
+      }
+      hideProcessDetectorModal();
+    });
+  }
+
+  const processModalCancelBtn = document.querySelector('#process-modal-cancel-btn');
+  if (processModalCancelBtn) {
+    processModalCancelBtn.addEventListener('click', () => {
+      pendingLaunch = null;
+      hideProcessDetectorModal();
     });
   }
 

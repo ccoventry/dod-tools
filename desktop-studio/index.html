@@ -405,5 +405,22 @@
     </div>
 
     <div id="toast-container"></div>
+
+    <!-- Half-Life Preview Detector — pre-flight guard shown when hl.exe/hlae.exe
+         is already running before launching a new preview. -->
+    <div id="process-detector-modal" class="modal" style="display: none;">
+      <div class="modal-content" style="max-width: 480px; padding: 20px;">
+        <h2>Half-Life Preview Detector</h2>
+        <p style="color: #f44336; font-weight: 600;">
+          The Half-Life engine is already running (hl.exe / hlae.exe). Launching a new preview
+          now can corrupt the capture session — close the running instance first, or force a relaunch.
+        </p>
+        <div style="display: flex; gap: 8px; margin-top: 16px; justify-content: flex-end; flex-wrap: wrap;">
+          <button id="process-modal-force-relaunch-btn" class="primary-btn">Force Relaunch</button>
+          <button id="process-modal-copy-command-btn">Copy View Command</button>
+          <button id="process-modal-cancel-btn">Cancel</button>
+        </div>
+      </div>
+    </div>
   </body>
 </html>

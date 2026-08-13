@@ -58,6 +58,28 @@ export async function launchDemoPreview(hlaePath, gamePath, streaks) {
     });
 }
 
+/** True if an `hl.exe`/`hlae.exe` instance is already running — used as a
+ *  pre-flight guard before `launchDemoPreview` so a stale HLAE session
+ *  doesn't corrupt the freshly-patched preview demo. */
+export async function checkEngineProcesses() {
+  return invoke("check_engine_processes")
+    .catch((err) => {
+      console.error("IPC Execution Error (check_engine_processes):", err);
+      showToast(`Process check failed: ${err}`, 'error');
+      throw err;
+    });
+}
+
+/** Aggressively kills any running `hl.exe`/`hlae.exe` instances. */
+export async function killEngineProcesses() {
+  return invoke("kill_engine_processes")
+    .catch((err) => {
+      console.error("IPC Execution Error (kill_engine_processes):", err);
+      showToast(`Failed to close running engine processes: ${err}`, 'error');
+      throw err;
+    });
+}
+
 /** Patches every demo with selected highlights into its own `<stem>_preview.dem`
  *  (grouped server-side by source demo) without launching HLAE. Resolves to the
  *  number of preview demos generated. */

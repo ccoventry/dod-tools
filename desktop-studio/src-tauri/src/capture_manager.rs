@@ -793,3 +793,40 @@ pub async fn generate_all_previews(
     .await
     .map_err(|e| format!("Task join error: {}", e))?
 }
+
+// ── Running Process Guard ───────────────────────────────────────────────────────
+//
+// Launching a fresh HLAE Game Capture preview against a demo while a prior
+// `hl.exe`/`hlae.exe` instance is still alive corrupts the new session (the
+// old instance holds the game's `dod` directory and console). These two
+// commands back the pre-flight "Half-Life Preview Detector" modal: check
+// before launching, and let the user force-kill stragglers instead of
+// hunting them down in Task Manager.
+
+fn is_engine_process_name(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    lower == "hl.exe" || lower == "hlae.exe"
+}
+
+/// True if any `hl.exe` or `hlae.exe` process is currently running.
+#[tauri::command]
+pub fn check_engine_processes() -> bool {
+    let sys = sysinfo::System::new_all();
+    sys.processes()
+        .values()
+        .any(|p| is_engine_process_name(p.name()))
+}
+
+/// Aggressively terminates every running `hl.exe`/`hlae.exe` instance.
+#[tauri::command]
+pub fn kill_engine_processes() -> Result<(), String> {
+    let sys = sysinfo::System::new_all();
+    for process in sys.processes().values() {
+        if is_engine_process_name(process.name()) {
+            if !process.kill() {
+                log::warn!("Failed to kill engine process pid={}", process.pid());
+            }
+        }
+    }
+    Ok(())
+}
