@@ -54,7 +54,12 @@
 
 use std::collections::BTreeMap;
 
-use dem::types::{Demo, DirectoryEntry, FrameData, MessageData, NetworkMessageType};
+use dem::bit::BitSliceCast;
+use dem::types::{
+    AuxRefCell, ClientDataWeaponData, Delta, Demo, DirectoryEntry, EngineMessage, EntityState,
+    Frame, FrameData, MessageData, NetMessage, NetworkMessage, NetworkMessageType,
+    SvcClientData, SvcPacketEntities,
+};
 
 pub mod idem;
 pub mod resources;
@@ -323,26 +328,47 @@ fn frame_kind(f: &FrameData) -> &'static str {
     }
 }
 
-/// Transcode only `[start - preroll, end]` of the playback section.
+/// Transcode only `[start - preroll, end]` of the playback section, with a
+/// synthesized entity baseline spliced in so the cut doesn't land mid-chain.
 ///
 /// The signon section is always kept whole — it carries the map name, resource
 /// list and entity baselines, without which nothing loads.
 ///
 /// # Delta-compression caveat
 ///
-/// `svc_deltapacketentities` encodes against an earlier frame. A cut landing
-/// mid-stream renders corrupt entities until the next full update arrives.
-/// `preroll` is a blunt mitigation that usually works because full updates are
-/// frequent.
+/// `svc_deltapacketentities` deltas against the client's *cumulative* running
+/// entity state, not a periodically-resent snapshot: GoldSrc only sends a
+/// full (non-delta) `svc_packetentities` once, in the first few frames after
+/// connecting — confirmed empirically against `analysis_target_pov.dem`
+/// (986 s, 90,464 delta messages, exactly 4 full ones, all inside the first
+/// 0.07 s). So "walk forward to the next full update" (this function's
+/// earlier approach) is a dead end for a real mid-match highlight — there
+/// usually isn't one. Left uncorrected, Xash hits
+/// `CL_ParseDeltaPacketEntitiesGS: (N should be M)` at signon and the
+/// replayed world never advances (confirmed in a real browser, 2026-08-14).
 ///
-/// The correct fix is to walk forward from `start` to the first frame carrying
-/// a non-delta `svc_packetentities` and cut there. That needs message-level
-/// parsing — reparse in `MessageDataParseMode::Parse` and match on
-/// `EngineMessage::SvcPacketEntities` via `dem::netmsg_doer`. Left as a TODO
-/// because for triage the blunt version is usually good enough, and doing it
-/// properly costs a second parse pass over the whole demo.
+/// The fix: reconstruct the state a real client would have accumulated by
+/// `start - preroll`, and inject it as a synthetic full `svc_packetentities`
+/// frame immediately before the retained window, so playback picks up from
+/// a self-contained snapshot instead of an orphaned delta chain.
+/// `parsed` — a second parse of the same source in
+/// [`dem::types::MessageDataParseMode::Parse`] (`demo` stays `Raw`, for the
+/// byte-exact write path elsewhere) — supplies the decoded per-entity field
+/// deltas ([`replay_entities_before`]) that get folded into one map per
+/// entity and re-encoded ([`encode_full_baseline`]) using the crate's own
+/// `SvcPacketEntities` writer, so none of GoldSrc's bit-level delta format is
+/// reimplemented here.
+///
+/// # Panics / preconditions
+///
+/// `demo` and `parsed` must be two parses of the same bytes — this walks
+/// them in lockstep by directory-entry index and assumes matching frame
+/// timestamps. Passing unrelated demos silently produces a baseline that
+/// doesn't match the retained window's frames, not a panic — directory-entry
+/// counts alone can't prove a mismatch.
 pub fn cut(
     demo: &Demo,
+    parsed: &Demo,
     start: f32,
     end: f32,
     preroll: f32,
@@ -352,7 +378,7 @@ pub fn cut(
 
     let mut kept: Vec<DirectoryEntry> = Vec::with_capacity(demo.directory.entries.len());
 
-    for entry in &demo.directory.entries {
+    for (i, entry) in demo.directory.entries.iter().enumerate() {
         if entry.type_ == 0 {
             kept.push(entry.clone());
             continue;
@@ -371,6 +397,55 @@ pub fn cut(
             .cloned()
             .collect();
 
+        // Splice synthesized full baselines in front of the retained window,
+        // built from every entity + local-player field ever set before `lo`.
+        // Usually one frame suffices for the whole reconstruction (entities
+        // are cumulative, so a single from-null baseline covers them). But
+        // `svc_clientdata` deltas against "the last frame this client
+        // acknowledged" — a few frames behind due to round-trip latency, a
+        // *sliding* reference, not a fixed one — so several leading
+        // post-cut clientdata messages each reference a *different* pre-cut
+        // frame in turn. See `client_data_chain`'s doc comment.
+        if let (Some(pe), Some(aux)) = (parsed.directory.entries.get(i), parsed._aux.clone()) {
+            let state = replay_state_before(pe, lo);
+            if !state.entities.is_empty() || !state.client_data.is_empty() {
+                let payload = encode_synthetic_payload(&state, aux);
+                if (payload.len() as u32) <= idem::MAX_INIT_MSG {
+                    if let Some(anchor) = e
+                        .frames
+                        .iter()
+                        .find(|f| matches!(f.frame_data, FrameData::NetworkMessage(_)))
+                        .cloned()
+                    {
+                        let FrameData::NetworkMessage(anchor_boxed) = &anchor.frame_data else {
+                            unreachable!("filtered to NetworkMessage above");
+                        };
+                        let anchor_seq = anchor_boxed.1.sequence_info.incoming_sequence;
+                        let chain = client_data_chain(pe, lo, anchor_seq);
+
+                        let insert_at = e
+                            .frames
+                            .iter()
+                            .position(|f| f.time >= lo)
+                            .unwrap_or(0);
+                        if chain.is_empty() {
+                            let synthetic = synthetic_baseline_frame(&anchor, payload, None);
+                            e.frames.insert(insert_at, synthetic);
+                        } else {
+                            for (offset, seq) in chain.iter().enumerate() {
+                                let synthetic =
+                                    synthetic_baseline_frame(&anchor, payload.clone(), Some(*seq));
+                                e.frames.insert(insert_at + offset, synthetic);
+                            }
+                        }
+                    }
+                }
+                // Oversize or no anchor frame: falls through with the plain
+                // cut, reproducing the original corrupt-entity symptom for
+                // this one section rather than failing the whole transcode.
+            }
+        }
+
         // Guarantee a terminator; Xash treats a section without dem_stop as corrupt.
         if !e
             .frames
@@ -387,6 +462,305 @@ pub fn cut(
     }
 
     transcode_entries(demo, &kept, opts)
+}
+
+/// Per-entity accumulated state: `has_custom_delta` flag plus every field
+/// ever explicitly set for that entity, keyed by field name exactly as the
+/// crate's own delta parser names them (never constructed by hand here, so
+/// there's no risk of drifting from its naming convention).
+type EntityTable = BTreeMap<u16, (bool, Delta)>;
+
+/// Everything replayed from `[0, before)` needed to synthesize a
+/// self-contained resume point: world entities (`svc_packetentities`) *and*
+/// the local player's own state (`svc_clientdata`), which GoldSrc encodes as
+/// a second, independent delta chain — same cumulative-against-your-own-
+/// running-state semantics, same "no periodic full resync" gap, and the
+/// actual cause of a real symptom: a mid-stream cut played back with only
+/// the entity fix applied showed a slowly-rotating free-floating camera
+/// above the player's body — classic GoldSrc observer/dead-camera fallback,
+/// caused by `clientdata_t`'s `origin`/`health`/`deadflag`/`iuser1` fields
+/// resolving from Xash's zeroed default instead of the real accumulated
+/// values (confirmed against real DoD 1.3 `delta.lst`: `clientdata_t`
+/// carries exactly these fields). Confirmed fixed 2026-08-14.
+#[derive(Default)]
+struct ReplayedState {
+    entities: EntityTable,
+    client_data: Delta,
+    /// Keyed by weapon slot index (0..64, `clientdata_t`'s `weapon_data_t`
+    /// delta is per-slot).
+    weapon_data: BTreeMap<u8, Delta>,
+}
+
+/// Replay every `NetworkMessage` frame in `entry` with `time < before`,
+/// folding entity and local-player fields into running tables. Full and
+/// delta entity messages are handled identically — merge listed fields,
+/// drop removed entities — which is enough because the only full messages
+/// observed in practice are the initial connect-time snapshot (see `cut`'s
+/// doc comment), so there's no case here of a later full update needing to
+/// *reset* rather than merge. `svc_clientdata` has no full/delta
+/// distinction at all — every occurrence merges the same way.
+fn replay_state_before(entry: &DirectoryEntry, before: f32) -> ReplayedState {
+    let mut state = ReplayedState::default();
+
+    for f in &entry.frames {
+        if f.time >= before {
+            continue;
+        }
+        let FrameData::NetworkMessage(boxed) = &f.frame_data else {
+            continue;
+        };
+        let MessageData::Parsed(messages) = &boxed.as_ref().1.messages else {
+            continue;
+        };
+
+        for m in messages {
+            let NetMessage::EngineMessage(engine) = m else {
+                continue;
+            };
+            match engine.as_ref() {
+                EngineMessage::SvcPacketEntities(full) => {
+                    for ent in &full.entity_states {
+                        merge_entity(
+                            &mut state.entities,
+                            ent.entity_index,
+                            ent.has_custom_delta,
+                            &ent.delta,
+                        );
+                    }
+                }
+                EngineMessage::SvcDeltaPacketEntities(delta_msg) => {
+                    for ent in &delta_msg.entity_states {
+                        if ent.remove_entity {
+                            state.entities.remove(&ent.entity_index);
+                            continue;
+                        }
+                        let hcd = ent.has_custom_delta.unwrap_or(false);
+                        if let Some(delta) = &ent.delta {
+                            merge_entity(&mut state.entities, ent.entity_index, hcd, delta);
+                        }
+                    }
+                }
+                EngineMessage::SvcClientData(cd) => {
+                    for (k, v) in &cd.client_data {
+                        state.client_data.insert(k.clone(), v.clone());
+                    }
+                    if let Some(weapons) = &cd.weapon_data {
+                        for w in weapons {
+                            let fields = state.weapon_data.entry(w.weapon_index.to_u8()).or_default();
+                            for (k, v) in &w.weapon_data {
+                                fields.insert(k.clone(), v.clone());
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    state
+}
+
+/// GoldSrc's client-data ring buffer size for a multiplayer session
+/// (`MULTIPLAYER_BACKUP`, `netchan.h`) — `CL_UPDATE_BACKUP` is set to this at
+/// connect time whenever `maxclients > 1` (`cl_game.c:999`), true for any
+/// real match recording. `CL_UPDATE_MASK` is this minus one.
+const CL_UPDATE_BACKUP: i32 = 64;
+
+/// Walk the real post-cut `svc_clientdata` stream and determine every
+/// distinct *pre-cut* ring-buffer slot its *leading* messages need populated
+/// before their own delta references resolve to frames that are actually
+/// part of the retained window.
+///
+/// `svc_clientdata` is not cumulative like entities — `CL_ParseClientData`
+/// (`cl_parse.c:1102-1119`) looks up one specific prior frame by an explicit
+/// sequence-number byte (`SvcClientData.delta_update_mask`, despite the
+/// name, is exactly that byte — `cl.frames[delta_sequence & CL_UPDATE_MASK]`).
+/// That byte only carries the *low bits* of the referenced frame's absolute
+/// sequence number, so which actual frame it names depends on the message's
+/// *own* sequence number too (the referenced frame is always within the last
+/// `CL_UPDATE_BACKUP` frames of it). Critically, GoldSrc deltas clientdata
+/// against "the last frame this client has acknowledged" — a few frames
+/// behind due to round-trip latency, a *sliding* reference — not a fixed
+/// point. Confirmed empirically against a real recording (`analysis_target_
+/// pov.dem`, 300s cut): the first several post-cut messages each reference a
+/// *different* pre-cut frame (e.g. bytes 5, 6, 7, 8, 8, ...) before the
+/// window ages past the cut boundary and later messages start referencing
+/// real retained frames that populate themselves normally during playback.
+/// A single synthetic frame (the original, incomplete version of this fix)
+/// only satisfied the very first of these.
+///
+/// Returns the distinct bytes needed, in first-seen order, stopping as soon
+/// as a message's own reference resolves to a frame at/after `anchor_seq`
+/// (i.e. the chain has caught up to the retained stream and everything from
+/// here self-heals).
+fn client_data_chain(entry: &DirectoryEntry, at_or_after: f32, anchor_seq: i32) -> Vec<u8> {
+    let mut needed = Vec::new();
+
+    for f in &entry.frames {
+        if f.time < at_or_after {
+            continue;
+        }
+        let FrameData::NetworkMessage(boxed) = &f.frame_data else {
+            continue;
+        };
+        let msg_seq = boxed.1.sequence_info.incoming_sequence;
+        let MessageData::Parsed(messages) = &boxed.as_ref().1.messages else {
+            continue;
+        };
+
+        let mut stop = false;
+        for m in messages {
+            let NetMessage::EngineMessage(engine) = m else {
+                continue;
+            };
+            let EngineMessage::SvcClientData(cd) = engine.as_ref() else {
+                continue;
+            };
+            let Some(byte) = (if cd.has_delta_update_mask {
+                cd.delta_update_mask.as_ref().map(|mask| mask.to_u8())
+            } else {
+                None
+            }) else {
+                // From-null full update — always self-sufficient.
+                stop = true;
+                break;
+            };
+
+            let lag = (msg_seq.rem_euclid(CL_UPDATE_BACKUP) - byte as i32)
+                .rem_euclid(CL_UPDATE_BACKUP);
+            let referenced = msg_seq - lag;
+            if referenced >= anchor_seq {
+                stop = true;
+                break;
+            }
+            if !needed.contains(&byte) {
+                needed.push(byte);
+            }
+        }
+        if stop {
+            break;
+        }
+    }
+
+    needed
+}
+
+fn merge_entity(table: &mut EntityTable, index: u16, has_custom_delta: bool, delta: &Delta) {
+    let (hcd, fields) = table.entry(index).or_default();
+    *hcd = has_custom_delta;
+    for (k, v) in delta {
+        fields.insert(k.clone(), v.clone());
+    }
+}
+
+/// Encode a [`ReplayedState`] as a full `svc_packetentities` payload
+/// followed by a full `svc_clientdata` payload — two independent messages
+/// concatenated, exactly like a real frame carrying several `svc_` messages
+/// back to back. Entities use absolute (not incremental) indices throughout
+/// for simplicity — slightly bigger on the wire, never wrong. `aux` supplies
+/// the delta decoder tables the source demo's own `svc_deltadescription`
+/// messages established; `Demo::_aux` (despite its "do not use this" doc
+/// comment — there is no other way to get a decoder table matching this
+/// specific demo) still holds them after a full parse, since they're set
+/// once near signon and read-only from then on.
+fn encode_synthetic_payload(state: &ReplayedState, aux: AuxRefCell) -> Vec<u8> {
+    let entity_states: Vec<EntityState> = state
+        .entities
+        .iter()
+        .map(|(&entity_index, (has_custom_delta, delta))| EntityState {
+            entity_index,
+            increment_entity_number: false,
+            is_absolute_entity_index: Some(true),
+            absolute_entity_index: Some(dem::nbit_num!(entity_index as u32, 11)),
+            entity_index_difference: None,
+            has_custom_delta: *has_custom_delta,
+            has_baseline_index: false,
+            baseline_index: None,
+            delta: delta.clone(),
+        })
+        .collect();
+
+    let entities_msg = NetMessage::EngineMessage(Box::new(EngineMessage::SvcPacketEntities(
+        SvcPacketEntities {
+            entity_count: dem::nbit_num!(entity_states.len() as u32, 16),
+            entity_states,
+        },
+    )));
+
+    let mut out = entities_msg.write(aux.clone());
+
+    if !state.client_data.is_empty() {
+        let weapon_data = if state.weapon_data.is_empty() {
+            None
+        } else {
+            Some(
+                state
+                    .weapon_data
+                    .iter()
+                    .map(|(&index, delta)| ClientDataWeaponData {
+                        weapon_index: dem::nbit_num!(index as u32, 6),
+                        weapon_data: delta.clone(),
+                    })
+                    .collect(),
+            )
+        };
+
+        let cd_msg = NetMessage::EngineMessage(Box::new(EngineMessage::SvcClientData(
+            SvcClientData {
+                has_delta_update_mask: false,
+                delta_update_mask: None,
+                client_data: state.client_data.clone(),
+                weapon_data,
+            },
+        )));
+
+        out.extend(cd_msg.write(aux));
+    }
+
+    out
+}
+
+/// Build a synthetic `NetworkMessage` frame carrying `payload`, reusing
+/// `anchor`'s `DemoInfo`/`SequenceInfo` (view angles, netchan sequence
+/// numbers) since the synthesized baseline logically belongs to the same
+/// instant as the first real retained frame.
+///
+/// `client_data_sequence`, when `Some`, overrides `sequence_info`'s
+/// `incoming_sequence` with the `delta_sequence` the real stream's next
+/// `svc_clientdata` message expects (see [`expected_client_data_sequence`]).
+/// The client looks that value up as `cl.frames[delta_sequence &
+/// CL_UPDATE_MASK]` — an exact numeric match on `incoming_sequence`, not
+/// the anchor's own sequence number, is what makes that lookup land on this
+/// synthetic frame's clientdata instead of an empty/stale ring-buffer slot.
+fn synthetic_baseline_frame(
+    anchor: &Frame,
+    payload: Vec<u8>,
+    client_data_sequence: Option<u8>,
+) -> Frame {
+    let FrameData::NetworkMessage(boxed) = &anchor.frame_data else {
+        unreachable!("caller only passes NetworkMessage frames as anchor");
+    };
+    let (_, anchor_msg) = boxed.as_ref();
+
+    let mut sequence_info = anchor_msg.sequence_info.clone();
+    if let Some(seq) = client_data_sequence {
+        sequence_info.incoming_sequence = seq as i32;
+    }
+
+    Frame {
+        time: anchor.time,
+        frame: anchor.frame,
+        frame_data: FrameData::NetworkMessage(Box::new((
+            NetworkMessageType::Normal,
+            NetworkMessage {
+                info: anchor_msg.info.clone(),
+                sequence_info,
+                message_length: payload.len() as u32,
+                messages: MessageData::Raw(payload),
+            },
+        ))),
+    }
 }
 
 // ---------------------------------------------------------------------------
