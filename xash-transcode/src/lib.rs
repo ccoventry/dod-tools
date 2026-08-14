@@ -28,8 +28,8 @@
 //!
 //! | GoldSrc | Xash | note |
 //! |---|---|---|
-//! | `NetworkMessage(Start)` | `dem_norewind` | signon traffic |
-//! | `NetworkMessage(Normal)` | `dem_read` | the actual gameplay stream |
+//! | `NetworkMessage(Start)` | `dem_usercmd` + `dem_norewind` | signon traffic |
+//! | `NetworkMessage(Normal)` | `dem_usercmd` + `dem_read` | the actual gameplay stream |
 //! | `DemoStart` | `dem_jumptime` | resets the section clock |
 //! | `NextSection` | `dem_stop` | section terminator |
 //! | `DemoBuffer` | `dem_userdata` | optional, off by default |
@@ -39,6 +39,12 @@
 //!
 //! Dropping the client-side frames is why output lands around 25% of input
 //! size. For a triage preview that is a feature, not a loss.
+//!
+//! Every `NetworkMessage` also gets a synthesized `dem_usercmd` frame ahead
+//! of it: GoldSrc records the player's view angles (needed to drive the
+//! camera during playback — there is no live mouse) inside each
+//! `NetworkMessage`'s own header, but Xash expects them as this separate
+//! frame type instead. See [`usercmd`] for the wire format.
 //!
 //! # No I/O
 //!
@@ -52,6 +58,7 @@ use dem::types::{Demo, DirectoryEntry, FrameData, MessageData, NetworkMessageTyp
 
 pub mod idem;
 pub mod resources;
+pub mod usercmd;
 pub mod writer;
 
 use writer::ByteWriter;
@@ -188,6 +195,19 @@ fn transcode_entries(
                         bump(&mut stats, "SKIPPED oversize netmsg");
                         continue;
                     }
+
+                    // dem_usercmd ahead of the network message: carries the
+                    // recorded view angles GoldSrc bundles inside this same
+                    // frame's DemoInfo header. See `usercmd` module docs.
+                    let encoded_cmd = usercmd::encode_usercmd(&msg.info.usercmd);
+                    w.u8(idem::DEM_USERCMD);
+                    w.f32(dt);
+                    w.i32(msg.sequence_info.outgoing_sequence);
+                    w.i32(msg.sequence_info.outgoing_sequence);
+                    w.u16(encoded_cmd.len() as u16);
+                    w.bytes(&encoded_cmd);
+                    nframes += 1;
+                    bump(&mut stats, "NetworkMessage -> dem_usercmd");
 
                     w.u8(cmd);
                     w.f32(dt);

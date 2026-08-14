@@ -30,7 +30,6 @@ pub const DEM_NOREWIND: u8 = 1;
 pub const DEM_READ: u8 = 2;
 pub const DEM_JUMPTIME: u8 = 3;
 pub const DEM_USERDATA: u8 = 4;
-#[allow(dead_code)]
 pub const DEM_USERCMD: u8 = 5;
 pub const DEM_STOP: u8 = 6;
 

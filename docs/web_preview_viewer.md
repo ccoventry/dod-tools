@@ -1,12 +1,25 @@
 # Web Preview Viewer — Handoff
 
-**Status:** Proof-of-concept. Transcoder verified against real demos. Renderer: engine boots, mounts our content, and **is confirmed parsing the transcoded demo's network stream** (prints the original recording server's hostname/build/map-cycle straight out of it). Blocked on getting past the level-load stage — see "STOP AND READ" below.
+**Status:** Working end-to-end for section-start clips. Confirmed visually
+by the project owner in a real browser (WebGL2): a demo cut from the true
+start of the recording (`dodEmmanuelEarly.dem`) **boots, signs on, renders
+the real map, shows moving players with weapons, and has a correctly
+turning first-person camera** — the full triage-viewer goal, working, for
+that one clip. Two things fixed this session got it here: `PROTO_GOLDSRC`
+demo playback (Open Risk #1) and a frozen-camera bug (missing `dem_usercmd`
+frames — see "Camera fix" below, now shipped in `xash-transcode`). One
+known issue remains, scoped and unfixed: **mid-stream cuts** (e.g. a
+300–320s highlight, not starting at a section boundary) still show
+corrupted/frozen entities — Open Risk #3, delta-compression baseline gap.
+That's the next and likely last blocker before this is a real feature
+instead of a proof of concept, since real highlight clips are almost always
+mid-stream cuts.
 **Last updated:** 2026-08-14 (mid-session handoff, more below)
 **Spans two repos:** `dod-tools/xash-transcode/` (this repo) and `../dod-web-demo-viewer/` (sibling).
 
 ---
 
-## STOP AND READ — exact state as of 2026-08-14 23:10, mid-session
+## STOP AND READ — exact state as of 2026-08-14 (late), mid-session
 
 This got interrupted by a context-limit warning before it finished. Picking
 this up cold? Do these in order:
@@ -27,56 +40,80 @@ this up cold? Do these in order:
    not in any scratchpad). It is our real `dod_custom_pack.zip` contents
    (built by `xash-transcode pack` against `analysis_target_pov.dem` and the
    real DoD install at `D:\Games\Steam\steamapps\common\Half-Life -
-   PRE-Anniversary for Movies`) **plus** every fix listed in "Step 3 findings"
-   below, rebuilt with a custom Node STORED-zip writer (not
-   `Compress-Archive` — see why in that section). **Don't rebuild it unless
-   you're adding a new fix** — it's current as of the last "Step 3 findings"
-   entry.
+   PRE-Anniversary for Movies`) **plus** every fix listed in "Step 3
+   findings" below, rebuilt with a custom Node STORED-zip writer (not
+   `Compress-Archive` — see why in that section). Carries **two demo
+   files**, both transcoded with the current (camera-fixed) `xash-transcode`
+   build — see point 3.
 
-3. **The URL to open** (real, non-headless browser — a human clicking through
-   DevTools has been far more informative than headless automation all
-   session):
+3. **Camera bug fixed and confirmed (2026-08-14).** The frozen-camera issue
+   from earlier this session was real, root-caused, and fixed — see "Camera
+   fix: dem_usercmd synthesis" below for the full mechanism. Confirmed via a
+   real-browser test: `dodEmmanuelEarly.dem` (cut 0–20s, from the true start
+   of the recording) now renders the map, shows moving players with
+   weapons, **and has a correctly turning first-person camera** — the full
+   triage-viewer goal, working:
+   ```
+   http://127.0.0.1:8080/?pack=/assets/dod_test_pack_with_demo.zip&demo=dodEmmanuelEarly&dev=1&autostart=1
+   ```
+   `dodEmmanuelClip.dem` (the original 300–320s mid-stream cut, also in the
+   pack) still shows the frozen/corrupted-entity symptom from before —
+   confirmed via the same real-browser test, console still shows
+   `Warning: CL_ParseDeltaPacketEntitiesGS: (7 should be 49)` at signon.
+   This isolates **Open Risk #3** (delta-compression baseline gap on
+   mid-stream cuts) as the one remaining blocker — the camera fix didn't
+   touch it, and it wasn't expected to (different mechanism entirely: this
+   is about `svc_deltapacketentities` needing a preceding full
+   `svc_packetentities` that a mid-stream cut doesn't carry, not about
+   usercmd/view-angle data).
    ```
    http://127.0.0.1:8080/?pack=/assets/dod_test_pack_with_demo.zip&demo=dodEmmanuelClip&dev=1&autostart=1
    ```
-   `dev=1` now auto-enables the real engine console (`-console -dev 2`, see
-   `index.html`'s `buildArgs()`) — no more manually toggling "Enable
-   developer console" in the menu.
 
-4. **What we're waiting on**: the user was about to paste console output from
-   a fresh retest (after the `sprites/hud.txt` fix, the last fix applied) into
-   a **new chat**, specifically to check whether a headless-only
-   `RuntimeError: Aborted(OOM)` (hit while loading real level content, using
-   the CPU software renderer forced for headless compatibility) also happens
-   in their real browser, which uses hardware-accelerated WebGL2 by default
-   and should have a much better memory profile. **If they paste console
-   output, read it against the "Step 3 findings" section below before
-   reacting — most of the noise in these logs (missing sounds, missing
-   `gfx/shell/*` UI images, `GL_INVALID_ENUM`, `ScriptProcessorNode`
-   deprecation) is already-triaged and harmless.** Look specifically for:
-   whether it gets past `Remote host: KTP - New York 1` into real level
-   content, whether the map actually renders, and whether `RuntimeError:
-   Aborted(OOM)` or any *new* fatal message appears.
+4. **This is now the last known blocker.** Real highlight clips are almost
+   always mid-stream cuts (that's the whole point of a highlight), so this
+   needs fixing before the viewer is usable for its actual purpose, not just
+   as a proof of concept. The fix is scoped and already noted: in
+   `xash-transcode/src/lib.rs`'s `cut()`, walk forward from the cut's start
+   time to find the first non-delta (full) `svc_packetentities` in the
+   original stream and start the transcoded window there instead (or fold
+   that earlier full update in ahead of the requested window), using
+   `dem::netmsg_doer` and a second parse pass — see "Open risks" #3 for the
+   full note. Not yet attempted.
 
-5. **`index.html` still has TEMPORARY TEST EDITS** (grep for `TEMPORARY TEST
+5. **Console noise that's already triaged and harmless**, don't re-investigate:
+   missing sounds, missing `gfx/shell/*` UI images, `GL_INVALID_ENUM`,
+   `CL_ParseUserMessage: No pfn ...` (expected — DoD-specific HUD
+   usermessages the generic `hlsdk-portable` client doesn't implement),
+   `CL_FireEvent: events/weapons/*.sc not precached` (expected — `pack`'s
+   resourcelist scraping doesn't currently walk event-script precaching, a
+   separate gap from the ones already fixed; means muzzle flash/shell-eject/
+   pain-reaction effects are silently dropped, not that anything is broken),
+   `Couldn't open file overviews/...txt`.
+
+6. **`index.html` still has TEMPORARY TEST EDITS** (grep for `TEMPORARY TEST
    EDIT`): forces `GAME_DIR = 'valve'` + `hlsdk-portable@0.1.3` client/server
    libs (no compiled DoD wasm exists yet), and ties `-console -dev 2` to
    `?dev=1`. These are real edits in a real file (not scratchpad) — they
-   persist. Leave them until step 3 is fully resolved or reverted on purpose.
+   persist. Leave them until risk #3 is resolved or reverted on purpose.
 
-6. **Everything under this session's scratchpad is gone** in a new chat
-   (session-scoped temp dir) — the Playwright driver script, the extracted
-   `pack_extract/` working folder, and shallow clones of `xash3d-fwgs`/
-   `hlsdk-portable` source used to trace the `hud.cpp` bug. **None of that
-   is needed to *use* the existing test pack.** If another fix is needed
-   (adding/replacing a file in the pack), the zip itself already persists
-   (point 2) — unzip it back into a working folder, edit, and rebuild with
-   the other new persisted script:
+7. **Everything under this session's scratchpad is gone** in a new chat
+   (session-scoped temp dir) — the extracted `pack_extract2/` working
+   folder and the freshly-cut `dodEmmanuelEarly.dem` before it was copied
+   into the pack. **None of that is needed to *use* the existing test
+   pack** — both demo files are already inside the persisted zip (point 2/3).
+   If another cut or fix is needed, the zip itself persists — unzip it back
+   into a working folder, edit, and rebuild with the other persisted script:
    ```
    node make-test-zip.js <extracted-folder> assets/dod_test_pack_with_demo.zip
    ```
    (also in `dod-web-demo-viewer/`, not scratchpad — do **not** use
    PowerShell's `Compress-Archive` for this, see finding #3 below for why).
+   To cut a fresh demo window from the source recording:
+   ```
+   cd xash-transcode
+   ./target/release/xash-transcode.exe cut ../demos/analysis_target_pov.dem <out.dem> <start> <end> --preroll 0
+   ```
    "Step 3 findings" documents exactly what's in the pack and where each
    piece came from, so extending it doesn't require re-deriving anything.
 
@@ -227,7 +264,7 @@ The shrink comes from dropping `ClientData` + `DemoBuffer`, which are ~76% of fr
 | BSP wad/sky extraction | **Logic verified** in Python across 11 cases (backslash/forward-slash paths, duplicates, junk segments, missing keys, worldspawn scoping, header offsets). Rust port unproven. |
 | `svc_resourcelist` extraction | **Exercised and fixed (2026-08-13).** Ran `pack` against `analysis_target_pov.dem` + the real `dod` install and found two real bugs, both fixed in `xash-transcode/src/resources.rs` (see below). After fixing, `pack` reports **"All required files found"** (268 wanted, 262 packed, 80.4 MB → 53.5 MB zipped) with 28 legitimate size-mismatched viewmodels (`v_*.mdl`, local ~3× the server-declared size — this install has HD/modified viewmodels, not the set the demo's recording client used; a real content-mismatch, not a bug). |
 | Viewer JS (ZIP, query string, path resolution) | **Verified** — byte-exact ZIP roundtrip on deflate + store, 22 query-string cases, zip-slip rejection. |
-| **Does Xash actually replay a transcoded DoD demo?** | **Looking like yes (2026-08-14) — see "Step 3 findings" for the full trail.** The engine parses signon data out of the transcoded IDEM file and prints the *original recording server's* hostname, build number, and map cycle straight from it (`BUILD 8308 SERVER`, `GoldSrc serverdata packet received.`, `Remote host: KTP - New York 1`, `dod_pandemic_aim`/`dod_orange`). `PROTO_GOLDSRC` demo playback is real. Every blocker hit past that point turned out to be a missing *base-engine* file our demo-scoped test pack had no reason to include (base WADs, `delta.lst`, Xash's replacement UI fonts, `sprites/hud.txt` + base sprites — root-caused the fatal "reinstall" message to `hud.cpp`'s `CHud::VidInit` via the real `hlsdk-portable` source, not a CRC check as first suspected) — all fixed as of 2026-08-14. Last blocker hit: an Out-Of-Memory abort loading real level content, but only in headless testing with the CPU software renderer forced — real-browser retest (hardware WebGL2) pending, not yet confirmed either way. Separately, a real double-free bug surfaced in this engine build's shutdown path — doesn't look content-related. |
+| **Does Xash actually replay a transcoded DoD demo?** | **Yes, confirmed end-to-end (2026-08-14 real-browser tests) — see "Step 3 findings" #12–15 for the full trail.** For a clip cut from a section start: the engine parses signon data, connects, **renders the real level** (map geometry, sky, lightstyles, all DoD player/weapon models), and — after the `dem_usercmd`/view-angle fix (#14) — **has a correctly turning first-person camera with visible player movement**. All visually confirmed by the project owner in a real browser on hardware WebGL2. `PROTO_GOLDSRC` demo playback is real; **Open Risk #1 is resolved.** Every blocker hit getting here turned out to be either a missing *base-engine* file the demo-scoped test pack had no reason to include (base WADs, `delta.lst`, Xash's replacement UI fonts, `sprites/hud.txt` + base sprites — fixed 2026-08-14), or the missing `dem_usercmd` frames carrying recorded view angles (fixed 2026-08-14, see #14). **Remaining known gap:** mid-stream cuts (i.e. real highlight clips, not starting at a section boundary) still freeze at signon with `CL_ParseDeltaPacketEntitiesGS: (7 should be 49)` — this is Open Risk #3 (delta-compression baseline gap), confirmed as the actual cause (not a leftover of the camera bug) by isolating it against a section-start clip that plays cleanly. Unfixed; see "STOP AND READ" #4 for the scoped fix. Separately, a real double-free bug surfaced in this engine build's shutdown path — doesn't look content-related, not chased. |
 
 ---
 
@@ -385,8 +422,113 @@ below on why).
     in WASM heap rather than GPU memory, so this is plausibly specific to
     that renderer choice + headless memory limits, not a real blocker — a
     real browser uses the default `gl4es`/WebGL2 renderer, which is far
-    lighter on system RAM. **This is the open question a fresh retest needs
-    to answer** — see "STOP AND READ" at the top of this doc.
+    lighter on system RAM.
+12. **Confirmed in a real browser (2026-08-14 23:28): the level renders.**
+    User tested `?demo=dodEmmanuelClip` (the 300–320s mid-stream cut) in
+    real Chrome/Chromium with hardware WebGL2 (`GL_VERSION: OpenGL ES 3.0
+    (WebGL 2.0 (OpenGL ES 3.0 Chromium))`) — **no OOM**, confirming #11 was
+    headless/software-renderer-specific. Full boot trail: WADs load, decals
+    init, `webgl2` renderer initializes (one harmless shader-version-310
+    fallback to 300, self-recovering), main menu images mostly missing
+    (`gfx/shell/*` — cosmetic, already known), then `+playdemo
+    dodEmmanuelClip` runs: `GoldSrc serverdata packet received`, ~130 missing
+    sound warnings (expected, `--sound` wasn't packed), then **every DoD
+    player/weapon/sprite model loads successfully** (`p_garand.mdl`,
+    `p_mg42bu.mdl`, `player/brit-inf/brit-inf.mdl`, etc. — confirms
+    `svc_resourcelist`-driven packing pulled in everything needed), sky and
+    all 14 lightstyles load, `CL_SignonReply: 1` then `2`, `client connected
+    at 3.35 sec`. **New findings at this point:**
+    - `Error: CL_ParseUserMessage: No pfn ClientAreas/WaveTime/GameRules/
+      RoundState/InitObj/ReqState/VoiceMask` — six DoD-specific usermessage
+      handlers the generic `hlsdk-portable` HL client (used per fix #4,
+      since no real DoD client wasm exists) doesn't implement. **Expected,
+      not a bug** — exactly the "silent film, no meaningful HUD" outcome
+      predicted in "DoD client library — assessment" below. Non-fatal.
+    - `Couldn't open file overviews/dod_Emmanuel.txt` — missing map-overview
+      config, cosmetic, falls back to defaults.
+    - **`Warning: CL_ParseDeltaPacketEntitiesGS: (7 should be 49)`** — fires
+      twice, right at signon, then the console goes silent (only sporadic
+      `SDL: [Error] That operation is not supported`, no further entity/
+      kill/chat/round activity). User confirms: map is visible but frozen,
+      nothing plays.
+13. **Diagnostic clip confirms Open Risk #3 as the cause of #12's freeze.**
+    A second clip, `dodEmmanuelEarly.dem` (cut 0–20s from the *true start*
+    of the recording, instead of mid-stream at 300s), was transcoded and
+    added to the pack alongside the original. Retested in the real browser:
+    `dodEmmanuelEarly` reaches the same signon point with **no**
+    `CL_ParseDeltaPacketEntitiesGS` warning, and the console shows real
+    match activity afterward — a scrolling kill feed (`DODMYLIFE ...`
+    entries) and dozens of `CL_FireEvent: events/weapons/{bar,mp44,kar,
+    garand}.sc not precached` / `events/misc/pain.sc not precached` lines
+    (weapon-fire and pain events actually firing repeatedly during a
+    firefight — see #15 below for what these errors mean). `dodEmmanuelClip`
+    (still in the pack, unchanged) reproduces the identical freeze +
+    delta-warning on a second run, confirming it's deterministic. This
+    isolates the mid-stream cut — specifically, the missing full
+    `svc_packetentities` baseline that a section-start clip carries for
+    free — as the actual cause, exactly matching Open Risk #3's original
+    description. Not yet fixed; see "STOP AND READ" #4 for the scoped fix.
+14. **Camera fix: `dem_usercmd` synthesis, root-caused and shipped
+    (2026-08-14).** With #13's `dodEmmanuelEarly` clip playing past signon,
+    the user reported the camera "doesn't turn or move crosshair at all"
+    despite the map, players, and weapon-switching all working — positional/
+    server-driven state was fine, but look direction was frozen. Root cause,
+    confirmed by reading `xash3d-fwgs/engine/client/cl_demo.c` and
+    `engine/common/net_encode.c` directly (shallow-cloned again this
+    session, same as the `hud.cpp` trace in fix #7 — gone from scratchpad
+    now, but no longer needed): **Xash's demo format carries recorded view
+    angles in a frame type the transcoder never emitted.** GoldSrc bundles
+    per-frame player input (crucially, view angles — there's no live mouse
+    during demo playback, so this is the *only* source of camera direction)
+    inside each `NetworkMessage`'s 436-byte `DemoInfo` header
+    (`msg.info.usercmd`, confirmed present and populated in `dem-patch`'s
+    already-parsed struct — `dem-patch/src/types.rs:248`). Xash has no
+    inline equivalent: it expects a **separate `dem_usercmd` frame** per
+    network message, written during live recording by `CL_WriteDemoUserCmd()`
+    and read back by `CL_ReadDemoUserCmd()` (which always deltas against an
+    all-zero baseline — `CL_WriteUsercmd(..., from = -1, ...)`). The
+    transcoder's GoldSrc→Xash frame mapping never covered this case at all,
+    so the data existed in memory throughout and was simply never written
+    out. **Fix:** new module `xash-transcode/src/usercmd.rs` — a
+    from-scratch implementation of Xash's generic delta-field bit encoder
+    (`MSG_WriteDeltaUsercmd`/`Delta_WriteField`, `net_encode.c`) over the
+    `DT_USERCMD_T` field table (transcribed from the real `delta.lst` in the
+    test pack — `usercmd_t` block, 15 fields, exact order/bit-widths/types
+    matter), plus a matching LSB-first bit writer verified against
+    `net_buffer.c`'s `MSG_WriteOneBit`/`MSG_WriteUBitLong`/`MSG_WriteBitAngle`
+    bit layout. Wired into `lib.rs`'s per-frame transcode loop: every
+    `NetworkMessage` now gets a synthesized `dem_usercmd` frame immediately
+    ahead of it, carrying real recorded view angles (pitch/yaw/roll) plus
+    `lerp_msec`/`msec`/`buttons`/`lightlevel`/`impulse`; movement fields
+    (`forwardmove`/`sidemove`/`upmove`/`impact_*`) are left at the encoder's
+    baseline zero — safe, because GoldSrc-protocol demo playback positions
+    entities from the server-authoritative network stream, not local
+    usercmd-driven prediction. Two round-trip unit tests added
+    (`usercmd::tests`); full `cargo test` and `cargo build --release` both
+    pass clean.
+15. **Confirmed fixed in a real browser (2026-08-14).** Both clips
+    re-transcoded with the fix and repacked. `dodEmmanuelEarly` now shows a
+    proper first-person view — rifle model, two soldiers visibly running
+    through the courtyard, camera facing and turning correctly — **the full
+    triage-viewer goal, working end-to-end for a section-start clip.**
+    `dodEmmanuelClip` still shows the frozen/upside-down view from #12/#13,
+    unaffected by this fix (different mechanism — confirmed the
+    `CL_ParseDeltaPacketEntitiesGS` warning is still present), which is
+    exactly what should happen: the camera fix and the delta-baseline gap
+    are independent bugs. Also newly visible now that the camera moves and
+    the console is legible: dozens of `CL_FireEvent: events/weapons/*.sc not
+    precached` errors during firefights (bar.sc, mp44.sc, kar.sc, garand.sc,
+    plus `events/misc/pain.sc`, `events/effects/bodydamage.sc`,
+    `events/effects/helmet.sc`). **Not a bug in the fix just shipped** — a
+    separate, pre-existing `pack`-tool gap: weapon-fire/pain client events
+    are precached through a different GoldSrc channel than
+    `svc_resourcelist`, which is all `pack`'s resource scraping currently
+    reads. Net effect: gunfire/hits happen correctly (the demo data is
+    real), but muzzle flash, shell ejection, and pain-flinch visual/audio
+    effects are silently dropped. Not chased further this session — worth a
+    dedicated look if the viewer's visual fidelity matters enough to justify
+    walking event precache the same way `resources.rs` already walks
+    `svc_resourcelist`.
 
 ### Why none of items 2–8 are `pack`-tool bugs
 
@@ -411,9 +553,9 @@ exact server-restart command, test URL, and what's being waited on.
 
 ## Open risks
 
-1. **`PROTO_GOLDSRC` may never have been exercised for demo playback.** That code path exists for live GoldSrc server connections. The transcoder makes this testable for the first time; it may simply not work. This is the highest-impact unknown and should be resolved before any further investment.
+1. ~~**`PROTO_GOLDSRC` may never have been exercised for demo playback.**~~ **Resolved 2026-08-14 — it works.** Confirmed in a real browser: the engine signs onto a transcoded demo's server data, loads the real map and all player/weapon models, and renders the level. See "Step 3 findings" #12.
 2. **No DoD client library exists for wasm.** Valve never released DoD's source, so it can't be compiled — it would have to be written. See below.
-3. **Delta compression on cuts.** `svc_deltapacketentities` encodes against earlier frames, so a cut landing mid-stream shows corrupt entities until the next full update. `--preroll` (default 3 s) is a blunt mitigation. Proper fix — walk forward to the first non-delta `svc_packetentities` — needs `dem::netmsg_doer` and a second parse pass. TODO in `lib.rs::cut`.
+3. **Delta compression on cuts — confirmed real, the last known blocker.** `svc_deltapacketentities` encodes against earlier frames, so a cut landing mid-stream shows corrupt entities until the next full update. `--preroll` (default 3 s) is a blunt mitigation. **Confirmed as the actual cause (2026-08-14)**, not a symptom of the (now-fixed) camera bug: a real-browser test of the 300–320s mid-stream cut hits `CL_ParseDeltaPacketEntitiesGS: (7 should be 49)` at signon and freezes (map renders, nothing advances — reproducible across multiple runs), while a section-start clip of the same source demo plays cleanly with no such warning. Since real highlight clips are essentially always mid-stream cuts, this blocks the feature's actual use case, not just the proof of concept. Proper fix — walk forward to the first non-delta `svc_packetentities` and start the transcoded window there — needs `dem::netmsg_doer` and a second parse pass. TODO in `lib.rs::cut`; not yet attempted.
 4. **Custom content mismatch.** DoD's custom-model culture means demos reference files a given install may lack or have different versions of. `pack` reports size mismatches against server-declared sizes to surface this.
 
 ---
@@ -439,8 +581,9 @@ If a minimal DoD HUD is later wanted, note that **the wire formats are already r
 
 1. ~~`cargo build` the crate and fix compile errors.~~ **Done (2026-08-13) — built clean, no errors.** CLI validated against `analysis_target_pov.dem`; output matches this doc's measured sizes and is byte-identical to the checked-in fixture for the 300–320s cut (see verification table above). A true byte-for-byte diff against the Python oracles is still outstanding — needs a machine with a real Python interpreter (not the Windows Store stub).
 2. ~~Build a content pack for one map.~~ **Done (2026-08-13).** `dod_custom_pack.zip` written to `../dod-web-demo-viewer/assets/` (gitignored there already) from `analysis_target_pov.dem` against the real `dod` install — 262 files, 53.5 MB zipped, all required files found after fixing the two bugs above. Only open item: the 28 mismatched viewmodels noted in the verification table — decide whether the *viewer's* content pack should prefer a vanilla viewmodel set over whatever install happens to build the pack, so played-back demos don't quietly pick up a movie-mod's oversized models.
-3. **In progress (2026-08-14) — very close.** See "STOP AND READ" at the top of this doc and "Step 3 findings" for the full trail. Confirmed: the engine parses the transcoded demo's signon data for real (prints the original server's hostname/build/map-cycle out of it). A long chain of missing base-engine files (not transcoder bugs) blocked getting further, all fixed one at a time. Last open question: does it actually render the level, or does a headless-only OOM (CPU software renderer) also happen in a real browser (hardware WebGL2)? Waiting on a real-browser retest to answer this.
-4. **Decide based on step 3.** If the world renders: pursue it, and consider a minimal DoD HUD. If `PROTO_GOLDSRC` demo playback is fundamentally broken: stop, and fall back to option B below.
+3. ~~Confirm the level actually renders and is playable.~~ **Done (2026-08-14).** See "Step 3 findings" #12–15 for the full trail: a long chain of missing base-engine files (not transcoder bugs), then a genuine transcoder bug (missing `dem_usercmd`/view-angle frames, fixed), got a section-start clip to a fully working real-browser playthrough — map, players, weapons, and a correctly turning camera. `PROTO_GOLDSRC` demo playback is real and works.
+4. **In progress — the actual remaining blocker.** Mid-stream cuts (i.e. real highlight clips) still freeze at signon (Open Risk #3, delta-compression baseline gap) — confirmed real and isolated from the now-fixed camera bug. This needs fixing before the viewer works for its actual use case, since highlights are essentially always mid-stream. Scoped fix noted in `lib.rs::cut`'s TODO and Open Risk #3; not yet attempted. Secondary, lower-priority gap found along the way: weapon-fire/pain client *events* (muzzle flash, shell eject, pain flinch) aren't currently packed — `pack`'s resourcelist walk covers `svc_resourcelist` but not event precaching (Step 3 finding #15).
+5. **Once #4 is fixed:** decide on a minimal DoD HUD (see "DoD client library — assessment" below) and design the "base kit" pack split noted after Step 3 findings (base WADs/fonts/delta.lst/hud sprites shipped once, not flattened into every per-demo pack).
 
 ### Fallback if 3D playback proves unworkable
 
