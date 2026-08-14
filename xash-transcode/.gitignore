@@ -1,0 +1,5 @@
+/target
+Cargo.lock
+__pycache__/
+# transcoded demos are derived artefacts (and Valve content)
+fixtures/*.dem
