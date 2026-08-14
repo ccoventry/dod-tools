@@ -1,8 +1,84 @@
 # Web Preview Viewer — Handoff
 
-**Status:** Proof-of-concept. Transcoder verified against real demos; renderer unproven.
-**Last updated:** 2026-08-13
+**Status:** Proof-of-concept. Transcoder verified against real demos. Renderer: engine boots, mounts our content, and **is confirmed parsing the transcoded demo's network stream** (prints the original recording server's hostname/build/map-cycle straight out of it). Blocked on getting past the level-load stage — see "STOP AND READ" below.
+**Last updated:** 2026-08-14 (mid-session handoff, more below)
 **Spans two repos:** `dod-tools/xash-transcode/` (this repo) and `../dod-web-demo-viewer/` (sibling).
+
+---
+
+## STOP AND READ — exact state as of 2026-08-14 23:10, mid-session
+
+This got interrupted by a context-limit warning before it finished. Picking
+this up cold? Do these in order:
+
+1. **A local static server needs to be running.** It was killed when the
+   previous session ended (background process, doesn't survive). Restart it —
+   the script is `../dod-web-demo-viewer/dev-server.js`, a real committed-repo
+   file (not scratchpad), no dependencies:
+   ```
+   node dev-server.js . 8080
+   ```
+   (run from inside `dod-web-demo-viewer/`). Sets COOP/COEP headers and
+   serves static files, `.wasm` → `application/wasm` included.
+
+2. **The test content pack already exists** at
+   `../dod-web-demo-viewer/assets/dod_test_pack_with_demo.zip` (~90 MB,
+   gitignored, real file on disk — survives across chat sessions fine, it's
+   not in any scratchpad). It is our real `dod_custom_pack.zip` contents
+   (built by `xash-transcode pack` against `analysis_target_pov.dem` and the
+   real DoD install at `D:\Games\Steam\steamapps\common\Half-Life -
+   PRE-Anniversary for Movies`) **plus** every fix listed in "Step 3 findings"
+   below, rebuilt with a custom Node STORED-zip writer (not
+   `Compress-Archive` — see why in that section). **Don't rebuild it unless
+   you're adding a new fix** — it's current as of the last "Step 3 findings"
+   entry.
+
+3. **The URL to open** (real, non-headless browser — a human clicking through
+   DevTools has been far more informative than headless automation all
+   session):
+   ```
+   http://127.0.0.1:8080/?pack=/assets/dod_test_pack_with_demo.zip&demo=dodEmmanuelClip&dev=1&autostart=1
+   ```
+   `dev=1` now auto-enables the real engine console (`-console -dev 2`, see
+   `index.html`'s `buildArgs()`) — no more manually toggling "Enable
+   developer console" in the menu.
+
+4. **What we're waiting on**: the user was about to paste console output from
+   a fresh retest (after the `sprites/hud.txt` fix, the last fix applied) into
+   a **new chat**, specifically to check whether a headless-only
+   `RuntimeError: Aborted(OOM)` (hit while loading real level content, using
+   the CPU software renderer forced for headless compatibility) also happens
+   in their real browser, which uses hardware-accelerated WebGL2 by default
+   and should have a much better memory profile. **If they paste console
+   output, read it against the "Step 3 findings" section below before
+   reacting — most of the noise in these logs (missing sounds, missing
+   `gfx/shell/*` UI images, `GL_INVALID_ENUM`, `ScriptProcessorNode`
+   deprecation) is already-triaged and harmless.** Look specifically for:
+   whether it gets past `Remote host: KTP - New York 1` into real level
+   content, whether the map actually renders, and whether `RuntimeError:
+   Aborted(OOM)` or any *new* fatal message appears.
+
+5. **`index.html` still has TEMPORARY TEST EDITS** (grep for `TEMPORARY TEST
+   EDIT`): forces `GAME_DIR = 'valve'` + `hlsdk-portable@0.1.3` client/server
+   libs (no compiled DoD wasm exists yet), and ties `-console -dev 2` to
+   `?dev=1`. These are real edits in a real file (not scratchpad) — they
+   persist. Leave them until step 3 is fully resolved or reverted on purpose.
+
+6. **Everything under this session's scratchpad is gone** in a new chat
+   (session-scoped temp dir) — the Playwright driver script, the extracted
+   `pack_extract/` working folder, and shallow clones of `xash3d-fwgs`/
+   `hlsdk-portable` source used to trace the `hud.cpp` bug. **None of that
+   is needed to *use* the existing test pack.** If another fix is needed
+   (adding/replacing a file in the pack), the zip itself already persists
+   (point 2) — unzip it back into a working folder, edit, and rebuild with
+   the other new persisted script:
+   ```
+   node make-test-zip.js <extracted-folder> assets/dod_test_pack_with_demo.zip
+   ```
+   (also in `dod-web-demo-viewer/`, not scratchpad — do **not** use
+   PowerShell's `Compress-Archive` for this, see finding #3 below for why).
+   "Step 3 findings" documents exactly what's in the pack and where each
+   piece came from, so extending it doesn't require re-deriving anything.
 
 ---
 
@@ -151,7 +227,7 @@ The shrink comes from dropping `ClientData` + `DemoBuffer`, which are ~76% of fr
 | BSP wad/sky extraction | **Logic verified** in Python across 11 cases (backslash/forward-slash paths, duplicates, junk segments, missing keys, worldspawn scoping, header offsets). Rust port unproven. |
 | `svc_resourcelist` extraction | **Exercised and fixed (2026-08-13).** Ran `pack` against `analysis_target_pov.dem` + the real `dod` install and found two real bugs, both fixed in `xash-transcode/src/resources.rs` (see below). After fixing, `pack` reports **"All required files found"** (268 wanted, 262 packed, 80.4 MB → 53.5 MB zipped) with 28 legitimate size-mismatched viewmodels (`v_*.mdl`, local ~3× the server-declared size — this install has HD/modified viewmodels, not the set the demo's recording client used; a real content-mismatch, not a bug). |
 | Viewer JS (ZIP, query string, path resolution) | **Verified** — byte-exact ZIP roundtrip on deflate + store, 22 query-string cases, zip-slip rejection. |
-| **Does Xash actually replay a transcoded DoD demo?** | **UNKNOWN. This is the project's central open question.** |
+| **Does Xash actually replay a transcoded DoD demo?** | **Looking like yes (2026-08-14) — see "Step 3 findings" for the full trail.** The engine parses signon data out of the transcoded IDEM file and prints the *original recording server's* hostname, build number, and map cycle straight from it (`BUILD 8308 SERVER`, `GoldSrc serverdata packet received.`, `Remote host: KTP - New York 1`, `dod_pandemic_aim`/`dod_orange`). `PROTO_GOLDSRC` demo playback is real. Every blocker hit past that point turned out to be a missing *base-engine* file our demo-scoped test pack had no reason to include (base WADs, `delta.lst`, Xash's replacement UI fonts, `sprites/hud.txt` + base sprites — root-caused the fatal "reinstall" message to `hud.cpp`'s `CHud::VidInit` via the real `hlsdk-portable` source, not a CRC check as first suspected) — all fixed as of 2026-08-14. Last blocker hit: an Out-Of-Memory abort loading real level content, but only in headless testing with the CPU software renderer forced — real-browser retest (hardware WebGL2) pending, not yet confirmed either way. Separately, a real double-free bug surfaced in this engine build's shutdown path — doesn't look content-related. |
 
 ---
 
@@ -166,6 +242,170 @@ First real run — `cargo run -- pack ../demos/analysis_target_pov.dem <sibling>
    **This second bug is scoped narrowly to `xash-transcode` on purpose.** `get_string()` is a shared `dem-patch` API used workspace-wide (`analysis`'s player-name/chat decoding included), and CLAUDE.md gates public-API changes behind explicit request. **The same corruption plausibly affects other `get_string()` callers outside this crate** (e.g. scoreboard player names, chat text) — worth a dedicated look if anyone's seen truncated-looking names or odd trailing characters elsewhere in the app. Not chased further here; out of scope for this handoff.
 
 Both fixes have unit tests in `resources.rs` (`inline_bsp_models_are_excluded`, `resource_names_are_truncated_at_the_first_nul`).
+
+---
+
+## Step 3 findings: booting the viewer against `hlsdk-portable` (2026-08-14)
+
+Ran the real viewer against `analysis_target_pov.dem`'s transcoded 300–320s
+clip and the real DoD install, alternating between headless Playwright
+(fast iteration, but blind to some things) and the user's real browser
+(slower to iterate, but far more informative — real `alert()` dialogs, a
+working DevTools console, no headless-specific crashes). **Bottom line so
+far: `PROTO_GOLDSRC` demo playback is real.** The engine parses the
+transcoded IDEM file's signon data and prints the *original recording
+server's* own hostname/build/map-cycle straight out of it. Getting from
+there to an actual rendered level has been a long chain of "engine wants a
+base file our demo-scoped `pack` tool has no reason to include" bugs, fixed
+one at a time. Still not fully resolved — see "STOP AND READ" at the top of
+this doc for exactly where this stands and what to check next.
+
+### Fixes applied, in the order they were hit
+
+Each of these was found by actually running the viewer and reading the
+real error, not by guessing. All are either code fixes (in `index.html` /
+`assets/README.md`, real files, committed-repo-adjacent) or additions to
+the **test content pack** (`assets/dod_test_pack_with_demo.zip`, gitignored,
+not something end users or the real `pack` tool need to worry about — see
+below on why).
+
+1. **Stale CDN path.** `assets/README.md`'s documented
+   `hlsdk-portable@latest` paths were wrong — the package added a `valve/`
+   layer under `dist/` since that snippet was written. Real paths:
+   `dist/valve/dlls/hl_emscripten_wasm32.wasm` and
+   `dist/valve/cl_dlls/client_emscripten_wasm32.wasm`. Fixed in both
+   `index.html` (pinned `@0.1.3`) and `assets/README.md`.
+2. **Missing base WADs.** The engine needs core `valve/` WADs (`gfx.wad` at
+   minimum) that `pack` correctly never includes (engine-level, not
+   referenced by any map/demo). Without it: a bare `Infinity` thrown
+   (not a real `Error` — see point 8) during `Host_InitCommon`.
+3. **`Compress-Archive` zips are unsafe for this viewer.** PowerShell's
+   `Compress-Archive` writes backslash path separators and an explicit
+   directory-marker entry (e.g. `models\player\`) for non-empty
+   directories with a trailing *backslash*. The viewer's zip reader only
+   recognizes a trailing forward slash as a directory marker
+   (`entry.name.endsWith('/')`), so the marker becomes a bogus zero-byte
+   *file*, and the next real file under that path fails `FS.mkdirTree()`
+   with `ENOTDIR`. Not a `pack`-tool bug (its Rust `zip` crate writes
+   forward slashes, no directory markers) — only hit building an ad hoc
+   test pack on Windows. **Fix: don't use `Compress-Archive` for a pack
+   this viewer will read.** Used `dod-web-demo-viewer/make-test-zip.js`
+   instead (a real, committed-repo-adjacent file, not scratchpad — see
+   "STOP AND READ" point 6 for usage).
+4. **`liblist.gam`'s `gamedll`/`gamedll_linux` decide the *actual* server
+   wasm filename — independent of the JS `serverLib` config.** The real
+   DoD `liblist.gam` (which `pack` always copies in) declares
+   `gamedll_linux "dlls/dod.so"`. The engine derives
+   `dlls/dod_emscripten_wasm32.wasm` from that at runtime and 404s (no
+   compiled DoD wasm exists), regardless of what the JS wrapper's
+   `libraries.server` override points at — that override only covers the
+   wrapper's *own* initial dylib load, not this liblist-driven one. **Fix
+   (test pack only):** edited the packed `liblist.gam`'s `gamedll`/
+   `gamedll_linux`/`gamedll_osx` to say `hl` instead of `dod`, and put real
+   copies of `hl_emscripten_wasm32.wasm` / `client_emscripten_wasm32.wasm`
+   (from `hlsdk-portable@0.1.3`'s CDN dist) directly in the pack under
+   `dlls/` / `cl_dlls/` so any lookup path finds them locally.
+5. **Missing `delta.lst`.** Another core engine file (network
+   delta-encoding field tables — directly relevant to demo/network message
+   decoding) that `pack` has no reason to include. Symptom:
+   `Delta_InitFields: couldn't load file delta.lst`, fatal. **Fix:** copied
+   `valve/delta.lst` from the real install (used `valve/`'s, not `dod/`'s,
+   since we're running the generic `hlsdk-portable` server logic under
+   `-game valve` — using DoD's own delta.lst would declare fields that
+   server binary doesn't know).
+6. **Missing UI fonts.** `Unable to read font file gfx/fonts/FiraSans-Regular.ttf!`
+   / `tahoma.ttf!`, repeated, then the same fatal "reinstall" message as
+   #7 (this was the *first* thing that ever triggered it — turned out to
+   be a font problem, not the more interesting cause found later). These
+   TrueType fonts are Xash3D-FWGS's own replacement for GoldSrc's original
+   bitmap console fonts — not part of any GoldSrc install at all. **Fix:**
+   found and extracted from `dist/valve/extras.pk3` in the `xash3d-fwgs@1.2.2`
+   npm package (a bundled zip of engine-supplied extras — this is the
+   standard place to look for this category of missing file). Both fonts
+   live at exactly `gfx/fonts/FiraSans-Regular.ttf` and
+   `gfx/fonts/tahoma.ttf` inside it.
+7. **The "reinstall" fatal message, found for real.** `"There is something
+   wrong with your game data! Please, reinstall"` recurred even after #6,
+   and looked at first like it might be a CRC/consistency check (it fires
+   right after `GoldSrc serverdata packet received.`, which made a
+   checksum mismatch plausible). **It is not that.** Cloned
+   `github.com/FWGS/hlsdk-portable` and grepped for the literal string —
+   found in `cl_dll/hud.cpp`, inside `CHud::VidInit` (search "number_0" in
+   that file to jump straight there): it calls
+   `SPR_GetList("sprites/hud.txt", &m_iSpriteCountAllRes)`, and if the
+   resulting sprite list doesn't contain an entry named `"number_0"`
+   (`GetSpriteIndex("number_0") == -1`), it prints exactly this message via
+   `HUD_MessageBox` and issues `quit`. `sprites/hud.txt` is the manifest
+   mapping names like `number_0` (HUD ammo/health digit sprites) to actual
+   `.spr` files — a standard base-engine HUD file, never referenced by any
+   demo's precache list, same category as everything above. **Fix:**
+   copied `valve/sprites/hud.txt` and all 164 `valve/sprites/*.spr` files
+   from the real install into the pack (`cp -n`, so demo-specific sprites
+   already present from `pack`'s own resource-list-driven packing were not
+   clobbered). **Confirmed fixed** — headless retest shows no "reinstall"
+   message, no fatal shutdown, and the log now continues well past
+   `Remote host: KTP - New York 1` into loading (missing, since audio isn't
+   packed) sound files — non-fatal `Error: Could not load sound ...` lines,
+   not blockers.
+8. **Demo filename must not contain a `.` before `.dem`.** The fixture is
+   named `dod_Emmanuel_300-320s.idem.dem` on disk. Passing
+   `?demo=dod_Emmanuel_300-320s.idem` produced
+   `Error: couldn't open dod_Emmanuel_300-320s.dem` — the engine's
+   `playdemo` extension handling treats the `.` before `idem` as an
+   existing (wrong) extension and *replaces* everything after it with
+   `.dem`, silently losing `idem`. Purely a test-fixture naming collision,
+   not a transcoder or viewer bug. **Fix:** renamed the packed copy to
+   `dodEmmanuelClip.dem` (no embedded dots) and use `?demo=dodEmmanuelClip`.
+9. **`-console` doesn't persist across reloads.** The in-game "Enable
+   developer console" toggle is stored in a config file the pack doesn't
+   carry, so it resets on every fresh VFS mount. **Fix (permanent,
+   `index.html`):** `buildArgs()` now pushes `-console -dev 2` whenever
+   `?dev=1` is set, so the real engine console (not just the page-level
+   `#log` panel) is on automatically every time.
+10. **A real, separate bug found along the way:** headless Chromium threw
+    an uncaught `SyntaxError: Failed to execute 'querySelector' on
+    'Document'` from inside `_emscripten_get_element_css_size` (WASM
+    passed a garbage pointer as a CSS selector string) when interacting
+    with the canvas (click, or pressing Escape at the main menu in the
+    user's real browser too — this reproduced in both headless *and* real
+    Chrome, so it's not purely a headless artifact). Also saw, in the
+    engine's own shutdown path after the "reinstall" abort:
+    `Mem_FreeBlock: not allocated or double freed (free at
+    ../engine/common/cmd.c:604)` — a genuine double-free, and the likely
+    source of the bare `Infinity` throws seen throughout (Emscripten
+    aborts sometimes surface as a non-Error thrown value with no
+    `.stack`). **Neither of these looks caused by our content** — they read
+    as upstream engine bugs in this `xash3d-fwgs@1.2.2` build. Not chased
+    further; flag if they recur.
+11. **Headless-only Out-Of-Memory.** After fix #7, headless Playwright
+    (forced to the CPU software renderer, `?renderer=soft`, specifically to
+    dodge headless GPU quirks) hit `RuntimeError: Aborted(OOM). Build with
+    -sASSERTIONS for more info.` right as it started loading real level
+    content. Software rendering keeps the whole framebuffer/texture cache
+    in WASM heap rather than GPU memory, so this is plausibly specific to
+    that renderer choice + headless memory limits, not a real blocker — a
+    real browser uses the default `gl4es`/WebGL2 renderer, which is far
+    lighter on system RAM. **This is the open question a fresh retest needs
+    to answer** — see "STOP AND READ" at the top of this doc.
+
+### Why none of items 2–8 are `pack`-tool bugs
+
+Every missing file above (`gfx.wad`, `delta.lst`, the fonts, `hud.txt` +
+base sprites) is **engine/base-install-level**, not something any specific
+map or demo precaches — `pack`'s whole design is "package what *this demo*
+needs," scoped correctly. A *real* deployment of this viewer would ship
+these once, adjacent to the per-map/per-demo packs `pack` produces, not
+reinvent them per pack. Worth designing as: a small fixed "base kit" zip
+(the base WADs + fonts + `delta.lst` + `hud.txt`/sprites, all pulled from
+the same place a copy of Half-Life provides them) that the viewer always
+mounts first, with the per-demo `pack` output layered on top. Not built
+yet — the test pack just has everything flattened into one zip for
+expedience.
+
+### How to reproduce / continue this
+
+See "STOP AND READ" at the very top of this document — it has the current
+exact server-restart command, test URL, and what's being waited on.
 
 ---
 
@@ -199,7 +439,7 @@ If a minimal DoD HUD is later wanted, note that **the wire formats are already r
 
 1. ~~`cargo build` the crate and fix compile errors.~~ **Done (2026-08-13) — built clean, no errors.** CLI validated against `analysis_target_pov.dem`; output matches this doc's measured sizes and is byte-identical to the checked-in fixture for the 300–320s cut (see verification table above). A true byte-for-byte diff against the Python oracles is still outstanding — needs a machine with a real Python interpreter (not the Windows Store stub).
 2. ~~Build a content pack for one map.~~ **Done (2026-08-13).** `dod_custom_pack.zip` written to `../dod-web-demo-viewer/assets/` (gitignored there already) from `analysis_target_pov.dem` against the real `dod` install — 262 files, 53.5 MB zipped, all required files found after fixing the two bugs above. Only open item: the 28 mismatched viewmodels noted in the verification table — decide whether the *viewer's* content pack should prefer a vanilla viewmodel set over whatever install happens to build the pack, so played-back demos don't quietly pick up a movie-mod's oversized models.
-3. **Point the viewer at `hlsdk-portable`'s client/server wasm** with `-game dod` (see `assets/README.md` for the exact `CONFIG` override), load `fixtures/dod_Emmanuel_300-320s.idem.dem`, and open with `?dev=1`. **The engine console output is the deliverable here** — it will say precisely where playback dies.
+3. **In progress (2026-08-14) — very close.** See "STOP AND READ" at the top of this doc and "Step 3 findings" for the full trail. Confirmed: the engine parses the transcoded demo's signon data for real (prints the original server's hostname/build/map-cycle out of it). A long chain of missing base-engine files (not transcoder bugs) blocked getting further, all fixed one at a time. Last open question: does it actually render the level, or does a headless-only OOM (CPU software renderer) also happen in a real browser (hardware WebGL2)? Waiting on a real-browser retest to answer this.
 4. **Decide based on step 3.** If the world renders: pursue it, and consider a minimal DoD HUD. If `PROTO_GOLDSRC` demo playback is fundamentally broken: stop, and fall back to option B below.
 
 ### Fallback if 3D playback proves unworkable
