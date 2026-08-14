@@ -1,6 +1,7 @@
-import { startCaptureBatch, cancelCaptureBatch, validatePaths, calculateExportPoolSpace, scanOrphanedPreviews, deleteOrphanedPreviews } from './ipc_bridge.js';
+import { startCaptureBatch, cancelCaptureBatch, validatePaths, calculateExportPoolSpace, scanOrphanedPreviews, deleteOrphanedPreviews, checkEngineProcesses, launchStandaloneGame } from './ipc_bridge.js';
 import { listen } from '@tauri-apps/api/event';
 import { showToast } from './toast.js';
+import { requestProcessGuardedLaunch } from './detail_pane.js';
 
 let unlistenCaptureStatus = null;
 // Tracks whether a batch is actively running so refreshLaunchGuard() never
@@ -328,6 +329,51 @@ function renderClearPreviewsResults() {
   updateClearPreviewsDeleteButtonState();
 }
 
+// ── Standalone Game Launch ───────────────────────────────────────────────────
+//
+// Boots HLAE against hl.exe with no demo loaded. Routes through the same
+// running-process guard as the per-demo preview launchers (detail_pane.js) —
+// on conflict, the intent is parked behind the shared Preview Detector modal
+// via `requestProcessGuardedLaunch` instead of duplicating that modal's
+// click listeners here.
+
+function initStandaloneLaunchButton() {
+  const btn = document.querySelector('#btn-launch-standalone-game');
+  if (!btn) return;
+
+  async function performLaunch() {
+    btn.disabled = true;
+    const originalLabel = btn.textContent;
+    btn.textContent = 'Launching…';
+    try {
+      await launchStandaloneGame();
+      showToast('Launching HLAE...', 'info');
+    } catch (err) {
+      // Already toasted by ipc_bridge.js.
+    } finally {
+      btn.textContent = originalLabel;
+      btn.disabled = false;
+    }
+  }
+
+  btn.addEventListener('click', async () => {
+    let engineAlreadyRunning = false;
+    try {
+      engineAlreadyRunning = await checkEngineProcesses();
+    } catch (err) {
+      // Already toasted by ipc_bridge.js — fail open rather than blocking
+      // a legitimate launch just because the detector itself errored.
+    }
+
+    if (engineAlreadyRunning) {
+      requestProcessGuardedLaunch(performLaunch);
+      return;
+    }
+
+    await performLaunch();
+  });
+}
+
 function initClearPreviewsModal() {
   const openBtn = document.querySelector('#open-clear-previews-btn');
   const modal = document.querySelector('#clear-previews-modal');
@@ -410,6 +456,7 @@ export function initCaptureUI(getState) {
   renderInitCommandsList();
   renderCustomCommandsList();
   initClearPreviewsModal();
+  initStandaloneLaunchButton();
 
   const addInitCommandBtn = document.querySelector('#add-init-command-btn');
   if (addInitCommandBtn) {

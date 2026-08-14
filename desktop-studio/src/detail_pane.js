@@ -24,6 +24,11 @@ export function initDetailPane(getAllDemos, onSelectionChange) {
 // checkEngineProcesses() reports a conflict, the launch is parked here until
 // the user resolves it via the modal (Force Relaunch / Copy View Command /
 // Cancel) instead of proceeding blind.
+//
+// `pendingLaunch.run` is a generic no-arg callback so this one shared modal
+// can park intents from other panes too (e.g. capture_pane.js's standalone
+// "Launch Game (HLAE)" button) without each caller needing its own
+// duplicate set of click listeners on the same modal buttons.
 let pendingLaunch = null;
 
 function demoStemFromPath(path) {
@@ -39,6 +44,15 @@ function showProcessDetectorModal() {
 function hideProcessDetectorModal() {
   const modal = document.querySelector('#process-detector-modal');
   if (modal) modal.style.display = 'none';
+}
+
+/** Parks a launch intent behind the Half-Life Preview Detector modal —
+ *  `runFn` is invoked (no args) once the user picks "Force Relaunch" and any
+ *  prior hl.exe/hlae.exe instance has been killed. Exported so other panes
+ *  can reuse the same guarded-launch flow instead of duplicating it. */
+export function requestProcessGuardedLaunch(runFn) {
+  pendingLaunch = { run: runFn };
+  showProcessDetectorModal();
 }
 
 /** Reflects current selection state onto the Launch Preview (per-demo) and
@@ -167,8 +181,7 @@ window.addEventListener("DOMContentLoaded", () => {
       }
 
       if (engineAlreadyRunning) {
-        pendingLaunch = { hlaePath, hlPath, selected };
-        showProcessDetectorModal();
+        requestProcessGuardedLaunch(() => performLaunchPreview(hlaePath, hlPath, selected));
         return;
       }
 
@@ -183,7 +196,7 @@ window.addEventListener("DOMContentLoaded", () => {
         hideProcessDetectorModal();
         return;
       }
-      const { hlaePath, hlPath, selected } = pendingLaunch;
+      const { run } = pendingLaunch;
       processModalForceRelaunchBtn.disabled = true;
       try {
         await killEngineProcesses();
@@ -194,7 +207,7 @@ window.addEventListener("DOMContentLoaded", () => {
       processModalForceRelaunchBtn.disabled = false;
       pendingLaunch = null;
       hideProcessDetectorModal();
-      await performLaunchPreview(hlaePath, hlPath, selected);
+      await run();
     });
   }
 
