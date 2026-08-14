@@ -70,6 +70,17 @@ export async function checkEngineProcesses() {
     });
 }
 
+/** Launches HLAE against `hl.exe` directly with no demo loaded, applying the
+ *  persisted resolution/HUD/init-command settings. */
+export async function launchStandaloneGame() {
+  return invoke("launch_standalone_game")
+    .catch((err) => {
+      console.error("IPC Execution Error (launch_standalone_game):", err);
+      showToast(`Launch failed: ${err}`, 'error');
+      throw err;
+    });
+}
+
 /** Aggressively kills any running `hl.exe`/`hlae.exe` instances. */
 export async function killEngineProcesses() {
   return invoke("kill_engine_processes")

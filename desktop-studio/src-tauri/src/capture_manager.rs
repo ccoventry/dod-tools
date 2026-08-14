@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 use native::patch::{PatcherConfig, CaptureStreak, PatchJob, StreamPatcher, build_batch_queue, build_preview_patch_jobs, DriveAllocationStrategy, CustomCommand, CommandRelation};
 use native::capture_engine::{spawn_capture_engine, CaptureJob, EngineEvent};
 use serde::{Deserialize, Serialize};
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 
 // ── IPC payload type ───────────────────────────────────────────────────────────
 
@@ -789,6 +789,79 @@ pub async fn generate_all_previews(
         let (patcher_config, dod_dir) = resolve_preview_env(&hlae_path, &game_path)?;
         let jobs = patch_bookmark_previews(streaks, &dod_dir, &patcher_config)?;
         Ok(jobs.len())
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
+}
+
+// ── Standalone Game Launch ──────────────────────────────────────────────────────
+//
+// Boots the GoldSrc engine environment through HLAE without a demo loaded —
+// same `build_hlae_process` plumbing as the preview launchers above, minus
+// any `+playdemo`/`+viewdemo` engine arg. Reads the persisted `AppSettings`
+// (not an IPC payload) since this is a standalone action triggered from the
+// global actions area rather than the per-demo detail pane.
+
+/// Builds the `+`-prefixed startup console command string from the user's
+/// configured init commands. Demo-time injection (STUFFTEXT frames patched
+/// into the .dem, see `build_preview_patch_jobs`) isn't available here since
+/// there's no demo — this is the standalone-launch equivalent, so any
+/// `playdemo`/`viewdemo` command is stripped defensively even though
+/// `init_commands` shouldn't carry one by convention.
+fn build_standalone_extra_args(init_commands: &[String]) -> String {
+    init_commands
+        .iter()
+        .map(|c| c.trim())
+        .filter(|c| !c.is_empty())
+        .filter(|c| {
+            let lower = c.to_lowercase();
+            !lower.starts_with("playdemo") && !lower.starts_with("viewdemo")
+        })
+        .map(|c| format!("+{}", c))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Launches HLAE directly against `hl.exe` with no demo loaded, applying the
+/// persisted resolution/HUD/init-command configuration from `AppSettings`.
+#[tauri::command]
+pub async fn launch_standalone_game(app: tauri::AppHandle) -> Result<(), String> {
+    let settings_state = app.state::<crate::settings_manager::SettingsManager>();
+    let settings = {
+        let guard = settings_state
+            .inner
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        guard.clone()
+    };
+
+    tokio::task::spawn_blocking(move || {
+        if settings.hlae_path.trim().is_empty() || settings.hl_path.trim().is_empty() {
+            return Err("Configure the HLAE and Half-Life executable paths before launching.".to_string());
+        }
+        if !Path::new(&settings.hlae_path).is_file() {
+            return Err("HLAE executable not found at the configured path.".to_string());
+        }
+        if !Path::new(&settings.hl_path).is_file() {
+            return Err("Half-Life executable not found at the configured path.".to_string());
+        }
+
+        let patcher_config = PatcherConfig {
+            hlae_path: settings.hlae_path.clone(),
+            game_path: settings.hl_path.clone(),
+            resolution_width: settings.resolution_width,
+            resolution_height: settings.resolution_height,
+            separate_hud: settings.separate_hud,
+            ..PatcherConfig::default()
+        };
+
+        let extra_args = build_standalone_extra_args(&settings.init_commands);
+
+        let mut cmd = patcher_config.build_hlae_process(&extra_args);
+        cmd.spawn()
+            .map_err(|e| format!("Failed to launch HLAE: {}", e))?;
+
+        Ok(())
     })
     .await
     .map_err(|e| format!("Task join error: {}", e))?
