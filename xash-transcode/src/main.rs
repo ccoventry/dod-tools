@@ -244,7 +244,11 @@ fn main() -> ExitCode {
                 let end: f32 = argv[4].parse()?;
                 let src = std::fs::metadata(&argv[1])?.len() as usize;
                 let demo = load(&argv[1])?;
-                let out = cut(&demo, start, end, preroll, &opts)?;
+                // `cut` needs a second, Parse-mode copy of the same source to
+                // find a valid entity-delta baseline for the cut boundary —
+                // see `xash_transcode::cut`'s doc comment.
+                let parsed = load_parsed(&argv[1])?;
+                let out = cut(&demo, &parsed, start, end, preroll, &opts)?;
                 std::fs::write(&argv[2], &out.bytes)?;
                 println!("{} [{start}s..{end}s] -> {}", argv[1], argv[2]);
                 report(&out, src);

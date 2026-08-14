@@ -1,121 +1,232 @@
 # Web Preview Viewer — Handoff
 
-**Status:** Working end-to-end for section-start clips. Confirmed visually
-by the project owner in a real browser (WebGL2): a demo cut from the true
-start of the recording (`dodEmmanuelEarly.dem`) **boots, signs on, renders
-the real map, shows moving players with weapons, and has a correctly
-turning first-person camera** — the full triage-viewer goal, working, for
-that one clip. Two things fixed this session got it here: `PROTO_GOLDSRC`
-demo playback (Open Risk #1) and a frozen-camera bug (missing `dem_usercmd`
-frames — see "Camera fix" below, now shipped in `xash-transcode`). One
-known issue remains, scoped and unfixed: **mid-stream cuts** (e.g. a
-300–320s highlight, not starting at a section boundary) still show
-corrupted/frozen entities — Open Risk #3, delta-compression baseline gap.
-That's the next and likely last blocker before this is a real feature
-instead of a proof of concept, since real highlight clips are almost always
-mid-stream cuts.
-**Last updated:** 2026-08-14 (mid-session handoff, more below)
+**Status:** Working end-to-end for section-start clips (confirmed in a real
+browser: map, players, weapons, correctly turning camera). Mid-stream cuts
+— the actual real-world use case, since highlights are never section-start
+— are **blocked on a newly-discovered, deeper problem than previously
+understood.** Entity state reconstructs correctly (confirmed — no more
+`CL_ParseDeltaPacketEntitiesGS`, kill feed works). The local-player
+(`svc_clientdata`) ring-buffer desync that was believed to be the sole
+remaining cause of the floating/rotating camera has been **fixed and
+byte-level verified correct** (see "Step 5 findings") — and the symptom
+**persists anyway, unchanged.** The leading theory going into the next
+session: injecting *any* synthetic full baseline frame mid-game (full
+`svc_packetentities` + `svc_clientdata`, something that structurally never
+happens in a real recording — see Step 4) may itself be read by the client
+DLL as "you just (re)connected," independent of whether its content and
+sequence numbers are correct. Evidence: a server MOTD box reappears
+mid-playback exactly when — and only when — a clip has synthetic frames
+spliced in; the section-start clip (which needs none) never shows it. Not
+yet confirmed against client-DLL source. See "STOP AND READ" point 3 and
+"Step 5 findings" for the full trail.
+**Last updated:** 2026-08-14 (mid-session handoff, cut short by user request
+to stop and write up findings rather than continue guessing — this doc is
+written to let a fresh chat pick up cold, see below).
 **Spans two repos:** `dod-tools/xash-transcode/` (this repo) and `../dod-web-demo-viewer/` (sibling).
 
 ---
 
 ## STOP AND READ — exact state as of 2026-08-14 (late), mid-session
 
-This got interrupted by a context-limit warning before it finished. Picking
-this up cold? Do these in order:
+Picking this up cold? Do these in order:
 
-1. **A local static server needs to be running.** It was killed when the
-   previous session ended (background process, doesn't survive). Restart it —
-   the script is `../dod-web-demo-viewer/dev-server.js`, a real committed-repo
-   file (not scratchpad), no dependencies:
+1. **Uncommitted code exists — check before doing anything else.**
    ```
-   node dev-server.js . 8080
+   cd dod-tools && git status --short
    ```
-   (run from inside `dod-web-demo-viewer/`). Sets COOP/COEP headers and
-   serves static files, `.wasm` → `application/wasm` included.
+   As of this handoff: `xash-transcode/src/lib.rs` and
+   `xash-transcode/src/main.rs` are **modified but not committed**
+   (mid-stream-cut baseline-synthesis work, now including the clientdata
+   ring-buffer chain fix — point 3 below), and `xash-transcode/examples/
+   verify_clip.rs` is a new **untracked** file (a small diagnostic — walks
+   raw IDEM bytes and prints each frame's `incoming_sequence` + payload
+   header, used to confirm the fix actually lands in the written output;
+   keep it, it's cheap and has already earned its keep once this session —
+   see point 3). `xash-transcode/src/usercmd.rs` (the earlier camera fix)
+   is already committed and needs no changes. The sibling repo
+   (`../dod-web-demo-viewer/`) also has an uncommitted one-line fix to
+   `dev-server.js` — see point 2.
 
-2. **The test content pack already exists** at
-   `../dod-web-demo-viewer/assets/dod_test_pack_with_demo.zip` (~90 MB,
-   gitignored, real file on disk — survives across chat sessions fine, it's
-   not in any scratchpad). It is our real `dod_custom_pack.zip` contents
-   (built by `xash-transcode pack` against `analysis_target_pov.dem` and the
-   real DoD install at `D:\Games\Steam\steamapps\common\Half-Life -
-   PRE-Anniversary for Movies`) **plus** every fix listed in "Step 3
-   findings" below, rebuilt with a custom Node STORED-zip writer (not
-   `Compress-Archive` — see why in that section). Carries **two demo
-   files**, both transcoded with the current (camera-fixed) `xash-transcode`
-   build — see point 3.
+2. **A local static server needs to be running**, and there are two real
+   bugs in `dev-server.js` fixed this session that matter for how you start
+   it:
+   - **No cache headers at all** meant the browser could silently keep
+     serving a stale cached copy of the 90 MB asset zip across rebuilds —
+     this cost real time this session (two rounds of "the fix didn't work"
+     turned out to at least partly be "the browser never re-fetched").
+     Fixed: `Cache-Control: no-store` added to every response.
+   - **The path-safety check is broken for a relative root.** `filePath =
+     path.join(root, urlPath)` stays relative, but the check compares it
+     against `path.resolve(root)` (absolute) with `.startsWith()` — always
+     false, so *every* request 403s when you start the server with `.` as
+     the root argument. **Start it with an absolute path**, not `.`:
+     ```
+     node dev-server.js "C:/Users/Chris Coventry/Repos/dod-web-demo-viewer" 8080
+     ```
+     (run from inside `dod-web-demo-viewer/`, or pass the absolute path from
+     anywhere). This bug was not fixed in `dev-server.js` itself this
+     session (only worked around by always passing an absolute root) —
+     worth a real fix (`path.resolve(root)` once up front, use that
+     everywhere) if this file gets touched again.
+   - Content pack: `../dod-web-demo-viewer/assets/dod_test_pack_with_demo.zip`
+     (~90 MB, gitignored, real file on disk, survives across sessions) —
+     see "Step 3/4 findings" for what's in it. Two demo files inside:
+     `?demo=dodEmmanuelEarly` (section-start clip, **fully working**, and
+     — new insight this session — structurally different from the other
+     clip in a load-bearing way: it gets **zero synthetic frames spliced
+     in**, see point 3) and `?demo=dodEmmanuelClip` (300–320s mid-stream
+     cut, **the one still broken**).
+   - Full test URL: `http://localhost:8080/index.html?demo=dodEmmanuelClip&pack=assets/dod_test_pack_with_demo.zip&dev=1`
+     — the `pack=` parameter is **required**, the page's hardcoded default
+     (`CONFIG.assetPack`) points at an older, incomplete pack
+     (`dod_custom_pack.zip`) from before the base-WAD/font/hud-sprite fixes
+     in Step 3; omitting `pack=` reproduces a `Host_InitCommon: couldn't
+     load gfx.wad` fatal that looks like a regression but isn't one.
 
-3. **Camera bug fixed and confirmed (2026-08-14).** The frozen-camera issue
-   from earlier this session was real, root-caused, and fixed — see "Camera
-   fix: dem_usercmd synthesis" below for the full mechanism. Confirmed via a
-   real-browser test: `dodEmmanuelEarly.dem` (cut 0–20s, from the true start
-   of the recording) now renders the map, shows moving players with
-   weapons, **and has a correctly turning first-person camera** — the full
-   triage-viewer goal, working:
-   ```
-   http://127.0.0.1:8080/?pack=/assets/dod_test_pack_with_demo.zip&demo=dodEmmanuelEarly&dev=1&autostart=1
-   ```
-   `dodEmmanuelClip.dem` (the original 300–320s mid-stream cut, also in the
-   pack) still shows the frozen/corrupted-entity symptom from before —
-   confirmed via the same real-browser test, console still shows
-   `Warning: CL_ParseDeltaPacketEntitiesGS: (7 should be 49)` at signon.
-   This isolates **Open Risk #3** (delta-compression baseline gap on
-   mid-stream cuts) as the one remaining blocker — the camera fix didn't
-   touch it, and it wasn't expected to (different mechanism entirely: this
-   is about `svc_deltapacketentities` needing a preceding full
-   `svc_packetentities` that a mid-stream cut doesn't carry, not about
-   usercmd/view-angle data).
-   ```
-   http://127.0.0.1:8080/?pack=/assets/dod_test_pack_with_demo.zip&demo=dodEmmanuelClip&dev=1&autostart=1
-   ```
+3. **The clientdata ring-buffer fix is now implemented, byte-level
+   verified correct, and the visible bug is still there anyway — this is
+   the actual state of play, read carefully.**
 
-4. **This is now the last known blocker.** Real highlight clips are almost
-   always mid-stream cuts (that's the whole point of a highlight), so this
-   needs fixing before the viewer is usable for its actual purpose, not just
-   as a proof of concept. The fix is scoped and already noted: in
-   `xash-transcode/src/lib.rs`'s `cut()`, walk forward from the cut's start
-   time to find the first non-delta (full) `svc_packetentities` in the
-   original stream and start the transcoded window there instead (or fold
-   that earlier full update in ahead of the requested window), using
-   `dem::netmsg_doer` and a second parse pass — see "Open risks" #3 for the
-   full note. Not yet attempted.
+   The *previous* handoff's theory (one synthetic frame, override its own
+   `sequence_info.incoming_sequence` to the byte `SvcClientData.
+   delta_update_mask` decodes to) was **incomplete, not wrong**. Empirical
+   trace against the real demo (`analysis_target_pov.dem`, 300s cut)
+   showed GoldSrc deltas `svc_clientdata` against "the last frame this
+   client acknowledged" — a *sliding* reference lagging the current frame
+   by a few packets (round-trip latency), not a fixed point. The first
+   several post-cut `svc_clientdata` messages each reference a *different*
+   pre-cut frame in turn (observed: bytes `5, 6, 7, 8`, with `8` repeated
+   once), before the window "ages past" the cut boundary and later
+   messages start referencing real retained frames that populate
+   themselves normally. One synthetic frame only satisfied the first of
+   these.
 
-5. **Console noise that's already triaged and harmless**, don't re-investigate:
-   missing sounds, missing `gfx/shell/*` UI images, `GL_INVALID_ENUM`,
-   `CL_ParseUserMessage: No pfn ...` (expected — DoD-specific HUD
-   usermessages the generic `hlsdk-portable` client doesn't implement),
-   `CL_FireEvent: events/weapons/*.sc not precached` (expected — `pack`'s
-   resourcelist scraping doesn't currently walk event-script precaching, a
-   separate gap from the ones already fixed; means muzzle flash/shell-eject/
-   pain-reaction effects are silently dropped, not that anything is broken),
-   `Couldn't open file overviews/...txt`.
+   **Fixed:** `client_data_chain()` in `xash-transcode/src/lib.rs` walks
+   the real post-cut stream, decodes each leading message's expected
+   `delta_sequence`, and collects every distinct pre-cut slot referenced
+   until one resolves to a frame inside the retained window. `cut()` now
+   splices in *one synthetic baseline frame per slot in that chain* (for
+   this demo: 4 frames, sequence numbers 5/6/7/8), each carrying the same
+   reconstructed entity+clientdata payload. Verified two ways, not just by
+   reasoning: (a) `client_data_chain()` on the real demo returns exactly
+   `[5, 6, 7, 8]`, matching a manual trace of the wire bytes; (b)
+   `examples/verify_clip.rs` re-parses the *actual written output file*
+   (not pre-write in-memory state) and confirms all 4 synthetic frames are
+   present with the correct `incoming_sequence` values, immediately before
+   the real stream resumes at `165385`. A dump of the reconstructed
+   `state.client_data` content also came back sane (`health=100`,
+   `deadflag=0`, `iuser1=0`, plausible origin/velocity) — not corrupted.
 
-6. **`index.html` still has TEMPORARY TEST EDITS** (grep for `TEMPORARY TEST
+   **And the camera is still broken, unchanged, after all of that.**
+   Confirmed in a real browser, twice, including after fixing the
+   dev-server caching bug from point 2 to rule out a stale-content
+   false-negative.
+
+   **New clue, not yet chased down:** the user noticed a server MOTD box
+   ("Nineteen Eleven 24/7 KTP…") reappearing mid-playback on the broken
+   clip, and correlated it directly with brokenness — it does not appear
+   on the working section-start clip. No `motd.txt` exists anywhere in the
+   mounted content pack (checked), so this isn't a stray leftover file
+   being read; whatever text is showing was almost certainly received
+   once already, near true t=0 during the shared, untouched `LOADING`
+   entry, and is being **redisplayed** later. The structural fact that
+   lines up cleanly with this: `dodEmmanuelEarly` is cut from `start=0`,
+   so `replay_state_before(pe, lo=0)` finds nothing before time zero and
+   the entire synthetic-baseline block in `cut()` never fires — it is the
+   *only* one of the two clips with zero synthetic frames. Every version
+   of this fix tried this session (one frame, four frames) spliced
+   synthetic frames into `dodEmmanuelClip` only. **Leading theory for next
+   session:** injecting a full baseline mid-game — something that
+   structurally never happens in a real recording (Step 4: only 4 full
+   `svc_packetentities` exist in the entire 986s source, all within 0.07s
+   of connect) — may itself be read by the *client DLL* (not the engine)
+   as "you just (re)connected," triggering connect-adjacent UI (MOTD
+   redisplay) and state resets (default/spectator camera), **independent
+   of whether the synthetic frame's content and sequence numbers are
+   correct.** This has not been confirmed against source — it requires
+   reading `hlsdk-portable`'s *client* DLL (a different codebase than
+   `xash3d-fwgs`'s engine, which is all that's been read so far this
+   session and last). Concretely: clone
+   `https://github.com/FWGS/hlsdk-portable` and look for what
+   `HUD_UpdateClientData` / `ServerActivate` / MOTD-display hooks key off
+   of — specifically whether a full (non-delta) `svc_clientdata` or
+   `svc_packetentities` arriving after the initial connect trips anything
+   connect-like.
+
+   If that theory pans out, the fix is no longer "get the sequence number
+   right" — it becomes "don't send a full baseline as a *separate*
+   mid-game event at all," which likely means folding the reconstructed
+   state into the frame differently (e.g. as pure deltas against a
+   locally-tracked "current" state per real per-message field-presence,
+   rather than one/several messages that look like full resyncs) — a
+   more involved change than anything implemented so far. Alternatively,
+   if the client DLL turns out not to be the cause, the next thing to
+   check is `cls.spectator` (`cl_parse.c:1092` early-returns out of all
+   origin/health/deadflag resolution when true) — ruled *unlikely* this
+   session because the only code path that sets it (`CL_ParseHLTV`,
+   `cl_parse.c:1956`) requires an `svc_hltv` message a normal player POV
+   recording wouldn't carry, but not conclusively ruled out.
+
+4. **Console noise that's already triaged and harmless**, don't
+   re-investigate: missing sounds, missing `gfx/shell/*` UI images,
+   `GL_INVALID_ENUM`, `CL_ParseUserMessage: No pfn ...` (expected —
+   DoD-specific HUD usermessages the generic `hlsdk-portable` client
+   doesn't implement), `CL_FireEvent: events/weapons/*.sc not precached`
+   (expected — `pack`'s resourcelist scraping doesn't currently walk
+   event-script precaching; muzzle flash/shell-eject/pain effects are
+   silently dropped, not broken), `Couldn't open file overviews/...txt`,
+   `Error: VGui_LoadProgs: Failed to find VGUI support API entry point` /
+   `Failed to load vgui_support library` (checked this session — fires
+   during generic client-DLL init, well before `GoldSrc serverdata packet
+   received`; `libvgui_support.wasm` just isn't shipped in this
+   `xash3d-fwgs` npm build; unrelated to demo content), and —
+   specifically for this session's testing — `gfx/shell/head_*` /
+   `sound/common/launch_*` / repeated `SDL: [Error] That operation is not
+   supported` lines are just the tester navigating Xash's own pause/options
+   menu (pressing Escape/`~`), not an engine or demo failure.
+
+5. **`index.html` still has TEMPORARY TEST EDITS** (grep for `TEMPORARY TEST
    EDIT`): forces `GAME_DIR = 'valve'` + `hlsdk-portable@0.1.3` client/server
    libs (no compiled DoD wasm exists yet), and ties `-console -dev 2` to
-   `?dev=1`. These are real edits in a real file (not scratchpad) — they
-   persist. Leave them until risk #3 is resolved or reverted on purpose.
+   `?dev=1`. Real edits in a real file (not scratchpad) — they persist.
+   Leave them until the clientdata bug is resolved or reverted on purpose.
 
-7. **Everything under this session's scratchpad is gone** in a new chat
-   (session-scoped temp dir) — the extracted `pack_extract2/` working
-   folder and the freshly-cut `dodEmmanuelEarly.dem` before it was copied
-   into the pack. **None of that is needed to *use* the existing test
-   pack** — both demo files are already inside the persisted zip (point 2/3).
-   If another cut or fix is needed, the zip itself persists — unzip it back
-   into a working folder, edit, and rebuild with the other persisted script:
+6. **Everything under this session's scratchpad is gone** in a new chat
+   (session-scoped temp dir) — the extracted `pack_extract/` working
+   folder, and a shallow clone of `xash3d-fwgs` used to read the engine
+   source cited above (that clone is *how* point 3's citations were
+   verified — re-clone if you need to check anything else in the engine:
+   `git clone --depth 1 https://github.com/FWGS/xash3d-fwgs.git`, then
+   look under `engine/client/parse/cl_parse.c` and `cl_parse_gs.c`; for
+   the *client DLL* lead in point 3, clone `hlsdk-portable` instead — a
+   different repo). **None of that is needed to *use* the existing test
+   pack** — both demo files are already inside the persisted zip. If
+   another cut or fix is needed, unzip the pack back into a working
+   folder, edit, rebuild with the persisted script:
    ```
    node make-test-zip.js <extracted-folder> assets/dod_test_pack_with_demo.zip
    ```
-   (also in `dod-web-demo-viewer/`, not scratchpad — do **not** use
-   PowerShell's `Compress-Archive` for this, see finding #3 below for why).
-   To cut a fresh demo window from the source recording:
+   (in `dod-web-demo-viewer/`, not scratchpad — do **not** use
+   PowerShell's `Compress-Archive`, see Step 3 finding #3 for why). To cut
+   a fresh demo window from the source recording (after building
+   `xash-transcode` — `cargo build --release` from inside that crate):
    ```
    cd xash-transcode
    ./target/release/xash-transcode.exe cut ../demos/analysis_target_pov.dem <out.dem> <start> <end> --preroll 0
    ```
-   "Step 3 findings" documents exactly what's in the pack and where each
-   piece came from, so extending it doesn't require re-deriving anything.
+   `cut`'s signature takes a second, Parse-mode-parsed copy of the demo as
+   an extra argument (`cut(&demo, &parsed, start, end, preroll, &opts)`);
+   `main.rs`'s CLI already handles this (loads both), but if calling the
+   library directly from other code, both parses are required. To inspect
+   what actually landed in a transcoded output file's raw bytes (not the
+   pre-write in-memory state), use the new diagnostic:
+   ```
+   cargo run --release --example verify_clip -- <path-to-transcoded.dem>
+   ```
+   prints each entry's first ~12 `dem_read`/`dem_norewind` frames with
+   their `incoming_sequence` and payload header bytes. "Step 3/4/5
+   findings" documents exactly what's in the pack and where each piece
+   came from, so extending it doesn't require re-deriving anything.
 
 ---
 
@@ -264,7 +375,7 @@ The shrink comes from dropping `ClientData` + `DemoBuffer`, which are ~76% of fr
 | BSP wad/sky extraction | **Logic verified** in Python across 11 cases (backslash/forward-slash paths, duplicates, junk segments, missing keys, worldspawn scoping, header offsets). Rust port unproven. |
 | `svc_resourcelist` extraction | **Exercised and fixed (2026-08-13).** Ran `pack` against `analysis_target_pov.dem` + the real `dod` install and found two real bugs, both fixed in `xash-transcode/src/resources.rs` (see below). After fixing, `pack` reports **"All required files found"** (268 wanted, 262 packed, 80.4 MB → 53.5 MB zipped) with 28 legitimate size-mismatched viewmodels (`v_*.mdl`, local ~3× the server-declared size — this install has HD/modified viewmodels, not the set the demo's recording client used; a real content-mismatch, not a bug). |
 | Viewer JS (ZIP, query string, path resolution) | **Verified** — byte-exact ZIP roundtrip on deflate + store, 22 query-string cases, zip-slip rejection. |
-| **Does Xash actually replay a transcoded DoD demo?** | **Yes, confirmed end-to-end (2026-08-14 real-browser tests) — see "Step 3 findings" #12–15 for the full trail.** For a clip cut from a section start: the engine parses signon data, connects, **renders the real level** (map geometry, sky, lightstyles, all DoD player/weapon models), and — after the `dem_usercmd`/view-angle fix (#14) — **has a correctly turning first-person camera with visible player movement**. All visually confirmed by the project owner in a real browser on hardware WebGL2. `PROTO_GOLDSRC` demo playback is real; **Open Risk #1 is resolved.** Every blocker hit getting here turned out to be either a missing *base-engine* file the demo-scoped test pack had no reason to include (base WADs, `delta.lst`, Xash's replacement UI fonts, `sprites/hud.txt` + base sprites — fixed 2026-08-14), or the missing `dem_usercmd` frames carrying recorded view angles (fixed 2026-08-14, see #14). **Remaining known gap:** mid-stream cuts (i.e. real highlight clips, not starting at a section boundary) still freeze at signon with `CL_ParseDeltaPacketEntitiesGS: (7 should be 49)` — this is Open Risk #3 (delta-compression baseline gap), confirmed as the actual cause (not a leftover of the camera bug) by isolating it against a section-start clip that plays cleanly. Unfixed; see "STOP AND READ" #4 for the scoped fix. Separately, a real double-free bug surfaced in this engine build's shutdown path — doesn't look content-related, not chased. |
+| **Does Xash actually replay a transcoded DoD demo?** | **Yes, confirmed end-to-end (2026-08-14 real-browser tests) — see "Step 3 findings" #12–15 for the full trail.** For a clip cut from a section start: the engine parses signon data, connects, **renders the real level** (map geometry, sky, lightstyles, all DoD player/weapon models), and — after the `dem_usercmd`/view-angle fix (#14) — **has a correctly turning first-person camera with visible player movement**. All visually confirmed by the project owner in a real browser on hardware WebGL2. `PROTO_GOLDSRC` demo playback is real; **Open Risk #1 is resolved.** Every blocker hit getting here turned out to be either a missing *base-engine* file the demo-scoped test pack had no reason to include (base WADs, `delta.lst`, Xash's replacement UI fonts, `sprites/hud.txt` + base sprites — fixed 2026-08-14), or the missing `dem_usercmd` frames carrying recorded view angles (fixed 2026-08-14, see #14). **Remaining known gap, updated 2026-08-14 (Step 5):** the original `CL_ParseDeltaPacketEntitiesGS: (7 should be 49)` freeze is fixed (Step 4) and stays fixed. Mid-stream cuts still don't work end-to-end, but the symptom moved: no more entity freeze, no more `CL_ParseDeltaPacketEntitiesGS` warning — instead a floating/rotating camera plus a server MOTD reappearing mid-playback, persisting even after the clientdata ring-buffer sequence bug (also Open Risk #3) was fixed and independently byte-verified correct. Current leading theory: unrelated to sequence-number correctness at all — a full baseline injected mid-game may be read by the client DLL as a reconnect event. See "Step 5 findings" and "STOP AND READ" point 3 for the full trail and the concrete next step (read `hlsdk-portable` client source). Separately, a real double-free bug surfaced in this engine build's shutdown path — doesn't look content-related, not chased. |
 
 ---
 
@@ -530,7 +641,321 @@ below on why).
     walking event precache the same way `resources.rs` already walks
     `svc_resourcelist`.
 
-### Why none of items 2–8 are `pack`-tool bugs
+---
+
+## Step 4 findings: fixing mid-stream cuts (Open Risk #3) (2026-08-14)
+
+Continuation of Step 3 #13's diagnostic. Goal: make a highlight cut from
+*anywhere* in a match (not just section starts) play correctly. This turned
+out to be two separate, structurally different bugs, because GoldSrc's
+network protocol has *two* independent delta-compressed channels — world
+entities and the local player's own state — that behave differently under
+cutting. Both required reading the real `xash3d-fwgs` engine source
+directly (shallow-cloned into scratchpad, same technique as Step 3's
+`hud.cpp` trace) rather than guessing from the demo format alone.
+
+### The wrong assumption this started from
+
+The original TODO (in `lib.rs::cut`'s doc comment, and Open Risk #3's
+original text) assumed GoldSrc periodically resends a full
+`svc_packetentities` baseline, so "walk forward from the cut point to the
+next one" would work. **Empirically false.** Diagnostic scan of
+`analysis_target_pov.dem` (986 s): exactly 4 full `svc_packetentities`
+messages in the *entire* recording, all inside the first 0.07 s after
+connecting. All 90,464 other entity updates across the whole match are
+`svc_deltapacketentities` — cumulative, chained against whatever the client
+currently has, never periodically resynced. A forward walk finds nothing
+for a real mid-match cut and silently degrades to the old broken behavior
+(confirmed: output was byte-identical to the unfixed version when tested).
+
+### The actual fix: reconstruct state, don't search for it
+
+Since there's no full baseline to *find* after the very start, one has to
+be *synthesized* — replay every entity delta from true t=0 up to the cut
+point, accumulate the resulting per-entity field state, and re-encode it as
+a new, self-contained full `svc_packetentities`, spliced in as an extra
+frame immediately before the retained window.
+
+This turned out to be far more tractable than it sounds, because of how
+`dem-patch` (this workspace's vendored GoldSrc parser) represents a delta:
+`pub type Delta = HashMap<String, ByteVec>` — already-*decoded* field
+values (not raw wire bits), keyed by field name exactly as parsed from the
+demo's own `svc_deltadescription` tables. Accumulating deltas over time is
+therefore a plain `HashMap` overlay (later values win), and re-encoding
+back to wire bytes reuses `dem-patch`'s own `SvcPacketEntities::write()` /
+`write_delta()` verbatim — **no bit-packing was reimplemented**, only the
+replay/accumulation logic and the struct construction around it.
+
+Mechanically (`xash-transcode/src/lib.rs`):
+- `cut()` now takes a second parameter, `parsed: &Demo` — the *same* source
+  bytes, parsed a second time in `MessageDataParseMode::Parse` (the
+  original `demo: &Demo` stays `Raw`, for the existing byte-exact write
+  path). `main.rs`'s CLI loads both (`load()` + `load_parsed()`) and passes
+  them through — this mirrors the existing `pack` command's pattern of
+  paying for a full parse when needed.
+- `replay_state_before(entry, before)` walks every `NetworkMessage` frame
+  in `[0, before)`, merging `EngineMessage::SvcPacketEntities` and
+  `SvcDeltaPacketEntities` entries into a running `BTreeMap<u16, (bool,
+  Delta)>` (entity index → `has_custom_delta` + accumulated fields;
+  `remove_entity` deletes from the map), *and* `SvcClientData` into a
+  second running `Delta` (+ per-weapon-slot deltas). Full and delta entity
+  messages are handled identically (both just contribute a `Delta` to
+  merge) — correct here because the only full messages that exist are the
+  initial connect-time snapshot, so there's no real case of a later full
+  update needing to *reset* rather than merge.
+- `encode_synthetic_payload(state, aux)` builds a `SvcPacketEntities`
+  (absolute entity indices throughout, for simplicity — slightly bigger on
+  the wire, never wrong) followed by a `SvcClientData`, and calls their
+  existing `.write(aux)`. `aux` comes from `Demo::_aux` — a field
+  `dem-patch` documents as "not part of a demo, do not use this," but there
+  is no other API to obtain the decoder tables this *specific* demo's own
+  `svc_deltadescription` messages established, and since those tables are
+  set once near signon and read-only afterward, the aux state from a
+  completed full parse is valid for this purpose.
+- `synthetic_baseline_frame(anchor, payload)` wraps that payload as a new
+  `dem::types::Frame` (`FrameData::NetworkMessage`), cloning the anchor
+  (first real retained frame)'s own `DemoInfo`/`SequenceInfo` — reasonable
+  since the synthesized snapshot logically belongs to the same instant.
+  Inserted into the frame list immediately before the retained window.
+  Skipped gracefully (falls through to the old plain-cut behavior for that
+  section) if the encoded payload would exceed `idem::MAX_INIT_MSG`
+  (32 KB) or no anchor frame exists — in practice, nowhere close: the real
+  entity table for this match added under 500 bytes.
+
+### Confirmed: the entity half works
+
+Real-browser test of the regenerated `dodEmmanuelClip` (300–320s mid-stream
+cut): **no `CL_ParseDeltaPacketEntitiesGS` warning**, kill feed scrolling
+with real player names, `CL_FireEvent` firing for weapon sounds during a
+firefight — all the signs of correctly-decoding entity state that were
+present in the working section-start clip. This is real, working,
+significant progress: the primary blocker for Open Risk #3 is solved.
+
+### Not yet fixed: `svc_clientdata` (the local player's own state)
+
+Symptom, confirmed twice across two test rounds: camera is a slowly
+rotating, free-floating view positioned above the (correctly-rendered, per
+the entity fix) player model — not a first-person view. Classic GoldSrc
+observer/spectator-camera fallback behavior.
+
+**Root cause, found by reading `engine/client/parse/cl_parse.c` and
+`cl_parse_gs.c` directly** (not guessed): unlike entities, `svc_clientdata`
+is *not* cumulative. `CL_ParseClientData` (`cl_parse.c:983`, called for
+GoldSrc demos via `cl_parse_gs.c:609` with `PROTO_GOLDSRC`) reads, right
+before the delta payload (`cl_parse.c:1102-1119`):
+```c
+if( MSG_ReadOneBit( msg )) {
+    int delta_sequence = MSG_ReadByte( msg );
+    from_cd = &cl.frames[delta_sequence & CL_UPDATE_MASK].clientdata;
+} else {
+    from_cd = &nullcd;  // zeroed baseline
+}
+```
+`svc_clientdata` explicitly references *one specific prior frame* by a
+sequence-number byte, looked up in a 64-entry ring buffer of frames the
+client has actually processed — not "whatever I currently have," the way
+entities work. The synthetic frame built above reuses the anchor's own
+`sequence_info.incoming_sequence`, landing correctly in that one ring-buffer
+slot — but the *real* clientdata message immediately following it (part of
+the unmodified original stream) references whatever `delta_sequence` the
+*original* recording expected, pointing at a frame from *before* the cut
+that was never received. That ring-buffer slot is empty/stale, so the very
+next real update corrupts `origin`/`health`/`deadflag`/observer-mode fields
+right after the one correct synthetic frame — matching the observed symptom
+exactly (position looks plausible-ish immediately, then falls into an
+observer-camera state).
+
+**The fix, scoped but not yet implemented:** `dem-patch`'s
+`SvcClientData.has_delta_update_mask` / `.delta_update_mask` fields are
+misleadingly named — despite the name, `delta_update_mask` (a `[bool; 8]`
+`BitVec`) *is* the C engine's `delta_sequence` byte. So: find the first
+`SvcClientData` message at/after the cut point in `parsed`. If
+`has_delta_update_mask` is `false`, nothing to fix — it's already a
+from-null full update. If `true`, decode `delta_update_mask` via
+`BitSliceCast::to_u8()` and set the *synthetic* frame's
+`sequence_info.incoming_sequence` to exactly that value (not the anchor's
+own sequence number) before writing it — `delta_sequence & CL_UPDATE_MASK`
+is satisfied by an exact numeric match regardless of the mask's actual
+value. This only has to be right once: after that one correct resolution,
+the real stream's subsequent clientdata messages chain against each other
+normally, unmodified, exactly like entities already do. Small, targeted
+change — no new encoder logic, just picking the right sequence number for
+the synthetic frame already being built.
+
+**Untested after this fix lands:** `weapon_data_t` (parsed in the same
+`CL_ParseClientData` call, `cl_parse.c` ~1121-1132, reusing the same
+`from_wd` ring-buffer frame selected by clientdata's `delta_sequence`) —
+plausibly rides along correctly once clientdata's sequence is right, since
+it shares the same frame selection, but not verified. Also unchecked:
+`cl.predicted_frames`/`cls.spectator` branching (`cl_parse.c:1029-1058`) —
+didn't investigate; flag if a new symptom appears post-fix that looks
+prediction-related.
+
+### Code state as of this handoff
+
+`xash-transcode/src/lib.rs` and `xash-transcode/src/main.rs` carry this
+work **uncommitted**. `cut()`'s signature changed
+(`cut(demo, parsed, start, end, preroll, opts)` — one new parameter).
+Builds clean, existing test suite passes (`cargo build --release` /
+`cargo test --release` from inside `xash-transcode/`), structural
+`validate()` passes on the regenerated `dodEmmanuelClip.dem` — the bug is
+real-engine-behavior-level, not a Rust-side defect these checks would catch.
+Superseded by Step 5 below — the clientdata half described here as "not yet
+implemented" has since been implemented, byte-verified correct, and the
+visible symptom persisted anyway.
+
+---
+
+## Step 5 findings: implementing the clientdata chain fix — implemented,
+## verified correct, symptom unchanged (2026-08-14)
+
+Continuation of Step 4. Goal: implement the scoped fix Step 4 identified
+(set the synthetic frame's `sequence_info.incoming_sequence` to the real
+stream's expected `delta_sequence`) and confirm the camera works.
+
+### The fix, as originally scoped, was incomplete
+
+Implemented Step 4's exact proposal first: one synthetic frame, its
+`incoming_sequence` overridden to the byte the first post-cut
+`svc_clientdata` message's `delta_update_mask` decodes to. Before trusting
+it, added temporary instrumentation (`eprintln!` in `cut()`, removed
+before this handoff) to dump the succession of `delta_update_mask` values
+across the first dozen post-cut `svc_clientdata` messages in the real
+demo. Result, against `analysis_target_pov.dem`'s 300s cut (anchor's own
+absolute sequence: `165385`):
+
+```
+cd#0: frame.seq=165385  expected_delta_seq=Some(5)
+cd#1: frame.seq=165386  expected_delta_seq=Some(6)
+cd#2: frame.seq=165387  expected_delta_seq=Some(7)
+cd#3: frame.seq=165388  expected_delta_seq=Some(8)
+cd#4: frame.seq=165389  expected_delta_seq=Some(8)
+cd#5: frame.seq=165390  expected_delta_seq=Some(9)   <- 165376+9=165385 = the anchor's own frame, real & retained
+cd#6: frame.seq=165391  expected_delta_seq=Some(11)  <- 165376+11=165387 = cd#2's own frame, real & retained
+...
+```
+
+(`CL_UPDATE_BACKUP`/`CL_UPDATE_MASK` — the ring-buffer modulus — is **64**
+for any real match recording: `cl_game.c:999` sets it from
+`MULTIPLAYER_BACKUP` whenever `maxclients > 1`, confirmed by re-checking
+`netchan.h`; the `SINGLEPLAYER_BACKUP=16` definition next to it is a
+dead end for this use case, not the active one.)
+
+This is not "reference the immediately-preceding processed frame" (what
+Step 4 assumed would hold after one correct resolution) — it's GoldSrc
+deltaing clientdata against "the last frame this client has
+acknowledged," a *sliding* window lagging the current frame by a roughly
+constant few-packet round-trip delay. The first four-to-five post-cut
+messages each reference a **different pre-cut frame in turn** (5, 6, 7,
+8, 8 — note `8` repeated, referenced by two different messages), all of
+them frames that don't exist in the retained stream and were never
+patched by a single synthetic frame. Only once a message's own reference
+"ages past" the cut boundary (cd#5 onward here) does it resolve to a real
+retained frame that populates itself normally during ordinary playback.
+
+### The actual fix: a burst of synthetic frames, not one
+
+`client_data_chain(entry, at_or_after, anchor_seq)` in
+`xash-transcode/src/lib.rs` walks the real post-cut stream and collects
+every *distinct* pre-cut slot referenced by the leading messages, in
+first-seen order, stopping as soon as a message's reference resolves to
+`>= anchor_seq` (i.e. the chain has caught up and everything from here
+self-heals). `cut()` now inserts one synthetic baseline frame per entry
+in that chain — for this demo, 4 frames with `incoming_sequence` 5, 6, 7,
+8 — each carrying the same reconstructed entity+clientdata payload,
+immediately before the retained window. `synthetic_baseline_frame()`
+gained a third parameter (`client_data_sequence: Option<u8>`) to drive
+this per-frame override.
+
+### Verified two independent ways, not just by re-reading the source
+
+1. `client_data_chain()` invoked directly (via temporary
+   instrumentation) on the real demo returns exactly `[5, 6, 7, 8]` —
+   matching the manual trace above exactly.
+2. **The actual written output bytes**, not pre-write in-memory state:
+   wrote `xash-transcode/examples/verify_clip.rs` (kept, untracked — see
+   "STOP AND READ" point 1), a from-scratch minimal IDEM-container walker
+   (deliberately independent of `lib.rs`'s own writer, so it can't share a
+   bug with it) that re-parses a transcoded output file and prints each
+   `dem_read`/`dem_norewind` frame's `incoming_sequence` and payload
+   header. Run against the regenerated `dodEmmanuelClip.dem`, the
+   `Playback` entry's first four frames show `incoming_sequence` `5, 6, 7,
+   8` (541-byte payload, identical first bytes — the same encoded
+   entities+clientdata blob, as expected), then the real stream resumes
+   at `165385`. The fix is genuinely present in the exact bytes the
+   browser loads.
+
+A dump of the reconstructed `state.client_data` field values (also
+temporary instrumentation, removed) came back sane: `health` decodes to
+`100.0`, `deadflag=0`, `iuser1=0` (not observing), plausible non-zero
+origin/velocity/view_ofs. Not corrupted, not a reconstruction bug.
+
+### And the camera is still broken, unchanged
+
+Confirmed in a real browser, twice — once immediately after implementing
+the chain fix, once again after fixing a dev-server caching bug (below)
+to rule out the first test having silently reused stale cached content.
+Same symptom both times: slowly-rotating free-floating camera, exactly as
+before any of this session's work.
+
+### A real, unrelated bug fixed along the way: dev-server.js caching + a path-safety bug
+
+`../dod-web-demo-viewer/dev-server.js` set no `Cache-Control`, `ETag`, or
+`Last-Modified` on any response, including the 90 MB asset zip — the
+browser was free to keep reusing a stale cached copy across rebuilds
+during iterative testing, and likely did so for at least one retest this
+session. Fixed: `Cache-Control: no-store` added to every response.
+Separately, while restarting the server, found its path-safety check is
+broken for the documented `.`-as-root invocation:
+`path.join(root, urlPath)` stays relative but gets compared against the
+absolute `path.resolve(root)` via `.startsWith()` — always false, so
+*every* request 403s. Not fixed in the file itself this session (only
+worked around by always passing an absolute root path); see "STOP AND
+READ" point 2 for the corrected invocation.
+
+### New clue: a server MOTD reappears mid-playback, exactly correlated with brokenness
+
+The user noticed, unprompted, a server MOTD box ("Nineteen Eleven 24/7
+KTP…" — real ad content from whatever community server the source
+recording came from) reappearing over the game view partway through
+playback on the broken clip, and correlated its presence directly with
+"the demo isn't working" — it never appears on the working section-start
+clip. Checked: no `motd.txt` exists anywhere in the mounted content pack,
+so this isn't a stray leftover file being read fresh; the text was almost
+certainly already received once, near true t=0, during the `LOADING`
+entry both clips share unmodified — something is **redisplaying** it
+later, only on the clip that has synthetic frames.
+
+That structural fact — *only* `dodEmmanuelClip` gets synthetic frames —
+is exact and load-bearing: `dodEmmanuelEarly` is cut from `start=0`, so
+`replay_state_before(pe, lo=0)` finds nothing before time zero and the
+entire synthetic-baseline block in `cut()` never fires for it. Every
+version of the fix tried this session (one frame, then four) only ever
+touched `dodEmmanuelClip`. **Leading theory, not yet confirmed against
+source:** injecting a full baseline (`svc_packetentities` +
+`svc_clientdata` with no delta reference) mid-game — something that
+structurally never happens in a real recording (Step 4: exactly 4 full
+`svc_packetentities` exist in the entire 986s source, all within 0.07s of
+connect) — may be read by the **client DLL** (not the engine, which is
+all that's been checked so far across this session and last) as "you
+just (re)connected," independent of whether the synthetic frame's
+content and sequence numbers are correct. This would explain both
+symptoms (MOTD redisplay, camera reset to a connect-like default) with
+one cause, and would explain why getting the sequence number byte-exact
+didn't help at all.
+
+**Not yet done, next session's starting point:** clone
+`https://github.com/FWGS/hlsdk-portable` (a different repo from
+`xash3d-fwgs` — the client-DLL source, not the engine) and check what
+`HUD_UpdateClientData`, `ServerActivate`, and MOTD-display logic key off
+of — specifically whether a non-delta (full) `svc_clientdata` or
+`svc_packetentities` arriving after the initial connect trips anything
+connect-like. If confirmed, the fix stops being "get the sequence number
+right" (already done) and becomes "don't send something that looks like
+a full resync mid-game at all" — likely a materially different, more
+involved approach than anything implemented so far.
+
+### Why none of items 2–8 are `pack`-tool bugs (Step 3)
 
 Every missing file above (`gfx.wad`, `delta.lst`, the fonts, `hud.txt` +
 base sprites) is **engine/base-install-level**, not something any specific
@@ -555,7 +980,7 @@ exact server-restart command, test URL, and what's being waited on.
 
 1. ~~**`PROTO_GOLDSRC` may never have been exercised for demo playback.**~~ **Resolved 2026-08-14 — it works.** Confirmed in a real browser: the engine signs onto a transcoded demo's server data, loads the real map and all player/weapon models, and renders the level. See "Step 3 findings" #12.
 2. **No DoD client library exists for wasm.** Valve never released DoD's source, so it can't be compiled — it would have to be written. See below.
-3. **Delta compression on cuts — confirmed real, the last known blocker.** `svc_deltapacketentities` encodes against earlier frames, so a cut landing mid-stream shows corrupt entities until the next full update. `--preroll` (default 3 s) is a blunt mitigation. **Confirmed as the actual cause (2026-08-14)**, not a symptom of the (now-fixed) camera bug: a real-browser test of the 300–320s mid-stream cut hits `CL_ParseDeltaPacketEntitiesGS: (7 should be 49)` at signon and freezes (map renders, nothing advances — reproducible across multiple runs), while a section-start clip of the same source demo plays cleanly with no such warning. Since real highlight clips are essentially always mid-stream cuts, this blocks the feature's actual use case, not just the proof of concept. Proper fix — walk forward to the first non-delta `svc_packetentities` and start the transcoded window there — needs `dem::netmsg_doer` and a second parse pass. TODO in `lib.rs::cut`; not yet attempted.
+3. **Delta compression on cuts — entity half fixed and confirmed; clientdata half's known bug is fixed and byte-verified correct, but the visible symptom is unchanged, and the actual root cause is now believed to be different from what was fixed.** `svc_deltapacketentities`/`svc_clientdata` encode cumulatively against earlier frames, so a cut landing mid-stream shows corrupt state until reconstructed. **Entity half fixed and confirmed 2026-08-14**: `cut()` synthesizes a full `svc_packetentities` baseline by replaying every entity delta from t=0 to the cut point (see "Step 4 findings") — real-browser test shows no more `CL_ParseDeltaPacketEntitiesGS`, kill feed works, players render and move. **Local-player half (`svc_clientdata`):** the ring-buffer sequence-number bug Step 4 root-caused is now fixed (`client_data_chain()`, "Step 5 findings") — not one synthetic frame but a *burst* of them, since the real reference is a sliding few-frame lag, not a fixed point — and independently byte-verified correct against the actual written output file. **The camera symptom persists anyway, unchanged**, and a new clue (a server MOTD reappearing mid-playback, exactly correlated with which clip has synthetic frames spliced in — see Step 5) points at a different, deeper cause: a full baseline injected mid-game may be read by the *client DLL* as a reconnect event, independent of its content being correct. Not yet confirmed against `hlsdk-portable` source — see "STOP AND READ" point 3 for the concrete next step. **All code (entity fix + clientdata chain fix) is uncommitted** in `xash-transcode/src/lib.rs` and `main.rs` as of this handoff.
 4. **Custom content mismatch.** DoD's custom-model culture means demos reference files a given install may lack or have different versions of. `pack` reports size mismatches against server-declared sizes to surface this.
 
 ---
@@ -582,8 +1007,8 @@ If a minimal DoD HUD is later wanted, note that **the wire formats are already r
 1. ~~`cargo build` the crate and fix compile errors.~~ **Done (2026-08-13) — built clean, no errors.** CLI validated against `analysis_target_pov.dem`; output matches this doc's measured sizes and is byte-identical to the checked-in fixture for the 300–320s cut (see verification table above). A true byte-for-byte diff against the Python oracles is still outstanding — needs a machine with a real Python interpreter (not the Windows Store stub).
 2. ~~Build a content pack for one map.~~ **Done (2026-08-13).** `dod_custom_pack.zip` written to `../dod-web-demo-viewer/assets/` (gitignored there already) from `analysis_target_pov.dem` against the real `dod` install — 262 files, 53.5 MB zipped, all required files found after fixing the two bugs above. Only open item: the 28 mismatched viewmodels noted in the verification table — decide whether the *viewer's* content pack should prefer a vanilla viewmodel set over whatever install happens to build the pack, so played-back demos don't quietly pick up a movie-mod's oversized models.
 3. ~~Confirm the level actually renders and is playable.~~ **Done (2026-08-14).** See "Step 3 findings" #12–15 for the full trail: a long chain of missing base-engine files (not transcoder bugs), then a genuine transcoder bug (missing `dem_usercmd`/view-angle frames, fixed), got a section-start clip to a fully working real-browser playthrough — map, players, weapons, and a correctly turning camera. `PROTO_GOLDSRC` demo playback is real and works.
-4. **In progress — the actual remaining blocker.** Mid-stream cuts (i.e. real highlight clips) still freeze at signon (Open Risk #3, delta-compression baseline gap) — confirmed real and isolated from the now-fixed camera bug. This needs fixing before the viewer works for its actual use case, since highlights are essentially always mid-stream. Scoped fix noted in `lib.rs::cut`'s TODO and Open Risk #3; not yet attempted. Secondary, lower-priority gap found along the way: weapon-fire/pain client *events* (muzzle flash, shell eject, pain flinch) aren't currently packed — `pack`'s resourcelist walk covers `svc_resourcelist` but not event precaching (Step 3 finding #15).
-5. **Once #4 is fixed:** decide on a minimal DoD HUD (see "DoD client library — assessment" below) and design the "base kit" pack split noted after Step 3 findings (base WADs/fonts/delta.lst/hud sprites shipped once, not flattened into every per-demo pack).
+4. **Entity half done. Clientdata ring-buffer sequence fix done and byte-verified — but the actual blocker turned out to be something else, still open.** Mid-stream cuts (real highlight clips) needed reconstructed entity *and* local-player state, not just a preroll — see "Step 4 findings". Entity half confirmed working in a real browser. Local-player half (`svc_clientdata`): the sequence-number bug Step 4 root-caused is now fixed and independently verified correct against the actual output bytes (Step 5) — and the camera symptom is **unchanged**. Leading theory (Step 5, not yet confirmed): a full baseline injected mid-game may be read by the *client DLL* as a reconnect event regardless of its content being correct, evidenced by a server MOTD reappearing exactly on the clip that has synthetic frames. **The single next step** is reading `hlsdk-portable`'s client-DLL source (not the engine — a different repo) to confirm or rule this out; see "STOP AND READ" point 3. Current code (entity fix + clientdata chain fix) is uncommitted in `xash-transcode/src/lib.rs`/`main.rs`. Secondary, lower-priority gap found along the way: weapon-fire/pain client *events* (muzzle flash, shell eject, pain flinch) aren't currently packed — `pack`'s resourcelist walk covers `svc_resourcelist` but not event precaching (Step 3 finding #15).
+5. **Once #4 is fully resolved:** commit, retest `dodEmmanuelClip` end-to-end, then decide on a minimal DoD HUD (see "DoD client library — assessment" below) and design the "base kit" pack split noted after Step 3 findings (base WADs/fonts/delta.lst/hud sprites shipped once, not flattened into every per-demo pack). If the client-DLL theory pans out and the fix turns out to be substantially more involved than expected, revisit Fallback A below rather than sinking more time into a redesign — the goal is a working triage viewer, not a from-scratch demo-splicing engine.
 
 ### Fallback if 3D playback proves unworkable
 
