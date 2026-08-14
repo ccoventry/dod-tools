@@ -34,6 +34,11 @@ impl ByteWriter {
     }
 
     #[inline]
+    pub fn u16(&mut self, v: u16) {
+        self.data.extend_from_slice(&v.to_le_bytes());
+    }
+
+    #[inline]
     pub fn u32(&mut self, v: u32) {
         self.data.extend_from_slice(&v.to_le_bytes());
     }
