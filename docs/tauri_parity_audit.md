@@ -66,29 +66,45 @@ Rollup: core duplicate-detection algorithm is a faithful port — both sides
 call the real `hl_demo_auditor::scan_dir`/`find_duplicates`. No invented
 logic anywhere in this pane.
 
-- [ ] **DRIFT** — folder targeting: dev's dedicated per-audit "Target Folder"
-  field + native picker → Tauri silently audits the app-wide pinned-folders
-  list shared with Analyzer/Capture Studio, with no indication in the pane of
-  what's about to be scanned.
-- [ ] **DRIFT** — result table: dev's collapsible group tree (hash shown once
-  per group) → Tauri's flat list (every file always shown, hash repeated per
-  row).
-- [ ] **DRIFT** — scan progress: dev's spinner + "found N so far" + current
-  filename → Tauri's single combined status line. Same backend signal,
-  thinner UI.
+- [x] **DRIFT — fixed (2026-08-16).** Folder targeting: dev's dedicated
+  per-audit "Target Folder" field + native picker was gone, replaced by
+  silently auditing the app-wide pinned-folders list. Restored a dedicated
+  `#audit-target-folder-input` + Browse button in `auditor_pane.js`; "Start
+  Audit" is disabled until a folder is chosen, matching dev's
+  `!target_folder.is_empty()` gate.
+- [x] **DRIFT — fixed (2026-08-16).** Result table: rebuilt as a collapsible
+  group tree (▶/▼ toggle per group, hash shown once per group header) instead
+  of a flat list with the hash repeated on every row. Kept Tauri's own
+  checkbox/delete mechanism (see below) layered on top rather than reverting
+  to dev's checkbox-less table.
+- [x] **DRIFT — fixed (2026-08-16).** Scan progress: status area now shows a
+  CSS spinner + bold "Found N demo file(s) so far…" + the raw progress detail
+  underneath, instead of one flat combined line. New `.spinner` class in
+  `styles.css`.
 - [x] ~~Delete mechanism~~ — **not a regression.** Dev's "Delete Selected
   Demos" was a literal `// TODO: Wire deletion dispatch` stub (pane subtitled
   "Read-Only tool"). Tauri's version is real, working deletion via per-row
-  checkboxes → `delete_audit_files`. Improvement, not drift to worry about.
-- [ ] **GAP** — Cancel Scan is half-wired: backend `cancel_audit` command
-  exists and is registered, but nothing in the frontend ever calls it (no
-  button, no `ipc_bridge.js` wrapper).
-- [ ] **GAP** — per-file "Copy Path" button is gone entirely.
-- [ ] **GAP** — per-file "Open Folder" (reveal in OS explorer, was
-  cross-platform in dev) is gone entirely.
-- [ ] **GAP** — no way to collapse large result sets (direct consequence of
-  the flat-list drift above, but a distinct usability loss worth tracking
-  separately).
+  checkboxes → `delete_audit_files`. Improvement, not drift to worry about —
+  kept and layered under the restored group-tree view above.
+- [x] **GAP — fixed (2026-08-16).** Cancel Scan is now wired: added a Cancel
+  button in `index.html`, a `cancelAudit()` wrapper in `ipc_bridge.js`, and a
+  click handler in `auditor_pane.js` that calls the pre-existing (but
+  previously unused) `cancel_audit` command. `hl_demo_auditor::scan_dir`/
+  `find_duplicates` already checked the cancel token internally and return
+  partial results early, so no backend change was needed — only the missing
+  frontend wiring.
+- [x] **GAP — fixed (2026-08-16).** Per-file "Copy Path" restored via
+  `navigator.clipboard.writeText`.
+- [x] **GAP — fixed (2026-08-16).** Per-file "Open Folder" restored. Added a
+  new `reveal_in_explorer` Tauri command (`audit_manager.rs`, registered in
+  `lib.rs`) — `explorer /select,` on Windows, `open -R` on macOS, `xdg-open`
+  on the parent directory as the Linux fallback (dev used the `open` crate
+  there; used `xdg-open` directly instead to avoid an unverifiable new
+  dependency on a platform this pass can't build/test).
+- [x] **GAP — fixed (2026-08-16).** Groups now default to expanded (all
+  files visible, matching Tauri's prior always-visible behavior) with a
+  per-group collapse toggle for decluttering large result sets — see the
+  result-table fix above.
 
 ---
 

@@ -27,7 +27,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   let selectedDemoIdx = null;
 
   // Initialize modular UI panes
-  initAuditorPane(() => scanPaths);
+  initAuditorPane();
 
   // Helper to persist application settings
   async function persistAppSettings() {
