@@ -9,7 +9,6 @@ path = "src/main.rs"
 
 [dependencies]
 analysis = { path = "../analysis" }
-clap = { workspace = true, features = ["derive"] }
-tabled = { workspace = true }
 dem = { workspace = true }
 dod = { path = "../dod" }
+serde_json = { workspace = true }

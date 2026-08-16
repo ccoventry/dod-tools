@@ -374,6 +374,23 @@
 
         <!-- Demo Analyzer: standalone per-demo report (Summary/Scoreboard/Player/Team/Timeline/Rounds/Chat) -->
         <section id="pane-demo-analyzer" class="content-pane" style="display: none;">
+          <!-- Picker sidebar: folder tree (top) + demo list for the selected folder (bottom) -->
+          <div id="analyzer-browser-sidebar" class="analyzer-browser-sidebar">
+            <div class="egui-panel analyzer-browser-panel">
+              <div class="panel-header analyzer-browser-toolbar">
+                <button id="analyzer-browser-up" title="Up one level">&uarr; Up</button>
+                <span id="analyzer-browser-path" class="analyzer-browser-path"></span>
+              </div>
+              <div id="analyzer-browser-dirs" class="analyzer-browser-list"></div>
+            </div>
+            <div class="egui-panel analyzer-browser-panel">
+              <div class="panel-header">
+                <h3>Demos in Folder</h3>
+              </div>
+              <div id="analyzer-browser-demos" class="analyzer-browser-list"></div>
+            </div>
+          </div>
+
           <div class="egui-panel" style="flex: 1; display: flex; flex-direction: column; overflow: hidden;">
             <div class="panel-header flex-between">
               <h3>Demo Analyzer</h3>
@@ -392,7 +409,7 @@
               <button class="analyzer-subtab-btn" data-subtab="chat">Chat Log</button>
             </div>
             <div id="analyzer-tab-content" class="analyzer-tab-content">
-              <p class="analyzer-empty">Browse for a demo file, or select one from the Workspace and click "View Match Telemetry".</p>
+              <p class="analyzer-empty">Pick a folder and demo on the left, browse for a file, or select one from the Workspace and click "View Match Telemetry".</p>
             </div>
           </div>
         </section>

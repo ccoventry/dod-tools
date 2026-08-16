@@ -744,6 +744,89 @@ button.primary-btn:hover:not(:disabled) {
   margin-right: 4px;
 }
 
+/* Demo Analyzer — folder tree / demo list picker sidebar */
+
+#pane-demo-analyzer {
+  flex-direction: row;
+}
+
+.analyzer-browser-sidebar {
+  width: 260px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow: hidden;
+}
+
+.analyzer-browser-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.analyzer-browser-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.analyzer-browser-toolbar button {
+  flex-shrink: 0;
+  padding: 3px 8px;
+  font-size: 11px;
+}
+
+.analyzer-browser-path {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.analyzer-browser-list {
+  flex: 1;
+  overflow-y: auto;
+  font-size: 12px;
+}
+
+.analyzer-browser-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.analyzer-browser-row:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.analyzer-browser-row.selected {
+  background: rgba(43, 92, 143, 0.35);
+  color: #ffffff;
+}
+
+.analyzer-browser-row .row-icon {
+  flex-shrink: 0;
+  opacity: 0.8;
+}
+
+.analyzer-browser-row .row-meta {
+  margin-left: auto;
+  padding-left: 8px;
+  flex-shrink: 0;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
 .text-muted {
   color: var(--text-muted);
 }

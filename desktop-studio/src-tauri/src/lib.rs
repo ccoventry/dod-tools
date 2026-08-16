@@ -2,6 +2,7 @@ mod capture_manager;
 mod render_manager;
 mod settings_manager;
 mod audit_manager;
+mod dir_browser;
 
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 use capture_manager::{CaptureManager, CapturePayload, launch_demo_preview, generate_all_previews, launch_standalone_game, check_engine_processes, kill_engine_processes, scan_orphaned_previews, delete_orphaned_previews};
@@ -356,6 +357,8 @@ pub fn run() {
             run_demo_audit,
             delete_audit_files,
             cancel_audit,
+            dir_browser::browse_directory,
+            dir_browser::default_browse_dir,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
