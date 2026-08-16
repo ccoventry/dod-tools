@@ -116,22 +116,40 @@ field-for-field to real `analysis::AnalyzerState` data on both sides. The
 missing POV tab is *correct*, not a gap — dev's `pov.rs` was already
 `#[allow(dead_code)]` and never called before the migration.
 
-- [ ] **GAP (biggest one, in progress)** — the demo browser lost search,
-  filters, sort, and grouping entirely. Dev had a persistent multi-drive tree
-  with text search (name/map), Type/Map/Date filters, a Reset button,
-  sortable columns, arrow-key navigation, and three view modes (Flat List /
-  Group by Match / Group by Player-Recorder). Tauri is a
-  single-directory-at-a-time drill-down with none of that — real data
-  underneath, much smaller surface. **Deliberately held back from this pass**
-  — dev's version filters/sorts/groups over an already-in-memory flat list of
-  every demo across all watched folders (`desktop_files`), built by a
-  recursive scan; Tauri's browser is a directory-drilldown with no equivalent
-  aggregate list yet. Restoring this faithfully means adding a new backend
-  recursive-scan endpoint (and deciding how to get map/date/type per demo
-  *cheaply* — a full `analyze_demo_full` parse per file is too slow across a
-  large demo library, see `docs/demo_analyzer_load_performance.md`'s
-  824ms/demo decode cost), not just a frontend change. Worth a scoped
-  discussion before implementation, not a silent design pick.
+- [x] **GAP — fixed (2026-08-16).** The demo browser lost search, filters,
+  sort, and grouping entirely — rebuilt as a flat, filterable/sortable list
+  across every recursively-watched folder (search name/map/path, Type/Map/
+  Date filters + Reset, sortable Name/Type/Map/Date columns with ▲/▼
+  indicators, arrow-key navigation + Enter to open), replacing the
+  single-directory drill-down.
+  - **Correction from the original finding**: dev's "Group by Match" and
+    "Group by Player-Recorder" view modes were *not* ported — traced their
+    grouping keys (`server_ip`, `player_roster_hash`, `recorder_id`) and
+    confirmed via `grep` that dev's `main.rs` only ever assigns them `None`,
+    at the one call site that constructs them, with no other assignment
+    anywhere in the file. Every demo would land in the same empty group in
+    dev too — same category of dead shell as the POV tab / Auditor's delete
+    button / CSV export button already excluded elsewhere in this audit.
+    Only "Flat List" (the one real, working view) was restored.
+  - **New backend**: `list_demos_recursive` (`dir_browser.rs`) walks watched
+    folders for `.dem` files — filesystem-only, no parsing, near-instant
+    regardless of library size — and opportunistically fills `map_name`/
+    `demo_type` from a new cache-only-read helper, `native::peek_analyzer_cache`
+    (never falls back to parsing, unlike `run_analyzer_cached`). Cache misses
+    ship as `null` and get lazily resolved one at a time in the background via
+    a new `resolve_demo_summary` command (does the real, possibly-~1.3s parse,
+    through the existing on-disk cache, so the cost is paid once per demo
+    rather than once per browse) — table re-renders incrementally as results
+    land instead of blocking on the whole library up front.
+  - **Watched folders**: reuses the app's existing shared `pinned_folders`/
+    `scanPaths` state (same list Capture Studio scans) rather than a
+    separate Analyzer-only list — this is the faithful restoration of dev's
+    actual design (its `desktop_files` list was app-wide too), unlike the
+    Auditor fix earlier in this doc, which deliberately moved *away* from
+    shared state because dev's Auditor really was scoped to one ad-hoc
+    folder. Added explicit add/remove UI so which folders are being searched
+    is no longer silent (the problem that made sharing state wrong for the
+    Auditor) even though the state itself is intentionally shared here.
 - [x] **GAP — fixed (2026-08-16).** Kill-streak weapon-category filters
   restored (Grenades/Melee/Allied/Axis/Other groups, per-category
   toggle-all + per-weapon checkboxes) in `analyzer_pane.js`, filtering which

@@ -7,7 +7,7 @@
 
 import { open } from '@tauri-apps/plugin-dialog';
 import { listen } from '@tauri-apps/api/event';
-import { analyzeDemoFull, browseDirectory, defaultBrowseDir } from './ipc_bridge.js';
+import { analyzeDemoFull, listDemosRecursive, resolveDemoSummary } from './ipc_bridge.js';
 
 let report = null;
 let analyzerLoadInProgress = false;
@@ -29,16 +29,28 @@ const WEAPON_CATEGORIES = [
   ['Axis', ['Luger', 'ScopedK98', 'Stg44', 'K98', 'Mp40', 'Mg42', 'Mg34', 'Fg42', 'ScopedFg42', 'K43', 'Panzerschreck']],
 ];
 
-// ── Picker sidebar state: folder tree (drives -> subfolders) + demo list for
-// whichever folder is currently selected. Mirrors the `dev` branch egui
-// GUI's persistent left explorer panel — see browser.rs/tree.rs — as a
-// two-widget sidebar next to the report content instead of a modal.
-let browserPath = null; // null = drive/root list
-let browserParent = null;
-let browserSubdirs = [];
-let browserDemos = [];
+// ── Picker sidebar state: a flat, filterable/sortable list of every demo
+// found recursively under the shared "watched folders" list (same
+// pinned_folders/scanPaths the rest of the app uses), mirroring dev's
+// `desktop_files` — see views/browser.rs. Dev's "Group by Match"/"Group by
+// Player-Recorder" view modes are NOT ported: their grouping keys
+// (server_ip/player_roster_hash/recorder_id) were only ever assigned `None`
+// in dev's own source, so those two view modes never actually grouped
+// anything there either — restoring the one real, working view (Flat List)
+// is the faithful port here, not a scope cut.
+let getWatchedFolders = () => [];
+let onAddWatchedFolder = async () => {};
+let onRemoveWatchedFolder = async () => {};
+let allDemos = []; // DemoListEntry[] from list_demos_recursive
 let browserSelectedDemo = null;
 let browserError = null;
+let demoFilterQuery = '';
+let demoFilterType = 'All';
+let demoFilterMap = '';
+let demoFilterDateStart = '';
+let demoFilterDateEnd = '';
+let demoSortColumn = null; // 'name' | 'type' | 'map' | 'date'
+let demoSortAscending = true;
 
 const TEAM_COLORS = {
   Allies: '#4caf50',
@@ -161,77 +173,255 @@ function groupConsecutiveWeapons(names) {
   return parts.join(', ');
 }
 
-// ── Picker sidebar: folder tree + demo list ──────────────────────────────────
+// ── Picker sidebar: watched folders + flat filterable/sortable demo list ────
 
-function formatFileSize(bytes) {
-  if (!bytes) return '0 B';
-  const mb = bytes / 1_048_576;
-  if (mb >= 1) return `${mb.toFixed(1)} MB`;
-  return `${(bytes / 1024).toFixed(0)} KB`;
+function demoTypeOf(entry) {
+  return entry.demo_type != null && entry.demo_type !== ''
+    ? entry.demo_type
+    : (entry.name.toLowerCase().includes('hltv') ? 'HLTV' : 'POV');
 }
 
-async function navigateBrowser(path) {
-  browserError = null;
-  renderBrowserSidebar(); // shows the (unchanged) list immediately; path label updates once loaded
-  try {
-    const listing = await browseDirectory(path);
-    browserPath = listing.path;
-    browserParent = listing.parent;
-    browserSubdirs = listing.subdirs || [];
-    browserDemos = listing.demos || [];
-  } catch (err) {
-    browserError = String(err);
+function demoDateISO(entry) {
+  if (!entry.modified_unix_secs) return '';
+  return new Date(entry.modified_unix_secs * 1000).toISOString().slice(0, 10);
+}
+
+function demoDateDisplay(entry) {
+  if (!entry.modified_unix_secs) return '—';
+  const d = new Date(entry.modified_unix_secs * 1000);
+  return `${d.toLocaleDateString()} ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+}
+
+function passesDemoFilter(entry) {
+  if (demoFilterQuery) {
+    const q = demoFilterQuery.toLowerCase();
+    const hay = `${entry.name} ${entry.map_name || ''} ${entry.path}`.toLowerCase();
+    if (!hay.includes(q)) return false;
   }
-  renderBrowserSidebar();
+  if (demoFilterType !== 'All' && demoTypeOf(entry) !== demoFilterType) return false;
+  if (demoFilterMap && !(entry.map_name || '').toLowerCase().includes(demoFilterMap.toLowerCase())) return false;
+  const iso = demoDateISO(entry);
+  if (demoFilterDateStart.length === 10 && (iso.length < 10 || iso < demoFilterDateStart)) return false;
+  if (demoFilterDateEnd.length === 10 && (iso.length < 10 || iso > demoFilterDateEnd)) return false;
+  return true;
 }
 
-function renderBrowserSidebar() {
-  const upBtn = document.querySelector('#analyzer-browser-up');
-  const pathEl = document.querySelector('#analyzer-browser-path');
-  const dirsEl = document.querySelector('#analyzer-browser-dirs');
-  const demosEl = document.querySelector('#analyzer-browser-demos');
-  if (!upBtn || !pathEl || !dirsEl || !demosEl) return;
+function sortedFilteredDemos() {
+  let list = allDemos.filter(passesDemoFilter);
+  if (demoSortColumn) {
+    list = list.slice().sort((a, b) => {
+      let cmp;
+      switch (demoSortColumn) {
+        case 'name': cmp = a.name.toLowerCase().localeCompare(b.name.toLowerCase()); break;
+        case 'type': cmp = demoTypeOf(a).localeCompare(demoTypeOf(b)); break;
+        case 'map': cmp = (a.map_name || '').toLowerCase().localeCompare((b.map_name || '').toLowerCase()); break;
+        case 'date': cmp = a.modified_unix_secs - b.modified_unix_secs; break;
+        default: cmp = 0;
+      }
+      return demoSortAscending ? cmp : -cmp;
+    });
+  }
+  return list;
+}
 
-  upBtn.disabled = browserPath === null;
-  pathEl.textContent = browserPath || 'This PC';
-  pathEl.title = browserPath || 'This PC';
+function updateSortHeaderIndicators() {
+  document.querySelectorAll('#analyzer-demo-table th[data-sort]').forEach((th) => {
+    const base = th.dataset.label;
+    th.textContent = demoSortColumn === th.dataset.sort ? `${base} ${demoSortAscending ? '▲' : '▼'}` : base;
+  });
+}
+
+function renderDemoTable() {
+  const tbody = document.querySelector('#analyzer-demo-tbody');
+  if (!tbody) return;
+  updateSortHeaderIndicators();
 
   if (browserError) {
-    dirsEl.innerHTML = `<p class="analyzer-empty" style="color:#f44336;padding:10px;">${esc(browserError)}</p>`;
-    demosEl.innerHTML = '';
+    tbody.innerHTML = `<tr><td colspan="4" class="table-empty" style="color:#f44336;">${esc(browserError)}</td></tr>`;
+    return;
+  }
+  if (allDemos.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="4" class="table-empty">No demos found. Add a watched folder above.</td></tr>';
+    return;
+  }
+  const list = sortedFilteredDemos();
+  if (list.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="4" class="table-empty">No demos match the current filters.</td></tr>';
     return;
   }
 
-  dirsEl.innerHTML = browserSubdirs.map((d) => `
-    <div class="analyzer-browser-row" data-dir-path="${esc(d.path)}">
-      <span class="row-icon">📁</span><span>${esc(d.name)}</span>
-    </div>`).join('') || '<p class="analyzer-empty" style="padding:10px;">No subfolders.</p>';
+  tbody.innerHTML = list.map((entry) => {
+    const isSelected = entry.path === browserSelectedDemo;
+    const mapDisplay = entry.map_name == null ? '…' : (entry.map_name || '—');
+    return `<tr class="analyzer-demo-row ${isSelected ? 'selected' : ''}" data-path="${esc(entry.path)}" title="${esc(entry.path)}">
+      <td>${esc(entry.name)}</td>
+      <td>${esc(demoTypeOf(entry))}</td>
+      <td>${esc(mapDisplay)}</td>
+      <td>${esc(demoDateDisplay(entry))}</td>
+    </tr>`;
+  }).join('');
 
-  demosEl.innerHTML = browserDemos.map((f) => `
-    <div class="analyzer-browser-row ${f.path === browserSelectedDemo ? 'selected' : ''}" data-demo-path="${esc(f.path)}" title="${esc(f.path)}">
-      <span class="row-icon">🎞️</span><span>${esc(f.name)}</span>
-      <span class="row-meta">${formatFileSize(f.size_bytes)}</span>
-    </div>`).join('') || '<p class="analyzer-empty" style="padding:10px;">No demos in this folder.</p>';
-
-  dirsEl.querySelectorAll('[data-dir-path]').forEach((row) => {
-    row.addEventListener('click', () => navigateBrowser(row.dataset.dirPath));
+  tbody.querySelectorAll('tr[data-path]').forEach((tr) => {
+    tr.addEventListener('click', () => selectDemo(tr.dataset.path));
   });
-  demosEl.querySelectorAll('[data-demo-path]').forEach((row) => {
-    row.addEventListener('click', () => {
-      browserSelectedDemo = row.dataset.demoPath;
-      demosEl.querySelectorAll('[data-demo-path]').forEach((r) => r.classList.toggle('selected', r === row));
-      loadAnalyzerDemo(row.dataset.demoPath);
+}
+
+function selectDemo(path) {
+  browserSelectedDemo = path;
+  renderDemoTable();
+  loadAnalyzerDemo(path);
+}
+
+function renderWatchedFoldersList() {
+  const el = document.querySelector('#analyzer-watched-folders');
+  if (!el) return;
+  const folders = getWatchedFolders() || [];
+  el.innerHTML = folders.length === 0
+    ? '<p class="analyzer-empty" style="padding:8px;">No folders added yet.</p>'
+    : folders.map((f) => `
+      <div class="analyzer-browser-row" title="${esc(f)}">
+        <span class="row-icon">📁</span><span>${esc(f)}</span>
+        <button class="analyzer-remove-folder-btn" data-folder="${esc(f)}" title="Stop watching this folder">×</button>
+      </div>`).join('');
+
+  el.querySelectorAll('.analyzer-remove-folder-btn').forEach((btn) => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      await onRemoveWatchedFolder(btn.dataset.folder);
+      renderWatchedFoldersList();
+      refreshWatchedFolderDemos();
     });
   });
 }
 
-async function initAnalyzerBrowser() {
-  const upBtn = document.querySelector('#analyzer-browser-up');
-  if (upBtn) {
-    upBtn.addEventListener('click', () => navigateBrowser(browserParent));
+// Recursive filesystem scan (near-instant) followed by a background,
+// one-at-a-time lazy fill of Map/Type for anything not already in the
+// analyzer cache — see docs/tauri_parity_audit.md for why this two-phase
+// approach was chosen over blocking on a full parse per demo up front.
+async function refreshWatchedFolderDemos() {
+  const folders = getWatchedFolders() || [];
+  browserError = null;
+  if (folders.length === 0) {
+    allDemos = [];
+    renderDemoTable();
+    return;
   }
-  const start = await defaultBrowseDir();
-  navigateBrowser(start || null);
+  try {
+    allDemos = await listDemosRecursive(folders);
+  } catch (err) {
+    browserError = String(err);
+    allDemos = [];
+  }
+  renderDemoTable();
+  lazyResolveUnknownDemos();
+}
+
+async function lazyResolveUnknownDemos() {
+  const unresolved = allDemos.filter((d) => d.map_name == null);
+  if (unresolved.length === 0) return;
+
+  let dirty = false;
+  const rerenderTimer = setInterval(() => {
+    if (dirty) { renderDemoTable(); dirty = false; }
+  }, 400);
+
+  for (const entry of unresolved) {
+    const target = allDemos.find((d) => d.path === entry.path);
+    if (!target) continue;
+    try {
+      const summary = await resolveDemoSummary(entry.path);
+      target.map_name = summary.map_name;
+      target.demo_type = summary.demo_type;
+    } catch (err) {
+      // Leave it displayable instead of retrying forever on a broken file.
+      target.map_name = '';
+      target.demo_type = '';
+    }
+    dirty = true;
+  }
+
+  clearInterval(rerenderTimer);
+  renderDemoTable();
+}
+
+function initAnalyzerBrowserKeyboardNav() {
+  document.addEventListener('keydown', (e) => {
+    const pane = document.querySelector('#pane-demo-analyzer');
+    if (!pane || pane.style.display === 'none') return;
+    const tag = document.activeElement && document.activeElement.tagName;
+    if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+
+    const list = sortedFilteredDemos();
+    if (list.length === 0) return;
+
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      const dir = e.key === 'ArrowDown' ? 1 : -1;
+      const idx = list.findIndex((d) => d.path === browserSelectedDemo);
+      const newIdx = idx === -1 ? (dir > 0 ? 0 : list.length - 1) : Math.min(list.length - 1, Math.max(0, idx + dir));
+      browserSelectedDemo = list[newIdx].path;
+      renderDemoTable();
+      const row = document.querySelector(`#analyzer-demo-tbody tr[data-path="${CSS.escape(browserSelectedDemo)}"]`);
+      row?.scrollIntoView({ block: 'nearest' });
+    } else if (e.key === 'Enter' && browserSelectedDemo) {
+      loadAnalyzerDemo(browserSelectedDemo);
+    }
+  });
+}
+
+function initAnalyzerBrowser() {
+  const addBtn = document.querySelector('#analyzer-add-folder-btn');
+  if (addBtn) {
+    addBtn.addEventListener('click', async () => {
+      try {
+        const selected = await open({ directory: true, multiple: false, title: 'Add Folder to Watch' });
+        if (selected) {
+          const folder = Array.isArray(selected) ? selected[0] : selected;
+          await onAddWatchedFolder(folder);
+          renderWatchedFoldersList();
+          refreshWatchedFolderDemos();
+        }
+      } catch (err) {
+        console.error('Error selecting watched folder:', err);
+      }
+    });
+  }
+
+  document.querySelectorAll('#analyzer-demo-table th[data-sort]').forEach((th) => {
+    th.addEventListener('click', () => {
+      const col = th.dataset.sort;
+      if (demoSortColumn === col) demoSortAscending = !demoSortAscending;
+      else { demoSortColumn = col; demoSortAscending = true; }
+      renderDemoTable();
+    });
+  });
+
+  const searchEl = document.querySelector('#analyzer-filter-search');
+  const typeEl = document.querySelector('#analyzer-filter-type');
+  const mapEl = document.querySelector('#analyzer-filter-map');
+  const dateStartEl = document.querySelector('#analyzer-filter-date-start');
+  const dateEndEl = document.querySelector('#analyzer-filter-date-end');
+  const resetBtn = document.querySelector('#analyzer-filter-reset');
+
+  searchEl?.addEventListener('input', (e) => { demoFilterQuery = e.target.value; renderDemoTable(); });
+  typeEl?.addEventListener('change', (e) => { demoFilterType = e.target.value; renderDemoTable(); });
+  mapEl?.addEventListener('input', (e) => { demoFilterMap = e.target.value; renderDemoTable(); });
+  dateStartEl?.addEventListener('input', (e) => { demoFilterDateStart = e.target.value; renderDemoTable(); });
+  dateEndEl?.addEventListener('input', (e) => { demoFilterDateEnd = e.target.value; renderDemoTable(); });
+  resetBtn?.addEventListener('click', () => {
+    demoFilterQuery = ''; demoFilterType = 'All'; demoFilterMap = ''; demoFilterDateStart = ''; demoFilterDateEnd = '';
+    if (searchEl) searchEl.value = '';
+    if (typeEl) typeEl.value = 'All';
+    if (mapEl) mapEl.value = '';
+    if (dateStartEl) dateStartEl.value = '';
+    if (dateEndEl) dateEndEl.value = '';
+    renderDemoTable();
+  });
+
+  initAnalyzerBrowserKeyboardNav();
+
+  renderWatchedFoldersList();
+  refreshWatchedFolderDemos();
 }
 
 // ── Init / entry points ──────────────────────────────────────────────────────
@@ -251,7 +441,11 @@ listen('analyzer_progress', (event) => {
   if (container) container.innerHTML = `<p class="analyzer-empty">Analyzing demo… ${pct}%</p>`;
 });
 
-export function initAnalyzerPane() {
+export function initAnalyzerPane(watchedFoldersGetter, addWatchedFolder, removeWatchedFolder) {
+  if (watchedFoldersGetter) getWatchedFolders = watchedFoldersGetter;
+  if (addWatchedFolder) onAddWatchedFolder = addWatchedFolder;
+  if (removeWatchedFolder) onRemoveWatchedFolder = removeWatchedFolder;
+
   const browseBtn = document.querySelector('#analyzer-browse-btn');
   if (browseBtn) {
     browseBtn.addEventListener('click', async () => {
@@ -295,9 +489,7 @@ export async function loadAnalyzerDemo(path) {
     selectedPlayerId = null;
     if (titleEl) titleEl.textContent = report.file_name;
     browserSelectedDemo = path;
-    document.querySelectorAll('#analyzer-browser-demos [data-demo-path]').forEach((r) => {
-      r.classList.toggle('selected', r.dataset.demoPath === path);
-    });
+    renderDemoTable();
     renderActiveTab();
   } catch (err) {
     if (container) {

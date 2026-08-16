@@ -886,6 +886,54 @@ button.primary-btn:hover:not(:disabled) {
   color: var(--text-muted);
 }
 
+.analyzer-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.analyzer-filter-bar input[type="text"] {
+  flex: 1;
+  min-width: 70px;
+}
+
+.analyzer-table th[data-sort] {
+  cursor: pointer;
+  user-select: none;
+}
+
+.analyzer-table th[data-sort]:hover {
+  color: #dddddd;
+}
+
+.analyzer-demo-row {
+  cursor: pointer;
+}
+
+.analyzer-demo-row:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.analyzer-demo-row.selected {
+  background: rgba(43, 92, 143, 0.35);
+  color: #ffffff;
+}
+
+.analyzer-remove-folder-btn {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+.analyzer-remove-folder-btn:hover {
+  color: #ef4444;
+}
+
 .text-muted {
   color: var(--text-muted);
 }

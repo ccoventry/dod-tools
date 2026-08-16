@@ -377,20 +377,45 @@
 
         <!-- Demo Analyzer: standalone per-demo report (Summary/Scoreboard/Player/Team/Timeline/Rounds/Chat) -->
         <section id="pane-demo-analyzer" class="content-pane" style="display: none;">
-          <!-- Picker sidebar: folder tree (top) + demo list for the selected folder (bottom) -->
+          <!-- Picker sidebar: watched folders (recursively searched, shared with Capture
+               Studio's scan paths) + a filterable/sortable flat list of every demo found. -->
           <div id="analyzer-browser-sidebar" class="analyzer-browser-sidebar">
-            <div class="egui-panel analyzer-browser-panel">
-              <div class="panel-header analyzer-browser-toolbar">
-                <button id="analyzer-browser-up" title="Up one level">&uarr; Up</button>
-                <span id="analyzer-browser-path" class="analyzer-browser-path"></span>
+            <div class="egui-panel analyzer-browser-panel" style="flex: none;">
+              <div class="panel-header flex-between">
+                <h3>Watched Folders</h3>
+                <button id="analyzer-add-folder-btn" title="Add a folder to search recursively">+ Add</button>
               </div>
-              <div id="analyzer-browser-dirs" class="analyzer-browser-list"></div>
+              <div id="analyzer-watched-folders" class="analyzer-browser-list" style="max-height: 110px;"></div>
             </div>
-            <div class="egui-panel analyzer-browser-panel">
+            <div class="egui-panel analyzer-browser-panel" style="flex: 1; display: flex; flex-direction: column; overflow: hidden;">
               <div class="panel-header">
-                <h3>Demos in Folder</h3>
+                <h3>Demos</h3>
               </div>
-              <div id="analyzer-browser-demos" class="analyzer-browser-list"></div>
+              <div class="analyzer-filter-bar">
+                <input type="text" id="analyzer-filter-search" placeholder="Search name/map..." />
+                <select id="analyzer-filter-type">
+                  <option value="All">All</option>
+                  <option value="POV">POV</option>
+                  <option value="HLTV">HLTV</option>
+                </select>
+                <input type="text" id="analyzer-filter-map" placeholder="Map" />
+                <input type="text" id="analyzer-filter-date-start" placeholder="Min Date (YYYY-MM-DD)" />
+                <input type="text" id="analyzer-filter-date-end" placeholder="Max Date (YYYY-MM-DD)" />
+                <button id="analyzer-filter-reset">Reset</button>
+              </div>
+              <div class="table-wrapper" style="flex: 1; overflow: auto;">
+                <table class="analyzer-table" id="analyzer-demo-table">
+                  <thead>
+                    <tr>
+                      <th data-sort="name" data-label="Name">Name</th>
+                      <th data-sort="type" data-label="Type">Type</th>
+                      <th data-sort="map" data-label="Map">Map</th>
+                      <th data-sort="date" data-label="Date">Date</th>
+                    </tr>
+                  </thead>
+                  <tbody id="analyzer-demo-tbody"></tbody>
+                </table>
+              </div>
             </div>
           </div>
 
