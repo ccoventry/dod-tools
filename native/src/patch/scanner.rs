@@ -31,6 +31,17 @@ pub fn is_hltv_demo(path: &std::path::Path) -> Result<bool, std::io::Error> {
 pub fn scan_demo_for_highlights(
     path: &std::path::Path,
 ) -> Result<(f32, Vec<CaptureStreak>, bool, Option<usize>, i32, Option<i32>, std::sync::Arc<Vec<f32>>), String> {
+    scan_demo_for_highlights_with_analysis(path).map(|(result, _analysis)| result)
+}
+
+// Same scan as `scan_demo_for_highlights`, but also hands back the full
+// `Analysis` it already computed internally (previously always discarded)
+// so callers doing a folder-wide scan (e.g. Capture Studio's `scan_directory`)
+// can write it straight into the analyzer cache instead of re-parsing the
+// same demo from scratch the next time it's opened in the Demo Analyzer.
+pub fn scan_demo_for_highlights_with_analysis(
+    path: &std::path::Path,
+) -> Result<((f32, Vec<CaptureStreak>, bool, Option<usize>, i32, Option<i32>, std::sync::Arc<Vec<f32>>), analysis::Analysis), String> {
     match is_hltv_demo(path) {
         Ok(true) => return Err("Unsupported HLTV proxy demo format".to_string()),
         Err(e) => return Err(format!("Failed to read demo header: {}", e)),
@@ -206,14 +217,20 @@ pub fn scan_demo_for_highlights(
     }
 
     let local_player_index = analysis.state.pov_player_index.map(|idx| idx as usize);
+    let demo_type_is_pov = analysis.demo_info.demo_type == "POV";
+    let playback_frames = analysis.demo_info.playback_frames;
+    let match_start_tick = analysis.state.match_start_tick;
 
     Ok((
-        tickrate,
-        streaks,
-        analysis.demo_info.demo_type == "POV",
-        local_player_index,
-        analysis.demo_info.playback_frames,
-        analysis.state.match_start_tick,
-        frame_times_arc,
+        (
+            tickrate,
+            streaks,
+            demo_type_is_pov,
+            local_player_index,
+            playback_frames,
+            match_start_tick,
+            frame_times_arc,
+        ),
+        analysis,
     ))
 }

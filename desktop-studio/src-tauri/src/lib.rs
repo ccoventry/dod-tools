@@ -274,16 +274,36 @@ pub struct AnalyzerReportPayload {
 }
 
 #[tauri::command]
-async fn analyze_demo_full(demo_path: String) -> Result<AnalyzerReportPayload, String> {
+async fn analyze_demo_full(
+    app_handle: tauri::AppHandle,
+    demo_path: String,
+) -> Result<AnalyzerReportPayload, String> {
     tokio::task::spawn_blocking(move || {
+        use tauri::Emitter;
+
         let path = std::path::PathBuf::from(&demo_path);
 
         if !path.exists() || !path.is_file() {
             return Err(format!("Demo file not found: {}", demo_path));
         }
 
-        match native::run_analyzer_with_progress(&path, |_, _| {}) {
-            Ok((file_info, analysis)) => {
+        // Throttled to ~30fps per CLAUDE.md's telemetry-throttling guardrail —
+        // `try_from_bytes_with_progress` calls back every ~500 frames, which
+        // can be 1000+ times for a large demo.
+        let mut last_emit = std::time::Instant::now() - std::time::Duration::from_secs(1);
+        let progress_cb = |processed: usize, total: usize| {
+            let now = std::time::Instant::now();
+            if now.duration_since(last_emit) >= std::time::Duration::from_millis(33) || processed == total {
+                last_emit = now;
+                let _ = app_handle.emit(
+                    "analyzer_progress",
+                    serde_json::json!({ "processed": processed, "total": total }),
+                );
+            }
+        };
+
+        match native::run_analyzer_cached(&path, progress_cb) {
+            Ok((file_info, analysis, _from_cache)) => {
                 // Independent metadata lookup (not `file_info.created_at`) to avoid
                 // depending on `web_time::SystemTime`'s exact type identity here.
                 let created_unix_secs = std::fs::metadata(&path)
