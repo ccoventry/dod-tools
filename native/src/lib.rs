@@ -200,6 +200,32 @@ fn write_analyzer_cache_entry(
     }
 }
 
+/// Cache-only read: returns `Some` on a fresh cache hit, `None` on a miss or
+/// stale entry — never falls back to parsing. Used by callers that need to
+/// know "is this already cheap to show" without paying the ~1.3s cold-parse
+/// cost for every demo up front (e.g. the Analyzer's recursive demo browser
+/// listing many files across watched folders at once).
+#[cfg(not(target_arch = "wasm32"))]
+pub fn peek_analyzer_cache(demo_path: &PathBuf) -> Option<(FileInfo, Analysis)> {
+    let metadata = fs::metadata(demo_path).ok()?;
+    let size_bytes = metadata.len();
+    let modified_unix_secs = metadata
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::SystemTime::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    let cache_path = analyzer_cache_path(demo_path)?;
+    let bytes = fs::read(&cache_path).ok()?;
+    let entry: AnalyzerCacheEntry = serde_json::from_slice(&bytes).ok()?;
+    if entry.size_bytes == size_bytes && entry.modified_unix_secs == modified_unix_secs {
+        Some((entry.file_info, entry.analysis))
+    } else {
+        None
+    }
+}
+
 /// Writes `analysis` (already computed by a folder scan, e.g.
 /// `scan_demo_for_highlights_with_analysis`) straight into the analyzer
 /// cache, so a later `run_analyzer_cached` call for the same demo hits the

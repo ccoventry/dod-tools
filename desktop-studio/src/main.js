@@ -694,7 +694,22 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   initMasterPane(onDeleteDemo);
   initDetailPane(() => currentScannedDemos, () => refreshLaunchGuard({ targetDrives, currentScannedDemos }));
-  initAnalyzerPane();
+
+  // Demo Analyzer's watched-folders list shares the same pinned_folders/
+  // scanPaths state as Capture Studio (matches dev's real design — its
+  // desktop_files list was app-wide, not analyzer-scoped). Doesn't trigger
+  // Capture Studio's heavier highlight-scan pipeline, just persists the path.
+  async function addAnalyzerWatchFolder(folder) {
+    if (!scanPaths.includes(folder)) {
+      scanPaths.push(folder);
+      await persistAppSettings();
+    }
+  }
+  async function removeAnalyzerWatchFolder(folder) {
+    scanPaths = scanPaths.filter((f) => f !== folder);
+    await persistAppSettings();
+  }
+  initAnalyzerPane(() => scanPaths, addAnalyzerWatchFolder, removeAnalyzerWatchFolder);
 
   // Context-Aware Shortcut Dispatcher
   window.addEventListener('keydown', (e) => {

@@ -277,3 +277,19 @@ export async function defaultBrowseDir() {
       return null;
     });
 }
+
+export async function listDemosRecursive(paths) {
+  return invoke("list_demos_recursive", { paths })
+    .catch((err) => {
+      console.error("IPC Execution Error (list_demos_recursive):", err);
+      throw err;
+    });
+}
+
+export async function resolveDemoSummary(path) {
+  return invoke("resolve_demo_summary", { path })
+    .catch((err) => {
+      console.error("IPC Execution Error (resolve_demo_summary):", err);
+      throw err;
+    });
+}
