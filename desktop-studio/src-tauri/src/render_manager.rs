@@ -88,7 +88,10 @@ pub async fn scan_render_directories(paths: Vec<String>) -> Result<Vec<Serialize
 pub struct RenderBatchPayload {
     /// Root directories to scan for HLCR take folders.
     pub render_directories: Vec<String>,
-    /// Target codec: "prores" | "dnxhr" | "h264"  (maps to get_codec_preset)
+    /// Target codec for non-alpha clips: "prores" | "dnxhr" | "h264" |
+    /// "h264_nvenc". `hud_only` clips always render through a forced
+    /// ProRes4444 alpha-merge path in `execute_render_batch` regardless of
+    /// this value, since none of these codecs carry an alpha channel.
     pub codec: String,
     /// Capture / source framerate (default 300 to match capture FPS).
     pub fps: u32,
@@ -120,7 +123,9 @@ fn resolve_ffmpeg(override_path: Option<&String>) -> PathBuf {
 }
 
 /// Returns the codec CLI arguments and output file extension for each
-/// codec name string — mirrors `native::hlcr::config::get_codec_preset()`.
+/// codec name string. `"h264"` (software libx264) and `"h264_nvenc"`
+/// (hardware NVENC, requires an NVIDIA GPU) are deliberately separate,
+/// user-selectable options rather than one silently picking the other.
 fn codec_args_and_ext(codec: &str) -> (Vec<String>, &'static str) {
     match codec {
         "dnxhr" | "dnxhd" => (
@@ -140,6 +145,16 @@ fn codec_args_and_ext(codec: &str) -> (Vec<String>, &'static str) {
             ],
             ".mp4",
         ),
+        "h264_nvenc" => (
+            vec![
+                "-c:v".into(), "h264_nvenc".into(),
+                "-preset".into(), "p6".into(),
+                "-tune".into(), "hq".into(),
+                "-cq".into(), "15".into(),
+                "-pix_fmt".into(), "yuv420p".into(),
+            ],
+            ".mp4",
+        ),
         // Default: ProRes 422 HQ (matches dev RenderCodec::ProRes)
         _ => (
             vec![
@@ -150,6 +165,21 @@ fn codec_args_and_ext(codec: &str) -> (Vec<String>, &'static str) {
             ".mov",
         ),
     }
+}
+
+/// Codec args + extension for `hud_only` clips. None of the standard codecs
+/// above carry an alpha channel, so alpha clips always render through
+/// ProRes4444 regardless of the user's codec selection — matches dev's
+/// `run_render_job` (`native/src/hlcr/renderer.rs`).
+fn alpha_codec_args_and_ext() -> (Vec<String>, &'static str) {
+    (
+        vec![
+            "-c:v".into(), "prores_ks".into(),
+            "-profile:v".into(), "4444".into(),
+            "-pix_fmt".into(), "yuva444p10le".into(),
+        ],
+        ".mov",
+    )
 }
 
 #[tauri::command]
@@ -222,28 +252,58 @@ pub async fn execute_render_batch(
             let _ = app_emitter.emit("render_status", progress_payload);
 
             let take_folder_path = PathBuf::from(&clip.take_folder);
-            let img_folder_path = take_folder_path.join(&clip.img_folder);
-            let input_img_pattern = img_folder_path.join("%05d.bmp");
             let wav_path = take_folder_path.join(&clip.wav_file);
+            let is_hud = clip.clip_type == "hud_only";
 
             let output_dir = if let Some(ref dir) = payload.export_directory {
                 PathBuf::from(dir)
             } else {
                 take_folder_path.parent().unwrap_or(&take_folder_path).to_path_buf()
             };
-            let output_file = output_dir.join(format!("{}{}", clip.base_name, codec_ext));
+            let (clip_codec_args, clip_codec_ext) = if is_hud {
+                alpha_codec_args_and_ext()
+            } else {
+                (codec_args.clone(), codec_ext)
+            };
+            let output_file = output_dir.join(format!("{}{}", clip.base_name, clip_codec_ext));
 
             let mut cmd = std::process::Command::new(&ffmpeg_bin);
-            cmd.arg("-y")
-               .arg("-probesize").arg("32")
-               .arg("-analyzeduration").arg("0")
-               .arg("-thread_queue_size").arg("512")
-               .arg("-framerate").arg(&fps_str)
-               .arg("-i").arg(&input_img_pattern)
-               .arg("-thread_queue_size").arg("512")
-               .arg("-i").arg(&wav_path);
+            cmd.arg("-y");
 
-            for arg in &codec_args {
+            if is_hud {
+                // hud_only clips always come with a sibling "hudalpha" folder
+                // next to the "hudcolor" folder named in clip.img_folder
+                // (native/src/hlcr/scanner.rs only emits a hud_only ClipData
+                // when "all"/"hudcolor"/"hudalpha" all exist together).
+                let hudcolor_pattern = take_folder_path.join(&clip.img_folder).join("%05d.bmp");
+                let hudalpha_pattern = take_folder_path.join("hudalpha").join("%05d.bmp");
+                cmd.arg("-probesize").arg("32")
+                   .arg("-analyzeduration").arg("0")
+                   .arg("-thread_queue_size").arg("512")
+                   .arg("-framerate").arg(&fps_str)
+                   .arg("-i").arg(&hudcolor_pattern)
+                   .arg("-probesize").arg("32")
+                   .arg("-analyzeduration").arg("0")
+                   .arg("-thread_queue_size").arg("512")
+                   .arg("-framerate").arg(&fps_str)
+                   .arg("-i").arg(&hudalpha_pattern)
+                   .arg("-thread_queue_size").arg("512")
+                   .arg("-i").arg(&wav_path)
+                   .arg("-filter_complex").arg("[1:v]extractplanes=r[alpha];[0:v][alpha]alphamerge[hud]")
+                   .arg("-map").arg("[hud]")
+                   .arg("-map").arg("2:a");
+            } else {
+                let input_img_pattern = take_folder_path.join(&clip.img_folder).join("%05d.bmp");
+                cmd.arg("-probesize").arg("32")
+                   .arg("-analyzeduration").arg("0")
+                   .arg("-thread_queue_size").arg("512")
+                   .arg("-framerate").arg(&fps_str)
+                   .arg("-i").arg(&input_img_pattern)
+                   .arg("-thread_queue_size").arg("512")
+                   .arg("-i").arg(&wav_path);
+            }
+
+            for arg in &clip_codec_args {
                 cmd.arg(arg);
             }
 
