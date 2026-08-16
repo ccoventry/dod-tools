@@ -118,3 +118,40 @@ pub fn delete_audit_files_impl(paths: Vec<String>) -> Result<(), String> {
     }
     Ok(())
 }
+
+/// Reveals a file in the OS file explorer, selecting it if the platform
+/// supports that. Mirrors dev's `views/auditor.rs` cross-platform match.
+pub fn reveal_in_explorer_impl(path: String) -> Result<(), String> {
+    let path_buf = PathBuf::from(&path);
+
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg("/select,")
+            .arg(&path_buf)
+            .spawn()
+            .map_err(|e| format!("Failed to open explorer: {}", e))?;
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg("-R")
+            .arg(&path_buf)
+            .spawn()
+            .map_err(|e| format!("Failed to open Finder: {}", e))?;
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        // Linux fallback: no universal "select this file" behavior, so just
+        // open the parent directory via the desktop's default file manager.
+        let parent = path_buf.parent().ok_or("No parent directory for path")?;
+        std::process::Command::new("xdg-open")
+            .arg(parent)
+            .spawn()
+            .map_err(|e| format!("Failed to open folder: {}", e))?;
+    }
+
+    Ok(())
+}

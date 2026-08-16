@@ -82,6 +82,11 @@ fn cancel_audit(state: tauri::State<'_, AuditManager>) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+fn reveal_in_explorer(path: String) -> Result<(), String> {
+    audit_manager::reveal_in_explorer_impl(path)
+}
+
 // ── Tauri commands ─────────────────────────────────────────────────────────────
 
 /// Triggers a batch capture run from the Vite frontend.
@@ -377,6 +382,7 @@ pub fn run() {
             run_demo_audit,
             delete_audit_files,
             cancel_audit,
+            reveal_in_explorer,
             dir_browser::browse_directory,
             dir_browser::default_browse_dir,
         ])

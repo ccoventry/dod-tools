@@ -332,13 +332,22 @@
               <h3>Demo Auditor (Deduplication)</h3>
             </div>
             <div class="panel-body">
-              <div class="row-inputs">
-                <button id="run-audit-btn" class="primary-btn">Run Audit on Scan Paths</button>
+              <div class="input-row">
+                <label>Target Folder:</label>
+                <input type="text" id="audit-target-folder-input" placeholder="Folder to scan for duplicate demos..." style="flex: 1;" />
+                <button id="audit-browse-folder-btn">Browse</button>
               </div>
-              <p id="audit-status" class="status-indicator">Status: Ready to audit</p>
+              <div class="row-inputs">
+                <button id="run-audit-btn" class="primary-btn" disabled>Start Audit</button>
+                <button id="cancel-audit-btn" disabled>Cancel Scan</button>
+              </div>
+              <p id="audit-status" class="status-indicator">
+                <span id="audit-spinner" class="spinner" style="display: none;"></span>
+                <span id="audit-status-text">Status: Ready to audit</span>
+              </p>
             </div>
           </div>
-          
+
           <div id="auditor-results-pane" class="egui-panel" style="margin-top: 10px;">
             <div class="panel-header flex-between">
               <h3>Duplicate Groups Found</h3>
@@ -349,14 +358,15 @@
                 <thead>
                   <tr>
                     <th><input type="checkbox" id="audit-select-all" /></th>
-                    <th>Group / File</th>
+                    <th>Status</th>
                     <th>Size</th>
-                    <th>Hash</th>
+                    <th>File Path</th>
+                    <th>Action</th>
                   </tr>
                 </thead>
                 <tbody id="audit-results-body">
                   <tr>
-                    <td colspan="4" class="table-empty">Run audit to find duplicate demo files.</td>
+                    <td colspan="5" class="table-empty">Choose a folder and run audit to find duplicate demo files.</td>
                   </tr>
                 </tbody>
               </table>

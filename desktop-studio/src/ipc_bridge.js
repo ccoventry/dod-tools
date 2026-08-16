@@ -211,6 +211,24 @@ export async function deleteAuditFiles(paths) {
     });
 }
 
+export async function cancelAudit() {
+  return invoke("cancel_audit")
+    .catch((err) => {
+      console.error("IPC Execution Error (cancel_audit):", err);
+      showToast(`Cancel audit error: ${err}`, 'error');
+      throw err;
+    });
+}
+
+export async function revealInExplorer(path) {
+  return invoke("reveal_in_explorer", { path })
+    .catch((err) => {
+      console.error("IPC Execution Error (reveal_in_explorer):", err);
+      showToast(`Could not open folder: ${err}`, 'error');
+      throw err;
+    });
+}
+
 /** Sweeps `<hl>/dod` for orphaned `*_preview.dem` bookmark previews (files
  *  that still carry their `.dodtools_preview` sidecar) left behind by prior
  *  capture sessions. `gameDir` is the configured hl.exe path. */
