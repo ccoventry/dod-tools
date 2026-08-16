@@ -730,6 +730,49 @@ button.primary-btn:hover:not(:disabled) {
   font-size: 12px;
 }
 
+.analyzer-timeline-tooltip {
+  position: absolute;
+  pointer-events: none;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  padding: 4px 8px;
+  font-size: 11px;
+  white-space: nowrap;
+  z-index: 5;
+}
+
+.analyzer-weapon-filters {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+  font-size: 11px;
+}
+
+.weapon-filter-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.weapon-filter-toggle-all {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+}
+
+.weapon-filter-group label {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  white-space: nowrap;
+}
+
 .legend-swatch {
   display: inline-block;
   width: 10px;
