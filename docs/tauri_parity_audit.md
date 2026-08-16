@@ -116,32 +116,60 @@ field-for-field to real `analysis::AnalyzerState` data on both sides. The
 missing POV tab is *correct*, not a gap — dev's `pov.rs` was already
 `#[allow(dead_code)]` and never called before the migration.
 
-- [ ] **GAP (biggest one)** — the demo browser lost search, filters, sort,
-  and grouping entirely. Dev had a persistent multi-drive tree with text
-  search (name/map), Type/Map/Date filters, a Reset button, sortable
-  columns, arrow-key navigation, and three view modes (Flat List / Group by
-  Match / Group by Player-Recorder). Tauri is a single-directory-at-a-time
-  drill-down with none of that — real data underneath, much smaller surface.
-- [ ] **GAP** — kill-streak weapon-category filters gone (dev: toggle
-  Grenades/Melee/Allied/Axis/Other + Select-All/Clear-All to hide filtered
-  kills from the streak table; Tauri always shows every kill).
-- [ ] **GAP** — "Legit-Proof" profile search link missing next to the Steam
-  link on the Player Details hero card.
-- [ ] **DRIFT** — Team Details merges Allies+British into one weapon-breakdown
-  bucket; dev tracked 3 separate buckets to handle demos where a team's side
-  label changes mid-match. Edge case only.
-- [ ] **GAP** — Timeline chart lost hover tooltips (formatted duration/team/
-  score). Canvas-vs-plot-lib reimplementation choice is reasonable; the
-  tooltip feature itself was just dropped.
-- [ ] **GAP** — Chat: Alive/Dead sender-status filter missing (the underlying
-  `sender_dead` field is real and even drives a badge — just not filterable).
-- [ ] **DRIFT** — Chat: dev's 4 independently-toggleable system-message
-  categories (Joins/Leaves, Team Changes, Gameplay, Other System, from real
-  `system_token` data) flattened into one blanket "show system" checkbox.
-- [ ] **GAP** — Chat: Select-All/Clear-All bulk filter buttons missing.
-- [ ] **GAP** — Chat: team-name keyword coloring inside system message text
-  is gone (dev colored "allies"/"axis"/"spectators" within the message
-  itself; Tauri renders it in one flat color). Minor.
+- [ ] **GAP (biggest one, in progress)** — the demo browser lost search,
+  filters, sort, and grouping entirely. Dev had a persistent multi-drive tree
+  with text search (name/map), Type/Map/Date filters, a Reset button,
+  sortable columns, arrow-key navigation, and three view modes (Flat List /
+  Group by Match / Group by Player-Recorder). Tauri is a
+  single-directory-at-a-time drill-down with none of that — real data
+  underneath, much smaller surface. **Deliberately held back from this pass**
+  — dev's version filters/sorts/groups over an already-in-memory flat list of
+  every demo across all watched folders (`desktop_files`), built by a
+  recursive scan; Tauri's browser is a directory-drilldown with no equivalent
+  aggregate list yet. Restoring this faithfully means adding a new backend
+  recursive-scan endpoint (and deciding how to get map/date/type per demo
+  *cheaply* — a full `analyze_demo_full` parse per file is too slow across a
+  large demo library, see `docs/demo_analyzer_load_performance.md`'s
+  824ms/demo decode cost), not just a frontend change. Worth a scoped
+  discussion before implementation, not a silent design pick.
+- [x] **GAP — fixed (2026-08-16).** Kill-streak weapon-category filters
+  restored (Grenades/Melee/Allied/Axis/Other groups, per-category
+  toggle-all + per-weapon checkboxes) in `analyzer_pane.js`, filtering which
+  kills appear in the streak table exactly like dev's
+  `render_streak_weapon_filters`/`rebuild_filtered_streaks`. Filter state
+  resets whenever the effective selected player changes (dropdown, scoreboard
+  click, or a kill-streak victim jump).
+- [x] **GAP — fixed (2026-08-16).** "Legit-Proof" profile search link
+  restored next to the Steam link on the Player Details hero card, built
+  from the same `STEAM_0:X:YYYY`-formatted ID already computed for display.
+- [x] **DRIFT — fixed (2026-08-16).** Team Details now aggregates weapon
+  breakdowns into up to 3 buckets keyed off each player's raw `team` value
+  (Allies / British / Axis, not merged), matching dev exactly — including
+  its exact show/hide condition for the Allies section. The Overview grid's
+  Allies+British-merged stats were correct already and untouched.
+- [x] **GAP — fixed (2026-08-16).** Timeline chart hover tooltips restored.
+  `drawTimelineChart` now returns per-point pixel coordinates + team/score,
+  and a new `initTimelineTooltip` does a nearest-point hit test on
+  `mousemove` to show a floating tooltip — canvas has no native
+  `label_formatter` like `egui_plot`, so this reimplements the same
+  end-user behavior rather than porting an API that doesn't exist here.
+- [x] **GAP — fixed (2026-08-16).** Chat: Alive/Dead sender-status filter
+  restored as a 3-way radio (All/Alive/Dead) using the already-real
+  `sender_dead` field.
+- [x] **DRIFT — fixed (2026-08-16).** Chat: system messages now filter
+  through the same 4 independently-toggleable categories dev used
+  (Joins/Leaves, Team Changes, Gameplay, Other System), categorized from
+  `m.system_token` with dev's exact keyword rules
+  (`systemMessageCategory` in `analyzer_pane.js`).
+- [x] **GAP — fixed (2026-08-16).** Chat: Select-All/Clear-All buttons
+  restored, resetting all chat filters and re-rendering the toolbar.
+- [x] **GAP — fixed (2026-08-16).** Chat: team-name keyword coloring inside
+  system message text restored (`colorSystemMessage`) — colors
+  "allies"/"axis"/"spectators" substrings within the already-translated
+  message text using dev's earliest-match scan, applied over `m.text` (which
+  arrives from the backend already fully translated — confirmed
+  `ChatMessage.text` is set from `translate_system_message` server-side in
+  `analysis/src/chat.rs`, so no client-side translation call was needed).
 
 ---
 

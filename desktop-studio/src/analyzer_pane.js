@@ -14,7 +14,20 @@ let analyzerLoadInProgress = false;
 let activeSubTab = 'summary';
 let highlightedPlayerId = null; // shared selection: Scoreboard row <-> Player Details dropdown
 let selectedPlayerId = null;
-let chatFilters = { showMm1: true, showMm2: true, showSystem: true, team: 'All', search: '' };
+let chatFilters = {
+  showMm1: true, showMm2: true, team: 'All', search: '',
+  status: 'All', // 'All' | 'Alive' | 'Dead'
+  showJoins: true, showTeams: true, showGameplay: true, showOtherSys: true,
+};
+// Kill Streaks weapon-category filter — reset whenever the selected player changes.
+let disabledWeapons = new Set();
+
+const WEAPON_CATEGORIES = [
+  ['Grenades', ['Mk2Grenade', 'StickGrenade', 'MillsBomb']],
+  ['Melee', ['Kabar', 'GermanKnife', 'BritishKnife', 'Spade', 'K98Bayonet', 'EnfieldBayonet', 'ButtStock']],
+  ['Allied', ['M1911', 'Garand', 'Springfield', 'Thompson', 'Bar', 'M1Carbine', 'Browning30Cal', 'GreaseGun', 'Bazooka', 'LeeEnfield', 'ScopedLeeEnfield', 'Sten', 'Bren', 'Webley', 'Piat', 'M1A1Carbine', 'Mortar']],
+  ['Axis', ['Luger', 'ScopedK98', 'Stg44', 'K98', 'Mp40', 'Mg42', 'Mg34', 'Fg42', 'ScopedFg42', 'K43', 'Panzerschreck']],
+];
 
 // ── Picker sidebar state: folder tree (drives -> subfolders) + demo list for
 // whichever folder is currently selected. Mirrors the `dev` branch egui
@@ -503,11 +516,15 @@ function renderPlayerDetailsTab(container) {
     container.innerHTML = '<p class="analyzer-empty">No players found in this demo.</p>';
     return;
   }
+  const previousSelectedId = selectedPlayerId;
   let selectedId = selectedPlayerId;
   if (!selectedId || !players.find((p) => p.id === selectedId)) {
     selectedId = highlightedPlayerId && players.find((p) => p.id === highlightedPlayerId) ? highlightedPlayerId : players[0].id;
   }
   selectedPlayerId = selectedId;
+  // Any change in the effective selected player (dropdown, scoreboard click,
+  // or a kill-streak victim jump) clears the per-player weapon filter state.
+  if (selectedId !== previousSelectedId) disabledWeapons = new Set();
 
   const options = players.map((p) => `<option value="${esc(p.id)}" ${p.id === selectedId ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
 
@@ -521,6 +538,7 @@ function renderPlayerDetailsTab(container) {
   container.querySelector('#player-details-select').addEventListener('change', (e) => {
     selectedPlayerId = e.target.value;
     highlightedPlayerId = selectedPlayerId;
+    disabledWeapons = new Set();
     renderPlayerDetailsBody(container, players.find((p) => p.id === selectedPlayerId));
   });
 
@@ -554,7 +572,7 @@ function renderPlayerDetailsBody(tabContainer, p) {
           <div class="analyzer-hero-sub" style="color:${color};">${esc((teamLabel(p.team, report.state.allies_are_british) || 'UNASSIGNED').toUpperCase())}${p.class ? ` &nbsp;|&nbsp; ${esc(p.class.toUpperCase())}` : ''}</div>
         </div>
         <div class="analyzer-hero-links">
-          ${/^\d{15,20}$/.test(p.id) ? `<a href="https://steamcommunity.com/profiles/${esc(p.id)}" target="_blank" rel="noopener">Steam Profile</a>` : '<span class="text-muted">No Steam ID</span>'}
+          ${/^\d{15,20}$/.test(p.id) ? `<a href="https://www.legit-proof.com/search?q=${esc(steamId)}" target="_blank" rel="noopener" title="Search this player on Legit-Proof">Legit-Proof</a> / <a href="https://steamcommunity.com/profiles/${esc(p.id)}" target="_blank" rel="noopener">Steam Profile</a>` : '<span class="text-muted">No Steam ID</span>'}
         </div>
       </div>
       <div class="analyzer-hero-status">
@@ -592,24 +610,69 @@ function renderPlayerDetailsBody(tabContainer, p) {
       </div>
       <div>
         <h4 class="analyzer-section-title">Kill Streaks</h4>
-        ${renderKillStreaksTable(p)}
+        <div id="killstreak-weapon-filters" class="analyzer-weapon-filters"></div>
+        <div id="killstreak-table-wrap"></div>
       </div>
     </div>`;
 
-  body.querySelectorAll('.killstreak-victim').forEach((el) => {
-    el.addEventListener('click', () => {
-      const vid = el.dataset.victimId;
-      if (!(report.state.players || []).find((pl) => pl.id === vid)) return;
-      selectedPlayerId = vid;
-      highlightedPlayerId = vid;
-      renderPlayerDetailsTab(document.querySelector('#analyzer-tab-content'));
+  renderKillStreaksSection(p);
+}
+
+function renderKillStreaksSection(p) {
+  const filtersEl = document.querySelector('#killstreak-weapon-filters');
+  const tableEl = document.querySelector('#killstreak-table-wrap');
+  if (!filtersEl || !tableEl) return;
+
+  const allWeapons = new Set();
+  (p.kill_streaks || []).forEach((s) => (s.kills || []).forEach((k) => allWeapons.add(k[1])));
+
+  renderWeaponFilterCategories(filtersEl, allWeapons, p);
+  renderKillStreaksTable(tableEl, p);
+}
+
+function renderWeaponFilterCategories(el, allWeapons, p) {
+  const categorized = new Set(WEAPON_CATEGORIES.flatMap(([, ws]) => ws));
+  const other = [...allWeapons].filter((w) => !categorized.has(w)).sort((a, b) => weaponName(a).localeCompare(weaponName(b)));
+  const groups = [...WEAPON_CATEGORIES, ...(other.length ? [['Other', other]] : [])]
+    .map(([label, ws]) => [label, ws.filter((w) => allWeapons.has(w))])
+    .filter(([, ws]) => ws.length > 0);
+
+  if (groups.length === 0) { el.innerHTML = ''; return; }
+
+  el.innerHTML = groups.map(([label, ws]) => {
+    const allEnabled = ws.every((w) => !disabledWeapons.has(w));
+    return `
+      <div class="weapon-filter-group">
+        <button type="button" class="weapon-filter-toggle-all" title="${allEnabled ? 'Hide all' : 'Show all'}" data-weapons="${esc(ws.join(','))}">[${esc(label)}]</button>
+        ${ws.map((w) => `<label><input type="checkbox" class="weapon-filter-cb" data-weapon="${esc(w)}" ${!disabledWeapons.has(w) ? 'checked' : ''} /> ${esc(weaponName(w))}</label>`).join('')}
+      </div>`;
+  }).join('');
+
+  el.querySelectorAll('.weapon-filter-toggle-all').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const ws = btn.dataset.weapons.split(',');
+      const allEnabled = ws.every((w) => !disabledWeapons.has(w));
+      ws.forEach((w) => (allEnabled ? disabledWeapons.add(w) : disabledWeapons.delete(w)));
+      renderKillStreaksSection(p);
+    });
+  });
+  el.querySelectorAll('.weapon-filter-cb').forEach((cb) => {
+    cb.addEventListener('change', () => {
+      const w = cb.dataset.weapon;
+      if (cb.checked) disabledWeapons.delete(w); else disabledWeapons.add(w);
+      renderKillStreaksSection(p);
     });
   });
 }
 
-function renderKillStreaksTable(p) {
-  const streaks = (p.kill_streaks || []).filter((s) => (s.kills || []).length > 0);
-  if (streaks.length === 0) return '<p class="analyzer-empty">No kill streaks recorded.</p>';
+function renderKillStreaksTable(container, p) {
+  const streaks = (p.kill_streaks || [])
+    .map((s) => ({ ...s, kills: (s.kills || []).filter((k) => !disabledWeapons.has(k[1])) }))
+    .filter((s) => s.kills.length > 0);
+  if (streaks.length === 0) {
+    container.innerHTML = '<p class="analyzer-empty">No kill streaks recorded.</p>';
+    return;
+  }
 
   const rows = streaks.map((s, idx) => {
     const kills = s.kills;
@@ -637,13 +700,23 @@ function renderKillStreaksTable(p) {
       ${sub}`;
   }).join('');
 
-  return `
+  container.innerHTML = `
     <div class="table-wrapper" style="max-height:320px;">
       <table class="analyzer-table">
         <thead><tr><th>Wave</th><th>Kills</th><th>Time</th><th>Duration</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>`;
+
+  container.querySelectorAll('.killstreak-victim').forEach((el) => {
+    el.addEventListener('click', () => {
+      const vid = el.dataset.victimId;
+      if (!(report.state.players || []).find((pl) => pl.id === vid)) return;
+      selectedPlayerId = vid;
+      highlightedPlayerId = vid;
+      renderPlayerDetailsTab(document.querySelector('#analyzer-tab-content'));
+    });
+  });
 }
 
 // ── 4. Team Details ──────────────────────────────────────────────────────────
@@ -667,34 +740,6 @@ function renderTeamDetailsTab(container) {
 
   const overviewRow = (label, allies, axis) => `<tr><td class="kv-label">${esc(label)}</td><td style="text-align:right;">${allies}</td><td style="text-align:right;">${axis}</td></tr>`;
 
-  const weaponTable = (arr) => {
-    const agg = {};
-    arr.forEach((p) => Object.entries(p.weapon_breakdown || {}).forEach(([w, [k, tk]]) => {
-      if (!agg[w]) agg[w] = [0, 0];
-      agg[w][0] += k; agg[w][1] += tk;
-    }));
-    const rows = Object.entries(agg).sort((a, b) => b[1][0] - a[1][0] || a[0].localeCompare(b[0]));
-    if (rows.length === 0) return '<p class="analyzer-empty">No weapon data.</p>';
-    const totalKills = rows.reduce((s, [, v]) => s + v[0], 0) || 1;
-    const totalTk = rows.reduce((s, [, v]) => s + v[1], 0) || 1;
-    return `
-      <div class="table-wrapper">
-        <table class="analyzer-table">
-          <thead><tr><th>Weapon</th><th style="text-align:right;">Kills</th><th>% of Total</th><th style="text-align:right;">Team Kills</th><th>% of Total</th></tr></thead>
-          <tbody>
-            ${rows.map(([w, [k, tk]]) => `
-              <tr>
-                <td>${esc(weaponName(w))}</td>
-                <td style="text-align:right;">${k}</td>
-                <td><div class="analyzer-progress"><div class="analyzer-progress-fill" style="width:${(k / totalKills * 100).toFixed(1)}%;"></div></div><span class="analyzer-progress-label">${(k / totalKills * 100).toFixed(1)}%</span></td>
-                <td style="text-align:right;">${tk}</td>
-                <td><div class="analyzer-progress"><div class="analyzer-progress-fill" style="width:${(tk / totalTk * 100).toFixed(1)}%;background:#e57373;"></div></div><span class="analyzer-progress-label">${(tk / totalTk * 100).toFixed(1)}%</span></td>
-              </tr>`).join('')}
-          </tbody>
-        </table>
-      </div>`;
-  };
-
   container.innerHTML = `
     <h3 class="analyzer-heading">Team Details</h3>
     <h4 class="analyzer-section-title">Match Overview</h4>
@@ -710,8 +755,61 @@ function renderTeamDetailsTab(container) {
     </table>
 
     <h4 class="analyzer-section-title" style="margin-top:16px;">Team Weapon Performance</h4>
-    <details open class="analyzer-collapsible"><summary style="color:${alliesColor};">${esc(alliesLabel)}</summary>${weaponTable(alliesPlayers)}</details>
-    <details open class="analyzer-collapsible"><summary style="color:${axisColor};">Axis</summary>${weaponTable(axisPlayers)}</details>`;
+    ${renderTeamWeaponSections(players, st.allies_are_british)}`;
+}
+
+// Dev groups weapon breakdowns by the player's raw `team` value (Allies vs.
+// British kept separate, not merged) so a mid-match side-label switch shows
+// as two sections instead of silently combining into one.
+function renderTeamWeaponSections(players, alliesAreBritish) {
+  const alliesPlayers = players.filter((p) => p.team === 'Allies');
+  const britishPlayers = players.filter((p) => p.team === 'British');
+  const axisPlayers = players.filter((p) => p.team === 'Axis');
+
+  const alliesColor = teamColor('Allies');
+  const britishColor = teamColor('British');
+  const axisColor = teamColor('Axis');
+
+  const sections = [];
+  // Matches dev exactly: show the Allies/US section unless there's British
+  // data present with no pure-Allies data at all.
+  if (alliesPlayers.length > 0 || britishPlayers.length === 0) {
+    const label = alliesAreBritish ? 'Allies (US)' : 'Allies';
+    sections.push(`<details open class="analyzer-collapsible"><summary style="color:${alliesColor};">${esc(label)}</summary>${weaponBreakdownTable(alliesPlayers)}</details>`);
+  }
+  if (britishPlayers.length > 0) {
+    sections.push(`<details open class="analyzer-collapsible"><summary style="color:${britishColor};">British</summary>${weaponBreakdownTable(britishPlayers)}</details>`);
+  }
+  sections.push(`<details open class="analyzer-collapsible"><summary style="color:${axisColor};">Axis</summary>${weaponBreakdownTable(axisPlayers)}</details>`);
+  return sections.join('');
+}
+
+function weaponBreakdownTable(arr) {
+  const agg = {};
+  arr.forEach((p) => Object.entries(p.weapon_breakdown || {}).forEach(([w, [k, tk]]) => {
+    if (!agg[w]) agg[w] = [0, 0];
+    agg[w][0] += k; agg[w][1] += tk;
+  }));
+  const rows = Object.entries(agg).sort((a, b) => b[1][0] - a[1][0] || a[0].localeCompare(b[0]));
+  if (rows.length === 0) return '<p class="analyzer-empty">No weapon data.</p>';
+  const totalKills = rows.reduce((s, [, v]) => s + v[0], 0) || 1;
+  const totalTk = rows.reduce((s, [, v]) => s + v[1], 0) || 1;
+  return `
+    <div class="table-wrapper">
+      <table class="analyzer-table">
+        <thead><tr><th>Weapon</th><th style="text-align:right;">Kills</th><th>% of Total</th><th style="text-align:right;">Team Kills</th><th>% of Total</th></tr></thead>
+        <tbody>
+          ${rows.map(([w, [k, tk]]) => `
+            <tr>
+              <td>${esc(weaponName(w))}</td>
+              <td style="text-align:right;">${k}</td>
+              <td><div class="analyzer-progress"><div class="analyzer-progress-fill" style="width:${(k / totalKills * 100).toFixed(1)}%;"></div></div><span class="analyzer-progress-label">${(k / totalKills * 100).toFixed(1)}%</span></td>
+              <td style="text-align:right;">${tk}</td>
+              <td><div class="analyzer-progress"><div class="analyzer-progress-fill" style="width:${(tk / totalTk * 100).toFixed(1)}%;background:#e57373;"></div></div><span class="analyzer-progress-label">${(tk / totalTk * 100).toFixed(1)}%</span></td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
 }
 
 // ── 5. Timeline ───────────────────────────────────────────────────────────────
@@ -728,17 +826,22 @@ function renderTimelineTab(container) {
       <span><span class="legend-swatch" style="background:${alliesColor};"></span>${esc(alliesLabel)}</span>
       <span><span class="legend-swatch" style="background:${axisColor};"></span>Axis</span>
     </div>
-    <canvas id="analyzer-timeline-canvas" style="width:100%;height:340px;background:#121212;border:1px solid #333;border-radius:2px;"></canvas>`;
+    <div style="position:relative;">
+      <canvas id="analyzer-timeline-canvas" style="width:100%;height:340px;background:#121212;border:1px solid #333;border-radius:2px;"></canvas>
+      <div id="analyzer-timeline-tooltip" class="analyzer-timeline-tooltip" style="display:none;"></div>
+    </div>`;
 
   const timeline = (st.team_scores && st.team_scores.timeline) || [];
   const alliesSeries = timeline.filter(([, t]) => t === 'Allies' || t === 'British').map(([time, , score]) => [durSecs(time.viewdemo_offset), score]);
   const axisSeries = timeline.filter(([, t]) => t === 'Axis').map(([time, , score]) => [durSecs(time.viewdemo_offset), score]);
 
-  drawTimelineChart(container.querySelector('#analyzer-timeline-canvas'), alliesSeries, axisSeries, alliesColor, axisColor);
+  const canvas = container.querySelector('#analyzer-timeline-canvas');
+  const points = drawTimelineChart(canvas, alliesSeries, axisSeries, alliesColor, axisColor, alliesLabel, 'Axis');
+  initTimelineTooltip(canvas, container.querySelector('#analyzer-timeline-tooltip'), points);
 }
 
-function drawTimelineChart(canvas, seriesA, seriesB, colorA, colorB) {
-  if (!canvas) return;
+function drawTimelineChart(canvas, seriesA, seriesB, colorA, colorB, labelA, labelB) {
+  if (!canvas) return [];
   const width = canvas.clientWidth || 600;
   const height = canvas.clientHeight || 340;
   canvas.width = width;
@@ -753,7 +856,7 @@ function drawTimelineChart(canvas, seriesA, seriesB, colorA, colorB) {
     ctx.font = '12px sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText('No team score events recorded', width / 2, height / 2);
-    return;
+    return [];
   }
   const padding = 36;
   const maxX = Math.max(...allPoints.map((p) => p[0]), 1);
@@ -779,7 +882,8 @@ function drawTimelineChart(canvas, seriesA, seriesB, colorA, colorB) {
   ctx.fillText(formatMMSS(maxX), width - padding, height - padding + 14);
   ctx.fillText(String(maxY), padding - 6, padding + 4);
 
-  const drawSeries = (series, color) => {
+  const hitPoints = [];
+  const drawSeries = (series, color, label) => {
     if (series.length === 0) return;
     ctx.strokeStyle = color;
     ctx.lineWidth = 2;
@@ -791,13 +895,43 @@ function drawTimelineChart(canvas, seriesA, seriesB, colorA, colorB) {
     ctx.stroke();
     ctx.fillStyle = color;
     series.forEach(([x, y]) => {
+      const px = xAt(x), py = yAt(y);
       ctx.beginPath();
-      ctx.arc(xAt(x), yAt(y), 2.5, 0, Math.PI * 2);
+      ctx.arc(px, py, 2.5, 0, Math.PI * 2);
       ctx.fill();
+      hitPoints.push({ px, py, x, y, color, label });
     });
   };
-  drawSeries(seriesA, colorA);
-  drawSeries(seriesB, colorB);
+  drawSeries(seriesA, colorA, labelA);
+  drawSeries(seriesB, colorB, labelB);
+  return hitPoints;
+}
+
+// Dev's egui_plot had a built-in hover tooltip (label_formatter); the canvas
+// reimplementation needs its own nearest-point hit test.
+function initTimelineTooltip(canvas, tooltip, points) {
+  if (!canvas || !tooltip || points.length === 0) return;
+  const HIT_RADIUS_PX = 14;
+  canvas.addEventListener('mousemove', (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    let nearest = null;
+    let nearestDist = HIT_RADIUS_PX;
+    for (const p of points) {
+      const d = Math.hypot(p.px - mx, p.py - my);
+      if (d < nearestDist) { nearest = p; nearestDist = d; }
+    }
+    if (nearest) {
+      tooltip.style.display = 'block';
+      tooltip.style.left = `${Math.min(nearest.px + 12, canvas.clientWidth - 90)}px`;
+      tooltip.style.top = `${Math.max(nearest.py - 30, 0)}px`;
+      tooltip.innerHTML = `${esc(formatMMSS(nearest.x))}<br><span style="color:${nearest.color};">${esc(nearest.label)}: ${nearest.y}</span>`;
+    } else {
+      tooltip.style.display = 'none';
+    }
+  });
+  canvas.addEventListener('mouseleave', () => { tooltip.style.display = 'none'; });
 }
 
 // ── 6. Rounds ─────────────────────────────────────────────────────────────────
@@ -846,26 +980,104 @@ function renderRoundsTab(container) {
 
 // ── 7. Chat Log ───────────────────────────────────────────────────────────────
 
+// Categorizes a System chat message the same way dev's chat.rs does, from
+// its raw system_token string — used to drive the 4 system-log checkboxes.
+function systemMessageCategory(m) {
+  if (!m.system_token) return 'other';
+  const t = m.system_token.toLowerCase();
+  if (t.includes('connect') || t.includes('join_game') || t.includes('joined_game') || t.includes('kick') || t.includes('disconnect')) return 'join_leave';
+  if (t.includes('joined_team') || t.includes('team')) return 'team_change';
+  if (t.includes('score') || t.includes('capture') || t.includes('cap') || t.includes('reinforce')) return 'gameplay';
+  return 'other';
+}
+
+const SYSTEM_KEYWORD_STYLES = [
+  { patterns: ['allies', 'allied'], color: '#228b22' },
+  { patterns: ['axis'], color: '#b22222' },
+  { patterns: ['spectators', 'spectator', 'spec'], color: '#dddd00' },
+];
+
+// Colors team-name keywords inline within an already-translated system
+// message, matching dev's earliest-match scan in render_system_message.
+function colorSystemMessage(text) {
+  const baseColor = '#b4dcdc';
+  let remainder = text;
+  let out = '';
+  while (remainder.length > 0) {
+    const lower = remainder.toLowerCase();
+    let earliest = null;
+    for (const style of SYSTEM_KEYWORD_STYLES) {
+      for (const pattern of style.patterns) {
+        const idx = lower.indexOf(pattern);
+        if (idx !== -1 && (!earliest || idx < earliest.idx)) {
+          earliest = { idx, len: pattern.length, color: style.color };
+        }
+      }
+    }
+    if (!earliest) {
+      out += `<span style="color:${baseColor};font-style:italic;">${esc(remainder)}</span>`;
+      break;
+    }
+    if (earliest.idx > 0) {
+      out += `<span style="color:${baseColor};font-style:italic;">${esc(remainder.slice(0, earliest.idx))}</span>`;
+    }
+    out += `<span style="color:${earliest.color};font-style:italic;">${esc(remainder.slice(earliest.idx, earliest.idx + earliest.len))}</span>`;
+    remainder = remainder.slice(earliest.idx + earliest.len);
+  }
+  return out;
+}
+
 function renderChatTab(container) {
   container.innerHTML = `
     <h3 class="analyzer-heading">Chat &amp; System Log</h3>
     <div class="analyzer-toolbar" style="flex-wrap:wrap;gap:10px;">
+      <button type="button" id="chat-select-all">Select All</button>
+      <button type="button" id="chat-clear-all">Clear All</button>
+    </div>
+    <div class="analyzer-toolbar" style="flex-wrap:wrap;gap:10px;">
       <label><input type="checkbox" id="chat-filter-mm1" ${chatFilters.showMm1 ? 'checked' : ''}/> All Chat</label>
       <label><input type="checkbox" id="chat-filter-mm2" ${chatFilters.showMm2 ? 'checked' : ''}/> Team Chat</label>
-      <label><input type="checkbox" id="chat-filter-sys" ${chatFilters.showSystem ? 'checked' : ''}/> System</label>
+      <span class="text-muted">|</span>
+      <label><input type="radio" name="chat-status" id="chat-status-all" ${chatFilters.status === 'All' ? 'checked' : ''}/> All</label>
+      <label><input type="radio" name="chat-status" id="chat-status-alive" ${chatFilters.status === 'Alive' ? 'checked' : ''}/> Alive</label>
+      <label><input type="radio" name="chat-status" id="chat-status-dead" ${chatFilters.status === 'Dead' ? 'checked' : ''}/> Dead</label>
+    </div>
+    <div class="analyzer-toolbar" style="flex-wrap:wrap;gap:10px;">
       <label>Team:
         <select id="chat-filter-team">
           ${['All', 'Allies', 'British', 'Axis', 'Spectators'].map((t) => `<option value="${t}" ${chatFilters.team === t ? 'selected' : ''}>${t}</option>`).join('')}
         </select>
       </label>
+    </div>
+    <div class="analyzer-toolbar" style="flex-wrap:wrap;gap:10px;">
+      <span class="text-muted">System Logs:</span>
+      <label><input type="checkbox" id="chat-filter-joins" ${chatFilters.showJoins ? 'checked' : ''}/> Joins/Leaves</label>
+      <label><input type="checkbox" id="chat-filter-teams" ${chatFilters.showTeams ? 'checked' : ''}/> Team Changes</label>
+      <label><input type="checkbox" id="chat-filter-gameplay" ${chatFilters.showGameplay ? 'checked' : ''}/> Gameplay</label>
+      <label><input type="checkbox" id="chat-filter-othersys" ${chatFilters.showOtherSys ? 'checked' : ''}/> Other System</label>
       <input type="text" id="chat-filter-search" placeholder="Search sender or text..." value="${esc(chatFilters.search)}" style="flex:1;min-width:150px;" />
     </div>
     <div id="chat-log-list" class="analyzer-chat-log"></div>`;
 
+  container.querySelector('#chat-select-all').addEventListener('click', () => {
+    Object.assign(chatFilters, { showMm1: true, showMm2: true, status: 'All', team: 'All', showJoins: true, showTeams: true, showGameplay: true, showOtherSys: true });
+    renderChatTab(container);
+  });
+  container.querySelector('#chat-clear-all').addEventListener('click', () => {
+    Object.assign(chatFilters, { showMm1: false, showMm2: false, showJoins: false, showTeams: false, showGameplay: false, showOtherSys: false });
+    renderChatTab(container);
+  });
+
   container.querySelector('#chat-filter-mm1').addEventListener('change', (e) => { chatFilters.showMm1 = e.target.checked; renderChatLogList(); });
   container.querySelector('#chat-filter-mm2').addEventListener('change', (e) => { chatFilters.showMm2 = e.target.checked; renderChatLogList(); });
-  container.querySelector('#chat-filter-sys').addEventListener('change', (e) => { chatFilters.showSystem = e.target.checked; renderChatLogList(); });
+  container.querySelector('#chat-status-all').addEventListener('change', () => { chatFilters.status = 'All'; renderChatLogList(); });
+  container.querySelector('#chat-status-alive').addEventListener('change', () => { chatFilters.status = 'Alive'; renderChatLogList(); });
+  container.querySelector('#chat-status-dead').addEventListener('change', () => { chatFilters.status = 'Dead'; renderChatLogList(); });
   container.querySelector('#chat-filter-team').addEventListener('change', (e) => { chatFilters.team = e.target.value; renderChatLogList(); });
+  container.querySelector('#chat-filter-joins').addEventListener('change', (e) => { chatFilters.showJoins = e.target.checked; renderChatLogList(); });
+  container.querySelector('#chat-filter-teams').addEventListener('change', (e) => { chatFilters.showTeams = e.target.checked; renderChatLogList(); });
+  container.querySelector('#chat-filter-gameplay').addEventListener('change', (e) => { chatFilters.showGameplay = e.target.checked; renderChatLogList(); });
+  container.querySelector('#chat-filter-othersys').addEventListener('change', (e) => { chatFilters.showOtherSys = e.target.checked; renderChatLogList(); });
   container.querySelector('#chat-filter-search').addEventListener('input', (e) => { chatFilters.search = e.target.value; renderChatLogList(); });
 
   renderChatLogList();
@@ -878,15 +1090,24 @@ function renderChatLogList() {
   const search = chatFilters.search.toLowerCase();
 
   const filtered = messages.filter((m) => {
-    if (m.chat_type === 'Mm1' && !chatFilters.showMm1) return false;
-    if (m.chat_type === 'Mm2' && !chatFilters.showMm2) return false;
-    if (m.chat_type === 'System' && !chatFilters.showSystem) return false;
-    if (chatFilters.team !== 'All' && m.chat_type !== 'System') {
-      const t = m.sender_team;
-      const matchesTeam = t === chatFilters.team
-        || (chatFilters.team === 'Allies' && t === 'British')
-        || (chatFilters.team === 'British' && t === 'Allies');
-      if (!matchesTeam) return false;
+    if (m.chat_type === 'System') {
+      const cat = systemMessageCategory(m);
+      if (cat === 'join_leave' && !chatFilters.showJoins) return false;
+      if (cat === 'team_change' && !chatFilters.showTeams) return false;
+      if (cat === 'gameplay' && !chatFilters.showGameplay) return false;
+      if (cat === 'other' && !chatFilters.showOtherSys) return false;
+    } else {
+      if (m.chat_type === 'Mm1' && !chatFilters.showMm1) return false;
+      if (m.chat_type === 'Mm2' && !chatFilters.showMm2) return false;
+      if (chatFilters.status === 'Alive' && m.sender_dead) return false;
+      if (chatFilters.status === 'Dead' && !m.sender_dead) return false;
+      if (chatFilters.team !== 'All') {
+        const t = m.sender_team;
+        const matchesTeam = t === chatFilters.team
+          || (chatFilters.team === 'Allies' && t === 'British')
+          || (chatFilters.team === 'British' && t === 'Allies');
+        if (!matchesTeam) return false;
+      }
     }
     if (search) {
       const hay = `${m.sender_name || ''} ${m.text || ''}`.toLowerCase();
@@ -905,7 +1126,7 @@ function renderChatLogList() {
     const deadBadge = m.sender_dead ? '<span style="color:#dc3232;">*DEAD*</span> ' : '';
     let body;
     if (m.chat_type === 'System') {
-      body = `<span style="color:#c89650;">[system]</span> <span style="color:#b4dcdc;font-style:italic;">${esc(m.text)}</span>`;
+      body = `<span style="color:#c89650;">[system]</span> ${colorSystemMessage(m.text)}`;
     } else {
       const teamBadge = m.chat_type === 'Mm2' ? `<span style="color:${teamColor(m.sender_team)};">(Team)</span> ` : '';
       body = `${teamBadge}<span style="color:${teamColor(m.sender_team)};font-weight:600;">${esc(m.sender_name || 'Unknown')}:</span> ${esc(m.text)}`;
