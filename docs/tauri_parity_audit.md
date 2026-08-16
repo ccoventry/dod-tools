@@ -1,0 +1,249 @@
+# Tauri Parity Audit — `feature/tauri-migration` vs. `dev` egui source
+
+Status (2026-08-16): **No merge blocker.** `cargo build --workspace` and
+`cargo test --workspace --no-fail-fast` are clean except 4 pre-existing
+`analysis`-crate failures, confirmed byte-identical at the `dev` merge-base
+(`80feaaf`) — not caused by this branch (see `active_sprint_state.md`).
+`dev`'s tip *is* the merge-base, so there is no divergence to reconcile
+before merging.
+
+This document is the result of a systematic field-by-field comparison of the
+Tauri/Vite rebuild (`desktop-studio/`) against the actual dev-branch `egui`
+source as it existed at the merge-base commit (`git show 80feaaf:native/src/bin/gui/...`
+— that directory is deleted at HEAD, use `git show` to read it). Purpose:
+separate real hallucinations (AI-invented fields/tabs with no backing logic)
+from honest UI reshaping (structural drift) and simple feature loss that
+never got tracked (parity gap).
+
+Classification used throughout:
+- **INVENTED** — exists in Tauri, no dev equivalent, traced to be functionally
+  dead (not backed by real logic downstream).
+- **DRIFT** — exists in materially different shape than dev, but is real,
+  working functionality. Judgment call, not a bug — unless flagged
+  **OUTPUT BUG**, meaning it silently changes what actually gets produced
+  (rendered video, etc.), not just how it looks/feels.
+- **GAP** — real, functional dev feature, simply missing from Tauri today,
+  and not already tracked in `docs/engineering_backlog.md`.
+- Confirmed matches are noted as a rollup per area, not itemized — the point
+  of this doc is the problems, not re-proving what already works.
+
+Suggested order of attack: fix the 2 INVENTED items first (cheap, no
+downside), then decide on the 2 Render Studio OUTPUT BUG items (silent
+correctness issues, not cosmetic), then triage GAP items into
+`engineering_backlog.md` at whatever priority you want. DRIFT items without
+an OUTPUT BUG flag are reshaping, not breakage — decide case by case whether
+they're worth reverting.
+
+---
+
+## 1. Top-level navigation
+
+Dev's `SidebarTab` enum (`native/src/bin/gui/types.rs` @ `80feaaf`) had exactly
+5 destinations: `Analyzer, CaptureStudio, Auditor, ExportManager, Settings`.
+
+- [x] ~~"Render Studio" tab~~ — **not an issue.** Faithful rename: dev's
+  `SidebarTab::ExportManager` literally rendered the HLCR render UI
+  (`native/src/hlcr/ui.rs`). Corrected from an earlier assumption made
+  mid-audit.
+- [ ] **DRIFT** — "Batch Capture Config" as its own top-level tab
+  (`data-nav="export-config"`, `desktop-studio/index.html:22`). Dev never had
+  this as a separate destination — export/timing/drive/custom-command config
+  was a phase *inside* the single continuous Capture Studio workflow, not a
+  place you navigate away to.
+- [ ] **GAP** — Settings tab has no equivalent anywhere in Tauri. Dev's
+  Settings view (`git show 80feaaf:native/src/bin/gui/views/settings.rs`) had
+  a language selector, a "scan folders for demos" toggle, and a pinned-folder
+  bookmark list (add/remove) with an explicit draft → Save/Revert pattern.
+  In Tauri: `main.js:64-65` hardcodes `language: "en"`, and `pinned_folders`
+  (`main.js:163-164`) auto-populates from whatever's been scanned instead of
+  being a user-managed list. Settings now auto-save per field with no revert.
+
+---
+
+## 2. Demo Auditor
+
+Rollup: core duplicate-detection algorithm is a faithful port — both sides
+call the real `hl_demo_auditor::scan_dir`/`find_duplicates`. No invented
+logic anywhere in this pane.
+
+- [ ] **DRIFT** — folder targeting: dev's dedicated per-audit "Target Folder"
+  field + native picker → Tauri silently audits the app-wide pinned-folders
+  list shared with Analyzer/Capture Studio, with no indication in the pane of
+  what's about to be scanned.
+- [ ] **DRIFT** — result table: dev's collapsible group tree (hash shown once
+  per group) → Tauri's flat list (every file always shown, hash repeated per
+  row).
+- [ ] **DRIFT** — scan progress: dev's spinner + "found N so far" + current
+  filename → Tauri's single combined status line. Same backend signal,
+  thinner UI.
+- [x] ~~Delete mechanism~~ — **not a regression.** Dev's "Delete Selected
+  Demos" was a literal `// TODO: Wire deletion dispatch` stub (pane subtitled
+  "Read-Only tool"). Tauri's version is real, working deletion via per-row
+  checkboxes → `delete_audit_files`. Improvement, not drift to worry about.
+- [ ] **GAP** — Cancel Scan is half-wired: backend `cancel_audit` command
+  exists and is registered, but nothing in the frontend ever calls it (no
+  button, no `ipc_bridge.js` wrapper).
+- [ ] **GAP** — per-file "Copy Path" button is gone entirely.
+- [ ] **GAP** — per-file "Open Folder" (reveal in OS explorer, was
+  cross-platform in dev) is gone entirely.
+- [ ] **GAP** — no way to collapse large result sets (direct consequence of
+  the flat-list drift above, but a distinct usability loss worth tracking
+  separately).
+
+---
+
+## 3. Demo Analyzer
+
+Rollup: **zero invented fields.** Summary (~17 fields), Scoreboard,
+Player Details, Team Details, Rounds, Timeline, and Chat Log all trace
+field-for-field to real `analysis::AnalyzerState` data on both sides. The
+missing POV tab is *correct*, not a gap — dev's `pov.rs` was already
+`#[allow(dead_code)]` and never called before the migration.
+
+- [ ] **GAP (biggest one)** — the demo browser lost search, filters, sort,
+  and grouping entirely. Dev had a persistent multi-drive tree with text
+  search (name/map), Type/Map/Date filters, a Reset button, sortable
+  columns, arrow-key navigation, and three view modes (Flat List / Group by
+  Match / Group by Player-Recorder). Tauri is a single-directory-at-a-time
+  drill-down with none of that — real data underneath, much smaller surface.
+- [ ] **GAP** — kill-streak weapon-category filters gone (dev: toggle
+  Grenades/Melee/Allied/Axis/Other + Select-All/Clear-All to hide filtered
+  kills from the streak table; Tauri always shows every kill).
+- [ ] **GAP** — "Legit-Proof" profile search link missing next to the Steam
+  link on the Player Details hero card.
+- [ ] **DRIFT** — Team Details merges Allies+British into one weapon-breakdown
+  bucket; dev tracked 3 separate buckets to handle demos where a team's side
+  label changes mid-match. Edge case only.
+- [ ] **GAP** — Timeline chart lost hover tooltips (formatted duration/team/
+  score). Canvas-vs-plot-lib reimplementation choice is reasonable; the
+  tooltip feature itself was just dropped.
+- [ ] **GAP** — Chat: Alive/Dead sender-status filter missing (the underlying
+  `sender_dead` field is real and even drives a badge — just not filterable).
+- [ ] **DRIFT** — Chat: dev's 4 independently-toggleable system-message
+  categories (Joins/Leaves, Team Changes, Gameplay, Other System, from real
+  `system_token` data) flattened into one blanket "show system" checkbox.
+- [ ] **GAP** — Chat: Select-All/Clear-All bulk filter buttons missing.
+- [ ] **GAP** — Chat: team-name keyword coloring inside system message text
+  is gone (dev colored "allies"/"axis"/"spectators" within the message
+  itself; Tauri renders it in one flat color). Minor.
+
+---
+
+## 4. Capture Studio workflow
+
+Rollup: Master Queue, Highlights table, Path Routing, Timing math, Drive
+Overrides, Custom Commands, launch buttons, and the Preview-Detector modal
+all trace to real backend reads — most of the drift here is panels being
+reshuffled, not logic being faked.
+
+> Framing note: dev's 6-state `CapturePhase` enum (`ReviewQueue → Patching →
+> HlaeCapture → HlcrRendering → Complete/Failed`) was already vestigial by
+> the merge-base — the real live state was a per-streak `HighlightStatus`
+> plus one global "is patching" gate. Doesn't change any finding below, just
+> corrects the mental model of what "the phases" actually were.
+
+- [ ] **INVENTED** — "Expected FPS" field (`#config-expected-fps`) feeds
+  `PatcherConfig.tickrate`/`pre_roll_ticks`/`post_roll_ticks`, none of which
+  anything in `native/src/patch/builder.rs` or `engine.rs` reads (confirmed:
+  `grep -rn "\.tickrate\b" native/` hits only struct defaults and test
+  mocks; `builder.rs:144` comment: `// tickrate is extracted dynamically from
+  streaks per-demo`). The real per-demo tickrate comes from the scanner, not
+  this field. Dev's egui UI never exposed a control for `tickrate` at all —
+  it hardcoded `engine_tickrate = 100.0` locally in its own estimator. This
+  was the audit's calibration example. **Action: delete the field and its
+  payload plumbing.**
+- [ ] **INVENTED (partial)** — "Backup Media Dir" input partially resurrects
+  a field dev had already killed off before the merge-base (deleted when the
+  drive-failover pool replaced single primary/backup dirs). The dedicated
+  `PatcherConfig.backup_media_dir` struct field is declared/defaulted but
+  never read downstream. Not fully inert though — the typed value is
+  separately folded into `capture_directories` as a fallback when no Target
+  Drives are configured (`capture_pane.js:596-599`), so there's a real,
+  indirect effect via a different field. **Action: decide whether to keep
+  the box (rename/repurpose it honestly around the fallback behavior) or
+  remove the dead struct field and its direct wiring.**
+- [ ] **DRIFT** — Fast-Forward Speed: dev rendered this slider explicitly
+  disabled (`add_enabled_ui(false, ...)`) — present but intentionally
+  non-editable. Tauri's version is fully live. Distinct from the
+  already-tracked default-value mismatch (10.0 vs 0.05, see
+  `engineering_backlog.md` Low Priority) — this is about the control being
+  locked vs. unlocked.
+- [x] ~~Timing fields split across two dev tabs, merged into one in Tauri~~ —
+  low-severity DRIFT, functionally harmless, not worth tracking further.
+- [ ] **GAP** — "Auto-Quit Game on Completion" checkbox
+  (`PatcherConfig.exit_on_finish`) is gone — no control, no payload field, no
+  read anywhere in Tauri. Caveat: this field looks like it was *already*
+  dead-wired in dev's real (non-CLI) capture path too — only a separate,
+  CLI-only code path (`native/src/bin/cli.rs`) ever honored it — so practical
+  impact may be low. Still a real, untracked UI-parity fact.
+
+---
+
+## 5. Render Studio
+
+Rollup: no invented controls — every field maps to a real command. This area
+has the audit's only two **output-affecting** regressions.
+
+> `hlcr/config.rs`, `renderer.rs`, and `autosave.rs` are byte-identical to
+> dev and still compile — but they're orphaned. `render_manager.rs`
+> reimplements the entire encode pipeline from scratch instead of calling
+> them (`grep -rn "run_render_job|RenderSessionData|keepawake"
+> desktop-studio/src-tauri/` → zero hits).
+
+- [ ] **DRIFT — OUTPUT BUG** — HUD-alpha clips silently lose transparency.
+  Dev special-cased `clip_type == "hud_only"` to merge color + alpha BMP
+  sequences via an `alphamerge` filter into transparent ProRes4444. The
+  Tauri render loop never reads `clip.clip_type` at all — it feeds the color
+  layer alone through whatever main codec was picked, producing an *opaque*
+  video for a clip the scanner still correctly flags as HUD-only.
+- [ ] **DRIFT — OUTPUT BUG** — "H.264" quietly became software encoding.
+  Dev's H.264 option was `h264_nvenc` (GPU/NVENC, `-preset p6 -tune hq -cq
+  15`). Tauri's is `libx264` (CPU/software, `-preset fast -crf 16`) under the
+  same menu label — real speed/CPU-load/quality/size differences from what
+  the label implies.
+- [ ] **DRIFT** — concurrent render queue → strictly sequential. Dev's
+  `max_concurrent_renders` (1-8) drove parallel jobs with per-job CPU thread
+  scaling; Tauri processes one FFmpeg job at a time, no concurrency control
+  exposed anywhere.
+- [ ] **DRIFT** — JIT multi-drive export pool collapsed to one static path.
+  Dev auto-selected the first export drive with 20 GB+ free from a
+  configurable pool, with a live "Total Export Pool Free" readout. Tauri has
+  a single text-field export directory — no picker, no free-space fallback,
+  no readout in the Render Studio panel. (Tauri's capture-side drive pool is
+  a separate thing and is never wired into rendering.)
+- [ ] **DRIFT** — per-job queue table collapsed into one global status line +
+  one global progress bar. Dev showed clip name/stream/frames/date/colored
+  status/speed/per-row progress bar/per-row Cancel+Reset+View-Log actions.
+  Tauri: no per-job rows, no Speed field, no per-job cancel/reset, errors are
+  a transient toast only (nothing persisted).
+- [ ] **GAP** — render-batch crash-recovery autosave (`.render_autosave.json`)
+  is gone. Distinct from the capture-side autosave already tracked in
+  `engineering_backlog.md` (dev kept these as two separate files with
+  separate recovery prompts) — the render-side one is untracked.
+- [ ] **GAP** — no wake-lock during a render batch. Dev held a
+  `keepawake::KeepAwake` guard for the render's duration, released on
+  cancel/completion, to stop the OS sleeping mid-batch. No trace of this
+  anywhere in Tauri.
+- [ ] **GAP** — auto-chaining a render after capture is gone. Dev
+  automatically pointed the render source at the just-finished capture
+  session and kicked off a scan/render once a capture batch completed — this
+  was automatic behavior, not a manual toggle, so there's no checkbox to
+  restore, the behavior itself just doesn't happen anymore.
+
+---
+
+## Methodology notes (for whoever picks this up next)
+
+- Ground truth for "what dev actually did" is always `git show
+  80feaaf:<path>` — that commit is the `dev`/`feature/tauri-migration`
+  merge-base, and `native/src/bin/gui/` is fully deleted at HEAD, so working-tree
+  reads of that directory will 404.
+- The "field exists in UI but nothing downstream reads it" pattern (see
+  INVENTED items above) is checked with `grep -rn "<field_name>"
+  native/src/patch/` — a real field shows up read in `builder.rs`/`engine.rs`,
+  not just declared in `types.rs` and defaulted.
+- Not everything different from dev is a problem — dev shipped real dead
+  code and non-functional stubs too (POV tab, Auditor's delete button,
+  Analyzer's CSV export button, footer counters). Confirming a dev-side
+  feature was itself already non-functional before calling its absence in
+  Tauri a "gap" avoided several false positives in this pass.
