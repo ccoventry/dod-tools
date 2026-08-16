@@ -28,11 +28,11 @@ Classification used throughout:
   of this doc is the problems, not re-proving what already works.
 
 Suggested order of attack: fix the 2 INVENTED items first (cheap, no
-downside), then decide on the 2 Render Studio OUTPUT BUG items (silent
-correctness issues, not cosmetic), then triage GAP items into
-`engineering_backlog.md` at whatever priority you want. DRIFT items without
-an OUTPUT BUG flag are reshaping, not breakage — decide case by case whether
-they're worth reverting.
+downside) — **done, 2026-08-16**. Then decide on the 2 Render Studio OUTPUT
+BUG items (silent correctness issues, not cosmetic) — **done, 2026-08-16**.
+Then triage GAP items into `engineering_backlog.md` at whatever priority you
+want. DRIFT items without an OUTPUT BUG flag are reshaping, not breakage —
+decide case by case whether they're worth reverting.
 
 ---
 
@@ -187,7 +187,8 @@ reshuffled, not logic being faked.
 ## 5. Render Studio
 
 Rollup: no invented controls — every field maps to a real command. This area
-has the audit's only two **output-affecting** regressions.
+had the audit's only two **output-affecting** regressions — both fixed
+2026-08-16, see below.
 
 > `hlcr/config.rs`, `renderer.rs`, and `autosave.rs` are byte-identical to
 > dev and still compile — but they're orphaned. `render_manager.rs`
@@ -195,17 +196,32 @@ has the audit's only two **output-affecting** regressions.
 > them (`grep -rn "run_render_job|RenderSessionData|keepawake"
 > desktop-studio/src-tauri/` → zero hits).
 
-- [ ] **DRIFT — OUTPUT BUG** — HUD-alpha clips silently lose transparency.
-  Dev special-cased `clip_type == "hud_only"` to merge color + alpha BMP
-  sequences via an `alphamerge` filter into transparent ProRes4444. The
-  Tauri render loop never reads `clip.clip_type` at all — it feeds the color
-  layer alone through whatever main codec was picked, producing an *opaque*
-  video for a clip the scanner still correctly flags as HUD-only.
-- [ ] **DRIFT — OUTPUT BUG** — "H.264" quietly became software encoding.
-  Dev's H.264 option was `h264_nvenc` (GPU/NVENC, `-preset p6 -tune hq -cq
-  15`). Tauri's is `libx264` (CPU/software, `-preset fast -crf 16`) under the
-  same menu label — real speed/CPU-load/quality/size differences from what
-  the label implies.
+- [x] **OUTPUT BUG — fixed (2026-08-16)** — HUD-alpha clips silently lost
+  transparency. Dev special-cased `clip_type == "hud_only"` to merge color +
+  alpha BMP sequences via an `alphamerge` filter into transparent ProRes4444.
+  The Tauri render loop never read `clip.clip_type` at all — it fed the
+  color layer alone through whatever main codec was picked, producing an
+  *opaque* video for a clip the scanner still correctly flags as HUD-only.
+  Fixed in `render_manager.rs::execute_render_batch`: branches on
+  `clip_type == "hud_only"`, feeds both the `hudcolor` folder and its
+  sibling `hudalpha` folder (always present together per
+  `native/src/hlcr/scanner.rs`) through the same `extractplanes`/
+  `alphamerge` filter dev used, forced through ProRes4444
+  (`alpha_codec_args_and_ext`) regardless of the user's codec selection.
+- [x] **OUTPUT BUG — resolved (2026-08-16)** — "H.264" had silently become
+  software-only encoding. Dev's H.264 option was `h264_nvenc` (GPU/NVENC,
+  `-preset p6 -tune hq -cq 15`); Tauri's was `libx264` (CPU/software,
+  `-preset fast -crf 16`) under the same menu label. Resolved by adding both
+  as separate, explicit options rather than reverting to one: "H.264
+  (Software, MP4)" (`libx264`, unchanged) and "H.264 (NVENC GPU, MP4)"
+  (`h264_nvenc`, dev's original args) in `render-codec-select`. Decision
+  context: the user's own later, independent rewrite of this tool (a
+  separate Python/PySide6 project, `../HLCR`) also defaulted to software
+  `libx264` — so keeping it wasn't the accidental-hallucination artifact it
+  looked like, it matched the user's own considered choice. NVENC is
+  generally faster and comparable-or-better quality than `libx264` at fast
+  presets on an NVIDIA GPU (Turing/RTX 20-series+), but isn't universally
+  available, hence offering both explicitly instead of picking one.
 - [ ] **DRIFT** — concurrent render queue → strictly sequential. Dev's
   `max_concurrent_renders` (1-8) drove parallel jobs with per-job CPU thread
   scaling; Tauri processes one FFmpeg job at a time, no concurrency control
