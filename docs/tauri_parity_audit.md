@@ -142,26 +142,31 @@ reshuffled, not logic being faked.
 > plus one global "is patching" gate. Doesn't change any finding below, just
 > corrects the mental model of what "the phases" actually were.
 
-- [ ] **INVENTED** — "Expected FPS" field (`#config-expected-fps`) feeds
-  `PatcherConfig.tickrate`/`pre_roll_ticks`/`post_roll_ticks`, none of which
-  anything in `native/src/patch/builder.rs` or `engine.rs` reads (confirmed:
-  `grep -rn "\.tickrate\b" native/` hits only struct defaults and test
-  mocks; `builder.rs:144` comment: `// tickrate is extracted dynamically from
-  streaks per-demo`). The real per-demo tickrate comes from the scanner, not
-  this field. Dev's egui UI never exposed a control for `tickrate` at all —
-  it hardcoded `engine_tickrate = 100.0` locally in its own estimator. This
-  was the audit's calibration example. **Action: delete the field and its
-  payload plumbing.**
-- [ ] **INVENTED (partial)** — "Backup Media Dir" input partially resurrects
-  a field dev had already killed off before the merge-base (deleted when the
-  drive-failover pool replaced single primary/backup dirs). The dedicated
-  `PatcherConfig.backup_media_dir` struct field is declared/defaulted but
-  never read downstream. Not fully inert though — the typed value is
-  separately folded into `capture_directories` as a fallback when no Target
-  Drives are configured (`capture_pane.js:596-599`), so there's a real,
-  indirect effect via a different field. **Action: decide whether to keep
-  the box (rename/repurpose it honestly around the fallback behavior) or
-  remove the dead struct field and its direct wiring.**
+- [x] **INVENTED — removed (2026-08-16).** "Expected FPS" field
+  (`#config-expected-fps`) fed `PatcherConfig.tickrate`/`pre_roll_ticks`/
+  `post_roll_ticks`, none of which anything in `native/src/patch/builder.rs`
+  or `engine.rs` read (confirmed: `grep -rn "\.tickrate\b" native/` hit only
+  struct defaults and test mocks; `builder.rs:144` comment: `// tickrate is
+  extracted dynamically from streaks per-demo`). The real per-demo tickrate
+  comes from the scanner, not this field. Dev's egui UI never exposed a
+  control for `tickrate` at all. Deleted the input from `index.html`, the
+  `expectedFpsVal`/`expected_fps` plumbing from `capture_pane.js`, and the
+  `expected_fps` field + its three dead `cfg.*` assignments from
+  `capture_manager.rs`.
+- [x] **INVENTED (partial) — removed entirely (2026-08-16).** "Backup Media
+  Dir" input partially resurrected a field dev had already killed off before
+  the merge-base. Decided to remove the whole feature rather than keep it
+  under a repurposed name — deleted the input row from `index.html`; its
+  read/payload/fallback wiring from `capture_pane.js` (both
+  `refreshLaunchGuard` and `buildCapturePayload`); its persistence, hydration,
+  and browse-dialog handler from `main.js`; the `backup_media_dir` field from
+  `CapturePayload` and its `cfg.backup_media_dir` assignment in
+  `capture_manager.rs`; the field from `AppSettings` in
+  `settings_manager.rs`; and the dead `PatcherConfig.backup_media_dir` field
+  itself (declaration + `Default` entry) from `native/src/patch/types.rs`.
+  Output drive routing now falls back to Primary Media Dir alone when no
+  Target Drive is configured — users need at least a Primary Media Dir or a
+  Target Drive to start a capture.
 - [ ] **DRIFT** — Fast-Forward Speed: dev rendered this slider explicitly
   disabled (`add_enabled_ui(false, ...)`) — present but intentionally
   non-editable. Tauri's version is fully live. Distinct from the
