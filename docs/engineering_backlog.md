@@ -3,7 +3,8 @@
 ## 📋 Immediate Tasks & Critical Bugs (Current Sprint)
 
 ### Capture Studio Feature Parity & UI Restorations
-- [ ] **Task: Verify Branch Merge Readiness:** Verify `feature/tauri-migration` functionality against `dev` for clean merge.
+- [x] **Task: Verify Branch Merge Readiness (2026-08-16):** `dev`'s tip (`80feaaf`) *is* the merge-base with `feature/tauri-migration` — the branch already contains 100% of `dev`'s history, nothing to reconcile. `cargo build --workspace` clean; `cargo test --workspace --no-fail-fast` clean except 4 failures in `analysis`, confirmed byte-identical/pre-existing at the `dev` merge-base (not caused by this branch) — see Medium Priority below.
+- [ ] **Task: Fix pre-existing `analysis` test debt before/after merge (not blocking):** 3 localization tests (`test_parse_localization_content`, `test_parse_amxx_localization`, `test_real_localization_loading`) assert against `#`-prefixed keys, but `parse_localization_content` stores keys literally without adding `#` (by design — `translate_key` normalizes at lookup time instead, per `staging_lessons.md`). Tests and loader have drifted out of sync. `test_inspect_lenn_demo` fails on a missing local demo fixture (`Demo file not found at either path`) — needs a real `.dem` file on disk that isn't committed to the repo.
 
 ---
 
@@ -13,8 +14,6 @@
 *(none currently open — all three audited High Priority parity gaps resolved 2026-08-13, see Completed Tasks)*
 
 ### Medium Priority
-- [ ] **"Clear Previews" Audit Modal:** Add scanner and IPC command to sweep `<hl>/dod` for orphaned `*_preview.dem` files with valid `.dodtools_preview` sidecars and offer one-click batch deletion.
-- [ ] **Standalone Game Launch:** Restore "Launch Game (HLAE)" button to boot the game environment without loading a demo stream.
 - [ ] **Drive Pool Interactive Management:** Add ⬆/⬇ reorder and 🗑 delete actions with live persistence for `#target-drive-list` and `#render-folder-list`.
 - [ ] **`movie_config` Input & Payload Binding:** Expose sanitised text field in Export Config to populate `+exec <name>.cfg` in HLAE launch args.
 - [ ] **Session Bookkeeping & Manifest Logging:** Restore writing `Capture_Sessions/<session_id>/manifest.txt`, routing chained demo copies, and cleaning up empty session directories on cancel/completion.
@@ -33,6 +32,16 @@
 ---
 
 ## 🛠 General Backlog & Future Upgrades
+
+### Demo Analyzer Load Performance (see `docs/demo_analyzer_load_performance.md`)
+- [x] Tier 1a — on-disk analyzer cache (cold parse ~1.3s, warm cache hit ~10-15ms).
+- [x] Tier 1b — real progress events for the analyzer's cold-parse path.
+- [x] Tier 2 — deleted dead `parse_with_diagnostics`/`ParseDiagnostics` code (~440 lines).
+- [x] Tier 3 — Capture Studio folder scans now warm the analyzer cache via `scan_demo_for_highlights_with_analysis`.
+- [ ] Tier 4/5 — selective netmessage parsing + `Delta` representation rewrite. **Blocked**: needs the future-player-stats review done first (both `SvcClientData`/`SvcDeltaPacketEntities`, the two biggest discard targets, are also the richest untapped stats source — see doc for why sequencing matters).
+
+### Web Preview Viewer / `xash-transcode` (see `docs/web_preview_viewer.md`)
+- Standalone HLDEMO → Xash3D IDEM transcoder, clip cutter, and content packer for the browser-based demo viewer (sibling repo `../dod-web-demo-viewer/`). Declares its own `[workspace]` — deliberately **not** a member of the root Cargo workspace, `cargo build --workspace` skips it. Read the handoff doc before touching; recent work fixed a clientdata ring-buffer/demo-cut bug and a frozen-camera bug from missing synthesized `dem_usercmd` frames (`bf88e4c`, `d19bd31`).
 
 ### R&D & Architectural Enhancements
 - **External Demo Playback:** Investigate if DoD `.dem` files can be parsed and rendered outside the game engine (e.g., web browser / lightweight desktop app) to preview killstreaks quickly.
