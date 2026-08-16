@@ -6,13 +6,24 @@
 // generic JSON used by the compact inline telemetry summary.
 
 import { open } from '@tauri-apps/plugin-dialog';
-import { analyzeDemoFull } from './ipc_bridge.js';
+import { analyzeDemoFull, browseDirectory, defaultBrowseDir } from './ipc_bridge.js';
 
 let report = null;
 let activeSubTab = 'summary';
 let highlightedPlayerId = null; // shared selection: Scoreboard row <-> Player Details dropdown
 let selectedPlayerId = null;
 let chatFilters = { showMm1: true, showMm2: true, showSystem: true, team: 'All', search: '' };
+
+// ── Picker sidebar state: folder tree (drives -> subfolders) + demo list for
+// whichever folder is currently selected. Mirrors the `dev` branch egui
+// GUI's persistent left explorer panel — see browser.rs/tree.rs — as a
+// two-widget sidebar next to the report content instead of a modal.
+let browserPath = null; // null = drive/root list
+let browserParent = null;
+let browserSubdirs = [];
+let browserDemos = [];
+let browserSelectedDemo = null;
+let browserError = null;
 
 const TEAM_COLORS = {
   Allies: '#4caf50',
@@ -135,6 +146,79 @@ function groupConsecutiveWeapons(names) {
   return parts.join(', ');
 }
 
+// ── Picker sidebar: folder tree + demo list ──────────────────────────────────
+
+function formatFileSize(bytes) {
+  if (!bytes) return '0 B';
+  const mb = bytes / 1_048_576;
+  if (mb >= 1) return `${mb.toFixed(1)} MB`;
+  return `${(bytes / 1024).toFixed(0)} KB`;
+}
+
+async function navigateBrowser(path) {
+  browserError = null;
+  renderBrowserSidebar(); // shows the (unchanged) list immediately; path label updates once loaded
+  try {
+    const listing = await browseDirectory(path);
+    browserPath = listing.path;
+    browserParent = listing.parent;
+    browserSubdirs = listing.subdirs || [];
+    browserDemos = listing.demos || [];
+  } catch (err) {
+    browserError = String(err);
+  }
+  renderBrowserSidebar();
+}
+
+function renderBrowserSidebar() {
+  const upBtn = document.querySelector('#analyzer-browser-up');
+  const pathEl = document.querySelector('#analyzer-browser-path');
+  const dirsEl = document.querySelector('#analyzer-browser-dirs');
+  const demosEl = document.querySelector('#analyzer-browser-demos');
+  if (!upBtn || !pathEl || !dirsEl || !demosEl) return;
+
+  upBtn.disabled = browserPath === null;
+  pathEl.textContent = browserPath || 'This PC';
+  pathEl.title = browserPath || 'This PC';
+
+  if (browserError) {
+    dirsEl.innerHTML = `<p class="analyzer-empty" style="color:#f44336;padding:10px;">${esc(browserError)}</p>`;
+    demosEl.innerHTML = '';
+    return;
+  }
+
+  dirsEl.innerHTML = browserSubdirs.map((d) => `
+    <div class="analyzer-browser-row" data-dir-path="${esc(d.path)}">
+      <span class="row-icon">📁</span><span>${esc(d.name)}</span>
+    </div>`).join('') || '<p class="analyzer-empty" style="padding:10px;">No subfolders.</p>';
+
+  demosEl.innerHTML = browserDemos.map((f) => `
+    <div class="analyzer-browser-row ${f.path === browserSelectedDemo ? 'selected' : ''}" data-demo-path="${esc(f.path)}" title="${esc(f.path)}">
+      <span class="row-icon">🎞️</span><span>${esc(f.name)}</span>
+      <span class="row-meta">${formatFileSize(f.size_bytes)}</span>
+    </div>`).join('') || '<p class="analyzer-empty" style="padding:10px;">No demos in this folder.</p>';
+
+  dirsEl.querySelectorAll('[data-dir-path]').forEach((row) => {
+    row.addEventListener('click', () => navigateBrowser(row.dataset.dirPath));
+  });
+  demosEl.querySelectorAll('[data-demo-path]').forEach((row) => {
+    row.addEventListener('click', () => {
+      browserSelectedDemo = row.dataset.demoPath;
+      demosEl.querySelectorAll('[data-demo-path]').forEach((r) => r.classList.toggle('selected', r === row));
+      loadAnalyzerDemo(row.dataset.demoPath);
+    });
+  });
+}
+
+async function initAnalyzerBrowser() {
+  const upBtn = document.querySelector('#analyzer-browser-up');
+  if (upBtn) {
+    upBtn.addEventListener('click', () => navigateBrowser(browserParent));
+  }
+  const start = await defaultBrowseDir();
+  navigateBrowser(start || null);
+}
+
 // ── Init / entry points ──────────────────────────────────────────────────────
 
 export function initAnalyzerPane() {
@@ -165,6 +249,8 @@ export function initAnalyzerPane() {
       renderActiveTab();
     });
   });
+
+  initAnalyzerBrowser();
 }
 
 export async function loadAnalyzerDemo(path) {
@@ -177,6 +263,10 @@ export async function loadAnalyzerDemo(path) {
     highlightedPlayerId = null;
     selectedPlayerId = null;
     if (titleEl) titleEl.textContent = report.file_name;
+    browserSelectedDemo = path;
+    document.querySelectorAll('#analyzer-browser-demos [data-demo-path]').forEach((r) => {
+      r.classList.toggle('selected', r.dataset.demoPath === path);
+    });
     renderActiveTab();
   } catch (err) {
     if (container) {

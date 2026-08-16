@@ -238,3 +238,24 @@ export async function deleteOrphanedPreviews(filePaths) {
 // removed from this module. render_pane.js registers a single
 // listen('render_status', ...) listener directly to avoid double-registration
 // bugs (ipc_bridge.js must not create a second competing listener).
+
+/** Lists the immediate subfolders and `.dem` files of `path` (drive roots
+ *  when `path` is null/undefined) for the Demo Analyzer's folder/demo picker
+ *  widgets. Errors (e.g. permission denied) are surfaced inline by the
+ *  caller rather than as a global toast, since browsing into an
+ *  inaccessible folder is an expected, recoverable event. */
+export async function browseDirectory(path) {
+  return invoke("browse_directory", { path: path ?? null })
+    .catch((err) => {
+      console.error("IPC Execution Error (browse_directory):", err);
+      throw err;
+    });
+}
+
+export async function defaultBrowseDir() {
+  return invoke("default_browse_dir")
+    .catch((err) => {
+      console.error("IPC Execution Error (default_browse_dir):", err);
+      return null;
+    });
+}
