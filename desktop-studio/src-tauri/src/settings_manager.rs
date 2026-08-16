@@ -38,10 +38,8 @@ pub struct AppSettings {
     pub fast_forward_speed: f32,
     #[serde(default)]
     pub primary_media_dir: Option<String>,
-    #[serde(default)]
-    pub backup_media_dir: Option<String>,
-    /// Target Output Drives pool — separate from `primary_media_dir` /
-    /// `backup_media_dir` (see capture_pane.js's driveDirs fallback chain).
+    /// Target Output Drives pool — separate from `primary_media_dir`
+    /// (see capture_pane.js's driveDirs fallback chain).
     #[serde(default)]
     pub target_drives: Vec<String>,
     #[serde(default)]
@@ -79,7 +77,6 @@ impl Default for AppSettings {
             initial_delay: default_initial_delay(),
             fast_forward_speed: default_fast_forward_speed(),
             primary_media_dir: None,
-            backup_media_dir: None,
             target_drives: Vec::new(),
             init_commands: Vec::new(),
             custom_commands: Vec::new(),

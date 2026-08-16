@@ -53,7 +53,6 @@ window.addEventListener("DOMContentLoaded", async () => {
     const fastForwardSpeed = parseFloat(document.querySelector('#config-fast-forward-speed')?.value) || 0.05;
 
     const primaryMediaDir = document.querySelector('#primary-media-dir-input')?.value?.trim() || null;
-    const backupMediaDir = document.querySelector('#backup-media-dir-input')?.value?.trim() || null;
 
     const { init_commands, custom_commands } = getCommandsState();
 
@@ -78,7 +77,6 @@ window.addEventListener("DOMContentLoaded", async () => {
       initial_delay: initialDelay,
       fast_forward_speed: fastForwardSpeed,
       primary_media_dir: primaryMediaDir,
-      backup_media_dir: backupMediaDir,
       target_drives: targetDrives,
       init_commands,
       custom_commands
@@ -155,10 +153,6 @@ window.addEventListener("DOMContentLoaded", async () => {
       if (settings.primary_media_dir) {
         const inputEl = document.querySelector('#primary-media-dir-input');
         if (inputEl) inputEl.value = settings.primary_media_dir;
-      }
-      if (settings.backup_media_dir) {
-        const inputEl = document.querySelector('#backup-media-dir-input');
-        if (inputEl) inputEl.value = settings.backup_media_dir;
       }
       if (Array.isArray(settings.pinned_folders) && settings.pinned_folders.length > 0) {
         scanPaths = [...settings.pinned_folders];
@@ -337,26 +331,6 @@ window.addEventListener("DOMContentLoaded", async () => {
         }
       } catch (err) {
         console.error("Error selecting primary media directory:", err);
-      }
-    });
-  }
-
-  const backupMediaBrowseBtn = document.querySelector('#backup-media-browse-btn');
-  if (backupMediaBrowseBtn) {
-    backupMediaBrowseBtn.addEventListener('click', async () => {
-      try {
-        const selected = await open({
-          directory: true,
-          multiple: false,
-          title: 'Select Backup Media Directory'
-        });
-        if (selected) {
-          const path = Array.isArray(selected) ? selected[0] : selected;
-          const inputEl = document.querySelector('#backup-media-dir-input');
-          if (inputEl) inputEl.value = path;
-        }
-      } catch (err) {
-        console.error("Error selecting backup media directory:", err);
       }
     });
   }

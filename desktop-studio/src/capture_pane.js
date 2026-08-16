@@ -117,14 +117,13 @@ export async function refreshLaunchGuard(state) {
   });
 
   // Mirrors buildCapturePayload's outputDrivePool: the Target Output Drives
-  // pool takes precedence, falling back to Primary/Backup Media Dir so a
-  // guard check doesn't block a setup that buildCapturePayload would accept.
+  // pool takes precedence, falling back to Primary Media Dir so a guard
+  // check doesn't block a setup that buildCapturePayload would accept.
   const primaryMediaDirVal = document.querySelector('#primary-media-dir-input')?.value?.trim() || null;
-  const backupMediaDirVal = document.querySelector('#backup-media-dir-input')?.value?.trim() || null;
   const driveDirs = (resolvedState.targetDrives || []).filter(Boolean);
   const effectiveDrivePool = driveDirs.length > 0
     ? driveDirs
-    : [primaryMediaDirVal, backupMediaDirVal].filter(Boolean);
+    : [primaryMediaDirVal].filter(Boolean);
 
   let availableBytes = 0;
   if (effectiveDrivePool.length > 0) {
@@ -479,7 +478,7 @@ export function initCaptureUI(getState) {
   // live instead of only being checked at click time.
   ['#config-res-width', '#config-res-height', '#config-separate-hud',
    '#config-pre-roll', '#config-post-roll', '#config-capture-fps',
-   '#primary-media-dir-input', '#backup-media-dir-input'].forEach(selector => {
+   '#primary-media-dir-input'].forEach(selector => {
     const el = document.querySelector(selector);
     if (el) el.addEventListener('input', () => refreshLaunchGuard());
   });
@@ -554,7 +553,6 @@ export function initCaptureUI(getState) {
     }
 
     const captureFpsVal = parseInt(document.querySelector("#config-capture-fps")?.value, 10) || 300;
-    const expectedFpsVal = parseFloat(document.querySelector("#config-expected-fps")?.value) || 100.0;
     const preRollVal = parseFloat(document.querySelector("#config-pre-roll")?.value) || 2.0;
     const postRollVal = parseFloat(document.querySelector("#config-post-roll")?.value) || 0.6;
     const recordStartLeadVal = parseFloat(document.querySelector("#config-record-start-lead")?.value) || 0.0;
@@ -567,7 +565,6 @@ export function initCaptureUI(getState) {
     const hlPathVal = document.querySelector("#hl-path-input")?.value?.trim() || "";
     const ffmpegOverridePathVal = document.querySelector("#ffmpeg-override-path-input")?.value?.trim() || null;
     const primaryMediaDirVal = document.querySelector("#primary-media-dir-input")?.value?.trim() || null;
-    const backupMediaDirVal = document.querySelector("#backup-media-dir-input")?.value?.trim() || null;
 
     const resWidthVal = parseInt(document.querySelector("#config-res-width")?.value, 10) || 1280;
     const resHeightVal = parseInt(document.querySelector("#config-res-height")?.value, 10) || 720;
@@ -591,12 +588,12 @@ export function initCaptureUI(getState) {
     // output directories, NEVER state.scanPaths (the demo *source* files
     // the user added for scanning); mklinking a junction against a .dem
     // file aborts the batch. Source from the configured Target Output
-    // Drives pool, falling back to the Primary/Backup Media Dir fields
-    // when that pool is empty.
+    // Drives pool, falling back to the Primary Media Dir field when that
+    // pool is empty.
     const driveDirs = (state.targetDrives || []).filter(Boolean);
     const outputDrivePool = driveDirs.length > 0
       ? driveDirs
-      : [primaryMediaDirVal, backupMediaDirVal].filter(Boolean);
+      : [primaryMediaDirVal].filter(Boolean);
 
     if (outputDrivePool.length === 0) {
       showToast("Configure at least one Target Output Drive (or a Primary Media Directory) before starting a capture.", 'error');
@@ -619,7 +616,6 @@ export function initCaptureUI(getState) {
       game_path: hlPathVal,
       ffmpeg_override_path: ffmpegOverridePathVal,
       primary_media_dir: primaryMediaDirVal,
-      backup_media_dir: backupMediaDirVal,
       resolution_width: resWidthVal,
       resolution_height: resHeightVal,
       separate_hud: separateHudVal,
@@ -630,7 +626,6 @@ export function initCaptureUI(getState) {
       post_roll_seconds: postRollVal,
       capture_directories: outputDrivePool,
       capture_fps: captureFpsVal,
-      expected_fps: expectedFpsVal,
       drives: state.targetDrives || [],
       allocation_strategy: allocationStrategyVal,
       record_start_lead: recordStartLeadVal,

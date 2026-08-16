@@ -34,9 +34,6 @@ pub struct CapturePayload {
     /// Explicit primary capture output folder; takes precedence over `drives[0]`.
     #[serde(default)]
     pub primary_media_dir: Option<String>,
-    /// Explicit backup capture output folder; takes precedence over `drives[1]`.
-    #[serde(default)]
-    pub backup_media_dir: Option<String>,
     #[serde(default = "default_resolution_width")]
     pub resolution_width: i32,
     #[serde(default = "default_resolution_height")]
@@ -56,7 +53,6 @@ pub struct CapturePayload {
     /// Directories used for dynamic drive failover and capture routing.
     pub capture_directories: Vec<String>,
     pub capture_fps: i32,
-    pub expected_fps: f32,
     /// Output drives for AOT capacity simulation and media routing.
     pub drives: Vec<String>,
     /// Matches native `DriveAllocationStrategy`: "MaximizeSpace" | "Chronological".
@@ -198,11 +194,8 @@ fn config_from_payload(payload: &CapturePayload) -> PatcherConfig {
     cfg.game_path = payload.game_path.clone();
     cfg.pre_roll_seconds = payload.pre_roll_seconds;
     cfg.post_roll_seconds = payload.post_roll_seconds;
-    cfg.pre_roll_ticks = (payload.pre_roll_seconds * payload.expected_fps) as i32;
-    cfg.post_roll_ticks = (payload.post_roll_seconds * payload.expected_fps) as i32;
     cfg.capture_directories = payload.capture_directories.iter().map(std::path::PathBuf::from).collect();
     cfg.capture_fps = payload.capture_fps;
-    cfg.tickrate = payload.expected_fps;
     cfg.record_start_lead = payload.record_start_lead;
     cfg.record_stop_trail = payload.record_stop_trail;
     cfg.initial_delay = payload.initial_delay;
@@ -226,16 +219,12 @@ fn config_from_payload(payload: &CapturePayload) -> PatcherConfig {
             _ => CommandRelation::Before,
         },
     }).collect();
-    // Drive routing: explicit Primary/Backup Media Dir fields (from their own
-    // UI inputs) take precedence; fall back to the Target Output Drives list.
+    // Drive routing: explicit Primary Media Dir field (from its own UI
+    // input) takes precedence; fall back to the Target Output Drives list.
     cfg.primary_media_dir = payload.primary_media_dir.as_ref()
         .filter(|s| !s.trim().is_empty())
         .map(std::path::PathBuf::from)
         .or_else(|| payload.drives.first().map(std::path::PathBuf::from));
-    cfg.backup_media_dir = payload.backup_media_dir.as_ref()
-        .filter(|s| !s.trim().is_empty())
-        .map(std::path::PathBuf::from)
-        .or_else(|| payload.drives.get(1).map(std::path::PathBuf::from));
     cfg.allocation_strategy = match payload.allocation_strategy.as_str() {
         "Chronological" => DriveAllocationStrategy::Chronological,
         _ => DriveAllocationStrategy::MaximizeSpace,
