@@ -506,7 +506,7 @@ pub async fn scan_directory_impl(
     let is_scanning_end = Arc::clone(&is_scanning);
 
     let result = tokio::task::spawn_blocking(move || {
-        use native::patch::scan_demo_for_highlights;
+        use native::patch::scan_demo_for_highlights_with_analysis;
         use tauri::Emitter;
 
         let mut list = Vec::new();
@@ -592,15 +592,23 @@ pub async fn scan_directory_impl(
             );
 
             if let Ok((
-                tickrate,
-                streaks,
-                is_pov,
-                local_player_index,
-                playback_frames,
-                match_start_tick,
-                frame_times_arc,
-            )) = scan_demo_for_highlights(&file)
+                (
+                    tickrate,
+                    streaks,
+                    is_pov,
+                    local_player_index,
+                    playback_frames,
+                    match_start_tick,
+                    frame_times_arc,
+                ),
+                analysis,
+            )) = scan_demo_for_highlights_with_analysis(&file)
             {
+                // Pre-warm the analyzer cache with the Analysis this scan already
+                // computed, so opening this demo in the Demo Analyzer afterward
+                // hits the cache path instead of re-parsing. Best-effort/silent.
+                native::warm_analyzer_cache(&file, &analysis);
+
                 let serialized_streaks: Vec<SerializedStreak> = streaks
                     .into_iter()
                     .map(|mut s| {

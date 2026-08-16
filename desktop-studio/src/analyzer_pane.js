@@ -6,9 +6,11 @@
 // generic JSON used by the compact inline telemetry summary.
 
 import { open } from '@tauri-apps/plugin-dialog';
+import { listen } from '@tauri-apps/api/event';
 import { analyzeDemoFull, browseDirectory, defaultBrowseDir } from './ipc_bridge.js';
 
 let report = null;
+let analyzerLoadInProgress = false;
 let activeSubTab = 'summary';
 let highlightedPlayerId = null; // shared selection: Scoreboard row <-> Player Details dropdown
 let selectedPlayerId = null;
@@ -221,6 +223,21 @@ async function initAnalyzerBrowser() {
 
 // ── Init / entry points ──────────────────────────────────────────────────────
 
+// Registered once here (not per-load) to avoid the double-registration bug
+// noted for render_status in ipc_bridge.js — analyzer_progress is throttled
+// to ~30fps backend-side (Rust `analyze_demo_full`), so no further
+// throttling is needed on the receiving end.
+listen('analyzer_progress', (event) => {
+  if (!analyzerLoadInProgress) return;
+  const { processed, total } = event.payload || {};
+  if (!total) return;
+  const pct = Math.min(100, Math.round((processed / total) * 100));
+  const titleEl = document.querySelector('#analyzer-current-file');
+  const container = document.querySelector('#analyzer-tab-content');
+  if (titleEl) titleEl.textContent = `Analyzing… ${pct}%`;
+  if (container) container.innerHTML = `<p class="analyzer-empty">Analyzing demo… ${pct}%</p>`;
+});
+
 export function initAnalyzerPane() {
   const browseBtn = document.querySelector('#analyzer-browse-btn');
   if (browseBtn) {
@@ -258,6 +275,7 @@ export async function loadAnalyzerDemo(path) {
   const titleEl = document.querySelector('#analyzer-current-file');
   if (container) container.innerHTML = '<p class="analyzer-empty">Analyzing demo…</p>';
   if (titleEl) titleEl.textContent = 'Analyzing…';
+  analyzerLoadInProgress = true;
   try {
     report = await analyzeDemoFull(path);
     highlightedPlayerId = null;
@@ -273,6 +291,8 @@ export async function loadAnalyzerDemo(path) {
       container.innerHTML = `<p class="analyzer-empty" style="color:#f44336;">Failed to analyze demo: ${esc(String(err))}</p>`;
     }
     if (titleEl) titleEl.textContent = '';
+  } finally {
+    analyzerLoadInProgress = false;
   }
 }
 
