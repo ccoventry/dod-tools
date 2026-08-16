@@ -1,9 +1,14 @@
 # Demo Analyzer Load Performance — Audit & Implementation Plan
 
-Status: **audit complete, nothing below "Implementation plan" is built yet.**
+Status: **Tiers 1a/1b/2/3 implemented and committed** (`00be056` perf commit,
+`ee86ea1` follow-up `run.ps1` fix — unrelated, just adjacent history on the
+same branch). **Tier 4/5 not started**, still blocked on the future-stats
+review exactly as originally planned — see that section, it's unchanged.
 Written so a fresh chat (clean context) can pick this up without re-deriving
 anything. If you're that fresh session: read this whole file before touching
-code, it front-loads everything the audit already ruled out.
+code, it front-loads everything the audit already ruled out. The "Implementation
+plan" section below is now a record of what was built, not just a proposal —
+each tier is marked with its outcome and any deviation from the original design.
 
 ## Goal
 
@@ -156,7 +161,7 @@ work (Tier 4), that's the first thing to instrument.
 
 ## Implementation plan
 
-### Tier 1a — on-disk analyzer cache (the only path to "instant")
+### Tier 1a — on-disk analyzer cache (the only path to "instant") ✅ implemented
 
 Highest leverage, low risk, purely additive. Design:
 
@@ -177,6 +182,17 @@ Highest leverage, low risk, purely additive. Design:
 - Wire `desktop-studio/src-tauri/src/lib.rs::analyze_demo_full` (~line 275) to
   call this instead of `run_analyzer_with_progress` directly.
 
+**As built:** matches the design above almost exactly. `native/src/lib.rs`
+gained `run_analyzer_cached` (cache read/write, size+mtime validity check),
+`build_file_info` (factored out of `run_analyzer_with_progress` so both paths
+share it), and `write_analyzer_cache_entry` (shared write-through helper, also
+used by Tier 3 below). Cache key is `fnv1a_hash` of the canonicalized path
+(reusing `native::utils::demo_hasher::fnv1a_hash`, already used by
+`hl-demo-auditor` — no new hashing dependency needed, as hoped). Cache dir is
+`analyzer_cache/v{CACHE_SCHEMA_VERSION}/<hash>.json`, `CACHE_SCHEMA_VERSION`
+starts at `1`. `analyze_demo_full` now calls `run_analyzer_cached` instead of
+`run_analyzer_with_progress`.
+
 Expected result: first open of a demo unchanged (~1.3s); every subsequent
 open of the same unmodified file drops to ~10-15ms (cache-file read + JSON
 deserialize of a ~0.3MB payload). This is what "instant" actually means here
@@ -195,7 +211,7 @@ computed content. Treat a version mismatch as a miss. This is what makes
 Tier 1a compatible with an evolving stats set — see below, this is not
 hypothetical, it's coming soon.
 
-### Tier 1b — real progress events (fixes "feels frozen", not speed)
+### Tier 1b — real progress events (fixes "feels frozen", not speed) ✅ implemented
 
 - Add `app_handle: tauri::AppHandle` param to the `analyze_demo_full` command
   (same pattern already used by `scan_directory` in the same file).
@@ -216,13 +232,34 @@ hypothetical, it's coming soon.
   listeners — same pattern `render_pane.js` uses for `render_status`) to swap
   the static "Analyzing…" text for a real percentage/progress bar.
 
-### Tier 2 — delete dead code
+**As built:** matches the design. `analyze_demo_full` now takes `app_handle:
+tauri::AppHandle`, throttles via a `last_emit: Instant` + 33ms check (always
+emitting on the final `processed == total` call too, so the UI never gets
+stuck below 100%), and emits `analyzer_progress` with `{processed, total}`.
+`analyzer_pane.js` registers a single `listen('analyzer_progress', ...)` at
+module scope (not inside a function, so it only ever runs once per app
+lifetime — same double-registration concern noted for `render_status` in
+`ipc_bridge.js`), gated by an `analyzerLoadInProgress` flag so stray/late
+events from a previous load can't clobber the UI. One thing not in the
+original design: since a cache *hit* (Tier 1a) never calls `progress_cb` at
+all, the progress UI only ever appears on a cold parse — correct behavior,
+just worth knowing if it looks like progress events "stopped working" once
+the cache warms up.
+
+### Tier 2 — delete dead code ✅ implemented
 
 Remove `analysis/src/lib.rs` ~lines 802-1240: `parse_with_diagnostics`,
 `struct ParseDiagnostics`, `fn check_states_equal`. Confirmed unused (see
 above). Pure cleanup, ~440 lines gone, no behavior change.
 
-### Tier 3 — reuse Capture Studio's scan for cache warm-up (deferred)
+**As built:** exactly as planned, plus a pass to keep the boundary clean
+(the block sat inside `impl Analysis { ... }` alongside `try_from_bytes*`, so
+only the `parse_with_diagnostics` fn body was deleted from inside that impl;
+`ParseDiagnostics`/`check_states_equal` were free-standing and deleted
+outright). `cargo build --workspace` and a `grep -rn` for all three names
+confirmed zero remaining references before landing it.
+
+### Tier 3 — reuse Capture Studio's scan for cache warm-up ✅ implemented (design changed)
 
 `scan_demo_for_highlights` (`native/src/patch/scanner.rs`) already builds the
 exact `Analysis` the cache in Tier 1a wants, then throws it away. Threading it
@@ -230,12 +267,25 @@ through would mean every Capture Studio folder scan pre-warms the analyzer
 cache for free — for the common "scan a folder, then inspect demos"
 workflow, every analyzer open after a scan becomes the ~10-15ms cache path.
 
-**Deferred, not started:** this requires changing `scan_demo_for_highlights`'s
-return signature (it's a `pub fn` consumed by `capture_manager.rs` — a public
-API per CLAUDE.md's "don't touch public APIs unless explicitly requested"
-guardrail) and touching `scan_directory_impl`'s destructuring. Bigger blast
-radius than Tier 1. Do it as its own follow-up once Tier 1 is proven out, not
-bundled in.
+**As built — deliberately not what this section originally proposed.** The
+plan above called for changing `scan_demo_for_highlights`'s return signature
+directly, flagged at the time as the reason to defer it (bigger blast radius,
+touches a `pub fn` with call sites beyond `capture_manager.rs`). When Tier 3
+actually got built, that turned out to be avoidable: `scan_demo_for_highlights`
+now has a new sibling, `scan_demo_for_highlights_with_analysis`, which does the
+real work and returns `(the_original_7_tuple, analysis::Analysis)`;
+`scan_demo_for_highlights` itself became a one-line wrapper
+(`.map(|(result, _analysis)| result)`) with its signature and behavior
+completely unchanged. Only `capture_manager.rs::scan_directory_impl` (the one
+caller that actually wanted the `Analysis`) was switched to call the new
+function. The other four call sites (`native/src/bin/check_ticks.rs`,
+`debug_scanner.rs`, `cli/main.rs`, `test_builder.rs`) were never touched —
+same effect as the original design (folder scans warm the cache), much
+smaller diff. `scan_directory_impl` calls the new
+`native::warm_analyzer_cache(&file, &analysis)` (in `native/src/lib.rs`,
+built alongside `run_analyzer_cached` in Tier 1a, sharing its
+`write_analyzer_cache_entry` helper) right after each successful scan —
+best-effort, never fails the scan itself.
 
 ### Tier 4/5 — BLOCKED on the future-stats question below, not just "later"
 
@@ -251,10 +301,12 @@ bundled in.
   824ms decode and the 441ms drop). Bigger, cross-cutting change to a shared
   parsing crate other tools depend on.
 
-Both need the old `check_states_equal`-style correctness harness (before you
-delete it in Tier 2, that's the pattern to resurrect: a real "compare
+Both need a `check_states_equal`-style correctness harness (a real "compare
 before/after parsed state across a broad demo corpus" check) rebuilt and run
-wide before shipping.
+wide before shipping. That code was deleted in Tier 2 (now done, see above) —
+its pattern is still in history at commit `00be056`'s parent (`fa0d9d4`) if
+you want to resurrect it as a starting point rather than writing one from
+scratch.
 
 **This tier is not just deferred, it is actively in tension with adding more
 player stats — read this before starting either.** The two biggest
@@ -294,9 +346,11 @@ unwanted (e.g. `SvcSound`, `ClientAreas`, `SvcTempEntity` remain good discard
 candidates regardless of the stats work). That's a smarter optimization than
 "decode nothing," and it only exists if the stats pass happens first.
 
-Do Tier 4/5 deliberately, as its own effort, once Tier 1-3 are done/validated
-**and** the future-stats review has determined which of the currently-discarded
-fields are worth computing.
+Do Tier 4/5 deliberately, as its own effort, now that Tier 1-3 are done
+(landed in `00be056`) **once** the future-stats review has determined which of
+the currently-discarded fields are worth computing. That review itself hasn't
+happened yet — Tier 4/5 is still fully unstarted, this is just no longer
+"blocked on other perf work too," only on the stats question.
 
 ## How to verify any of this yourself
 
@@ -306,6 +360,21 @@ cargo build --release -p dod-benchmark
 ```
 
 Reproduces the phase table and the consumed/discarded netmessage histogram
-above. For the cache once Tier 1a exists: open a demo in the Analyzer, check
-`%APPDATA%/dod-tools/analyzer_cache/` populates, then re-open the same demo
-and confirm it's near-instant.
+above — still accurate for a cold/cache-miss parse, since the benchmark
+exercises the parse path directly and doesn't go through the Tier 1a cache.
+
+**Tier 1a cache, now that it exists:** open a demo in the Demo Analyzer tab,
+check `%APPDATA%\dod-tools\analyzer_cache\v1\` populates with a
+`<16-hex-digit>.json` file, then re-open the same demo (or re-select it from
+the sidebar) and confirm it's near-instant with no progress bar — a cache hit
+skips `progress_cb` entirely, so the absence of the Tier 1b progress UI on a
+second open is itself the tell. Bump `ANALYZER_CACHE_SCHEMA_VERSION` in
+`native/src/lib.rs` (currently `1`) any time computed `AnalyzerState`/`Player`
+fields change, so old cache entries get treated as a miss instead of quietly
+deserializing incomplete.
+
+**Tier 3 warm-up:** run a Capture Studio folder scan over a directory of
+demos you haven't opened in the Analyzer yet, then check
+`analyzer_cache/v1/` already has entries for them before you ever open the
+Analyzer tab — confirms `scan_directory_impl` is calling
+`native::warm_analyzer_cache` per scanned demo.
