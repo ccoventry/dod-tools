@@ -31,9 +31,6 @@ pub struct CapturePayload {
     /// Optional absolute path to ffmpeg.exe; falls back to bundled then PATH.
     #[serde(default)]
     pub ffmpeg_override_path: Option<String>,
-    /// Explicit primary capture output folder; takes precedence over `drives[0]`.
-    #[serde(default)]
-    pub primary_media_dir: Option<String>,
     #[serde(default = "default_resolution_width")]
     pub resolution_width: i32,
     #[serde(default = "default_resolution_height")]
@@ -219,12 +216,9 @@ fn config_from_payload(payload: &CapturePayload) -> PatcherConfig {
             _ => CommandRelation::Before,
         },
     }).collect();
-    // Drive routing: explicit Primary Media Dir field (from its own UI
-    // input) takes precedence; fall back to the Target Output Drives list.
-    cfg.primary_media_dir = payload.primary_media_dir.as_ref()
-        .filter(|s| !s.trim().is_empty())
-        .map(std::path::PathBuf::from)
-        .or_else(|| payload.drives.first().map(std::path::PathBuf::from));
+    // Capture Output is the sole (required) source of output directories —
+    // the frontend already blocks the batch if `drives` is empty.
+    cfg.primary_media_dir = payload.drives.first().map(std::path::PathBuf::from);
     cfg.allocation_strategy = match payload.allocation_strategy.as_str() {
         "Chronological" => DriveAllocationStrategy::Chronological,
         _ => DriveAllocationStrategy::MaximizeSpace,

@@ -405,7 +405,7 @@ button.primary-btn:hover:not(:disabled) {
   transition: width 0.2s ease-in-out;
 }
 
-/* Shared editable row-list widget (list_editor.js) — Drive Overrides,
+/* Shared editable row-list widget (list_editor.js) — Capture Output,
    Render Folders, Export Drives, Init Commands, and Custom Commands. */
 .list-editor-list {
   display: flex;

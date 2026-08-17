@@ -132,14 +132,10 @@ export async function refreshLaunchGuard(state) {
     separateHud: separateHudVal,
   });
 
-  // Mirrors buildCapturePayload's outputDrivePool: the Target Output Drives
-  // pool takes precedence, falling back to Primary Media Dir so a guard
-  // check doesn't block a setup that buildCapturePayload would accept.
-  const primaryMediaDirVal = document.querySelector('#primary-media-dir-input')?.value?.trim() || null;
-  const driveDirs = (resolvedState.targetDrives || []).filter(Boolean);
-  const effectiveDrivePool = driveDirs.length > 0
-    ? driveDirs
-    : [primaryMediaDirVal].filter(Boolean);
+  // Mirrors buildCapturePayload's outputDrivePool — Capture Output is the
+  // sole (required) source of output directories now that Primary Media Dir
+  // is gone.
+  const effectiveDrivePool = (resolvedState.targetDrives || []).filter(Boolean);
 
   let availableBytes = 0;
   if (effectiveDrivePool.length > 0) {
@@ -162,7 +158,7 @@ export async function refreshLaunchGuard(state) {
 
   if (warningEl) {
     if (noDrivesConfigured) {
-      warningEl.textContent = "No target output drives configured — add at least one Target Output Drive with free space before starting a capture.";
+      warningEl.textContent = "No Capture Output directories configured — add at least one with free space before starting a capture.";
       warningEl.style.display = 'block';
     } else if (insufficientSpace) {
       warningEl.textContent = `Insufficient disk space: capture needs ~${(requiredBytes / 1e9).toFixed(2)} GB, only ${(availableBytes / 1e9).toFixed(2)} GB available across the export pool.`;
@@ -454,8 +450,7 @@ export function initCaptureUI(getState, onSettingsChange) {
   // so values only survived a restart by coincidence, if some unrelated
   // action (e.g. browsing for hlae.exe) happened to save afterward.
   ['#config-res-width', '#config-res-height', '#config-separate-hud',
-   '#config-pre-roll', '#config-post-roll', '#config-capture-fps',
-   '#primary-media-dir-input'].forEach(selector => {
+   '#config-pre-roll', '#config-post-roll', '#config-capture-fps'].forEach(selector => {
     const el = document.querySelector(selector);
     if (el) el.addEventListener('input', () => { refreshLaunchGuard(); notifySettingsChange(); });
   });
@@ -466,7 +461,7 @@ export function initCaptureUI(getState, onSettingsChange) {
     });
   // Checkboxes read by persistAppSettings/buildCapturePayload but with no
   // change listener of their own — same missing-wiring bug as the Timing
-  // Options fields above, just on Path Routing / Drive Overrides checkboxes.
+  // Options fields above, just on Path Routing / Capture Output checkboxes.
   ['#config-add-condebug', '#config-auto-clear-logs', '#config-auto-clear-previews',
    '#config-auto-clear-temp-demos', '#config-save-local-patched'].forEach(selector => {
     const el = document.querySelector(selector);
@@ -560,7 +555,6 @@ export function initCaptureUI(getState, onSettingsChange) {
     const hlaePathVal = document.querySelector("#hlae-path-input")?.value?.trim() || "";
     const hlPathVal = document.querySelector("#hl-path-input")?.value?.trim() || "";
     const ffmpegOverridePathVal = document.querySelector("#ffmpeg-override-path-input")?.value?.trim() || null;
-    const primaryMediaDirVal = document.querySelector("#primary-media-dir-input")?.value?.trim() || null;
 
     const resWidthVal = parseInt(document.querySelector("#config-res-width")?.value, 10) || 1280;
     const resHeightVal = parseInt(document.querySelector("#config-res-height")?.value, 10) || 720;
@@ -583,16 +577,12 @@ export function initCaptureUI(getState, onSettingsChange) {
     // capture_engine.rs mklinks a junction per entry. It must be actual
     // output directories, NEVER state.scanPaths (the demo *source* files
     // the user added for scanning); mklinking a junction against a .dem
-    // file aborts the batch. Source from the configured Target Output
-    // Drives pool, falling back to the Primary Media Dir field when that
-    // pool is empty.
-    const driveDirs = (state.targetDrives || []).filter(Boolean);
-    const outputDrivePool = driveDirs.length > 0
-      ? driveDirs
-      : [primaryMediaDirVal].filter(Boolean);
+    // file aborts the batch. Sourced from Capture Output — required, no
+    // fallback.
+    const outputDrivePool = (state.targetDrives || []).filter(Boolean);
 
     if (outputDrivePool.length === 0) {
-      showToast("Configure at least one Target Output Drive (or a Primary Media Directory) before starting a capture.", 'error');
+      showToast("Configure at least one Capture Output directory before starting a capture.", 'error');
       return null;
     }
 
@@ -611,7 +601,6 @@ export function initCaptureUI(getState, onSettingsChange) {
       hlae_path: hlaePathVal,
       game_path: hlPathVal,
       ffmpeg_override_path: ffmpegOverridePathVal,
-      primary_media_dir: primaryMediaDirVal,
       resolution_width: resWidthVal,
       resolution_height: resHeightVal,
       separate_hud: separateHudVal,
@@ -649,7 +638,7 @@ export function initCaptureUI(getState, onSettingsChange) {
       const guard = await refreshLaunchGuard(state);
       if (guard && guard.blocked) {
         if (guard.availableBytes === 0) {
-          showToast("Configure at least one Target Output Drive (or Primary Media Directory) with free space before starting a capture.", 'error');
+          showToast("Configure at least one Capture Output directory with free space before starting a capture.", 'error');
         } else {
           showToast(`Insufficient disk space. Required: ${(guard.requiredBytes / 1e9).toFixed(2)} GB, Available: ${(guard.availableBytes / 1e9).toFixed(2)} GB`, 'error');
         }

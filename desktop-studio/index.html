@@ -140,7 +140,7 @@
             <div class="config-tabs-nav">
               <button class="config-tab-btn active" data-tab="tab-path-routing">Path Routing</button>
               <button class="config-tab-btn" data-tab="tab-timing-options">Timing Options</button>
-              <button class="config-tab-btn" data-tab="tab-drive-overrides">Drive Overrides</button>
+              <button class="config-tab-btn" data-tab="tab-drive-overrides">Capture Output</button>
               <button class="config-tab-btn" data-tab="tab-custom-commands">Custom Commands</button>
             </div>
 
@@ -160,11 +160,6 @@
                 <label>FFmpeg Override Path:</label>
                 <input type="text" id="ffmpeg-override-path-input" placeholder="Optional path to ffmpeg.exe" style="flex: 1;" />
                 <button id="ffmpeg-browse-btn">Browse</button>
-              </div>
-              <div class="input-row">
-                <label>Primary Media Dir:</label>
-                <input type="text" id="primary-media-dir-input" placeholder="Primary output folder for captures" style="flex: 1;" />
-                <button id="primary-media-browse-btn">Browse</button>
               </div>
               <div class="inline-controls">
                 <div class="control-group">
@@ -224,12 +219,12 @@
               </div>
             </div>
 
-            <!-- Tab Content: Drive Overrides -->
+            <!-- Tab Content: Capture Output (id kept as tab-drive-overrides — internal hook, not user-visible) -->
             <div id="tab-drive-overrides" class="config-tab-content" style="display: none;">
               <div class="input-row">
-                <input type="text" id="drive-path-input" placeholder="Target output drive path..." style="flex: 1;" />
-                <button id="add-drive-btn">Add Drive</button>
-                <button id="browse-drive-btn">Browse Drive</button>
+                <input type="text" id="drive-path-input" placeholder="Capture output directory path..." style="flex: 1;" />
+                <button id="add-drive-btn">Add Directory</button>
+                <button id="browse-drive-btn">Browse</button>
                 <label for="allocation-strategy">Allocation Strategy:</label>
                 <select id="allocation-strategy">
                   <option value="MaximizeSpace">Maximize Space</option>
@@ -501,7 +496,7 @@
 
       <!-- Pinned Bottom Action / Status Bar -->
       <footer id="pinned-action-bar">
-        <div id="export-pool-free-indicator">Total Export Pool Free: 0.0 GB</div>
+        <div id="export-pool-free-indicator">Capture Output Free: 0.0 GB</div>
         <div class="action-bar-right">
           <button id="proceed-capture-nav-btn" class="action-next-btn">Proceed to Capture &rarr;</button>
         </div>
