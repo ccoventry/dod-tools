@@ -15,7 +15,7 @@ import { initRenderUI, checkRenderRecoveryOnStartup } from './render_pane.js';
 import { renderTelemetry } from './telemetry_pane.js';
 import { initAuditorPane } from './auditor_pane.js';
 import { initAnalyzerPane } from './analyzer_pane.js';
-import { switchNavTab, setCaptureDetailSubtab, getCaptureDetailSubtab } from './nav.js';
+import { switchNavTab, setCaptureDetailSubtab } from './nav.js';
 import { analyzeDemo } from './ipc_bridge.js';
 import { showToast } from './toast.js';
 
@@ -34,6 +34,23 @@ window.addEventListener("DOMContentLoaded", async () => {
   let renderExportDirs = []; // JIT multi-drive export pool for Render Studio
   let currentScannedDemos = [];
   let selectedDemoIdx = null;
+  // The project session file last loaded or saved in this window, if any —
+  // once set, "Save Session" writes straight back to it instead of asking
+  // Save-As every time (matches Ctrl+S's behavior in every other app).
+  let currentSessionPath = null;
+
+  function updateSessionFileIndicator() {
+    const el = document.querySelector('#session-file-indicator');
+    if (!el) return;
+    if (currentSessionPath) {
+      const filename = currentSessionPath.split(/[\\/]/).pop() || currentSessionPath;
+      el.textContent = filename;
+      el.title = currentSessionPath;
+    } else {
+      el.textContent = 'No session loaded';
+      el.title = '';
+    }
+  }
 
   // Initialize modular UI panes
   initAuditorPane();
@@ -242,11 +259,13 @@ window.addEventListener("DOMContentLoaded", async () => {
   if (saveProjectBtn) {
     saveProjectBtn.addEventListener('click', async () => {
       if (currentScannedDemos.length === 0) {
-        console.warn("No scanned demo state to save.");
+        showToast("Nothing to save yet — add demo files or load a session first.", 'info');
         return;
       }
       try {
-        const filePath = await save({
+        // Once a session's been loaded or saved once in this window, keep
+        // writing back to that same file instead of asking Save-As again.
+        const filePath = currentSessionPath || await save({
           title: 'Save Studio Project Session',
           defaultPath: 'dod_project.json',
           filters: [{ name: 'JSON Project File', extensions: ['json'] }]
@@ -262,6 +281,8 @@ window.addEventListener("DOMContentLoaded", async () => {
             hlPath: hlPath
           }, null, 2);
           await invoke('save_project_session', { path: filePath, contents: projectData });
+          currentSessionPath = filePath;
+          updateSessionFileIndicator();
           showToast(`Project session saved successfully to ${filePath}`, 'success');
         }
       } catch (err) {
@@ -284,6 +305,8 @@ window.addEventListener("DOMContentLoaded", async () => {
           const content = await invoke('load_project_session', { path: selected });
           const data = JSON.parse(content);
           if (data) {
+            currentSessionPath = selected;
+            updateSessionFileIndicator();
             if (data.hlaePath) {
               const hlaeInput = document.querySelector('#hlae-path-input');
               if (hlaeInput) hlaeInput.value = data.hlaePath;
@@ -871,13 +894,12 @@ window.addEventListener("DOMContentLoaded", async () => {
     }
 
     if (activeTab === 'workspace') {
-      // Ctrl+O behavior depends on which in-workflow phase is active — matches
-      // the old 'workspace'/'export-config' top-level-tab split before that
-      // was folded into Capture Studio's Highlights/Configuration sub-tabs.
-      if (isCtrlO) {
-        const target = getCaptureDetailSubtab() === 'configuration' ? '#load-project-btn' : '#add-files-btn';
-        document.querySelector(target)?.click();
-      }
+      // Ctrl+O always opens a project session file (Ctrl+S always saves one,
+      // unconditionally, below) — it previously depended on which Capture
+      // Studio sub-tab was active and opened the Add Demo Files picker
+      // instead when on Highlights, which doesn't match Ctrl+O's meaning
+      // in every other app.
+      if (isCtrlO) document.querySelector('#load-project-btn')?.click();
       if (isCtrlS) document.querySelector('#save-project-btn')?.click();
     }
   });

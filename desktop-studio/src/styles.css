@@ -129,7 +129,17 @@ body {
 
 .nav-actions {
   display: flex;
+  align-items: center;
   gap: 6px;
+}
+
+.session-file-indicator {
+  color: var(--text-muted);
+  font-size: 11px;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Main Split Content Area */
