@@ -141,7 +141,7 @@ export async function checkRenderRecoveryOnStartup(onRecovered) {
   }, { once: true });
 }
 
-export function initRenderUI(getRenderFolders, getExportDirs) {
+export function initRenderUI(getRenderFolders, getExportDirs, onSettingsChange) {
   const scanRenderBtn = document.querySelector('#scan-render-btn');
   const startRenderBtn = document.querySelector('#start-render-btn');
   const cancelRenderBtn = document.querySelector('#cancel-render-btn');
@@ -270,6 +270,18 @@ export function initRenderUI(getRenderFolders, getExportDirs) {
         if (startRenderBtn) startRenderBtn.disabled = false;
       });
     });
+  }
+
+  // Codec/FPS/max-concurrent aren't read until Start Render Batch is
+  // clicked, but they're still persisted settings — nothing previously
+  // wired their edits to a save.
+  if (onSettingsChange) {
+    const codecEl = document.querySelector('#render-codec-select');
+    if (codecEl) codecEl.addEventListener('change', () => onSettingsChange());
+    const fpsEl = document.querySelector('#render-fps-input');
+    if (fpsEl) fpsEl.addEventListener('input', () => onSettingsChange());
+    const maxConcurrentEl = document.querySelector('#render-max-concurrent-input');
+    if (maxConcurrentEl) maxConcurrentEl.addEventListener('input', () => onSettingsChange());
   }
 
   refreshExportPoolFree(getExportDirs);

@@ -519,10 +519,15 @@ export function initCaptureUI(getState, onSettingsChange) {
   // change listener of their own — same missing-wiring bug as the Timing
   // Options fields above, just on Path Routing / Drive Overrides checkboxes.
   ['#config-add-condebug', '#config-auto-clear-logs', '#config-auto-clear-previews',
-   '#config-auto-clear-temp-demos'].forEach(selector => {
+   '#config-auto-clear-temp-demos', '#config-save-local-patched'].forEach(selector => {
     const el = document.querySelector(selector);
     if (el) el.addEventListener('change', () => notifySettingsChange());
   });
+  // Only read at capture time (buildCapturePayload), same as the checkboxes
+  // above, but previously not part of AppSettings at all — reset to default
+  // every restart.
+  const allocationStrategyEl = document.querySelector('#allocation-strategy');
+  if (allocationStrategyEl) allocationStrategyEl.addEventListener('change', () => notifySettingsChange());
   refreshLaunchGuard();
 
   if (!unlistenCaptureStatus) {
