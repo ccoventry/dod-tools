@@ -359,10 +359,10 @@ button.primary-btn:hover:not(:disabled) {
   gap: 4px;
 }
 
-/* Pinned Bottom Action / Status Bar */
+/* Pinned Bottom Status Bar — one child per tab (index.html), toggled by
+   switchNavTab() (nav.js); only the active tab's content is visible. */
 #pinned-action-bar {
   display: flex;
-  justify-content: space-between;
   align-items: center;
   background: #161616;
   border-top: 1px solid var(--border-color);
@@ -371,22 +371,24 @@ button.primary-btn:hover:not(:disabled) {
   flex-shrink: 0;
 }
 
-#export-pool-free-indicator {
+.pinned-footer-content {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+#export-pool-free-indicator,
+#render-footer-pool-free,
+#footer-audit-summary {
   font-weight: bold;
   color: #4caf50;
   font-size: 12px;
 }
 
-.action-next-btn {
-  background: var(--success-color);
-  color: #ffffff;
-  border-color: #558b2f;
-  font-weight: bold;
-  padding: 6px 14px;
-}
-
-.action-next-btn:hover {
-  background: #43a047;
+#render-footer-queue-summary,
+#footer-analyzer-current-file {
+  color: var(--text-muted);
+  font-size: 12px;
 }
 
 /* Progress Bars */

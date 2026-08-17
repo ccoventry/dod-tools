@@ -729,15 +729,6 @@ window.addEventListener("DOMContentLoaded", async () => {
     btn.addEventListener('click', () => setCaptureDetailSubtab(btn.dataset.captureSubtab));
   });
 
-  // Proceed to Capture button in footer
-  const proceedBtn = document.querySelector('#proceed-capture-nav-btn');
-  if (proceedBtn) {
-    proceedBtn.addEventListener('click', () => {
-      switchNavTab('workspace');
-      setCaptureDetailSubtab('configuration');
-    });
-  }
-
   // Initialize Capture Batch UI
   initCaptureUI(() => ({
     scanPaths,

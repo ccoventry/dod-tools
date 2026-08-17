@@ -9,6 +9,13 @@ import { open } from '@tauri-apps/plugin-dialog';
 import { listen } from '@tauri-apps/api/event';
 import { analyzeDemoFull, browseDirectory, defaultBrowseDir, countDemoFiles, scanDemoFolders } from './ipc_bridge.js';
 
+function setAnalyzerFileIndicator(text) {
+  const titleEl = document.querySelector('#analyzer-current-file');
+  const footerEl = document.querySelector('#footer-analyzer-current-file');
+  if (titleEl) titleEl.textContent = text;
+  if (footerEl) footerEl.textContent = text || 'No demo loaded';
+}
+
 let report = null;
 let analyzerLoadInProgress = false;
 let activeSubTab = 'summary';
@@ -700,9 +707,8 @@ listen('analyzer_progress', (event) => {
   const { processed, total } = event.payload || {};
   if (!total) return;
   const pct = Math.min(100, Math.round((processed / total) * 100));
-  const titleEl = document.querySelector('#analyzer-current-file');
   const container = document.querySelector('#analyzer-tab-content');
-  if (titleEl) titleEl.textContent = `Analyzing… ${pct}%`;
+  setAnalyzerFileIndicator(`Analyzing… ${pct}%`);
   if (container) container.innerHTML = `<p class="analyzer-empty">Analyzing demo… ${pct}%</p>`;
 });
 
@@ -770,15 +776,14 @@ export async function openAnalyzerDemo(path) {
 
 export async function loadAnalyzerDemo(path) {
   const container = document.querySelector('#analyzer-tab-content');
-  const titleEl = document.querySelector('#analyzer-current-file');
   if (container) container.innerHTML = '<p class="analyzer-empty">Analyzing demo…</p>';
-  if (titleEl) titleEl.textContent = 'Analyzing…';
+  setAnalyzerFileIndicator('Analyzing…');
   analyzerLoadInProgress = true;
   try {
     report = await analyzeDemoFull(path);
     highlightedPlayerId = null;
     selectedPlayerId = null;
-    if (titleEl) titleEl.textContent = report.file_name;
+    setAnalyzerFileIndicator(report.file_name);
     browserSelectedDemo = path;
     renderDemoTable();
     renderActiveTab();
@@ -786,7 +791,7 @@ export async function loadAnalyzerDemo(path) {
     if (container) {
       container.innerHTML = `<p class="analyzer-empty" style="color:#f44336;">Failed to analyze demo: ${esc(String(err))}</p>`;
     }
-    if (titleEl) titleEl.textContent = '';
+    setAnalyzerFileIndicator('');
   } finally {
     analyzerLoadInProgress = false;
   }

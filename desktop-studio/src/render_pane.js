@@ -32,7 +32,17 @@ function statusColor(status) {
   }
 }
 
+function updateFooterQueueSummary() {
+  const el = document.querySelector('#render-footer-queue-summary');
+  if (!el) return;
+  const queued = jobs.filter((j) => j.status === 'Queued').length;
+  const rendering = jobs.filter((j) => j.status === 'Rendering').length;
+  const done = jobs.filter((j) => j.status === 'Finished' || j.status === 'Error' || j.status === 'Cancelled').length;
+  el.textContent = `${queued} queued · ${rendering} rendering · ${done} done`;
+}
+
 function renderJobsTable() {
+  updateFooterQueueSummary();
   const tbody = document.querySelector('#render-jobs-tbody');
   if (!tbody) return;
 
@@ -94,13 +104,15 @@ function initErrorLogModal() {
 async function refreshExportPoolFree(getExportDirs) {
   const dirs = getExportDirs ? getExportDirs() : [];
   const freeEl = document.querySelector('#render-export-pool-free');
-  if (!freeEl) return;
+  const footerFreeEl = document.querySelector('#render-footer-pool-free');
   if (dirs.length === 0) {
-    freeEl.textContent = '0.0 GB';
+    if (freeEl) freeEl.textContent = '0.0 GB';
+    if (footerFreeEl) footerFreeEl.textContent = 'Export Pool Free: 0.0 GB';
     return;
   }
   const gb = await getExportPoolFreeGb(dirs);
-  freeEl.textContent = `${gb.toFixed(1)} GB`;
+  if (freeEl) freeEl.textContent = `${gb.toFixed(1)} GB`;
+  if (footerFreeEl) footerFreeEl.textContent = `Export Pool Free: ${gb.toFixed(1)} GB`;
 }
 
 // ── Startup crash-recovery prompt ────────────────────────────────────────────

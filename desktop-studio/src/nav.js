@@ -49,18 +49,30 @@ export function switchNavTab(navKey) {
   [workspacePane, detailsPane, captureSubtabsBar, detailPane, advancedPanel, exportPanel, renderPanel, auditorPane, analyzerPane]
     .forEach((el) => { if (el) el.style.display = 'none'; });
 
+  const footerCaptureStudio = document.querySelector('#footer-capture-studio');
+  const footerRenderStudio = document.querySelector('#footer-render-studio');
+  const footerDemoAuditor = document.querySelector('#footer-demo-auditor');
+  const footerDemoAnalyzer = document.querySelector('#footer-demo-analyzer');
+
+  [footerCaptureStudio, footerRenderStudio, footerDemoAuditor, footerDemoAnalyzer]
+    .forEach((el) => { if (el) el.style.display = 'none'; });
+
   if (navKey === 'workspace') {
     if (workspacePane) workspacePane.style.display = 'flex';
     if (detailsPane) detailsPane.style.display = 'flex';
     if (captureSubtabsBar) captureSubtabsBar.style.display = 'flex';
     applyCaptureDetailSubtabDisplay();
+    if (footerCaptureStudio) footerCaptureStudio.style.display = 'flex';
   } else if (navKey === 'render-studio') {
     if (detailsPane) detailsPane.style.display = 'flex';
     if (renderPanel) renderPanel.style.display = 'block';
+    if (footerRenderStudio) footerRenderStudio.style.display = 'flex';
   } else if (navKey === 'demo-auditor') {
     if (auditorPane) auditorPane.style.display = 'flex';
+    if (footerDemoAuditor) footerDemoAuditor.style.display = 'flex';
   } else if (navKey === 'demo-analyzer') {
     if (analyzerPane) analyzerPane.style.display = 'flex';
+    if (footerDemoAnalyzer) footerDemoAnalyzer.style.display = 'flex';
   }
 
   document.querySelectorAll('.nav-tab-btn').forEach((b) => {
