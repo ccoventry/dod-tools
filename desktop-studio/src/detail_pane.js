@@ -16,6 +16,18 @@ let currentOnSelectionChange = null;
 export function initDetailPane(getAllDemos, onSelectionChange) {
   currentGetAllDemos = getAllDemos;
   currentOnSelectionChange = onSelectionChange || null;
+
+  // The timeline canvas now lives inside the collapsed-by-default Advanced
+  // Diagnostics <details> block, so it has 0 clientWidth/clientHeight (and
+  // therefore never actually draws) any time renderTimeline() runs while
+  // collapsed. Redraw on expand so it isn't stuck blank the first time the
+  // user opens it.
+  const advancedPanel = document.querySelector('#advanced-diagnostics-details');
+  if (advancedPanel) {
+    advancedPanel.addEventListener('toggle', () => {
+      if (advancedPanel.open) renderTimeline(currentDemo);
+    });
+  }
 }
 
 // ── Running Process Guard (Half-Life Preview Detector) ────────────────────────
