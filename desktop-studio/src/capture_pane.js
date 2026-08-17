@@ -48,7 +48,12 @@ function computeRequiredCaptureBytes(currentScannedDemos, opts) {
 
   (currentScannedDemos || []).forEach(demo => {
     const intervals = (demo.streaks || [])
-      .filter(streak => streak.selected === true || streak.selected === undefined)
+      // Opt-in model (detail_pane.js): a streak counts as selected only once
+      // explicitly checked. `undefined` covers both demos never opened in the
+      // Highlight Details view and every non-recording-player streak (which
+      // never renders as a checkable row at all) — neither should ever be
+      // billed for capture space.
+      .filter(streak => streak.selected === true)
       .map(streak => {
         const fps = streak.demo_fps || 100;
         const startSec = (streak.start_tick / fps) - preRollSeconds;
@@ -544,7 +549,8 @@ export function initCaptureUI(getState) {
       state.currentScannedDemos.forEach(demo => {
         if (demo.streaks) {
           demo.streaks.forEach(streak => {
-            if (streak.selected === true || streak.selected === undefined) {
+            // Opt-in model (detail_pane.js) — see computeRequiredCaptureBytes above.
+            if (streak.selected === true) {
               selectedStreaks.push(streak);
             }
           });
