@@ -385,8 +385,8 @@ pub fn run() {
             reveal_in_explorer,
             dir_browser::browse_directory,
             dir_browser::default_browse_dir,
-            dir_browser::list_demos_recursive,
-            dir_browser::resolve_demo_summary,
+            dir_browser::count_demo_files_in_folder,
+            dir_browser::scan_demo_folders,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

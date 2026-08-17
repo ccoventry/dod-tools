@@ -10,6 +10,11 @@ pub struct AppSettings {
     pub hl_path: String,
     pub ffmpeg_path: Option<String>,
     pub pinned_folders: Vec<String>,
+    /// Analyzer sidebar's "Recent" quick-links tier — most-recent-first,
+    /// capped at 10, pushed whenever a folder selection yields a non-empty
+    /// demo listing. Mirrors dev's `settings.demo_folder_history`.
+    #[serde(default)]
+    pub demo_folder_history: Vec<String>,
     pub language: String,
     pub capture_fps: i32,
     pub pre_roll_seconds: f32,
@@ -61,6 +66,7 @@ impl Default for AppSettings {
             hl_path: String::new(),
             ffmpeg_path: None,
             pinned_folders: Vec::new(),
+            demo_folder_history: Vec::new(),
             language: "en".to_string(),
             capture_fps: 300,
             pre_roll_seconds: 2.0,

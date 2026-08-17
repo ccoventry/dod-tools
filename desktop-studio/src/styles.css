@@ -803,22 +803,47 @@ button.primary-btn:hover:not(:disabled) {
   margin-right: 4px;
 }
 
-/* Demo Analyzer — folder tree / demo list picker sidebar */
+/* Demo Analyzer — Explorer sidebar (Quick Links + folder tree) + single-folder
+   Demos panel docked above the report tabs. See docs/tauri_parity_audit.md
+   Area 3 for the dev layout this mirrors. */
 
 #pane-demo-analyzer {
   flex-direction: row;
 }
 
-.analyzer-browser-sidebar {
+.analyzer-explorer-sidebar {
   width: 260px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
+  gap: 6px;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.analyzer-main-column {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
   gap: 10px;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.analyzer-demos-panel {
+  flex: none;
+  max-height: 260px;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
 }
 
-.analyzer-browser-panel {
+.analyzer-demos-table-wrap {
+  flex: 1;
+  overflow: auto;
+}
+
+.analyzer-report-panel {
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -830,6 +855,7 @@ button.primary-btn:hover:not(:disabled) {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-shrink: 0;
 }
 
 .analyzer-browser-toolbar button {
@@ -838,52 +864,134 @@ button.primary-btn:hover:not(:disabled) {
   font-size: 11px;
 }
 
-.analyzer-browser-path {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 11px;
+/* Quick Links — Windows-11-style Quick Access: Pinned + Recent + Local
+   tiers, each hidden when empty. */
+.analyzer-quick-links {
+  max-height: 140px;
+  overflow-y: auto;
+  font-size: 12px;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 4px;
+}
+
+.quicklink-tier-label {
+  padding: 4px 6px 2px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
   color: var(--text-muted);
 }
 
-.analyzer-browser-list {
-  flex: 1;
-  overflow-y: auto;
-  font-size: 12px;
-}
-
-.analyzer-browser-row {
+.quicklink-row {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
+  gap: 4px;
+  padding: 3px 6px;
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
-  text-overflow: ellipsis;
 }
 
-.analyzer-browser-row:hover {
+.quicklink-row:hover {
   background: rgba(255, 255, 255, 0.06);
 }
 
-.analyzer-browser-row.selected {
+.quicklink-row.selected {
   background: rgba(43, 92, 143, 0.35);
   color: #ffffff;
 }
 
-.analyzer-browser-row .row-icon {
+.quicklink-pin-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  opacity: 0.35;
   flex-shrink: 0;
+  padding: 0 2px;
+  font-size: 12px;
+}
+
+.quicklink-pin-btn.pinned {
+  opacity: 1;
+}
+
+.quicklink-pin-btn:hover {
   opacity: 0.8;
 }
 
-.analyzer-browser-row .row-meta {
-  margin-left: auto;
-  padding-left: 8px;
+.quicklink-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+
+.quicklink-empty {
+  padding: 8px 6px;
+  font-size: 11px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Native Explorer Tree — lazily-loaded, cached, real expand/collapse. */
+.analyzer-tree {
+  flex: 1;
+  overflow: auto;
+  font-size: 12px;
+  min-height: 0;
+}
+
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px 2px;
+  border-radius: 2px;
+}
+
+.tree-row:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.tree-row.selected .tree-label {
+  background: rgba(43, 92, 143, 0.35);
+  color: #ffffff;
+}
+
+.tree-toggle {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  width: 16px;
   flex-shrink: 0;
   font-size: 10px;
+  padding: 0;
+}
+
+.tree-label {
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 1px 4px;
+  border-radius: 2px;
+  flex: 1;
+}
+
+.tree-children {
+  margin-left: 13px;
+  border-left: 1px solid rgba(255, 255, 255, 0.06);
+  padding-left: 4px;
+}
+
+.tree-loading {
   color: var(--text-muted);
+  font-size: 11px;
+  padding: 2px 8px;
 }
 
 .analyzer-filter-bar {
@@ -919,19 +1027,6 @@ button.primary-btn:hover:not(:disabled) {
 .analyzer-demo-row.selected {
   background: rgba(43, 92, 143, 0.35);
   color: #ffffff;
-}
-
-.analyzer-remove-folder-btn {
-  margin-left: auto;
-  background: none;
-  border: none;
-  color: var(--text-muted);
-  cursor: pointer;
-  padding: 0 4px;
-}
-
-.analyzer-remove-folder-btn:hover {
-  color: #ef4444;
 }
 
 .text-muted {

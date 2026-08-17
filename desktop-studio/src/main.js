@@ -21,6 +21,11 @@ import { showToast } from './toast.js';
 
 window.addEventListener("DOMContentLoaded", async () => {
   let scanPaths = [];
+  // Analyzer Explorer sidebar's "Recent" quick-links tier — most-recent-first,
+  // capped at 10, pushed via recordDemoFolderVisit() below whenever browsing
+  // into a folder yields a non-empty demo listing. Mirrors dev's
+  // `settings.demo_folder_history` (see docs/tauri_parity_audit.md Area 3).
+  let demoFolderHistory = [];
   let targetDrives = [];
   let renderFolders = [];
   let currentScannedDemos = [];
@@ -61,6 +66,7 @@ window.addEventListener("DOMContentLoaded", async () => {
       hl_path: hlPath,
       ffmpeg_path: ffmpegPath,
       pinned_folders: scanPaths,
+      demo_folder_history: demoFolderHistory,
       language: "en",
       capture_fps: captureFps,
       pre_roll_seconds: preRoll,
@@ -156,6 +162,9 @@ window.addEventListener("DOMContentLoaded", async () => {
       }
       if (Array.isArray(settings.pinned_folders) && settings.pinned_folders.length > 0) {
         scanPaths = [...settings.pinned_folders];
+      }
+      if (Array.isArray(settings.demo_folder_history) && settings.demo_folder_history.length > 0) {
+        demoFolderHistory = [...settings.demo_folder_history];
       }
       if (Array.isArray(settings.target_drives) && settings.target_drives.length > 0) {
         targetDrives = [...settings.target_drives];
@@ -695,21 +704,45 @@ window.addEventListener("DOMContentLoaded", async () => {
   initMasterPane(onDeleteDemo);
   initDetailPane(() => currentScannedDemos, () => refreshLaunchGuard({ targetDrives, currentScannedDemos }));
 
-  // Demo Analyzer's watched-folders list shares the same pinned_folders/
-  // scanPaths state as Capture Studio (matches dev's real design — its
-  // desktop_files list was app-wide, not analyzer-scoped). Doesn't trigger
-  // Capture Studio's heavier highlight-scan pipeline, just persists the path.
-  async function addAnalyzerWatchFolder(folder) {
+  // Demo Analyzer's Explorer sidebar Pinned tier shares the same
+  // pinned_folders/scanPaths state as Capture Studio (matches dev's real
+  // design — its own pinned_folders field is app-wide, not analyzer-scoped).
+  // Pinning/unpinning here doesn't trigger Capture Studio's heavier
+  // highlight-scan pipeline, just persists the path.
+  async function pinAnalyzerFolder(folder) {
     if (!scanPaths.includes(folder)) {
       scanPaths.push(folder);
       await persistAppSettings();
     }
   }
-  async function removeAnalyzerWatchFolder(folder) {
+  async function unpinAnalyzerFolder(folder) {
     scanPaths = scanPaths.filter((f) => f !== folder);
     await persistAppSettings();
   }
-  initAnalyzerPane(() => scanPaths, addAnalyzerWatchFolder, removeAnalyzerWatchFolder);
+  // Recent tier: most-recent-first, capped at 10, deduped — mirrors dev's
+  // `demo_folder_history` push-front/truncate logic exactly.
+  async function recordDemoFolderVisit(folder) {
+    demoFolderHistory = demoFolderHistory.filter((f) => f !== folder);
+    demoFolderHistory.unshift(folder);
+    if (demoFolderHistory.length > 10) demoFolderHistory.length = 10;
+    await persistAppSettings();
+  }
+  // A pinned/recent folder that no longer exists on disk is silently
+  // dropped from history when clicked, matching dev's Quick Links behavior.
+  async function forgetDemoFolderVisit(folder) {
+    if (demoFolderHistory.includes(folder)) {
+      demoFolderHistory = demoFolderHistory.filter((f) => f !== folder);
+      await persistAppSettings();
+    }
+  }
+  initAnalyzerPane({
+    getPinnedFolders: () => scanPaths,
+    pinFolder: pinAnalyzerFolder,
+    unpinFolder: unpinAnalyzerFolder,
+    getDemoFolderHistory: () => demoFolderHistory,
+    recordDemoFolderVisit,
+    forgetDemoFolderVisit,
+  });
 
   // Context-Aware Shortcut Dispatcher
   window.addEventListener('keydown', (e) => {
