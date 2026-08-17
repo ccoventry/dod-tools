@@ -63,6 +63,13 @@ window.addEventListener("DOMContentLoaded", async () => {
 
     const primaryMediaDir = document.querySelector('#primary-media-dir-input')?.value?.trim() || null;
 
+    const saveLocalPatchedCopy = document.querySelector('#config-save-local-patched')?.checked || false;
+    const allocationStrategy = document.querySelector('#allocation-strategy')?.value || 'MaximizeSpace';
+
+    const renderCodec = document.querySelector('#render-codec-select')?.value || 'prores';
+    const renderFps = parseInt(document.querySelector('#render-fps-input')?.value, 10) || 300;
+    const renderMaxConcurrent = parseInt(document.querySelector('#render-max-concurrent-input')?.value, 10) || 2;
+
     const { init_commands, custom_commands } = getCommandsState();
 
     const settingsPayload = {
@@ -90,7 +97,14 @@ window.addEventListener("DOMContentLoaded", async () => {
       primary_media_dir: primaryMediaDir,
       target_drives: targetDrives,
       init_commands,
-      custom_commands
+      custom_commands,
+      save_local_patched_copy: saveLocalPatchedCopy,
+      allocation_strategy: allocationStrategy,
+      render_folders: renderFolders,
+      render_codec: renderCodec,
+      render_fps: renderFps,
+      render_max_concurrent: renderMaxConcurrent,
+      render_export_dirs: renderExportDirs
     };
     try {
       await saveSettings(settingsPayload);
@@ -165,6 +179,24 @@ window.addEventListener("DOMContentLoaded", async () => {
         const inputEl = document.querySelector('#primary-media-dir-input');
         if (inputEl) inputEl.value = settings.primary_media_dir;
       }
+      const saveLocalPatchedEl = document.querySelector('#config-save-local-patched');
+      if (saveLocalPatchedEl) saveLocalPatchedEl.checked = !!settings.save_local_patched_copy;
+      if (settings.allocation_strategy) {
+        const inputEl = document.querySelector('#allocation-strategy');
+        if (inputEl) inputEl.value = settings.allocation_strategy;
+      }
+      if (settings.render_codec) {
+        const inputEl = document.querySelector('#render-codec-select');
+        if (inputEl) inputEl.value = settings.render_codec;
+      }
+      if (settings.render_fps) {
+        const inputEl = document.querySelector('#render-fps-input');
+        if (inputEl) inputEl.value = settings.render_fps;
+      }
+      if (settings.render_max_concurrent) {
+        const inputEl = document.querySelector('#render-max-concurrent-input');
+        if (inputEl) inputEl.value = settings.render_max_concurrent;
+      }
       if (Array.isArray(settings.pinned_folders) && settings.pinned_folders.length > 0) {
         scanPaths = [...settings.pinned_folders];
       }
@@ -183,6 +215,21 @@ window.addEventListener("DOMContentLoaded", async () => {
           });
         }
         updateExportPoolIndicator();
+      }
+      if (Array.isArray(settings.render_folders) && settings.render_folders.length > 0) {
+        renderFolders = [...settings.render_folders];
+        const renderFolderListEl = document.querySelector('#render-folder-list');
+        if (renderFolderListEl) {
+          renderFolders.forEach(folderPath => {
+            const li = document.createElement('li');
+            li.textContent = folderPath;
+            renderFolderListEl.appendChild(li);
+          });
+        }
+      }
+      if (Array.isArray(settings.render_export_dirs) && settings.render_export_dirs.length > 0) {
+        renderExportDirs = [...settings.render_export_dirs];
+        renderExportDirs.forEach(dirPath => addRenderExportDirRow(dirPath));
       }
       hydrateCommandsState(settings.init_commands, settings.custom_commands);
     }
@@ -597,7 +644,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   }
 
   // Render folders management
-  document.querySelector('#add-render-folder-btn').addEventListener('click', () => {
+  document.querySelector('#add-render-folder-btn').addEventListener('click', async () => {
     const inputEl = document.querySelector('#render-path-input');
     const path = inputEl.value.trim();
     if (path && !renderFolders.includes(path)) {
@@ -606,6 +653,7 @@ window.addEventListener("DOMContentLoaded", async () => {
       const li = document.createElement('li');
       li.textContent = path;
       document.querySelector('#render-folder-list').appendChild(li);
+      await persistAppSettings();
     }
   });
 
@@ -623,6 +671,7 @@ window.addEventListener("DOMContentLoaded", async () => {
           const li = document.createElement('li');
           li.textContent = selected;
           document.querySelector('#render-folder-list').appendChild(li);
+          await persistAppSettings();
         }
       } catch (err) {
         console.error("Error opening render directory dialog:", err);
@@ -640,9 +689,10 @@ window.addEventListener("DOMContentLoaded", async () => {
     removeBtn.textContent = '🗑';
     removeBtn.title = 'Remove this export drive';
     removeBtn.className = 'drive-pool-remove-btn';
-    removeBtn.addEventListener('click', () => {
+    removeBtn.addEventListener('click', async () => {
       renderExportDirs = renderExportDirs.filter((d) => d !== path);
       li.remove();
+      await persistAppSettings();
     });
     li.appendChild(removeBtn);
     document.querySelector('#render-export-dir-list')?.appendChild(li);
@@ -650,13 +700,14 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   const addRenderExportDirBtn = document.querySelector('#add-render-export-dir-btn');
   if (addRenderExportDirBtn) {
-    addRenderExportDirBtn.addEventListener('click', () => {
+    addRenderExportDirBtn.addEventListener('click', async () => {
       const inputEl = document.querySelector('#render-export-dir-input');
       const path = inputEl?.value?.trim();
       if (path && !renderExportDirs.includes(path)) {
         renderExportDirs.push(path);
         if (inputEl) inputEl.value = '';
         addRenderExportDirRow(path);
+        await persistAppSettings();
       }
     });
   }
@@ -673,6 +724,7 @@ window.addEventListener("DOMContentLoaded", async () => {
         if (selected && !renderExportDirs.includes(selected)) {
           renderExportDirs.push(selected);
           addRenderExportDirRow(selected);
+          await persistAppSettings();
         }
       } catch (err) {
         console.error("Error opening render export directory dialog:", err);
@@ -727,7 +779,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   }), persistAppSettings);
 
   // Initialize Render Studio UI
-  initRenderUI(() => renderFolders, () => renderExportDirs);
+  initRenderUI(() => renderFolders, () => renderExportDirs, persistAppSettings);
 
   // Render-batch crash-recovery prompt — checked once on startup, same
   // pattern as dev's StartupState::PendingRenderRecovery.
