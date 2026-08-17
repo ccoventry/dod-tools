@@ -65,7 +65,11 @@ Dev's `SidebarTab` enum (`native/src/bin/gui/types.rs` @ `80feaaf`) had exactly
   navigating to a separate tab. Also fixed a dead branch this exposed: the
   Ctrl+O shortcut dispatcher (`main.js`) checked for the now-removed
   `'export-config'` top-level tab; repointed it at the new sub-tab state so
-  Ctrl+O still maps to Load Project vs Add Demo Files correctly.
+  Ctrl+O mapped to Load Project vs Add Demo Files depending on which sub-tab
+  was active. **Superseded 2026-08-17:** that sub-tab-conditional behavior
+  itself turned out to be the wrong call from a user-testing pass — Ctrl+O
+  now always opens Load Project regardless of sub-tab, matching Ctrl+S
+  (always Save Project, no conditional) and every other app's Ctrl+O.
 - [x] **GAP — fixed (2026-08-16), scope narrowed with user.** Dev's
   Settings view (`git show 80feaaf:native/src/bin/gui/views/settings.rs`) had
   a language selector, a "scan folders for demos" toggle, and a pinned-folder
