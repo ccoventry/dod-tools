@@ -15,7 +15,7 @@ import { initRenderUI } from './render_pane.js';
 import { renderTelemetry } from './telemetry_pane.js';
 import { initAuditorPane } from './auditor_pane.js';
 import { initAnalyzerPane } from './analyzer_pane.js';
-import { switchNavTab } from './nav.js';
+import { switchNavTab, setCaptureDetailSubtab, getCaptureDetailSubtab } from './nav.js';
 import { analyzeDemo } from './ipc_bridge.js';
 import { showToast } from './toast.js';
 
@@ -672,10 +672,19 @@ window.addEventListener("DOMContentLoaded", async () => {
     btn.addEventListener('click', () => switchNavTab(btn.getAttribute('data-nav')));
   });
 
+  // Capture Studio in-workflow phase switch (Highlights <-> Configuration) —
+  // replaces the old "Batch Capture Config" top-level nav tab, see nav.js.
+  document.querySelectorAll('.capture-detail-subtab-btn').forEach((btn) => {
+    btn.addEventListener('click', () => setCaptureDetailSubtab(btn.dataset.captureSubtab));
+  });
+
   // Proceed to Capture button in footer
   const proceedBtn = document.querySelector('#proceed-capture-nav-btn');
   if (proceedBtn) {
-    proceedBtn.addEventListener('click', () => switchNavTab('export-config'));
+    proceedBtn.addEventListener('click', () => {
+      switchNavTab('workspace');
+      setCaptureDetailSubtab('configuration');
+    });
   }
 
   // Initialize Capture Batch UI
@@ -768,12 +777,13 @@ window.addEventListener("DOMContentLoaded", async () => {
     }
 
     if (activeTab === 'workspace') {
-      if (isCtrlO) document.querySelector('#add-files-btn')?.click();
-      // Only allow save/new project from workspace context? Wait, spec says:
-      // "If export-config is active, map Ctrl+O to 'Load Project'"
-      if (isCtrlS) document.querySelector('#save-project-btn')?.click();
-    } else if (activeTab === 'export-config') {
-      if (isCtrlO) document.querySelector('#load-project-btn')?.click();
+      // Ctrl+O behavior depends on which in-workflow phase is active — matches
+      // the old 'workspace'/'export-config' top-level-tab split before that
+      // was folded into Capture Studio's Highlights/Configuration sub-tabs.
+      if (isCtrlO) {
+        const target = getCaptureDetailSubtab() === 'configuration' ? '#load-project-btn' : '#add-files-btn';
+        document.querySelector(target)?.click();
+      }
       if (isCtrlS) document.querySelector('#save-project-btn')?.click();
     }
   });

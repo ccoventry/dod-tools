@@ -467,6 +467,28 @@ button.primary-btn:hover:not(:disabled) {
   }
 }
 
+/* ── Capture Studio — in-workflow Highlights/Configuration phase switch ──────── */
+
+.capture-detail-subtabs {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.capture-detail-subtab-btn {
+  background: #222222;
+  color: #aaaaaa;
+  border: 1px solid var(--border-color);
+  border-radius: 2px;
+  padding: 4px 12px;
+}
+
+.capture-detail-subtab-btn.active {
+  background: var(--primary-accent);
+  color: #ffffff;
+  border-color: #4a82bd;
+}
+
 /* ── Demo Analyzer ─────────────────────────────────────────────────────────── */
 
 .analyzer-subtabs {

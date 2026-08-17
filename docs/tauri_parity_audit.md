@@ -45,11 +45,27 @@ Dev's `SidebarTab` enum (`native/src/bin/gui/types.rs` @ `80feaaf`) had exactly
   `SidebarTab::ExportManager` literally rendered the HLCR render UI
   (`native/src/hlcr/ui.rs`). Corrected from an earlier assumption made
   mid-audit.
-- [ ] **DRIFT** — "Batch Capture Config" as its own top-level tab
-  (`data-nav="export-config"`, `desktop-studio/index.html:22`). Dev never had
-  this as a separate destination — export/timing/drive/custom-command config
-  was a phase *inside* the single continuous Capture Studio workflow, not a
-  place you navigate away to.
+- [x] **DRIFT — fixed (2026-08-16).** "Batch Capture Config" as its own
+  top-level tab. Verified dev's real structure (`views/capture/workspace.rs`):
+  a `SelectTab` enum (`Highlights` / `Configuration` / `Advanced`) persisted
+  in `egui`'s temp memory, switched via in-page buttons *inside* the single
+  `SidebarTab::CaptureStudio` destination — the Master List panel renders
+  unconditionally above the tab switch, only the detail area below it changes
+  content. Dev's `Configuration` (engine paths, drive failover, export/codec
+  config) + `Advanced` (highlight buffers, custom commands, debug settings)
+  map onto Tauri's existing 4-tab Path Routing/Timing/Drive Overrides/Custom
+  Commands split with no fields lost, so rebuilt as 2 in-page sub-tabs
+  (Highlights/Configuration) rather than 3 — a non-lossy consolidation, same
+  precedent as the already-accepted "timing fields merged into one tab" DRIFT
+  below. Removed the `data-nav="export-config"` top-level button; added a
+  `#capture-detail-subtabs` bar as the first child of `#pane-details-config`
+  (`setCaptureDetailSubtab`/`getCaptureDetailSubtab` in `nav.js`) toggling
+  `#detail-pane`+`#advanced-diagnostics-details` vs `#export-config-panel`.
+  "Proceed to Capture" now switches to the Configuration sub-tab instead of
+  navigating to a separate tab. Also fixed a dead branch this exposed: the
+  Ctrl+O shortcut dispatcher (`main.js`) checked for the now-removed
+  `'export-config'` top-level tab; repointed it at the new sub-tab state so
+  Ctrl+O still maps to Load Project vs Add Demo Files correctly.
 - [x] **GAP — fixed (2026-08-16), scope narrowed with user.** Dev's
   Settings view (`git show 80feaaf:native/src/bin/gui/views/settings.rs`) had
   a language selector, a "scan folders for demos" toggle, and a pinned-folder
@@ -240,20 +256,29 @@ reshuffled, not logic being faked.
   Output drive routing now falls back to Primary Media Dir alone when no
   Target Drive is configured — users need at least a Primary Media Dir or a
   Target Drive to start a capture.
-- [ ] **DRIFT** — Fast-Forward Speed: dev rendered this slider explicitly
-  disabled (`add_enabled_ui(false, ...)`) — present but intentionally
-  non-editable. Tauri's version is fully live. Distinct from the
-  already-tracked default-value mismatch (10.0 vs 0.05, see
-  `engineering_backlog.md` Low Priority) — this is about the control being
-  locked vs. unlocked.
+- [x] **DRIFT — fixed (2026-08-16).** Fast-Forward Speed: dev rendered this
+  slider explicitly disabled (`add_enabled_ui(false, ...)`) — present but
+  intentionally non-editable. Added `disabled` + an explanatory `title` to
+  `#config-fast-forward-speed`; unaffected — disabled inputs still report
+  `.value` to `persistAppSettings()`. Distinct from the already-tracked
+  default-value mismatch (10.0 vs 0.05, see `engineering_backlog.md` Low
+  Priority), which remains untouched — this fix was about locked vs. unlocked
+  only.
 - [x] ~~Timing fields split across two dev tabs, merged into one in Tauri~~ —
   low-severity DRIFT, functionally harmless, not worth tracking further.
-- [ ] **GAP** — "Auto-Quit Game on Completion" checkbox
-  (`PatcherConfig.exit_on_finish`) is gone — no control, no payload field, no
-  read anywhere in Tauri. Caveat: this field looks like it was *already*
-  dead-wired in dev's real (non-CLI) capture path too — only a separate,
-  CLI-only code path (`native/src/bin/cli.rs`) ever honored it — so practical
-  impact may be low. Still a real, untracked UI-parity fact.
+- [x] **GAP — confirmed non-actionable (2026-08-16), no UI added.**
+  "Auto-Quit Game on Completion" checkbox (`PatcherConfig.exit_on_finish`).
+  Traced the real GUI/HLAE capture path this session: `capture_engine.rs:466`
+  unconditionally `taskkill /F /IM hl.exe`s after every capture job
+  regardless of any config, by design — a batch pipeline processing many
+  demos sequentially must always tear down between jobs. `exit_on_finish` is
+  only ever read by `highlevel.rs:184`'s `PatchOptions` (a *different*
+  struct), only ever populated by the standalone CLI tool
+  (`cli.rs:187: exit_on_finish: quit`) — confirmed genuinely dead in both
+  dev's and Tauri's real (non-CLI) engine, not just "low practical impact."
+  Building a checkbox for it would recreate exactly the kind of
+  UI-with-no-backing-logic this audit exists to catch, so left unbuilt rather
+  than adding a new INVENTED field for field-parity's own sake.
 
 ---
 
