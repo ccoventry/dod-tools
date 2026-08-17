@@ -1,13 +1,5 @@
 # Tauri Parity Audit — `feature/tauri-migration` vs. `dev` egui source
 
-> **Resuming work? Read this first.** The Demo Analyzer's demo-browser item
-> (Area 3, near the top of that section) was reopened after being marked done
-> — the first implementation guessed at dev's sidebar design from partial
-> source reading instead of verifying it, and got the architecture wrong.
-> That section now has a full corrected writeup (real dev layout, exact
-> file:line references, what's already in the repo that needs rework, and
-> the confirmed scope decision) — read it before writing any browser code.
-
 Status (2026-08-16): **No merge blocker.** `cargo build --workspace` and
 `cargo test --workspace --no-fail-fast` are clean except 4 pre-existing
 `analysis`-crate failures, confirmed byte-identical at the `dev` merge-base
@@ -124,171 +116,31 @@ field-for-field to real `analysis::AnalyzerState` data on both sides. The
 missing POV tab is *correct*, not a gap — dev's `pov.rs` was already
 `#[allow(dead_code)]` and never called before the migration.
 
-- [ ] **GAP — REOPENED (2026-08-16), first attempt was structurally wrong.**
-  The demo browser lost search, filters, sort, and grouping entirely. A first
-  pass (commit `75da64f`) shipped and was marked done, but the user (who
-  actually used dev's UI) corrected it: the real design is not an aggregate
-  multi-folder list. **Do not re-derive this from scratch — read this section
-  fully before touching code.**
-
-  **What's live in the repo right now (from `75da64f`, wrong shape, needs
-  rework not necessarily deletion):**
-  - `desktop-studio/src-tauri/src/dir_browser.rs`: `list_demos_recursive`
-    (recursively walks *every* watched folder into one flat list —
-    **wrong**, dev shows one folder at a time, non-recursively) and
-    `resolve_demo_summary` (lazy per-demo cache-fill, built around
-    `native::peek_analyzer_cache`/`run_analyzer_cached` — **also
-    unnecessary**, see below).
-  - `native/src/lib.rs`: `peek_analyzer_cache` (cache-only read helper) —
-    was added to support the lazy-fill approach above.
-  - `desktop-studio/src/analyzer_pane.js`: sidebar rewritten as "Watched
-    Folders" (flat list of add/remove folder bookmarks, no tree) + a demo
-    table sourced from the recursive aggregate — **wrong shape**, replaces
-    what should have been a real expand/collapse filesystem tree.
-  - `desktop-studio/index.html` / `styles.css`: matching markup/CSS for the
-    above.
-
-  **What dev actually did — verified this session by reading
-  `git show 80feaaf:native/src/bin/gui/tree.rs` (545 lines) and the relevant
-  `main.rs` layout block (~1860-2200), not just `browser.rs` — the earlier
-  finding only read `browser.rs` and inferred the rest, which is exactly how
-  the "Watched Folders" mistake happened:**
-
-  1. **Left sidebar** (`SidePanel::left("explorer_panel")`, `main.rs:1863`,
-     default 260px) contains, top to bottom:
-     - A **Quick Links** box (`ScrollArea::both().max_height(140.0)`,
-       `main.rs:1883`) with three tiers, each optional/only-shown-if-non-empty:
-       - **📌 Pinned** (`main.rs:1890-1931`) — `self.settings.pinned_folders`,
-         explicit user bookmarks (add via the 📌 toggle next to any folder
-         anywhere in Quick Links; this is the same `pinned_folders` field
-         the Settings-tab GAP in Area 1 of this doc also needs).
-       - **🕒 Recent** (`main.rs:1933-1980`) — `self.settings.demo_folder_history`,
-         auto-tracked, most-recent-first, capped at 10
-         (`main.rs:1508-1516`: any folder that yields a non-empty scan gets
-         pushed to the front and the list truncated to 10), excludes anything
-         already pinned.
-       - **📂 Local** (`main.rs:1982-2024`) — `self.demo_folders`, populated
-         by a *separate*, bounded background scan (`tree.rs:481-545
-         scan_demo_folders_async`: depth-limited to 4, capped at 2000 folders
-         checked, skips `.`/`$`-prefixed and `target`/`node_modules`/`.git`/
-         `src`/`assets` dirs, records any folder containing at least one
-         `.dem` file), excludes anything already pinned.
-       - Every Quick Links row: clicking the 📌/📌-outline icon
-         pins/unpins; clicking the row itself sets `next_dir` (see below).
-         If the folder no longer exists on click, it's silently removed from
-         pinned/recent and an error is shown instead of navigating.
-     - Below Quick Links: a **Refresh** button, then the real native
-       **Explorer Tree** filling all remaining vertical height
-       (`ScrollArea::both()`, `main.rs:2118-2160` calling
-       `tree.rs::render_native_dir_node`, `tree.rs:311-408`) — starts from
-       drive roots (`get_native_roots`, `tree.rs:277-294`, `A:\`-`Z:\` on
-       Windows), lazily loads + caches subdirectories per node
-       (`get_subdirs`, `tree.rs:252-274`, skips `.`/`$`-prefixed dirs),
-       shows a 📂/📁 icon with a `(N)` demo-count suffix when
-       `settings.scan_folders_for_demos` is on (`count_demo_files`,
-       `tree.rs:297-308`, non-recursive count of that one folder), and is
-       genuinely expand/collapse per node (`egui::collapsing_header::CollapsingState`,
-       default closed). **Key mechanic #1 — auto-expand down to selection**:
-       whenever a node's `current_dir` is a descendant of it, that node
-       force-opens itself on the next frame (`tree.rs:358-368`,
-       `is_ancestor` check) — so simply changing `current_dir` (from a tree
-       click *or* a Quick Links click, both just set `next_dir`) is what
-       makes the tree auto-expand down to the newly selected folder. No
-       separate "reveal path" logic needed — replicate this same
-       auto-open-if-ancestor check per tree node in the Tauri rebuild and it
-       falls out for free.
-       **Key mechanic #2 — collapsing an ancestor jumps selection up to it**
-       (this is also standard Windows Explorer behavior, confirmed by user):
-       clicking the ⏵/⏷ toggle on a node that is *currently open* and is an
-       ancestor of `current_dir` closes it and also sets `next_dir` to that
-       node's own path (`tree.rs:373-383`: `if !state.is_open() { if
-       curr.starts_with(path) && curr != path { *next_dir = Some(path...) }
-       }`) — so collapsing a folder you're inside of navigates you up to it
-       rather than leaving you on a hidden/collapsed selection. User is not
-       fully sure they want this carried over, but says to build it in for
-       now since it's what dev/Windows both do — treat as easy-to-toggle-off
-       later, not a hard requirement to preserve.
-  2. **Top-center** (`TopBottomPanel::top("demos_list_panel")`,
-     `main.rs:2189`, resizable, default 220px, docked above the report
-     tabs) is where `browser.rs`'s search/Type/Map/Date filters + Reset +
-     sortable columns + arrow-key nav (already documented accurately in the
-     superseded bullet this replaces) actually render — but scoped to
-     **`self.desktop_files`, which is the contents of ONLY the single
-     currently-selected folder** (`tree.rs::get_dir_contents_parallel`,
-     **non-recursive** `std::fs::read_dir`, refreshed via
-     `GuiMessage::DirScanComplete` at `main.rs:1502-1518` every time
-     `current_dir` changes), not an aggregate across multiple folders. The
-     "Group by Match"/"Group by Player-Recorder" correction from the
-     superseded bullet still holds (confirmed dead — `server_ip`/
-     `player_roster_hash`/`recorder_id` only ever assigned `None`); only
-     Flat List was ever real.
-  3. **Map name is read directly from the demo file header**
-     (`tree.rs::get_demo_map_name`, `tree.rs:103-116`: opens the file, reads
-     exactly 276 bytes, checks the `HLDEMO` magic, extracts a
-     null-terminated string starting at offset 16) — **not** via
-     `analysis::Analysis`/the analyzer cache at all. This is cheap enough
-     (276-byte read) to do synchronously for every file in one
-     non-recursive folder listing with no caching or lazy-fill needed —
-     `peek_analyzer_cache`/`resolve_demo_summary` from the first attempt
-     solve a problem dev didn't actually have, because dev never parses
-     demos just to populate this list. **The lazy-fill machinery should
-     likely be deleted**, not extended, once the real header-read approach
-     is implemented — confirm no other caller needs it first.
-  4. Demo *type* (POV/HLTV) has no header-read equivalent in dev either —
-     `tree.rs:159-164` falls back to the same filename-contains-"hltv"
-     heuristic already in the Tauri code, cache hit or not. Keep that part
-     as-is.
-
-  **Scope decision (confirmed with user this session): build the full
-  3-tier Quick Links (Pinned + Recent + Local), not just Pinned.** Recent
-  needs a persisted, capped-at-10, most-recent-first history in
-  `AppSettings`/`settings_manager.rs` (new field, `#[serde(default)]` for
-  back-compat) updated whenever a folder-select yields a non-empty listing.
-  Local needs a bounded background scan on Analyzer-tab entry (mirror
-  `tree.rs`'s depth-4/2000-folder/skip-list bounds exactly — don't invent
-  different limits).
-
-  **Visual/UX reference (from user, with a Windows 11 File Explorer
-  screenshot): model the Quick Links tiers on Windows 11's own "Quick
-  Access" pattern** — pinned items and recent items listed together at the
-  top with pin icons and a per-item remove/unpin control, above the full
-  drive tree below. This is a UX-styling confirmation of the 3-tier
-  structure above, not new scope. One explicit correction from the
-  screenshot: **the top-center "Demos" panel must list `.dem` files only,
-  never subfolders mixed in** (unlike a raw Windows Explorer file pane,
-  which lists folders and files together) — this already matches dev's real
-  behavior (`get_dir_contents_parallel` only ever collects `.dem` files
-  into `desktop_files`, `tree.rs:190-197`), so no functional change, just
-  don't build it looking like the screenshot's mixed folder+file main pane.
-
-  **New UX fix requested (not a dev-parity item — dev had this problem and
-  never actually fixed it): shorten long paths in the Quick Access rows
-  (Pinned/Recent).** Verified dev's own `display_path` logic (`main.rs:1898-1911`,
-  reused for Pinned/Recent/Local) only strips a common root prefix via
-  `strip_prefix` — falls back to the full absolute path with no length
-  limit or truncation when that fails, which is the long-path problem the
-  user is describing. Build real truncation for the Tauri version: user's
-  spec is to always guarantee the **drive letter and the final folder name**
-  are visible, eliding the middle when the full/relative path is too long
-  — e.g. `C:\...\DoD Demos`. Suggested approach: try the existing
-  root-relative `display_path` first; if it (or the absolute path, if no
-  root) exceeds some max character/pixel width, collapse to
-  `<drive>\...\<final component>`; only fall further than that (e.g.
-  truncating the final folder name itself) if even that minimum doesn't
-  fit. Full path should still be available on hover via a `title` attribute
-  regardless of how the visible label is shortened.
-
-  **Suggested rebuild order for next session**: (a) delete/repurpose the
-  wrong recursive aggregate scan + lazy-fill backend, (b) add a
-  `read_demo_header_map_name`-equivalent Tauri command (or fold into an
-  extended `browse_directory` response) using the same 276-byte HLDEMO
-  header read, (c) rebuild the sidebar as real Explorer Tree + 3-tier Quick
-  Links driving one shared `current_dir`, (d) re-point the existing
-  filter/sort/search table (already correctly built in the first attempt,
-  keep it) at that single folder's contents instead of the multi-folder
-  aggregate, (e) update `AppSettings`/`settings_manager.rs` for
-  `demo_folder_history` (Recent) — `pinned_folders` already exists there
-  from the Settings-tab work tracked in Area 1.
+- [x] **GAP — fixed (2026-08-16), rebuilt to the corrected design.** The
+  wrong-shape recursive multi-folder aggregate (`list_demos_recursive`,
+  `resolve_demo_summary`, `native::peek_analyzer_cache`, the "Watched
+  Folders" flat-list sidebar from `75da64f`) was deleted and replaced with
+  dev's real architecture: a native Explorer Tree (drives → subfolders,
+  lazily loaded per node, genuine expand/collapse, auto-expands down to the
+  current selection, collapsing an ancestor jumps you up to it) plus a
+  3-tier Quick Links box (📌 Pinned / 🕒 Recent / 📂 Local, each hidden when
+  empty) — both driving one shared selected folder. The Demos filter/sort
+  table (already correct from the first attempt) is now scoped to only that
+  single folder's contents, non-recursive, with map name read straight from
+  each file's 276-byte `HLDEMO` header instead of the analyzer cache.
+  `AppSettings` gained `demo_folder_history` (Recent, capped at 10,
+  `#[serde(default)]`); `pinned_folders` (Pinned) was already there. Long
+  Quick Links paths are truncated to `<drive>\...\<final folder>` with the
+  full path on hover, per the user's explicit spec. One deliberate
+  simplification vs. dev: no `scan_folders_for_demos` settings toggle exists
+  yet (that's Area 1's Settings-tab GAP, still open), so per-folder demo
+  counts are always computed rather than gated behind it — harmless, just
+  means the toggle has nothing to disable yet. Small follow-up fix same
+  session: Workspace's "View Match Telemetry" button now points the sidebar
+  at the demo's own folder before loading it (`openAnalyzerDemo` in
+  `analyzer_pane.js`), so the Demos table reliably highlights the jumped-to
+  demo instead of only coincidentally matching whatever folder the sidebar
+  already happened to be on.
 - [x] **GAP — fixed (2026-08-16).** Kill-streak weapon-category filters
   restored (Grenades/Melee/Allied/Axis/Other groups, per-category
   toggle-all + per-weapon checkboxes) in `analyzer_pane.js`, filtering which

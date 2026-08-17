@@ -278,18 +278,23 @@ export async function defaultBrowseDir() {
     });
 }
 
-export async function listDemosRecursive(paths) {
-  return invoke("list_demos_recursive", { paths })
+/** Non-recursive `.dem` count for a single folder — used by the Explorer
+ *  sidebar's Quick Links rows (Pinned/Recent/Local). */
+export async function countDemoFiles(path) {
+  return invoke("count_demo_files_in_folder", { path })
     .catch((err) => {
-      console.error("IPC Execution Error (list_demos_recursive):", err);
-      throw err;
+      console.error("IPC Execution Error (count_demo_files_in_folder):", err);
+      return 0;
     });
 }
 
-export async function resolveDemoSummary(path) {
-  return invoke("resolve_demo_summary", { path })
+/** Bounded background scan (depth-4, 2000-folder cap) for folders containing
+ *  at least one `.dem` file, rooted at `root` (or the default browse dir).
+ *  Feeds the Explorer sidebar's "Local" Quick Links tier. */
+export async function scanDemoFolders(root) {
+  return invoke("scan_demo_folders", { root: root ?? null })
     .catch((err) => {
-      console.error("IPC Execution Error (resolve_demo_summary):", err);
-      throw err;
+      console.error("IPC Execution Error (scan_demo_folders):", err);
+      return [];
     });
 }

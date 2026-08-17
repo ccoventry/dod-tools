@@ -377,17 +377,23 @@
 
         <!-- Demo Analyzer: standalone per-demo report (Summary/Scoreboard/Player/Team/Timeline/Rounds/Chat) -->
         <section id="pane-demo-analyzer" class="content-pane" style="display: none;">
-          <!-- Picker sidebar: watched folders (recursively searched, shared with Capture
-               Studio's scan paths) + a filterable/sortable flat list of every demo found. -->
-          <div id="analyzer-browser-sidebar" class="analyzer-browser-sidebar">
-            <div class="egui-panel analyzer-browser-panel" style="flex: none;">
-              <div class="panel-header flex-between">
-                <h3>Watched Folders</h3>
-                <button id="analyzer-add-folder-btn" title="Add a folder to search recursively">+ Add</button>
-              </div>
-              <div id="analyzer-watched-folders" class="analyzer-browser-list" style="max-height: 110px;"></div>
+          <!-- Left: Explorer sidebar — 3-tier Quick Links (Pinned/Recent/Local) + a
+               real native folder tree, both driving one shared selected folder. -->
+          <div id="analyzer-explorer-sidebar" class="egui-panel analyzer-explorer-sidebar">
+            <div class="panel-header">
+              <h3>Explorer</h3>
             </div>
-            <div class="egui-panel analyzer-browser-panel" style="flex: 1; display: flex; flex-direction: column; overflow: hidden;">
+            <div id="analyzer-quick-links" class="analyzer-quick-links"></div>
+            <div class="analyzer-browser-toolbar">
+              <button id="analyzer-tree-refresh-btn" title="Refresh folder tree">⟳ Refresh</button>
+            </div>
+            <div id="analyzer-tree" class="analyzer-tree"></div>
+          </div>
+
+          <!-- Right: Demos panel (scoped to only the selected folder, non-recursive)
+               docked above the report tabs. -->
+          <div class="analyzer-main-column">
+            <div class="egui-panel analyzer-demos-panel">
               <div class="panel-header">
                 <h3>Demos</h3>
               </div>
@@ -403,7 +409,7 @@
                 <input type="text" id="analyzer-filter-date-end" placeholder="Max Date (YYYY-MM-DD)" />
                 <button id="analyzer-filter-reset">Reset</button>
               </div>
-              <div class="table-wrapper" style="flex: 1; overflow: auto;">
+              <div class="table-wrapper analyzer-demos-table-wrap">
                 <table class="analyzer-table" id="analyzer-demo-table">
                   <thead>
                     <tr>
@@ -417,27 +423,27 @@
                 </table>
               </div>
             </div>
-          </div>
 
-          <div class="egui-panel" style="flex: 1; display: flex; flex-direction: column; overflow: hidden;">
-            <div class="panel-header flex-between">
-              <h3>Demo Analyzer</h3>
-              <div style="display: flex; gap: 10px; align-items: center;">
-                <span id="analyzer-current-file" class="status-text"></span>
-                <button id="analyzer-browse-btn">Browse Demo...</button>
+            <div class="egui-panel analyzer-report-panel">
+              <div class="panel-header flex-between">
+                <h3>Demo Analyzer</h3>
+                <div style="display: flex; gap: 10px; align-items: center;">
+                  <span id="analyzer-current-file" class="status-text"></span>
+                  <button id="analyzer-browse-btn">Browse Demo...</button>
+                </div>
               </div>
-            </div>
-            <div class="analyzer-subtabs">
-              <button class="analyzer-subtab-btn active" data-subtab="summary">Summary</button>
-              <button class="analyzer-subtab-btn" data-subtab="scoreboard">Scoreboard</button>
-              <button class="analyzer-subtab-btn" data-subtab="player-details">Player Details</button>
-              <button class="analyzer-subtab-btn" data-subtab="team-details">Team Details</button>
-              <button class="analyzer-subtab-btn" data-subtab="timeline">Timeline</button>
-              <button class="analyzer-subtab-btn" data-subtab="rounds">Rounds</button>
-              <button class="analyzer-subtab-btn" data-subtab="chat">Chat Log</button>
-            </div>
-            <div id="analyzer-tab-content" class="analyzer-tab-content">
-              <p class="analyzer-empty">Pick a folder and demo on the left, browse for a file, or select one from the Workspace and click "View Match Telemetry".</p>
+              <div class="analyzer-subtabs">
+                <button class="analyzer-subtab-btn active" data-subtab="summary">Summary</button>
+                <button class="analyzer-subtab-btn" data-subtab="scoreboard">Scoreboard</button>
+                <button class="analyzer-subtab-btn" data-subtab="player-details">Player Details</button>
+                <button class="analyzer-subtab-btn" data-subtab="team-details">Team Details</button>
+                <button class="analyzer-subtab-btn" data-subtab="timeline">Timeline</button>
+                <button class="analyzer-subtab-btn" data-subtab="rounds">Rounds</button>
+                <button class="analyzer-subtab-btn" data-subtab="chat">Chat Log</button>
+              </div>
+              <div id="analyzer-tab-content" class="analyzer-tab-content">
+                <p class="analyzer-empty">Pick a folder and demo on the left, browse for a file, or select one from the Workspace and click "View Match Telemetry".</p>
+              </div>
             </div>
           </div>
         </section>

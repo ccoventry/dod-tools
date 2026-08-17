@@ -7,7 +7,7 @@
 
 import { open } from '@tauri-apps/plugin-dialog';
 import { listen } from '@tauri-apps/api/event';
-import { analyzeDemoFull, listDemosRecursive, resolveDemoSummary } from './ipc_bridge.js';
+import { analyzeDemoFull, browseDirectory, defaultBrowseDir, countDemoFiles, scanDemoFolders } from './ipc_bridge.js';
 
 let report = null;
 let analyzerLoadInProgress = false;
@@ -29,19 +29,36 @@ const WEAPON_CATEGORIES = [
   ['Axis', ['Luger', 'ScopedK98', 'Stg44', 'K98', 'Mp40', 'Mg42', 'Mg34', 'Fg42', 'ScopedFg42', 'K43', 'Panzerschreck']],
 ];
 
-// ── Picker sidebar state: a flat, filterable/sortable list of every demo
-// found recursively under the shared "watched folders" list (same
-// pinned_folders/scanPaths the rest of the app uses), mirroring dev's
-// `desktop_files` — see views/browser.rs. Dev's "Group by Match"/"Group by
-// Player-Recorder" view modes are NOT ported: their grouping keys
-// (server_ip/player_roster_hash/recorder_id) were only ever assigned `None`
-// in dev's own source, so those two view modes never actually grouped
-// anything there either — restoring the one real, working view (Flat List)
-// is the faithful port here, not a scope cut.
-let getWatchedFolders = () => [];
-let onAddWatchedFolder = async () => {};
-let onRemoveWatchedFolder = async () => {};
-let allDemos = []; // DemoListEntry[] from list_demos_recursive
+// ── Explorer sidebar state — a real native folder tree (drives -> subfolders,
+// lazily loaded, expand/collapse) plus a 3-tier Quick Links box (Pinned /
+// Recent / Local), both driving one shared `currentDir`. The demos table
+// below is scoped to ONLY that single folder's contents (non-recursive) —
+// mirrors dev's SidePanel::left explorer + `desktop_files`, see
+// docs/tauri_parity_audit.md Area 3 for the corrected design this replaced
+// an earlier (wrong-shape) recursive multi-folder aggregate with. Dev's
+// "Group by Match"/"Group by Player-Recorder" view modes are NOT ported:
+// their grouping keys (server_ip/player_roster_hash/recorder_id) were only
+// ever assigned `None` in dev's own source, so those two view modes never
+// actually grouped anything there either — restoring the one real, working
+// view (Flat List) is the faithful port here, not a scope cut.
+let getPinnedFolders = () => [];
+let pinFolder = async () => {};
+let unpinFolder = async () => {};
+let getDemoFolderHistory = () => [];
+let recordDemoFolderVisit = async () => {};
+let forgetDemoFolderVisit = async () => {};
+
+let currentDir = null;
+const dirCache = new Map(); // path -> DirListing from browse_directory
+const openTreeNodes = new Set();
+let thisPcOpen = true;
+let driveRoots = []; // DirEntryLite[]
+let localFolders = []; // DemoFolderHit[] from scan_demo_folders
+let localFoldersScanning = false;
+let localFoldersScanTriggered = false;
+const quickLinkCountCache = new Map(); // path -> demo_count
+
+let currentFolderDemos = []; // DemoFileEntry[] for currentDir only
 let browserSelectedDemo = null;
 let browserError = null;
 let demoFilterQuery = '';
@@ -173,12 +190,287 @@ function groupConsecutiveWeapons(names) {
   return parts.join(', ');
 }
 
-// ── Picker sidebar: watched folders + flat filterable/sortable demo list ────
+// ── Explorer sidebar + single-folder demo list ───────────────────────────────
 
 function demoTypeOf(entry) {
-  return entry.demo_type != null && entry.demo_type !== ''
-    ? entry.demo_type
-    : (entry.name.toLowerCase().includes('hltv') ? 'HLTV' : 'POV');
+  return entry.demo_type || 'POV';
+}
+
+// Guarantees the drive letter and final folder name stay visible, eliding
+// the middle when the full path is too long to fit the sidebar — e.g.
+// "C:\...\DoD Demos". Falls back to a forward-slash root-relative path when
+// short enough (dev's own `display_path`, see tree quick-links in
+// docs/tauri_parity_audit.md Area 3). Full path is always available via the
+// row's `title` attribute regardless of how the visible label is shortened.
+function shortenPath(fullPath, maxChars = 34) {
+  if (!fullPath) return '';
+  const forward = fullPath.replace(/\\/g, '/');
+  if (forward.length <= maxChars) return forward;
+
+  const driveMatch = fullPath.match(/^([A-Za-z]:\\|\\\\|\/)/);
+  const drive = driveMatch ? driveMatch[0].replace(/[\\/]+$/, '') : '';
+  const segments = fullPath.split(/[\\/]/).filter(Boolean);
+  let finalComponent = segments[segments.length - 1] || fullPath;
+
+  let collapsed = `${drive}\\...\\${finalComponent}`;
+  if (collapsed.length > maxChars) {
+    const keep = Math.max(6, maxChars - drive.length - 8);
+    finalComponent = `…${finalComponent.slice(-keep)}`;
+    collapsed = `${drive}\\...\\${finalComponent}`;
+  }
+  return collapsed;
+}
+
+function pathSeparator(p) { return p.includes('\\') ? '\\' : '/'; }
+
+function parentDirOf(path) {
+  const sep = pathSeparator(path);
+  const idx = path.lastIndexOf(sep);
+  return idx > 0 ? path.slice(0, idx) : null;
+}
+
+// Full ancestor chain from the top of the tree down to (and including)
+// `path` itself — used to auto-expand the Explorer Tree down to a selection
+// and to detect ancestor/descendant relationships for the collapse-jumps-up
+// mechanic below.
+function ancestorChain(path) {
+  const sep = pathSeparator(path);
+  const trimmed = path.endsWith(sep) && path.length > sep.length ? path.slice(0, -1) : path;
+  const segments = trimmed.split(sep).filter((s) => s.length > 0);
+  const chain = [];
+  if (sep === '\\' && /^[A-Za-z]:$/.test(segments[0] || '')) {
+    let acc = `${segments[0]}\\`;
+    chain.push(acc);
+    for (let i = 1; i < segments.length; i++) {
+      acc += segments[i];
+      chain.push(acc);
+      acc += '\\';
+    }
+  } else {
+    let acc = '/';
+    for (const seg of segments) {
+      acc = acc === '/' ? `/${seg}` : `${acc}/${seg}`;
+      chain.push(acc);
+    }
+  }
+  return chain;
+}
+
+function isAncestorOf(candidate, descendant) {
+  if (!descendant || candidate === descendant) return false;
+  return ancestorChain(descendant).includes(candidate);
+}
+
+async function countDemoFilesCached(path) {
+  if (quickLinkCountCache.has(path)) return quickLinkCountCache.get(path);
+  const n = await countDemoFiles(path);
+  quickLinkCountCache.set(path, n);
+  return n;
+}
+
+function quickLinkRowHtml(folder, count, isPinned) {
+  const label = shortenPath(folder);
+  return `<div class="quicklink-row ${folder === currentDir ? 'selected' : ''}" data-path="${esc(folder)}" title="${esc(folder)}">
+    <button class="quicklink-pin-btn ${isPinned ? 'pinned' : ''}" data-path="${esc(folder)}" title="${isPinned ? 'Unpin folder' : 'Pin folder'}">📌</button>
+    <span class="quicklink-label">${esc(label)} (${count})</span>
+  </div>`;
+}
+
+// Dev's Windows-11-style Quick Access pattern: Pinned (explicit bookmarks),
+// Recent (auto-tracked history), Local (bounded background scan) — each
+// tier hidden entirely when empty, excludes anything already promoted to a
+// higher tier. See docs/tauri_parity_audit.md Area 3.
+async function renderQuickLinksSection() {
+  const container = document.querySelector('#analyzer-quick-links');
+  if (!container) return;
+
+  const pinned = getPinnedFolders() || [];
+  const recent = (getDemoFolderHistory() || []).filter((f) => !pinned.includes(f));
+  const local = localFolders.map((f) => f.path).filter((f) => !pinned.includes(f));
+
+  const allPaths = [...new Set([...pinned, ...recent, ...local])];
+  await Promise.all(allPaths.map((p) => countDemoFilesCached(p)));
+
+  const tier = (label, paths) => paths.length === 0 ? '' : `
+    <div class="quicklink-tier-label">${esc(label)}</div>
+    ${paths.map((p) => quickLinkRowHtml(p, quickLinkCountCache.get(p) || 0, pinned.includes(p))).join('')}`;
+
+  if (pinned.length === 0 && recent.length === 0 && local.length === 0) {
+    container.innerHTML = localFoldersScanning
+      ? '<div class="quicklink-empty"><span class="spinner"></span> Scanning workspace…</div>'
+      : '<div class="quicklink-empty">No demo folders found.</div>';
+  } else {
+    container.innerHTML = tier('📌 Pinned', pinned) + tier('🕒 Recent', recent) + tier('📂 Local', local);
+  }
+
+  container.querySelectorAll('.quicklink-row').forEach((row) => {
+    row.addEventListener('click', (e) => {
+      if (e.target.closest('.quicklink-pin-btn')) return;
+      setCurrentDir(row.dataset.path);
+    });
+  });
+  container.querySelectorAll('.quicklink-pin-btn').forEach((btn) => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const path = btn.dataset.path;
+      const isPinned = (getPinnedFolders() || []).includes(path);
+      if (isPinned) await unpinFolder(path); else await pinFolder(path);
+      renderQuickLinksSection();
+    });
+  });
+}
+
+function treeRowHtml(entry) {
+  const { path, name, demo_count } = entry;
+  const isOpen = openTreeNodes.has(path);
+  const isSelected = path === currentDir;
+  const icon = demo_count > 0 ? '📂' : '📁';
+  const label = demo_count > 0 ? `${name} (${demo_count})` : name;
+  const arrow = isOpen ? '⏷' : '⏵';
+
+  let childrenHtml = '';
+  if (isOpen) {
+    const listing = dirCache.get(path);
+    if (listing) {
+      childrenHtml = listing.subdirs.length > 0
+        ? `<div class="tree-children">${listing.subdirs.map(treeRowHtml).join('')}</div>`
+        : '';
+    } else {
+      childrenHtml = '<div class="tree-children"><div class="tree-loading">Loading…</div></div>';
+    }
+  }
+
+  return `<div class="tree-node">
+    <div class="tree-row ${isSelected ? 'selected' : ''}">
+      <button class="tree-toggle" data-path="${esc(path)}">${arrow}</button>
+      <span class="tree-label" data-path="${esc(path)}" title="${esc(path)}">${icon} ${esc(label)}</span>
+    </div>
+    ${childrenHtml}
+  </div>`;
+}
+
+// Native Explorer Tree: drives -> subfolders, lazily loaded and cached per
+// node, genuinely expand/collapse (default closed). Mirrors dev's
+// `tree.rs::render_native_dir_node` — see docs/tauri_parity_audit.md Area 3.
+async function renderExplorerTree() {
+  const container = document.querySelector('#analyzer-tree');
+  if (!container) return;
+  if (driveRoots.length === 0) {
+    try {
+      const listing = await browseDirectory(null);
+      driveRoots = listing.subdirs;
+    } catch {
+      driveRoots = [];
+    }
+  }
+
+  const thisPcArrow = thisPcOpen ? '⏷' : '⏵';
+  container.innerHTML = `<div class="tree-node">
+    <div class="tree-row">
+      <button class="tree-toggle" id="tree-this-pc-toggle">${thisPcArrow}</button>
+      <span class="tree-label">💻 This PC</span>
+    </div>
+    ${thisPcOpen ? `<div class="tree-children">${driveRoots.map(treeRowHtml).join('')}</div>` : ''}
+  </div>`;
+
+  const thisPcToggle = container.querySelector('#tree-this-pc-toggle');
+  thisPcToggle?.addEventListener('click', () => {
+    thisPcOpen = !thisPcOpen;
+    renderExplorerTree();
+  });
+
+  container.querySelectorAll('.tree-toggle:not(#tree-this-pc-toggle)').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const path = btn.dataset.path;
+      if (openTreeNodes.has(path)) {
+        openTreeNodes.delete(path);
+        // Key mechanic: collapsing a node you're currently inside navigates
+        // you up to it, rather than leaving you on a hidden selection —
+        // matches dev/Windows Explorer both (tree.rs:373-383).
+        if (isAncestorOf(path, currentDir)) {
+          await setCurrentDir(path);
+          return;
+        }
+        renderExplorerTree();
+      } else {
+        openTreeNodes.add(path);
+        renderExplorerTree();
+        if (!dirCache.has(path)) {
+          try {
+            dirCache.set(path, await browseDirectory(path));
+          } catch {
+            dirCache.set(path, { subdirs: [], demos: [] });
+          }
+          renderExplorerTree();
+        }
+      }
+    });
+  });
+  container.querySelectorAll('.tree-label').forEach((el) => {
+    el.addEventListener('click', () => setCurrentDir(el.dataset.path));
+  });
+}
+
+async function forgetInvalidFolder(path) {
+  if ((getPinnedFolders() || []).includes(path)) await unpinFolder(path);
+  await forgetDemoFolderVisit(path);
+}
+
+// Sets the single folder the Demos panel and Explorer Tree are scoped to.
+// Key mechanic: whenever a node's ancestor chain contains `currentDir`, that
+// node force-opens on the next render — so simply changing `currentDir`
+// (from a tree click *or* a Quick Links click) is what makes the tree
+// auto-expand down to the newly selected folder (tree.rs:358-368).
+async function setCurrentDir(path) {
+  let listing;
+  try {
+    listing = await browseDirectory(path);
+  } catch (err) {
+    browserError = String(err);
+    await forgetInvalidFolder(path);
+    renderQuickLinksSection();
+    renderDemoTable();
+    return;
+  }
+
+  dirCache.set(path, listing);
+  currentDir = path;
+  browserError = null;
+
+  const ancestors = ancestorChain(path);
+  ancestors.slice(0, -1).forEach((a) => openTreeNodes.add(a));
+  await Promise.all(ancestors.slice(0, -1).map(async (a) => {
+    if (!dirCache.has(a)) {
+      try { dirCache.set(a, await browseDirectory(a)); } catch { /* leaf render shows a loading placeholder */ }
+    }
+  }));
+
+  currentFolderDemos = listing.demos;
+  browserSelectedDemo = null;
+
+  renderQuickLinksSection();
+  await renderExplorerTree();
+  renderDemoTable();
+
+  if (listing.demos.length > 0) {
+    await recordDemoFolderVisit(path);
+    renderQuickLinksSection();
+  }
+}
+
+async function triggerLocalFoldersScan(force = false) {
+  if (localFoldersScanTriggered && !force) return;
+  localFoldersScanTriggered = true;
+  localFoldersScanning = true;
+  renderQuickLinksSection();
+  try {
+    const root = currentDir || (await defaultBrowseDir());
+    localFolders = await scanDemoFolders(root);
+  } catch {
+    localFolders = [];
+  }
+  localFoldersScanning = false;
+  renderQuickLinksSection();
 }
 
 function demoDateISO(entry) {
@@ -207,7 +499,7 @@ function passesDemoFilter(entry) {
 }
 
 function sortedFilteredDemos() {
-  let list = allDemos.filter(passesDemoFilter);
+  let list = currentFolderDemos.filter(passesDemoFilter);
   if (demoSortColumn) {
     list = list.slice().sort((a, b) => {
       let cmp;
@@ -240,8 +532,12 @@ function renderDemoTable() {
     tbody.innerHTML = `<tr><td colspan="4" class="table-empty" style="color:#f44336;">${esc(browserError)}</td></tr>`;
     return;
   }
-  if (allDemos.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="4" class="table-empty">No demos found. Add a watched folder above.</td></tr>';
+  if (!currentDir) {
+    tbody.innerHTML = '<tr><td colspan="4" class="table-empty">Pick a folder from the Explorer sidebar.</td></tr>';
+    return;
+  }
+  if (currentFolderDemos.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="4" class="table-empty">No demos found in this folder.</td></tr>';
     return;
   }
   const list = sortedFilteredDemos();
@@ -252,11 +548,10 @@ function renderDemoTable() {
 
   tbody.innerHTML = list.map((entry) => {
     const isSelected = entry.path === browserSelectedDemo;
-    const mapDisplay = entry.map_name == null ? '…' : (entry.map_name || '—');
     return `<tr class="analyzer-demo-row ${isSelected ? 'selected' : ''}" data-path="${esc(entry.path)}" title="${esc(entry.path)}">
       <td>${esc(entry.name)}</td>
       <td>${esc(demoTypeOf(entry))}</td>
-      <td>${esc(mapDisplay)}</td>
+      <td>${esc(entry.map_name || '—')}</td>
       <td>${esc(demoDateDisplay(entry))}</td>
     </tr>`;
   }).join('');
@@ -270,78 +565,6 @@ function selectDemo(path) {
   browserSelectedDemo = path;
   renderDemoTable();
   loadAnalyzerDemo(path);
-}
-
-function renderWatchedFoldersList() {
-  const el = document.querySelector('#analyzer-watched-folders');
-  if (!el) return;
-  const folders = getWatchedFolders() || [];
-  el.innerHTML = folders.length === 0
-    ? '<p class="analyzer-empty" style="padding:8px;">No folders added yet.</p>'
-    : folders.map((f) => `
-      <div class="analyzer-browser-row" title="${esc(f)}">
-        <span class="row-icon">📁</span><span>${esc(f)}</span>
-        <button class="analyzer-remove-folder-btn" data-folder="${esc(f)}" title="Stop watching this folder">×</button>
-      </div>`).join('');
-
-  el.querySelectorAll('.analyzer-remove-folder-btn').forEach((btn) => {
-    btn.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      await onRemoveWatchedFolder(btn.dataset.folder);
-      renderWatchedFoldersList();
-      refreshWatchedFolderDemos();
-    });
-  });
-}
-
-// Recursive filesystem scan (near-instant) followed by a background,
-// one-at-a-time lazy fill of Map/Type for anything not already in the
-// analyzer cache — see docs/tauri_parity_audit.md for why this two-phase
-// approach was chosen over blocking on a full parse per demo up front.
-async function refreshWatchedFolderDemos() {
-  const folders = getWatchedFolders() || [];
-  browserError = null;
-  if (folders.length === 0) {
-    allDemos = [];
-    renderDemoTable();
-    return;
-  }
-  try {
-    allDemos = await listDemosRecursive(folders);
-  } catch (err) {
-    browserError = String(err);
-    allDemos = [];
-  }
-  renderDemoTable();
-  lazyResolveUnknownDemos();
-}
-
-async function lazyResolveUnknownDemos() {
-  const unresolved = allDemos.filter((d) => d.map_name == null);
-  if (unresolved.length === 0) return;
-
-  let dirty = false;
-  const rerenderTimer = setInterval(() => {
-    if (dirty) { renderDemoTable(); dirty = false; }
-  }, 400);
-
-  for (const entry of unresolved) {
-    const target = allDemos.find((d) => d.path === entry.path);
-    if (!target) continue;
-    try {
-      const summary = await resolveDemoSummary(entry.path);
-      target.map_name = summary.map_name;
-      target.demo_type = summary.demo_type;
-    } catch (err) {
-      // Leave it displayable instead of retrying forever on a broken file.
-      target.map_name = '';
-      target.demo_type = '';
-    }
-    dirty = true;
-  }
-
-  clearInterval(rerenderTimer);
-  renderDemoTable();
 }
 
 function initAnalyzerBrowserKeyboardNav() {
@@ -370,20 +593,15 @@ function initAnalyzerBrowserKeyboardNav() {
 }
 
 function initAnalyzerBrowser() {
-  const addBtn = document.querySelector('#analyzer-add-folder-btn');
-  if (addBtn) {
-    addBtn.addEventListener('click', async () => {
-      try {
-        const selected = await open({ directory: true, multiple: false, title: 'Add Folder to Watch' });
-        if (selected) {
-          const folder = Array.isArray(selected) ? selected[0] : selected;
-          await onAddWatchedFolder(folder);
-          renderWatchedFoldersList();
-          refreshWatchedFolderDemos();
-        }
-      } catch (err) {
-        console.error('Error selecting watched folder:', err);
-      }
+  const refreshBtn = document.querySelector('#analyzer-tree-refresh-btn');
+  if (refreshBtn) {
+    refreshBtn.addEventListener('click', () => {
+      dirCache.clear();
+      driveRoots = [];
+      quickLinkCountCache.clear();
+      triggerLocalFoldersScan(true);
+      renderExplorerTree();
+      if (currentDir) setCurrentDir(currentDir);
     });
   }
 
@@ -420,8 +638,16 @@ function initAnalyzerBrowser() {
 
   initAnalyzerBrowserKeyboardNav();
 
-  renderWatchedFoldersList();
-  refreshWatchedFolderDemos();
+  renderQuickLinksSection();
+  renderExplorerTree();
+  triggerLocalFoldersScan();
+
+  (async () => {
+    const startDir = (getPinnedFolders() || [])[0]
+      || (getDemoFolderHistory() || [])[0]
+      || (await defaultBrowseDir());
+    if (startDir) setCurrentDir(startDir);
+  })();
 }
 
 // ── Init / entry points ──────────────────────────────────────────────────────
@@ -441,10 +667,20 @@ listen('analyzer_progress', (event) => {
   if (container) container.innerHTML = `<p class="analyzer-empty">Analyzing demo… ${pct}%</p>`;
 });
 
-export function initAnalyzerPane(watchedFoldersGetter, addWatchedFolder, removeWatchedFolder) {
-  if (watchedFoldersGetter) getWatchedFolders = watchedFoldersGetter;
-  if (addWatchedFolder) onAddWatchedFolder = addWatchedFolder;
-  if (removeWatchedFolder) onRemoveWatchedFolder = removeWatchedFolder;
+export function initAnalyzerPane({
+  getPinnedFolders: getPinnedFoldersCb,
+  pinFolder: pinFolderCb,
+  unpinFolder: unpinFolderCb,
+  getDemoFolderHistory: getDemoFolderHistoryCb,
+  recordDemoFolderVisit: recordDemoFolderVisitCb,
+  forgetDemoFolderVisit: forgetDemoFolderVisitCb,
+} = {}) {
+  if (getPinnedFoldersCb) getPinnedFolders = getPinnedFoldersCb;
+  if (pinFolderCb) pinFolder = pinFolderCb;
+  if (unpinFolderCb) unpinFolder = unpinFolderCb;
+  if (getDemoFolderHistoryCb) getDemoFolderHistory = getDemoFolderHistoryCb;
+  if (recordDemoFolderVisitCb) recordDemoFolderVisit = recordDemoFolderVisitCb;
+  if (forgetDemoFolderVisitCb) forgetDemoFolderVisit = forgetDemoFolderVisitCb;
 
   const browseBtn = document.querySelector('#analyzer-browse-btn');
   if (browseBtn) {
@@ -475,6 +711,18 @@ export function initAnalyzerPane(watchedFoldersGetter, addWatchedFolder, removeW
   });
 
   initAnalyzerBrowser();
+}
+
+// Entry point for cross-pane jumps (e.g. Workspace's "View Match Telemetry"
+// button) — points the Explorer sidebar at the demo's own folder first, so
+// the Demos table reliably highlights it instead of only coincidentally
+// matching whatever folder the sidebar was already browsing.
+export async function openAnalyzerDemo(path) {
+  const parentDir = parentDirOf(path);
+  if (parentDir && parentDir !== currentDir) {
+    await setCurrentDir(parentDir);
+  }
+  await loadAnalyzerDemo(path);
 }
 
 export async function loadAnalyzerDemo(path) {

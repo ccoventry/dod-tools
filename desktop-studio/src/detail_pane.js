@@ -1,5 +1,5 @@
 import { switchNavTab } from './nav.js';
-import { loadAnalyzerDemo } from './analyzer_pane.js';
+import { openAnalyzerDemo } from './analyzer_pane.js';
 import { launchDemoPreview, generateAllPreviews, checkEngineProcesses, killEngineProcesses } from './ipc_bridge.js';
 import { showToast } from './toast.js';
 
@@ -280,7 +280,7 @@ export function renderDetailView(demo, selectedDemoIdx) {
       telemetryBtn.disabled = false;
       telemetryBtn.onclick = () => {
         switchNavTab('demo-analyzer');
-        loadAnalyzerDemo(demo.path);
+        openAnalyzerDemo(demo.path);
       };
     }
   }

@@ -1,19 +1,23 @@
-// dir_browser.rs — lightweight, non-recursive filesystem browsing for the
-// Demo Analyzer's picker widgets: a folder tree (drives -> subfolders) and a
-// list of .dem files sitting directly in whichever folder is selected. This
-// mirrors the `dev` branch egui GUI's SidePanel::left explorer + browser.rs
-// list (see native/src/bin/gui/tree.rs's get_native_roots/get_subdirs and
-// views/browser.rs), minus the persisted pinned/recent quick-links and
-// multi-threaded per-demo metadata parsing — those aren't needed just to
-// pick a file.
+// dir_browser.rs — filesystem browsing backend for the Demo Analyzer's
+// Explorer sidebar: a native drive/folder tree plus the non-recursive
+// contents (subfolders + `.dem` files) of whichever single folder is
+// selected. Mirrors the `dev` branch egui GUI's SidePanel::left explorer +
+// browser.rs's `desktop_files` list (see native/src/bin/gui/tree.rs's
+// get_native_roots/get_subdirs/get_demo_map_name/count_demo_files and
+// scan_demo_folders_async) — see docs/tauri_parity_audit.md Area 3 for the
+// full corrected design this was rebuilt against.
 
 use serde::Serialize;
-use std::path::PathBuf;
+use std::io::Read;
+use std::path::{Path, PathBuf};
 
 #[derive(Serialize)]
 pub struct DirEntryLite {
     pub name: String,
     pub path: String,
+    /// Non-recursive count of `.dem` files directly inside this folder —
+    /// drives the tree's 📂/📁 icon + "(N)" suffix.
+    pub demo_count: usize,
 }
 
 #[derive(Serialize)]
@@ -22,6 +26,8 @@ pub struct DemoFileEntry {
     pub path: String,
     pub size_bytes: u64,
     pub modified_unix_secs: f64,
+    pub map_name: String,
+    pub demo_type: String,
 }
 
 #[derive(Serialize)]
@@ -32,14 +38,63 @@ pub struct DirListing {
     pub demos: Vec<DemoFileEntry>,
 }
 
+fn is_dem_file(path: &Path) -> bool {
+    path.extension()
+        .map(|ext| ext.eq_ignore_ascii_case("dem"))
+        .unwrap_or(false)
+}
+
+/// Non-recursive count of `.dem` files directly inside `dir`. Mirrors dev's
+/// `tree.rs::count_demo_files` exactly.
+fn count_demo_files(dir: &Path) -> usize {
+    std::fs::read_dir(dir)
+        .map(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .filter(|e| {
+                    let p = e.path();
+                    !p.is_dir() && is_dem_file(&p)
+                })
+                .count()
+        })
+        .unwrap_or(0)
+}
+
+/// Reads the map name directly out of the demo file header — a 276-byte
+/// `HLDEMO` header read, no demo parsing. Mirrors dev's
+/// `tree.rs::get_demo_map_name` exactly (including its `"-"` fallback).
+fn get_demo_map_name(path: &Path) -> String {
+    if let Ok(mut file) = std::fs::File::open(path) {
+        let mut header = [0u8; 276];
+        if file.read_exact(&mut header).is_ok() && &header[0..6] == b"HLDEMO" {
+            let map_bytes = &header[16..];
+            let len = map_bytes.iter().position(|&c| c == 0).unwrap_or(260);
+            return String::from_utf8_lossy(&map_bytes[..len]).into_owned();
+        }
+    }
+    "-".to_string()
+}
+
+/// Filename heuristic fallback — dev has no header-read equivalent for demo
+/// type either, see `tree.rs:159-164`.
+fn demo_type_from_name(name: &str) -> String {
+    if name.to_lowercase().contains("hltv") {
+        "HLTV".to_string()
+    } else {
+        "POV".to_string()
+    }
+}
+
 fn native_roots() -> Vec<DirEntryLite> {
     #[cfg(target_os = "windows")]
     {
         (b'A'..=b'Z')
             .filter_map(|letter| {
                 let drive = format!("{}:\\", letter as char);
-                if PathBuf::from(&drive).is_dir() {
-                    Some(DirEntryLite { name: drive.clone(), path: drive })
+                let p = PathBuf::from(&drive);
+                if p.is_dir() {
+                    let demo_count = count_demo_files(&p);
+                    Some(DirEntryLite { name: drive.clone(), path: drive, demo_count })
                 } else {
                     None
                 }
@@ -48,7 +103,9 @@ fn native_roots() -> Vec<DirEntryLite> {
     }
     #[cfg(not(target_os = "windows"))]
     {
-        vec![DirEntryLite { name: "/".to_string(), path: "/".to_string() }]
+        let root = PathBuf::from("/");
+        let demo_count = count_demo_files(&root);
+        vec![DirEntryLite { name: "/".to_string(), path: "/".to_string(), demo_count }]
     }
 }
 
@@ -82,12 +139,9 @@ pub fn browse_directory(path: Option<String>) -> Result<DirListing, String> {
             if name.starts_with('.') || name.starts_with('$') {
                 continue;
             }
-            subdirs.push(DirEntryLite { name, path: entry_path.to_string_lossy().into_owned() });
-        } else if entry_path
-            .extension()
-            .map(|ext| ext.eq_ignore_ascii_case("dem"))
-            .unwrap_or(false)
-        {
+            let demo_count = count_demo_files(&entry_path);
+            subdirs.push(DirEntryLite { name, path: entry_path.to_string_lossy().into_owned(), demo_count });
+        } else if is_dem_file(&entry_path) {
             let meta = entry.metadata().ok();
             let size_bytes = meta.as_ref().map(|m| m.len()).unwrap_or(0);
             let modified_unix_secs = meta
@@ -95,11 +149,15 @@ pub fn browse_directory(path: Option<String>) -> Result<DirListing, String> {
                 .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                 .map(|d| d.as_secs_f64())
                 .unwrap_or(0.0);
+            let map_name = get_demo_map_name(&entry_path);
+            let demo_type = demo_type_from_name(&name);
             demos.push(DemoFileEntry {
                 name,
                 path: entry_path.to_string_lossy().into_owned(),
                 size_bytes,
                 modified_unix_secs,
+                map_name,
+                demo_type,
             });
         }
     }
@@ -123,121 +181,102 @@ pub fn default_browse_dir() -> Option<String> {
         .map(|p| p.to_string_lossy().into_owned())
 }
 
-// ── Recursive multi-folder demo listing (Analyzer browser: search/filter/
-// sort/group over every demo across all watched folders at once, mirroring
-// dev's `desktop_files` list — see docs/tauri_parity_audit.md Area 3). ──────
-
-#[derive(Serialize)]
-pub struct DemoListEntry {
-    pub name: String,
-    pub path: String,
-    pub size_bytes: u64,
-    pub modified_unix_secs: f64,
-    /// `None` when this demo isn't in the analyzer cache yet — the frontend
-    /// lazily resolves these via `resolve_demo_summary` in the background
-    /// instead of blocking the whole listing on a full parse per file.
-    pub map_name: Option<String>,
-    pub demo_type: Option<String>,
+/// Non-recursive `.dem` count for a single folder — used by the Explorer
+/// sidebar's Quick Links rows (Pinned/Recent/Local), which don't otherwise
+/// need a full directory listing.
+#[tauri::command]
+pub fn count_demo_files_in_folder(path: String) -> usize {
+    count_demo_files(&PathBuf::from(path))
 }
 
-fn collect_dem_files(dir: &PathBuf, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
-    for entry in entries.filter_map(Result::ok) {
-        let path = entry.path();
-        if path.is_dir() {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if name.starts_with('.') || name.starts_with('$') {
-                continue;
-            }
-            collect_dem_files(&path, out);
-        } else if path
-            .extension()
-            .map(|ext| ext.eq_ignore_ascii_case("dem"))
-            .unwrap_or(false)
-        {
-            out.push(path);
-        }
+fn is_drive_root(path: &Path) -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        let s = path.to_string_lossy();
+        s.len() <= 3 && s.ends_with(":\\")
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        path == Path::new("/")
     }
 }
 
-/// Recursively walks every given folder for `.dem` files — filesystem-only,
-/// no demo parsing, so this returns near-instantly regardless of library
-/// size. `map_name`/`demo_type` are filled in from the analyzer cache when
-/// already present (e.g. from a prior Capture Studio scan or Analyzer open)
-/// and left `None` otherwise for the frontend to resolve lazily.
-#[tauri::command]
-pub async fn list_demos_recursive(paths: Vec<String>) -> Result<Vec<DemoListEntry>, String> {
-    tokio::task::spawn_blocking(move || {
-        let mut found = Vec::new();
-        let mut seen = std::collections::HashSet::new();
+#[derive(Serialize)]
+pub struct DemoFolderHit {
+    pub path: String,
+    pub demo_count: usize,
+}
 
-        for p in paths {
-            let dir = PathBuf::from(&p);
-            if !dir.is_dir() {
-                continue;
+const SCAN_SKIP_DIRS: [&str; 5] = ["target", "node_modules", ".git", "src", "assets"];
+
+/// Bounded background scan for folders containing at least one `.dem` file,
+/// rooted at `root` (falling back to the default browse dir). Mirrors dev's
+/// `tree.rs::scan_demo_folders_async` bounds exactly: depth-limited to 4,
+/// capped at 2000 folders checked, skips `.`/`$`-prefixed and
+/// target/node_modules/.git/src/assets dirs. Feeds the Explorer sidebar's
+/// "Local" Quick Links tier.
+#[tauri::command]
+pub async fn scan_demo_folders(root: Option<String>) -> Result<Vec<DemoFolderHit>, String> {
+    tokio::task::spawn_blocking(move || {
+        let root_dir = root
+            .map(PathBuf::from)
+            .or_else(dirs::document_dir)
+            .or_else(dirs::home_dir)
+            .unwrap_or_else(|| PathBuf::from("."));
+        if !root_dir.is_dir() {
+            return Vec::new();
+        }
+
+        let mut folders = Vec::new();
+        let walk_recursive = !is_drive_root(&root_dir);
+        let mut stack = vec![(root_dir, 0usize)];
+        let max_depth = 4;
+        let mut folders_checked = 0;
+        let max_folders_checked = 2000;
+
+        while let Some((dir, depth)) = stack.pop() {
+            folders_checked += 1;
+            if folders_checked > max_folders_checked {
+                break;
             }
-            let mut in_this_dir = Vec::new();
-            collect_dem_files(&dir, &mut in_this_dir);
-            for path in in_this_dir {
-                if seen.insert(path.clone()) {
-                    found.push(path);
+
+            let mut demo_count = 0;
+            let mut subdirs = Vec::new();
+
+            if let Ok(entries) = std::fs::read_dir(&dir) {
+                for entry in entries.filter_map(Result::ok) {
+                    let path = entry.path();
+                    if path.is_dir() {
+                        if walk_recursive && depth < max_depth {
+                            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                                let name_lower = name.to_lowercase();
+                                if !name.starts_with('.')
+                                    && !name.starts_with('$')
+                                    && !SCAN_SKIP_DIRS.contains(&name_lower.as_str())
+                                {
+                                    subdirs.push(path);
+                                }
+                            }
+                        }
+                    } else if is_dem_file(&path) {
+                        demo_count += 1;
+                    }
                 }
+            }
+
+            if demo_count > 0 {
+                folders.push(DemoFolderHit { path: dir.to_string_lossy().into_owned(), demo_count });
+            }
+
+            subdirs.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
+            for subdir in subdirs {
+                stack.push((subdir, depth + 1));
             }
         }
 
-        found
-            .into_iter()
-            .map(|path| {
-                let meta = std::fs::metadata(&path).ok();
-                let size_bytes = meta.as_ref().map(|m| m.len()).unwrap_or(0);
-                let modified_unix_secs = meta
-                    .and_then(|m| m.modified().ok())
-                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                    .map(|d| d.as_secs_f64())
-                    .unwrap_or(0.0);
-                let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-
-                let (map_name, demo_type) = native::peek_analyzer_cache(&path)
-                    .map(|(_, analysis)| (Some(analysis.demo_info.map_name), Some(analysis.demo_info.demo_type)))
-                    .unwrap_or((None, None));
-
-                DemoListEntry {
-                    name,
-                    path: path.to_string_lossy().into_owned(),
-                    size_bytes,
-                    modified_unix_secs,
-                    map_name,
-                    demo_type,
-                }
-            })
-            .collect::<Vec<_>>()
+        folders.sort_by(|a, b| a.path.cmp(&b.path));
+        folders
     })
     .await
     .map_err(|e| format!("Task join error: {}", e))
-}
-
-#[derive(Serialize)]
-pub struct DemoSummary {
-    pub path: String,
-    pub map_name: String,
-    pub demo_type: String,
-}
-
-/// Lazy-fill counterpart to `list_demos_recursive`: does the full (possibly
-/// ~1.3s cold) parse for one demo, via the same on-disk cache
-/// `analyze_demo_full` uses, so the cost is paid once per demo rather than
-/// once per browse. Called in the background per cache-miss row.
-#[tauri::command]
-pub async fn resolve_demo_summary(path: String) -> Result<DemoSummary, String> {
-    tokio::task::spawn_blocking(move || {
-        let pb = PathBuf::from(&path);
-        let (_, analysis, _) = native::run_analyzer_cached(&pb, |_, _| {})?;
-        Ok(DemoSummary {
-            path,
-            map_name: analysis.demo_info.map_name,
-            demo_type: analysis.demo_info.demo_type,
-        })
-    })
-    .await
-    .map_err(|e| format!("Task join error: {}", e))?
 }
