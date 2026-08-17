@@ -30,6 +30,8 @@ window.addEventListener("DOMContentLoaded", async () => {
   // Gates the Analyzer Explorer tree's per-subfolder demo-count badge.
   // Mirrors dev's `settings.scan_folders_for_demos`, default false.
   let scanFoldersForDemos = false;
+  // Analyzer Explorer sidebar's drag-to-resize width (analyzer_pane.js).
+  let analyzerExplorerWidth = 260;
   let targetDrives = [];
   let renderFolders = [];
   let renderExportDirs = []; // JIT multi-drive export pool for Render Studio
@@ -156,6 +158,7 @@ window.addEventListener("DOMContentLoaded", async () => {
       pinned_folders: scanPaths,
       demo_folder_history: demoFolderHistory,
       scan_folders_for_demos: scanFoldersForDemos,
+      analyzer_explorer_width: analyzerExplorerWidth,
       language: "en",
       capture_fps: captureFps,
       pre_roll_seconds: preRoll,
@@ -276,6 +279,9 @@ window.addEventListener("DOMContentLoaded", async () => {
         demoFolderHistory = [...settings.demo_folder_history];
       }
       scanFoldersForDemos = !!settings.scan_folders_for_demos;
+      if (settings.analyzer_explorer_width) {
+        analyzerExplorerWidth = settings.analyzer_explorer_width;
+      }
       if (Array.isArray(settings.target_drives) && settings.target_drives.length > 0) {
         targetDrives = [...settings.target_drives];
         driveOverridesEditor.render();
@@ -805,6 +811,10 @@ window.addEventListener("DOMContentLoaded", async () => {
     scanFoldersForDemos = enabled;
     await persistAppSettings();
   }
+  async function setAnalyzerExplorerWidth(px) {
+    analyzerExplorerWidth = px;
+    await persistAppSettings();
+  }
   initAnalyzerPane({
     getPinnedFolders: () => scanPaths,
     pinFolder: pinAnalyzerFolder,
@@ -814,6 +824,8 @@ window.addEventListener("DOMContentLoaded", async () => {
     forgetDemoFolderVisit,
     getScanFoldersForDemos: () => scanFoldersForDemos,
     setScanFoldersForDemos,
+    getAnalyzerExplorerWidth: () => analyzerExplorerWidth,
+    setAnalyzerExplorerWidth,
   });
 
   // Context-Aware Shortcut Dispatcher
