@@ -21,6 +21,9 @@ pub struct AppSettings {
     /// dev's own `AppSettings::default()`.
     #[serde(default)]
     pub scan_folders_for_demos: bool,
+    /// Demo Analyzer Explorer sidebar's drag-to-resize width, in pixels.
+    #[serde(default = "default_analyzer_explorer_width")]
+    pub analyzer_explorer_width: i32,
     pub language: String,
     pub capture_fps: i32,
     pub pre_roll_seconds: f32,
@@ -82,6 +85,7 @@ fn default_allocation_strategy() -> String { "MaximizeSpace".to_string() }
 fn default_render_codec() -> String { "prores".to_string() }
 fn default_render_fps() -> i32 { 300 }
 fn default_render_max_concurrent() -> i32 { 2 }
+fn default_analyzer_explorer_width() -> i32 { 260 }
 
 impl Default for AppSettings {
     fn default() -> Self {
@@ -92,6 +96,7 @@ impl Default for AppSettings {
             pinned_folders: Vec::new(),
             demo_folder_history: Vec::new(),
             scan_folders_for_demos: false,
+            analyzer_explorer_width: default_analyzer_explorer_width(),
             language: "en".to_string(),
             capture_fps: 300,
             pre_roll_seconds: 2.0,
