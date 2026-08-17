@@ -19,7 +19,6 @@
         </div>
         <div class="nav-tabs">
           <button class="nav-tab-btn active" data-nav="workspace">Capture Studio</button>
-          <button class="nav-tab-btn" data-nav="export-config">Batch Capture Config</button>
           <button class="nav-tab-btn" data-nav="render-studio">Render Studio</button>
           <button class="nav-tab-btn" data-nav="demo-auditor">Demo Auditor</button>
           <button class="nav-tab-btn" data-nav="demo-analyzer">Demo Analyzer</button>
@@ -80,7 +79,17 @@
 
         <!-- Right / Bottom Split Pane: Detail View & Configuration Panels -->
         <section id="pane-details-config" class="content-pane">
-          
+
+          <!-- In-workflow phase switch: dev never had "Batch Capture Config" as its
+               own top-level destination — export/timing/drive/custom-command config
+               was a phase inside the single continuous Capture Studio workflow
+               (SelectTab::Highlights / Configuration), not a place you navigate
+               away to. This bar only appears while on the Capture Studio tab. -->
+          <div id="capture-detail-subtabs" class="capture-detail-subtabs">
+            <button class="capture-detail-subtab-btn active" data-capture-subtab="highlights">Highlights</button>
+            <button class="capture-detail-subtab-btn" data-capture-subtab="configuration">Configuration</button>
+          </div>
+
           <!-- Detail View: Highlight Rules -->
           <div id="detail-pane" class="egui-panel">
             <div class="panel-header flex-between">
@@ -122,7 +131,7 @@
           </details>
 
           <!-- Export Configuration & Batch Capture -->
-          <div id="export-config-panel" class="egui-panel">
+          <div id="export-config-panel" class="egui-panel" style="display: none;">
             <div class="panel-header">
               <h3>Export Configuration & Batch Capture Pipeline</h3>
             </div>
@@ -205,7 +214,7 @@
                 </div>
                 <div class="control-group">
                   <label for="config-fast-forward-speed">FF Speed (x):</label>
-                  <input type="number" step="0.01" id="config-fast-forward-speed" value="0.05" style="width: 80px;" />
+                  <input type="number" step="0.01" id="config-fast-forward-speed" value="0.05" style="width: 80px;" disabled title="Locked, matching dev — not currently user-editable." />
                 </div>
                 <div class="control-group">
                   <label for="config-capture-fps">Capture FPS:</label>
