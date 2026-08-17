@@ -26,6 +26,9 @@ window.addEventListener("DOMContentLoaded", async () => {
   // into a folder yields a non-empty demo listing. Mirrors dev's
   // `settings.demo_folder_history` (see docs/tauri_parity_audit.md Area 3).
   let demoFolderHistory = [];
+  // Gates the Analyzer Explorer tree's per-subfolder demo-count badge.
+  // Mirrors dev's `settings.scan_folders_for_demos`, default false.
+  let scanFoldersForDemos = false;
   let targetDrives = [];
   let renderFolders = [];
   let currentScannedDemos = [];
@@ -67,6 +70,7 @@ window.addEventListener("DOMContentLoaded", async () => {
       ffmpeg_path: ffmpegPath,
       pinned_folders: scanPaths,
       demo_folder_history: demoFolderHistory,
+      scan_folders_for_demos: scanFoldersForDemos,
       language: "en",
       capture_fps: captureFps,
       pre_roll_seconds: preRoll,
@@ -166,6 +170,7 @@ window.addEventListener("DOMContentLoaded", async () => {
       if (Array.isArray(settings.demo_folder_history) && settings.demo_folder_history.length > 0) {
         demoFolderHistory = [...settings.demo_folder_history];
       }
+      scanFoldersForDemos = !!settings.scan_folders_for_demos;
       if (Array.isArray(settings.target_drives) && settings.target_drives.length > 0) {
         targetDrives = [...settings.target_drives];
         const driveListEl = document.querySelector('#target-drive-list');
@@ -735,6 +740,10 @@ window.addEventListener("DOMContentLoaded", async () => {
       await persistAppSettings();
     }
   }
+  async function setScanFoldersForDemos(enabled) {
+    scanFoldersForDemos = enabled;
+    await persistAppSettings();
+  }
   initAnalyzerPane({
     getPinnedFolders: () => scanPaths,
     pinFolder: pinAnalyzerFolder,
@@ -742,6 +751,8 @@ window.addEventListener("DOMContentLoaded", async () => {
     getDemoFolderHistory: () => demoFolderHistory,
     recordDemoFolderVisit,
     forgetDemoFolderVisit,
+    getScanFoldersForDemos: () => scanFoldersForDemos,
+    setScanFoldersForDemos,
   });
 
   // Context-Aware Shortcut Dispatcher

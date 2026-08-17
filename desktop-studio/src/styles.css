@@ -994,6 +994,42 @@ button.primary-btn:hover:not(:disabled) {
   padding: 2px 8px;
 }
 
+.analyzer-explorer-settings {
+  flex-shrink: 0;
+  border-top: 1px solid var(--border-color);
+  padding-top: 6px;
+  font-size: 11px;
+}
+
+.analyzer-explorer-settings summary {
+  cursor: pointer;
+  color: var(--text-muted);
+  user-select: none;
+}
+
+.analyzer-explorer-settings summary:hover {
+  color: #dddddd;
+}
+
+.settings-checkbox-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 8px 2px 4px;
+  cursor: pointer;
+}
+
+.settings-checkbox-row input {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+#analyzer-add-pin-btn {
+  width: 100%;
+  padding: 3px 8px;
+  font-size: 11px;
+}
+
 .analyzer-filter-bar {
   display: flex;
   flex-wrap: wrap;

@@ -50,13 +50,33 @@ Dev's `SidebarTab` enum (`native/src/bin/gui/types.rs` @ `80feaaf`) had exactly
   this as a separate destination — export/timing/drive/custom-command config
   was a phase *inside* the single continuous Capture Studio workflow, not a
   place you navigate away to.
-- [ ] **GAP** — Settings tab has no equivalent anywhere in Tauri. Dev's
+- [x] **GAP — fixed (2026-08-16), scope narrowed with user.** Dev's
   Settings view (`git show 80feaaf:native/src/bin/gui/views/settings.rs`) had
   a language selector, a "scan folders for demos" toggle, and a pinned-folder
-  bookmark list (add/remove) with an explicit draft → Save/Revert pattern.
-  In Tauri: `main.js:64-65` hardcodes `language: "en"`, and `pinned_folders`
-  (`main.js:163-164`) auto-populates from whatever's been scanned instead of
-  being a user-managed list. Settings now auto-save per field with no revert.
+  bookmark list (add/remove) with an explicit draft → Save/Revert pattern,
+  as its own top-level `SidebarTab::Settings` destination (confirmed —
+  `hlae_path`/`hl_path`/capture config are NOT in dev's Settings tab, they
+  stay inline in Capture Studio, exactly where Tauri already has them; the
+  split itself was already correct, only the Settings tab was missing).
+  Rebuilt with two scope cuts, both decided with the user this session:
+  (1) **no separate Settings page** — the remaining two settings are
+  Analyzer-specific, so they now live in a collapsible "⚙ Explorer Settings"
+  section inside the Analyzer's Explorer sidebar instead of a 6th nav tab;
+  (2) **language selector dropped entirely** — dev's 8-language dropdown
+  retranslates real UI text via a `t()` lookup table that has no Tauri
+  equivalent (every string is hardcoded English), so shipping the dropdown
+  would itself be a new INVENTED field. `scan_folders_for_demos` was added to
+  `AppSettings` (`#[serde(default)]` → `false`, matching dev's own default —
+  this is a real behavior change from Tauri's prior always-on tree demo
+  counts) and gates only the Explorer tree's "(N)" badge, auto-saving
+  immediately on toggle rather than dev's draft/Save/Revert (simplification:
+  one inline checkbox doesn't warrant a bespoke commit pattern when every
+  other Tauri setting already auto-saves). The pinned-folder bookmark list
+  itself was **not** duplicated — the Analyzer's Quick Links "Pinned" tier
+  already lists every pinned folder with its own pin/unpin control, so a
+  second add/remove list in the same pane would be redundant; only dev's
+  "add a pin without navigating to it first" convenience was kept, as an
+  "➕ Add Pin…" button next to the toggle.
 
 ---
 

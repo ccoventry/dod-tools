@@ -15,6 +15,12 @@ pub struct AppSettings {
     /// demo listing. Mirrors dev's `settings.demo_folder_history`.
     #[serde(default)]
     pub demo_folder_history: Vec<String>,
+    /// Gates the Demo Analyzer Explorer tree's per-subfolder "(N)" demo-count
+    /// badge (Quick Links counts are always shown, matching dev — see
+    /// docs/tauri_parity_audit.md Area 1). Defaults to `false`, matching
+    /// dev's own `AppSettings::default()`.
+    #[serde(default)]
+    pub scan_folders_for_demos: bool,
     pub language: String,
     pub capture_fps: i32,
     pub pre_roll_seconds: f32,
@@ -67,6 +73,7 @@ impl Default for AppSettings {
             ffmpeg_path: None,
             pinned_folders: Vec::new(),
             demo_folder_history: Vec::new(),
+            scan_folders_for_demos: false,
             language: "en".to_string(),
             capture_fps: 300,
             pre_roll_seconds: 2.0,

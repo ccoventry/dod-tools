@@ -45,6 +45,11 @@ let getPinnedFolders = () => [];
 let pinFolder = async () => {};
 let unpinFolder = async () => {};
 let getDemoFolderHistory = () => [];
+// Gates the Explorer tree's per-subfolder "(N)" demo-count badge — dev's
+// `settings.scan_folders_for_demos`, defaults false. Quick Links counts are
+// NOT gated by this (dev never gated those either), only the tree is.
+let getScanFoldersForDemos = () => false;
+let setScanFoldersForDemos = async () => {};
 let recordDemoFolderVisit = async () => {};
 let forgetDemoFolderVisit = async () => {};
 
@@ -221,6 +226,14 @@ function shortenPath(fullPath, maxChars = 34) {
   return collapsed;
 }
 
+// `pinned_folders`/`demo_folder_history` are shared with Capture Studio's
+// own "+ Add Demo Files" flow, which legitimately pushes individual `.dem`
+// FILE paths into the same list (main.js's scanPaths) for its own rescan
+// purposes. Quick Links/the tree only ever navigate to folders, so filter
+// those file entries out here rather than showing them as bogus "pinned
+// folders" that error out with "Not a directory" when clicked.
+function isFolderPath(p) { return !/\.dem$/i.test(p); }
+
 function pathSeparator(p) { return p.includes('\\') ? '\\' : '/'; }
 
 function parentDirOf(path) {
@@ -284,8 +297,8 @@ async function renderQuickLinksSection() {
   const container = document.querySelector('#analyzer-quick-links');
   if (!container) return;
 
-  const pinned = getPinnedFolders() || [];
-  const recent = (getDemoFolderHistory() || []).filter((f) => !pinned.includes(f));
+  const pinned = (getPinnedFolders() || []).filter(isFolderPath);
+  const recent = (getDemoFolderHistory() || []).filter(isFolderPath).filter((f) => !pinned.includes(f));
   const local = localFolders.map((f) => f.path).filter((f) => !pinned.includes(f));
 
   const allPaths = [...new Set([...pinned, ...recent, ...local])];
@@ -324,8 +337,9 @@ function treeRowHtml(entry) {
   const { path, name, demo_count } = entry;
   const isOpen = openTreeNodes.has(path);
   const isSelected = path === currentDir;
-  const icon = demo_count > 0 ? '📂' : '📁';
-  const label = demo_count > 0 ? `${name} (${demo_count})` : name;
+  const showCount = getScanFoldersForDemos() && demo_count > 0;
+  const icon = showCount ? '📂' : '📁';
+  const label = showCount ? `${name} (${demo_count})` : name;
   const arrow = isOpen ? '⏷' : '⏵';
 
   let childrenHtml = '';
@@ -605,6 +619,31 @@ function initAnalyzerBrowser() {
     });
   }
 
+  const scanFoldersCb = document.querySelector('#analyzer-scan-folders-for-demos');
+  if (scanFoldersCb) {
+    scanFoldersCb.checked = getScanFoldersForDemos();
+    scanFoldersCb.addEventListener('change', async (e) => {
+      await setScanFoldersForDemos(e.target.checked);
+      renderExplorerTree();
+    });
+  }
+
+  const addPinBtn = document.querySelector('#analyzer-add-pin-btn');
+  if (addPinBtn) {
+    addPinBtn.addEventListener('click', async () => {
+      try {
+        const selected = await open({ directory: true, multiple: false, title: 'Add Pinned Folder' });
+        if (selected) {
+          const folder = Array.isArray(selected) ? selected[0] : selected;
+          await pinFolder(folder);
+          renderQuickLinksSection();
+        }
+      } catch (err) {
+        console.error('Error picking folder to pin:', err);
+      }
+    });
+  }
+
   document.querySelectorAll('#analyzer-demo-table th[data-sort]').forEach((th) => {
     th.addEventListener('click', () => {
       const col = th.dataset.sort;
@@ -643,8 +682,8 @@ function initAnalyzerBrowser() {
   triggerLocalFoldersScan();
 
   (async () => {
-    const startDir = (getPinnedFolders() || [])[0]
-      || (getDemoFolderHistory() || [])[0]
+    const startDir = (getPinnedFolders() || []).filter(isFolderPath)[0]
+      || (getDemoFolderHistory() || []).filter(isFolderPath)[0]
       || (await defaultBrowseDir());
     if (startDir) setCurrentDir(startDir);
   })();
@@ -674,6 +713,8 @@ export function initAnalyzerPane({
   getDemoFolderHistory: getDemoFolderHistoryCb,
   recordDemoFolderVisit: recordDemoFolderVisitCb,
   forgetDemoFolderVisit: forgetDemoFolderVisitCb,
+  getScanFoldersForDemos: getScanFoldersForDemosCb,
+  setScanFoldersForDemos: setScanFoldersForDemosCb,
 } = {}) {
   if (getPinnedFoldersCb) getPinnedFolders = getPinnedFoldersCb;
   if (pinFolderCb) pinFolder = pinFolderCb;
@@ -681,6 +722,8 @@ export function initAnalyzerPane({
   if (getDemoFolderHistoryCb) getDemoFolderHistory = getDemoFolderHistoryCb;
   if (recordDemoFolderVisitCb) recordDemoFolderVisit = recordDemoFolderVisitCb;
   if (forgetDemoFolderVisitCb) forgetDemoFolderVisit = forgetDemoFolderVisitCb;
+  if (getScanFoldersForDemosCb) getScanFoldersForDemos = getScanFoldersForDemosCb;
+  if (setScanFoldersForDemosCb) setScanFoldersForDemos = setScanFoldersForDemosCb;
 
   const browseBtn = document.querySelector('#analyzer-browse-btn');
   if (browseBtn) {
