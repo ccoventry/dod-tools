@@ -11,6 +11,16 @@ let capturingInFlight = false;
 // can be called with no args from other panes (e.g. main.js after a target
 // drive is added, or detail_pane.js after a streak selection changes).
 let currentGetState = null;
+// onSettingsChange callback captured from initCaptureUI() — main.js's
+// persistAppSettings, wired here so Timing Options fields and Init/Custom
+// Commands actually get written to settings.json on edit instead of only
+// being saved incidentally whenever some unrelated action (e.g. browsing
+// for hlae.exe) happens to also call it.
+let currentOnSettingsChange = null;
+
+function notifySettingsChange() {
+  if (currentOnSettingsChange) currentOnSettingsChange();
+}
 
 /** Generates a `session_YYYYMMDD_HHMMSS` id so each batch routes into its own
  *  output subfolder instead of colliding in the export root (mirrors dev's
@@ -218,10 +228,12 @@ function renderInitCommandsList() {
     `;
     row.querySelector('.init-command-input').addEventListener('input', (e) => {
       initCommands[idx] = e.target.value;
+      notifySettingsChange();
     });
     row.querySelector('.remove-init-command-btn').addEventListener('click', () => {
       initCommands.splice(idx, 1);
       renderInitCommandsList();
+      notifySettingsChange();
     });
     container.appendChild(row);
   });
@@ -245,17 +257,21 @@ function renderCustomCommandsList() {
     `;
     row.querySelector('.custom-command-input').addEventListener('input', (e) => {
       cmd.command = e.target.value;
+      notifySettingsChange();
     });
     row.querySelector('.custom-command-relation').addEventListener('change', (e) => {
       cmd.relation = e.target.value;
+      notifySettingsChange();
     });
     row.querySelector('.custom-command-offset').addEventListener('input', (e) => {
       const v = parseFloat(e.target.value);
       cmd.offsetSeconds = Number.isNaN(v) ? 0 : v;
+      notifySettingsChange();
     });
     row.querySelector('.remove-custom-command-btn').addEventListener('click', () => {
       customCommands.splice(idx, 1);
       renderCustomCommandsList();
+      notifySettingsChange();
     });
     container.appendChild(row);
   });
@@ -448,7 +464,7 @@ function initClearPreviewsModal() {
   }
 }
 
-export function initCaptureUI(getState) {
+export function initCaptureUI(getState, onSettingsChange) {
   const startBtn = document.querySelector('#start-capture-btn') || document.querySelector('#start-batch-btn');
   const cancelBtn = document.querySelector('#cancel-batch-btn');
   const statusEl = document.querySelector('#batch-status');
@@ -456,6 +472,7 @@ export function initCaptureUI(getState) {
   const progressBar = document.querySelector('#capture-progress-bar');
 
   currentGetState = getState;
+  currentOnSettingsChange = onSettingsChange || null;
 
   renderInitCommandsList();
   renderCustomCommandsList();
@@ -467,6 +484,7 @@ export function initCaptureUI(getState) {
     addInitCommandBtn.addEventListener('click', () => {
       initCommands.push('');
       renderInitCommandsList();
+      notifySettingsChange();
     });
   }
 
@@ -475,17 +493,35 @@ export function initCaptureUI(getState) {
     addCustomCommandBtn.addEventListener('click', () => {
       customCommands.push({ command: '', relation: 'Before', offsetSeconds: 2.0 });
       renderCustomCommandsList();
+      notifySettingsChange();
     });
   }
 
   // Any config field that feeds computeRequiredCaptureBytes recomputes the
   // hard launch guard on change, so the Start button's disabled state stays
-  // live instead of only being checked at click time.
+  // live instead of only being checked at click time. These (plus the rest
+  // of the Timing Options tab, which doesn't feed the guard) also persist to
+  // settings.json on edit — previously nothing wired them to a save at all,
+  // so values only survived a restart by coincidence, if some unrelated
+  // action (e.g. browsing for hlae.exe) happened to save afterward.
   ['#config-res-width', '#config-res-height', '#config-separate-hud',
    '#config-pre-roll', '#config-post-roll', '#config-capture-fps',
    '#primary-media-dir-input'].forEach(selector => {
     const el = document.querySelector(selector);
-    if (el) el.addEventListener('input', () => refreshLaunchGuard());
+    if (el) el.addEventListener('input', () => { refreshLaunchGuard(); notifySettingsChange(); });
+  });
+  ['#config-record-start-lead', '#config-record-stop-trail', '#config-initial-delay']
+    .forEach(selector => {
+      const el = document.querySelector(selector);
+      if (el) el.addEventListener('input', () => notifySettingsChange());
+    });
+  // Checkboxes read by persistAppSettings/buildCapturePayload but with no
+  // change listener of their own — same missing-wiring bug as the Timing
+  // Options fields above, just on Path Routing / Drive Overrides checkboxes.
+  ['#config-add-condebug', '#config-auto-clear-logs', '#config-auto-clear-previews',
+   '#config-auto-clear-temp-demos'].forEach(selector => {
+    const el = document.querySelector(selector);
+    if (el) el.addEventListener('change', () => notifySettingsChange());
   });
   refreshLaunchGuard();
 
