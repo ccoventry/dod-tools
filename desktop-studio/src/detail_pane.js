@@ -548,7 +548,12 @@ export function renderTimeline(demo) {
   ctx.fillText(`Tick ${maxTick}`, width - padding, height - 5);
 
   demo.streaks.forEach((streak) => {
-    const isSelected = streak.selected !== false;
+    // Opt-in model, matching the checkbox default and the row-build loop
+    // above — only an explicit `true` counts as selected. `undefined`
+    // covers demos never opened in this view yet (and every streak that
+    // never renders as a checkable row at all, e.g. other players'), and
+    // must render as unselected, not selected.
+    const isSelected = streak.selected === true;
     const startX = padding + ((streak.start_tick - minTick) / tickSpan) * usableWidth;
     const endX = padding + ((streak.end_tick - minTick) / tickSpan) * usableWidth;
     const blockWidth = Math.max(endX - startX, 4);
