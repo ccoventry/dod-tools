@@ -58,9 +58,9 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   async function pickTargetDrive() {
     try {
-      return await open({ directory: true, multiple: false, title: 'Select Target Output Drive/Directory' });
+      return await open({ directory: true, multiple: false, title: 'Select Capture Output Directory' });
     } catch (err) {
-      console.error("Error opening target drive dialog:", err);
+      console.error("Error opening capture output directory dialog:", err);
       return null;
     }
   }
@@ -84,12 +84,12 @@ window.addEventListener("DOMContentLoaded", async () => {
   }
 
   // Shared editable-list widget (list_editor.js) for the three folder/drive
-  // pools — Drive Overrides, Render Folders, and Render Studio's Export
+  // pools — Capture Output, Render Folders, and Render Studio's Export
   // Drives all get add/edit/remove/reorder/browse from one implementation.
   const driveOverridesEditor = createListEditor({
     container: document.querySelector('#target-drive-list'),
     getItems: () => targetDrives,
-    fields: [{ key: 'value', type: 'text', primitive: true, placeholder: 'Target output drive path...' }],
+    fields: [{ key: 'value', type: 'text', primitive: true, placeholder: 'Capture output directory path...' }],
     unique: true,
     browse: pickTargetDrive,
     onChange: () => {
@@ -140,8 +140,6 @@ window.addEventListener("DOMContentLoaded", async () => {
     const initialDelay = parseFloat(document.querySelector('#config-initial-delay')?.value) || 3.0;
     const fastForwardSpeed = parseFloat(document.querySelector('#config-fast-forward-speed')?.value) || 0.05;
 
-    const primaryMediaDir = document.querySelector('#primary-media-dir-input')?.value?.trim() || null;
-
     const saveLocalPatchedCopy = document.querySelector('#config-save-local-patched')?.checked || false;
     const allocationStrategy = document.querySelector('#allocation-strategy')?.value || 'MaximizeSpace';
 
@@ -173,7 +171,6 @@ window.addEventListener("DOMContentLoaded", async () => {
       record_stop_trail: recordStopTrail,
       initial_delay: initialDelay,
       fast_forward_speed: fastForwardSpeed,
-      primary_media_dir: primaryMediaDir,
       target_drives: targetDrives,
       init_commands,
       custom_commands,
@@ -253,10 +250,6 @@ window.addEventListener("DOMContentLoaded", async () => {
       if (settings.fast_forward_speed) {
         const inputEl = document.querySelector('#config-fast-forward-speed');
         if (inputEl) inputEl.value = settings.fast_forward_speed;
-      }
-      if (settings.primary_media_dir) {
-        const inputEl = document.querySelector('#primary-media-dir-input');
-        if (inputEl) inputEl.value = settings.primary_media_dir;
       }
       const saveLocalPatchedEl = document.querySelector('#config-save-local-patched');
       if (saveLocalPatchedEl) saveLocalPatchedEl.checked = !!settings.save_local_patched_copy;
@@ -444,27 +437,6 @@ window.addEventListener("DOMContentLoaded", async () => {
         }
       } catch (err) {
         console.error("Error selecting FFmpeg executable:", err);
-      }
-    });
-  }
-
-  const primaryMediaBrowseBtn = document.querySelector('#primary-media-browse-btn');
-  if (primaryMediaBrowseBtn) {
-    primaryMediaBrowseBtn.addEventListener('click', async () => {
-      try {
-        const selected = await open({
-          directory: true,
-          multiple: false,
-          title: 'Select Primary Media Directory'
-        });
-        if (selected) {
-          const path = Array.isArray(selected) ? selected[0] : selected;
-          const inputEl = document.querySelector('#primary-media-dir-input');
-          if (inputEl) inputEl.value = path;
-          await persistAppSettings();
-        }
-      } catch (err) {
-        console.error("Error selecting primary media directory:", err);
       }
     });
   }
@@ -661,16 +633,16 @@ window.addEventListener("DOMContentLoaded", async () => {
     const indicator = document.querySelector('#export-pool-free-indicator');
     if (!indicator) return;
     if (targetDrives.length === 0) {
-      indicator.textContent = "Total Export Pool Free: 0.0 GB";
+      indicator.textContent = "Capture Output Free: 0.0 GB";
       return;
     }
     try {
       const bytes = await calculateExportPoolSpace(targetDrives);
       const gb = bytes / (1024 * 1024 * 1024);
-      indicator.textContent = `Total Export Pool Free: ${gb.toFixed(1)} GB`;
+      indicator.textContent = `Capture Output Free: ${gb.toFixed(1)} GB`;
     } catch (err) {
       console.error("Error calculating export pool space:", err);
-      indicator.textContent = "Total Export Pool Free: Error calculating space";
+      indicator.textContent = "Capture Output Free: Error calculating space";
     }
   }
 

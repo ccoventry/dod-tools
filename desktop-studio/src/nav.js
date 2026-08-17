@@ -8,7 +8,7 @@
 // separate top-level nav tab ("Batch Capture Config" was DRIFT, see
 // docs/tauri_parity_audit.md Area 1). 'highlights' shows the Master Queue's
 // detail view + advanced diagnostics; 'configuration' shows Path
-// Routing/Timing/Drive Overrides/Custom Commands.
+// Routing/Timing/Capture Output/Custom Commands.
 let activeCaptureDetailSubtab = 'highlights';
 
 function applyCaptureDetailSubtabDisplay() {

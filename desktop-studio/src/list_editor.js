@@ -1,6 +1,6 @@
 // Shared editable row-list widget.
 //
-// Backs Drive Overrides, Render Folders, Render Studio's Export Drives,
+// Backs Capture Output, Render Folders, Render Studio's Export Drives,
 // Init Commands, and Custom Commands so all five lists share one
 // add/edit/remove/reorder implementation instead of five hand-rolled ones.
 // Items are either plain values (`fields[0].primitive: true`, e.g. a path
