@@ -751,7 +751,13 @@ window.addEventListener("DOMContentLoaded", async () => {
   };
 
   initMasterPane(onDeleteDemo);
-  initDetailPane(() => currentScannedDemos, () => refreshLaunchGuard({ targetDrives, currentScannedDemos }));
+  initDetailPane(() => currentScannedDemos, () => {
+    // Fired on both streak selection and status edits — selection moves
+    // required capture bytes (refreshLaunchGuard) and both move the Master
+    // Queue's Highlights/Pending/Captured/Rendered columns (renderMasterList).
+    refreshLaunchGuard({ targetDrives, currentScannedDemos });
+    renderMasterList(currentScannedDemos, selectedDemoIdx);
+  });
 
   // Demo Analyzer's Explorer sidebar Pinned tier shares the same
   // pinned_folders/scanPaths state as Capture Studio (matches dev's real

@@ -343,12 +343,18 @@ export function renderDetailView(demo, selectedDemoIdx) {
   let renderedRowNum = 0;
 
   demo.streaks.forEach((streak, streakIdx) => {
-    // 1. POV Filter
-    const isHLTV = !demo.is_pov && !demo.recording_player;
-    if (!isHLTV) {
-       const recPlayer = demo.recording_player || demo.local_player_index;
-       const strPlayer = streak.player || streak.player_index;
-       if (strPlayer !== recPlayer) return;
+    // 1. POV Filter — gate on whether the analyzer actually resolved a
+    // recording player (local_player_index), not on demo.is_pov. is_pov
+    // reflects whether the demo contains any SvcHltv/SvcDirector message
+    // anywhere in the file, which also fires on a normal player-recorded
+    // demo if an HLTV caster was merely spectating the live match (those
+    // are server-broadcast messages every connected client picks up) — so
+    // it's not a reliable signal that this is an actual spectator/HLTV
+    // recording with no single owner. scan_demo_for_highlights already
+    // rejects true HLTV proxy files before local_player_index is ever
+    // computed, so None here means "no resolvable owner", not "is_pov".
+    if (demo.local_player_index !== null && demo.local_player_index !== undefined) {
+       if (streak.player_index !== demo.local_player_index) return;
     }
 
     // 2. Min Kills filter
@@ -465,6 +471,7 @@ export function renderDetailView(demo, selectedDemoIdx) {
     statusSelect.addEventListener('change', (e) => {
       streak.status = e.target.value;
       statusSelect.style.color = statusColors[e.target.value] || '#888';
+      if (currentOnSelectionChange) currentOnSelectionChange();
     });
 
     const notesInput = tr.querySelector('.streak-notes-input');
