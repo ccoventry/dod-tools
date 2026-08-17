@@ -59,6 +59,31 @@ async fn save_settings(
     .map_err(|e| format!("Task join error: {}", e))?
 }
 
+// ── Project Session IPC Commands ───────────────────────────────────────────────
+// `fs:default` (capabilities/default.json) only grants read access to the app's
+// own AppConfig/AppData dirs — it does NOT scope arbitrary user-picked paths, so
+// the JS `@tauri-apps/plugin-fs` read/writeTextFile calls fail for every path a
+// save/open dialog can return. Do the actual I/O in Rust (std::fs, unscoped)
+// instead, same as `save_settings`/`get_settings` above.
+
+#[tauri::command]
+async fn save_project_session(path: String, contents: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        std::fs::write(&path, contents).map_err(|e| format!("Failed to write {}: {}", path, e))
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
+}
+
+#[tauri::command]
+async fn load_project_session(path: String) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || {
+        std::fs::read_to_string(&path).map_err(|e| format!("Failed to read {}: {}", path, e))
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
+}
+
 // ── Auditor IPC Commands ───────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -388,6 +413,8 @@ pub fn run() {
             recover_render_batch,
             get_settings,
             save_settings,
+            save_project_session,
+            load_project_session,
             run_demo_audit,
             delete_audit_files,
             cancel_audit,
