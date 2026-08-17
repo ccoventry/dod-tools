@@ -309,26 +309,57 @@
                 <label for="render-fps-input">Source FPS:</label>
                 <input type="number" id="render-fps-input" value="300" min="1" max="1000" style="width: 70px;" />
               </div>
+              <div class="control-group">
+                <label for="render-max-concurrent-input">Max Concurrent Renders:</label>
+                <input type="number" id="render-max-concurrent-input" value="2" min="1" max="8" style="width: 60px;" />
+              </div>
             </div>
+
+            <!-- JIT multi-drive export pool — first drive with 20GB+ free wins per job. -->
             <div class="input-row" style="margin-top: 6px;">
-              <label style="white-space: nowrap;">Export Dir:</label>
-              <input type="text" id="render-export-dir-input" placeholder="Optional: override output directory..." style="flex: 1;" />
-              <button id="browse-render-export-btn">Browse</button>
+              <input type="text" id="render-export-dir-input" placeholder="Add export drive/folder..." style="flex: 1;" />
+              <button id="add-render-export-dir-btn">Add Drive</button>
+              <button id="browse-render-export-btn">Browse Drive</button>
+            </div>
+            <ul id="render-export-dir-list" class="drive-pool-list"></ul>
+            <div class="input-row" style="margin-top: 4px; align-items: center;">
+              <strong>Total Export Pool Free:</strong>
+              <span id="render-export-pool-free">0.0 GB</span>
             </div>
 
             <div class="action-row" style="margin-top: 8px;">
               <button id="scan-render-btn">Scan for Takes</button>
             </div>
             <div id="render-job-container"></div>
+
+            <!-- Per-job render queue table — replaces the old single global
+                 status line + progress bar with real per-clip rows. -->
+            <div class="table-wrapper" style="margin-top: 8px; max-height: 280px;">
+              <table class="analyzer-table" id="render-jobs-table">
+                <thead>
+                  <tr>
+                    <th>Clip Name</th>
+                    <th>Stream</th>
+                    <th>Frames</th>
+                    <th>Date</th>
+                    <th>Status</th>
+                    <th>Speed</th>
+                    <th style="width: 140px;">Progress</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="render-jobs-tbody">
+                  <tr><td colspan="8" class="table-empty">No render jobs queued. Scan a folder, then click Start Render Batch.</td></tr>
+                </tbody>
+              </table>
+            </div>
+
             <div class="action-footer flex-between" style="margin-top: 12px; border-top: 1px solid #383838; padding-top: 10px;">
               <div class="action-buttons">
                 <button id="start-render-btn" class="primary-btn">Start Render Batch</button>
-                <button id="cancel-render-btn" disabled>Cancel Render</button>
+                <button id="cancel-render-btn" disabled>Cancel All</button>
               </div>
               <p id="render-status" class="status-text">Status: Waiting...</p>
-            </div>
-            <div id="render-progress-container" class="progress-bar-container" style="display: none;">
-              <div id="render-progress-bar" class="progress-bar-fill"></div>
             </div>
           </div>
 
@@ -491,6 +522,33 @@
           <button id="process-modal-force-relaunch-btn" class="primary-btn">Force Relaunch</button>
           <button id="process-modal-copy-command-btn">Copy View Command</button>
           <button id="process-modal-cancel-btn">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- FFmpeg Error Log — shown via a render job row's "View Log" action. -->
+    <div id="render-error-log-modal" class="modal" style="display: none;">
+      <div class="modal-content" style="max-width: 640px; padding: 20px;">
+        <h2 id="render-error-log-title">FFmpeg Error Log</h2>
+        <pre id="render-error-log-body" style="max-height: 360px; overflow: auto; white-space: pre-wrap; background: #121212; padding: 10px; border-radius: 2px; border: 1px solid #333;"></pre>
+        <div style="display: flex; gap: 8px; margin-top: 16px; justify-content: flex-end;">
+          <button id="render-error-log-close-btn">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Render batch crash-recovery prompt — shown on startup when
+         .render_autosave.json is found (the batch didn't finish cleanly
+         last session). Mirrors dev's own "Render Batch Interrupted" modal. -->
+    <div id="render-recovery-modal" class="modal" style="display: none;">
+      <div class="modal-content" style="max-width: 480px; padding: 20px;">
+        <h2>🎬 Render Batch Interrupted</h2>
+        <p>The last render batch didn't finish cleanly (app closed or crashed mid-batch).</p>
+        <p>Source: <span id="render-recovery-source"></span></p>
+        <p>✅ Completed: <span id="render-recovery-completed"></span> &nbsp; ⏳ Pending: <span id="render-recovery-pending"></span></p>
+        <div style="display: flex; gap: 8px; margin-top: 16px; justify-content: flex-end;">
+          <button id="render-recovery-recover-btn" class="primary-btn">🔄 Recover Render Batch</button>
+          <button id="render-recovery-discard-btn">🗑 Discard</button>
         </div>
       </div>
     </div>

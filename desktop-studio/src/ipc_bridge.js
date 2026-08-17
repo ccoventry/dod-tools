@@ -150,7 +150,7 @@ export async function scanRenderDirectories(renderFolders) {
 
 export async function executeRenderBatch(payload) {
   // payload must match RenderBatchPayload:
-  //   { render_directories, codec, fps, ffmpeg_path?, export_directory? }
+  //   { render_directories, codec, fps, ffmpeg_path?, export_directories, max_concurrent_renders }
   return invoke("execute_render_batch", { payload: payload })
     .catch((err) => {
       console.error("IPC Execution Error (execute_render_batch):", err);
@@ -162,6 +162,54 @@ export async function cancelRenderBatch() {
   return invoke("cancel_render_batch")
     .catch((err) => {
       console.error("IPC Execution Error (cancel_render_batch):", err);
+      throw err;
+    });
+}
+
+export async function cancelRenderJob(jobId) {
+  return invoke("cancel_render_job", { jobId })
+    .catch((err) => {
+      console.error("IPC Execution Error (cancel_render_job):", err);
+      throw err;
+    });
+}
+
+export async function resetRenderJob(jobId) {
+  return invoke("reset_render_job", { jobId })
+    .catch((err) => {
+      console.error("IPC Execution Error (reset_render_job):", err);
+      throw err;
+    });
+}
+
+export async function getExportPoolFreeGb(directories) {
+  return invoke("get_export_pool_free_gb", { directories })
+    .catch((err) => {
+      console.error("IPC Execution Error (get_export_pool_free_gb):", err);
+      return 0;
+    });
+}
+
+export async function checkRenderAutosave() {
+  return invoke("check_render_autosave")
+    .catch((err) => {
+      console.error("IPC Execution Error (check_render_autosave):", err);
+      return null;
+    });
+}
+
+export async function discardRenderAutosave() {
+  return invoke("discard_render_autosave")
+    .catch((err) => {
+      console.error("IPC Execution Error (discard_render_autosave):", err);
+      throw err;
+    });
+}
+
+export async function recoverRenderBatch() {
+  return invoke("recover_render_batch")
+    .catch((err) => {
+      console.error("IPC Execution Error (recover_render_batch):", err);
       throw err;
     });
 }
@@ -253,8 +301,8 @@ export async function deleteOrphanedPreviews(filePaths) {
 }
 
 // NOTE: onRenderStatus and initRenderProgressListener have been intentionally
-// removed from this module. render_pane.js registers a single
-// listen('render_status', ...) listener directly to avoid double-registration
+// removed from this module. render_pane.js registers 'render_jobs_snapshot'/
+// 'render_batch_finished' listeners directly to avoid double-registration
 // bugs (ipc_bridge.js must not create a second competing listener).
 
 /** Lists the immediate subfolders and `.dem` files of `path` (drive roots

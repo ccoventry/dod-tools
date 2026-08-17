@@ -11,7 +11,7 @@ import {
 import { renderMasterList, initMasterPane } from './master_pane.js';
 import { renderDetailView, initDetailPane } from './detail_pane.js';
 import { initCaptureUI, getCommandsState, hydrateCommandsState, refreshLaunchGuard } from './capture_pane.js';
-import { initRenderUI } from './render_pane.js';
+import { initRenderUI, checkRenderRecoveryOnStartup } from './render_pane.js';
 import { renderTelemetry } from './telemetry_pane.js';
 import { initAuditorPane } from './auditor_pane.js';
 import { initAnalyzerPane } from './analyzer_pane.js';
@@ -31,6 +31,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   let scanFoldersForDemos = false;
   let targetDrives = [];
   let renderFolders = [];
+  let renderExportDirs = []; // JIT multi-drive export pool for Render Studio
   let currentScannedDemos = [];
   let selectedDemoIdx = null;
 
@@ -628,7 +629,37 @@ window.addEventListener("DOMContentLoaded", async () => {
     });
   }
 
-  // Browse handler for render export directory override
+  // JIT multi-drive export pool for Render Studio — add/remove, no reorder
+  // (dev's own hlcr/ui.rs never exposed reordering for export_directories
+  // either, only Capture Studio's separate drive-override list does).
+  function addRenderExportDirRow(path) {
+    const li = document.createElement('li');
+    li.textContent = path;
+    const removeBtn = document.createElement('button');
+    removeBtn.textContent = '🗑';
+    removeBtn.title = 'Remove this export drive';
+    removeBtn.className = 'drive-pool-remove-btn';
+    removeBtn.addEventListener('click', () => {
+      renderExportDirs = renderExportDirs.filter((d) => d !== path);
+      li.remove();
+    });
+    li.appendChild(removeBtn);
+    document.querySelector('#render-export-dir-list')?.appendChild(li);
+  }
+
+  const addRenderExportDirBtn = document.querySelector('#add-render-export-dir-btn');
+  if (addRenderExportDirBtn) {
+    addRenderExportDirBtn.addEventListener('click', () => {
+      const inputEl = document.querySelector('#render-export-dir-input');
+      const path = inputEl?.value?.trim();
+      if (path && !renderExportDirs.includes(path)) {
+        renderExportDirs.push(path);
+        if (inputEl) inputEl.value = '';
+        addRenderExportDirRow(path);
+      }
+    });
+  }
+
   const browseRenderExportBtn = document.querySelector('#browse-render-export-btn');
   if (browseRenderExportBtn) {
     browseRenderExportBtn.addEventListener('click', async () => {
@@ -638,9 +669,9 @@ window.addEventListener("DOMContentLoaded", async () => {
           multiple: false,
           title: 'Select Render Export Directory'
         });
-        if (selected) {
-          const inputEl = document.querySelector('#render-export-dir-input');
-          if (inputEl) inputEl.value = selected;
+        if (selected && !renderExportDirs.includes(selected)) {
+          renderExportDirs.push(selected);
+          addRenderExportDirRow(selected);
         }
       } catch (err) {
         console.error("Error opening render export directory dialog:", err);
@@ -695,7 +726,11 @@ window.addEventListener("DOMContentLoaded", async () => {
   }));
 
   // Initialize Render Studio UI
-  initRenderUI(() => renderFolders);
+  initRenderUI(() => renderFolders, () => renderExportDirs);
+
+  // Render-batch crash-recovery prompt — checked once on startup, same
+  // pattern as dev's StartupState::PendingRenderRecovery.
+  checkRenderRecoveryOnStartup(() => switchNavTab('render-studio'));
 
   // Delete callback: remove a demo from the active scan list and re-render.
   // Called by master_pane.js when the 🗑 button is clicked on a row.

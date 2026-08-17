@@ -288,11 +288,14 @@ Rollup: no invented controls — every field maps to a real command. This area
 had the audit's only two **output-affecting** regressions — both fixed
 2026-08-16, see below.
 
-> `hlcr/config.rs`, `renderer.rs`, and `autosave.rs` are byte-identical to
-> dev and still compile — but they're orphaned. `render_manager.rs`
-> reimplements the entire encode pipeline from scratch instead of calling
-> them (`grep -rn "run_render_job|RenderSessionData|keepawake"
-> desktop-studio/src-tauri/` → zero hits).
+> `hlcr/config.rs`, `renderer.rs`, and `autosave.rs` were byte-identical to
+> dev and still compiled — but were orphaned; `render_manager.rs`
+> reimplemented the entire encode pipeline from scratch instead of calling
+> them. **No longer true as of 2026-08-16** — see the 5 items below, all
+> fixed by rewiring `render_manager.rs` to actually call `native::hlcr`'s
+> real pipeline. The 6th item in this area (auto-chaining a render after
+> capture) was explicitly left out of scope by the user this session — not
+> clearly still wanted, revisit if needed later.
 
 - [x] **OUTPUT BUG — fixed (2026-08-16)** — HUD-alpha clips silently lost
   transparency. Dev special-cased `clip_type == "hud_only"` to merge color +
@@ -320,30 +323,67 @@ had the audit's only two **output-affecting** regressions — both fixed
   generally faster and comparable-or-better quality than `libx264` at fast
   presets on an NVIDIA GPU (Turing/RTX 20-series+), but isn't universally
   available, hence offering both explicitly instead of picking one.
-- [ ] **DRIFT** — concurrent render queue → strictly sequential. Dev's
-  `max_concurrent_renders` (1-8) drove parallel jobs with per-job CPU thread
-  scaling; Tauri processes one FFmpeg job at a time, no concurrency control
-  exposed anywhere.
-- [ ] **DRIFT** — JIT multi-drive export pool collapsed to one static path.
-  Dev auto-selected the first export drive with 20 GB+ free from a
-  configurable pool, with a live "Total Export Pool Free" readout. Tauri has
-  a single text-field export directory — no picker, no free-space fallback,
-  no readout in the Render Studio panel. (Tauri's capture-side drive pool is
-  a separate thing and is never wired into rendering.)
-- [ ] **DRIFT** — per-job queue table collapsed into one global status line +
-  one global progress bar. Dev showed clip name/stream/frames/date/colored
-  status/speed/per-row progress bar/per-row Cancel+Reset+View-Log actions.
-  Tauri: no per-job rows, no Speed field, no per-job cancel/reset, errors are
-  a transient toast only (nothing persisted).
-- [ ] **GAP** — render-batch crash-recovery autosave (`.render_autosave.json`)
-  is gone. Distinct from the capture-side autosave already tracked in
-  `engineering_backlog.md` (dev kept these as two separate files with
-  separate recovery prompts) — the render-side one is untracked.
-- [ ] **GAP** — no wake-lock during a render batch. Dev held a
-  `keepawake::KeepAwake` guard for the render's duration, released on
-  cancel/completion, to stop the OS sleeping mid-batch. No trace of this
-  anywhere in Tauri.
-- [ ] **GAP** — auto-chaining a render after capture is gone. Dev
+- [x] **DRIFT — fixed (2026-08-16).** Concurrent render queue → strictly
+  sequential. `render_manager.rs` now calls `native::hlcr::renderer::
+  run_render_job` from a `spawn_scheduler` loop that ports dev's
+  `hlcr/ui.rs::update_channels` scheduling exactly: starts Queued jobs up to
+  `max_concurrent_renders` (new 1-8 UI control), computing the same
+  `effective_concurrent` value dev did so a lone job gets all available CPU
+  threads instead of only 1/max of them. One real behavior change worth
+  flagging: `run_render_job`'s own output filename scheme
+  (`{demo}_{take}[_wav]_{stream}_{hash}.mov`, dev's original) replaces the
+  old reimplementation's `{base_name}.{ext}` naming — a uniqueness hash
+  suffix and always-`.mov` container, not a functional regression but a
+  visible change to what filenames land on disk.
+  Required extending dev's `RenderCodec` enum (byte-identical, otherwise
+  unchanged) with an `H264Software` variant — dev's enum only ever had
+  `NvencH264`/`ProRes`/`DnxHr`, no separate software option, so calling
+  `run_render_job` directly would have silently dropped the "H.264
+  (Software, MP4)" choice from the OUTPUT BUG fix above. Decided with the
+  user: extend-and-call dev's real renderer rather than hand-porting pieces
+  into the reimplementation.
+- [x] **DRIFT — fixed (2026-08-16).** JIT multi-drive export pool collapsed
+  to one static path. `RenderBatchPayload.export_directories: Vec<String>`
+  replaces the single `export_directory` field; the Render Studio panel now
+  has an add/remove drive-pool list (`#render-export-dir-list`) and a live
+  "Total Export Pool Free" readout (`get_export_pool_free_gb`, refreshed
+  every 15s). The 20 GB+ threshold and first-fit selection logic is
+  `run_render_job`'s own (unchanged) — no reordering control, matching dev
+  (`hlcr/ui.rs` never exposed one for `export_directories` either, only
+  Capture Studio's separate drive-override list did).
+- [x] **DRIFT — fixed (2026-08-16).** Per-job queue table collapsed into one
+  global status line + progress bar. `RenderManager` now tracks real
+  per-job state (`RenderJobRuntime`) and emits a `render_jobs_snapshot`
+  event the frontend renders as a real table: Clip Name/Stream/Frames/
+  Date/colored Status/Speed/per-row progress bar/per-row Cancel+Reset+View
+  Log actions — all matching dev's table exactly. New `cancel_render_job`/
+  `reset_render_job` commands. One deliberate UX improvement over dev:
+  Reset immediately resumes the scheduler if the batch already fully
+  drained, instead of requiring a second "Start Render" click to notice the
+  re-queued job (dev's own real behavior, per `hlcr/ui.rs` — reset alone did
+  nothing without a manual click. Not worth reproducing the extra step).
+- [x] **GAP — fixed (2026-08-16).** Render-batch crash-recovery autosave
+  (`.render_autosave.json`). Backend writes/updates/deletes the lockfile via
+  `native::hlcr::autosave`'s real types, exactly matching dev's write-at-
+  batch-start / update-per-completion / delete-on-clean-drain lifecycle.
+  Added the startup recovery prompt dev had in `main.rs` (not just the
+  lockfile itself, which alone is invisible/low-value) — a modal showing
+  Source/Completed/Pending with Recover/Discard, `checkRenderAutosave()`
+  called once on app startup. "Recover" rebuilds the job table from stub
+  `ClipData` (take_folder/name/status only — the snapshot never stored full
+  scanner output, so Stream/Frames/Date come back blank on recovered rows),
+  matching dev's own recovery flow's real limitation exactly, not a Tauri
+  regression.
+- [x] **GAP — fixed (2026-08-16).** No wake-lock during a render batch. Held
+  via a new `native::hlcr::renderer::{RenderWakeLock, hold_render_wake_lock}`
+  wrapping `keepawake::KeepAwake` (`display(false)/idle(true)/sleep(true)`,
+  same as dev). **No new Cargo dependency was needed or added** — `native`
+  already depends on `keepawake` (still used today by
+  `capture_engine.rs::CaptureCleanupGuard` for the capture-side wake lock);
+  the wrapper just re-exposes it so `desktop-studio/src-tauri` never
+  references `keepawake` directly, avoiding any build-config change.
+- [ ] **GAP — explicitly left out of scope (2026-08-16).** Auto-chaining a
+  render after capture. User: "not sure if that's necessary anymore" — dev
   automatically pointed the render source at the just-finished capture
   session and kicked off a scan/render once a capture batch completed — this
   was automatic behavior, not a manual toggle, so there's no checkbox to
