@@ -343,6 +343,7 @@ window.addEventListener("DOMContentLoaded", async () => {
           const path = Array.isArray(selected) ? selected[0] : selected;
           const inputEl = document.querySelector('#primary-media-dir-input');
           if (inputEl) inputEl.value = path;
+          await persistAppSettings();
         }
       } catch (err) {
         console.error("Error selecting primary media directory:", err);
@@ -723,7 +724,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     scanPaths,
     targetDrives,
     currentScannedDemos
-  }));
+  }), persistAppSettings);
 
   // Initialize Render Studio UI
   initRenderUI(() => renderFolders, () => renderExportDirs);
