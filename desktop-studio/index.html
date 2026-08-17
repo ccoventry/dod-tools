@@ -109,9 +109,6 @@
                 </div>
               </div>
             </div>
-            <div style="padding: 10px; border-bottom: 1px solid #333; background: #1a1a1a;">
-              <canvas id="streak-timeline-canvas" height="60" style="width: 100%; border-radius: 2px; background: #121212; border: 1px solid #333;"></canvas>
-            </div>
             <div id="detail-streaks-container">
               <p class="placeholder-text" style="color: #888;">Select a demo in the Master List to view its killstreak details.</p>
             </div>
@@ -121,6 +118,9 @@
           <details id="advanced-diagnostics-details" class="egui-panel">
             <summary style="cursor: pointer; font-weight: bold; color: #ccc;">Advanced Diagnostics (Canvas Timeline & Telemetry)</summary>
             <div class="diagnostics-content" style="margin-top: 10px;">
+              <div style="padding: 10px; border-bottom: 1px solid #333; background: #1a1a1a;">
+                <canvas id="streak-timeline-canvas" height="60" style="width: 100%; border-radius: 2px; background: #121212; border: 1px solid #333;"></canvas>
+              </div>
               <div id="telemetry-pane" style="margin-top: 10px;">
                 <h4 style="margin: 5px 0;">Match Telemetry</h4>
                 <div id="telemetry-container" style="max-height: 250px; overflow-y: auto; background-color: #181818; padding: 10px; border-radius: 2px;">
