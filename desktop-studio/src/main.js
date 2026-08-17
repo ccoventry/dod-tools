@@ -1,5 +1,5 @@
 import { open, save } from '@tauri-apps/plugin-dialog';
-import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
+import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import {
   scanDirectory,
@@ -214,7 +214,7 @@ window.addEventListener("DOMContentLoaded", async () => {
             hlaePath: hlaePath,
             hlPath: hlPath
           }, null, 2);
-          await writeTextFile(filePath, projectData);
+          await invoke('save_project_session', { path: filePath, contents: projectData });
           showToast(`Project session saved successfully to ${filePath}`, 'success');
         }
       } catch (err) {
@@ -234,7 +234,7 @@ window.addEventListener("DOMContentLoaded", async () => {
           filters: [{ name: 'JSON Project File', extensions: ['json'] }]
         });
         if (selected) {
-          const content = await readTextFile(selected);
+          const content = await invoke('load_project_session', { path: selected });
           const data = JSON.parse(content);
           if (data) {
             if (data.hlaePath) {
