@@ -14,7 +14,6 @@
 *(none currently open — all three audited High Priority parity gaps resolved 2026-08-13, see Completed Tasks)*
 
 ### Medium Priority
-- [ ] **Drive Pool Interactive Management:** Add ⬆/⬇ reorder and 🗑 delete actions with live persistence for `#target-drive-list` and `#render-folder-list`.
 - [ ] **`movie_config` Input & Payload Binding:** Expose sanitised text field in Export Config to populate `+exec <name>.cfg` in HLAE launch args.
 - [ ] **Session Bookkeeping & Manifest Logging:** Restore writing `Capture_Sessions/<session_id>/manifest.txt`, routing chained demo copies, and cleaning up empty session directories on cancel/completion.
 - [ ] **Autosave Lockfile Recovery:** Re-enable writing `.autosave.json` immediately before batch dispatch to allow state restoration after unclean exits or crashes.
@@ -40,10 +39,20 @@
 - [x] Tier 3 — Capture Studio folder scans now warm the analyzer cache via `scan_demo_for_highlights_with_analysis`.
 - [ ] Tier 4/5 — selective netmessage parsing + `Delta` representation rewrite. **Blocked**: needs the future-player-stats review done first (both `SvcClientData`/`SvcDeltaPacketEntities`, the two biggest discard targets, are also the richest untapped stats source — see doc for why sequencing matters).
 
+### Render Studio ↔ HLCR Parity (see `docs/render_studio_hlcr_parity.md`)
+- Field-by-field comparison against the user's independent Python/PySide6
+  render-tool rewrite (`../HLCR`), done 2026-08-17. Highest-value gaps:
+  table checkbox multi-select + bulk delete, per-row delete/open take
+  folder, sortable columns, "Skip Previously Rendered" (needs a
+  `render_info.json`-style marker), a global aggregate progress bar, and
+  "Scan All Drives". Not yet triaged into Medium/Low Priority — do that once
+  the user picks which of these they actually want ported.
+
 ### Web Preview Viewer / `xash-transcode` (see `docs/web_preview_viewer.md`)
 - Standalone HLDEMO → Xash3D IDEM transcoder, clip cutter, and content packer for the browser-based demo viewer (sibling repo `../dod-web-demo-viewer/`). Declares its own `[workspace]` — deliberately **not** a member of the root Cargo workspace, `cargo build --workspace` skips it. Read the handoff doc before touching; recent work fixed a clientdata ring-buffer/demo-cut bug and a frozen-camera bug from missing synthesized `dem_usercmd` frames (`bf88e4c`, `d19bd31`).
 
 ### R&D & Architectural Enhancements
+- **Theme System (Light/Dark/System, expandable via a "Themes" dropdown):** App is currently dark-mode-only. `styles.css`'s `:root` defines only 10 CSS variables (`--bg-dark`, `--bg-panel`, etc.), but ~77 hex colors are hardcoded elsewhere in the stylesheet plus ~46 more baked into inline `style="color:#..."` attributes across `index.html`/`main.js`/`capture_pane.js` — none of it currently routes through a variable. A real toggle means: migrate every hardcoded color to a variable, design + contrast-audit a light palette, add a `data-theme` attribute + `prefers-color-scheme` fallback + persisted setting, and expose it in the UI. The variable migration is the expensive, one-time part; once it's done, extra palettes beyond light/dark are cheap, so build it as a theme-token system with a dropdown rather than a hardcoded 3-way switch. Estimated half-day-plus — own branch, not a quick add.
 - **External Demo Playback:** Investigate if DoD `.dem` files can be parsed and rendered outside the game engine (e.g., web browser / lightweight desktop app) to preview killstreaks quickly.
 - **Mode Toggle:** Add functionality to Capture Studio to switch between "Timing Mode" and "Capture Mode".
 - **Session Compression & Modular Export:** Add options for Gzip/Zstd compression for JSON and "Selective Export" feature flags (e.g., export demos only vs. export full project metadata).
@@ -54,6 +63,7 @@
 
 ## ✅ Completed Tasks
 
+- [x] **Feature: Unified Editable-List Widget Across Drive/Command Lists (2026-08-17):** Drive Overrides and Render Folders (`#target-drive-list`/`#render-folder-list`) had no remove/edit/reorder at all — add-only, plain text `<li>`s. Render Studio's Export Drives had delete but no edit/reorder; Init/Custom Commands had inline edit + delete but no reorder, via a separate hand-rolled implementation. Extracted a shared `list_editor.js` widget (add, inline edit, remove, ⬆/⬇ reorder, optional native-picker browse via `@tauri-apps/plugin-dialog`, optional uniqueness) driving all five lists off one implementation; `index.html`'s three `<ul>` containers became `<div class="list-editor-list">` to match. Also replaced the 🗑 emoji remove icon with an inline SVG (`stroke="currentColor"`) after noticing WebView2 renders the emoji as a monochrome glyph that ignores CSS `color` — it was reading as a pause icon in `--text-muted` grey instead of respecting the grey→red hover state.
 - [x] **Feature: Tauri & Vite Integration:** Migrated frontend stack from native `egui` to Tauri + Vite, establishing async IPC boundaries for demo ingestion, settings persistence, demo auditor, and AOT simulation.
 - [x] **Headless Preview CLI Generator:** Built secondary `preview_cli` binary target ([main.rs](file:///c:/Users/Chris%20Coventry/Repos/dod-tools/native/src/bin/cli/main.rs)). Supports drag-and-drop folder/file execution, localized terminal output, and interactive/headless modes.
 - [x] **Top Navigation Bar Migration & Non-Destructive Scan Cancellation:** Extracted Export Manager view, migrated sidebar to Top Navigation Bar, implemented non-destructive scan cancellation (`INGESTION_CANCEL`), and scaffolded localized footers across views.
