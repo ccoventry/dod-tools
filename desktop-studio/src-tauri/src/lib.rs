@@ -6,7 +6,11 @@ mod dir_browser;
 
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 use capture_manager::{CaptureManager, CapturePayload, launch_demo_preview, generate_all_previews, launch_standalone_game, check_engine_processes, kill_engine_processes, scan_orphaned_previews, delete_orphaned_previews};
-use render_manager::{RenderManager, scan_render_directories, execute_render_batch, render_status, cancel_render_batch};
+use render_manager::{
+    RenderManager, scan_render_directories, execute_render_batch, cancel_render_batch,
+    cancel_render_job, reset_render_job, get_export_pool_free_gb,
+    check_render_autosave, discard_render_autosave, recover_render_batch,
+};
 use settings_manager::{AppSettings, SettingsManager};
 use audit_manager::{AuditManager, SerializedDuplicateGroup};
 
@@ -375,8 +379,13 @@ pub fn run() {
             simulate_aot_capacity,
             scan_render_directories,
             execute_render_batch,
-            render_status,
             cancel_render_batch,
+            cancel_render_job,
+            reset_render_job,
+            get_export_pool_free_gb,
+            check_render_autosave,
+            discard_render_autosave,
+            recover_render_batch,
             get_settings,
             save_settings,
             run_demo_audit,

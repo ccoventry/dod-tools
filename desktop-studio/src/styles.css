@@ -395,6 +395,39 @@ button.primary-btn:hover:not(:disabled) {
   transition: width 0.2s ease-in-out;
 }
 
+/* JIT multi-drive export pool (Render Studio) */
+.drive-pool-list {
+  list-style: none;
+  margin: 4px 0;
+  padding: 0;
+  max-height: 100px;
+  overflow-y: auto;
+}
+
+.drive-pool-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 3px 8px;
+  font-size: 12px;
+  font-family: monospace;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.drive-pool-remove-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0 4px;
+  flex-shrink: 0;
+}
+
+.drive-pool-remove-btn:hover {
+  color: #ef4444;
+}
+
 /* Small inline scan/audit-in-progress indicator */
 .spinner {
   display: inline-block;
