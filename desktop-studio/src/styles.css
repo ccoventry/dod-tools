@@ -405,37 +405,48 @@ button.primary-btn:hover:not(:disabled) {
   transition: width 0.2s ease-in-out;
 }
 
-/* JIT multi-drive export pool (Render Studio) */
-.drive-pool-list {
-  list-style: none;
-  margin: 4px 0;
-  padding: 0;
-  max-height: 100px;
+/* Shared editable row-list widget (list_editor.js) — Drive Overrides,
+   Render Folders, Export Drives, Init Commands, and Custom Commands. */
+.list-editor-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 4px 0 8px;
+  max-height: 160px;
   overflow-y: auto;
 }
 
-.drive-pool-list li {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 3px 8px;
-  font-size: 12px;
-  font-family: monospace;
-  border-bottom: 1px solid var(--border-color);
+.list-editor-row {
+  margin-bottom: 0;
 }
 
-.drive-pool-remove-btn {
+.list-editor-browse-btn,
+.list-editor-move-btn,
+.list-editor-remove-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background: none;
   border: none;
   color: var(--text-muted);
   cursor: pointer;
-  padding: 0 4px;
+  padding: 2px 4px;
   flex-shrink: 0;
+  font-size: 12px;
 }
 
-.drive-pool-remove-btn:hover {
+.list-editor-browse-btn:hover,
+.list-editor-move-btn:hover:not(:disabled) {
+  color: #ffffff;
+}
+
+.list-editor-remove-btn:hover {
   color: #ef4444;
+}
+
+.list-editor-move-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
 }
 
 /* Small inline scan/audit-in-progress indicator */

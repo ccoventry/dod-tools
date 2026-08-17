@@ -2,6 +2,7 @@ import { startCaptureBatch, cancelCaptureBatch, validatePaths, calculateExportPo
 import { listen } from '@tauri-apps/api/event';
 import { showToast } from './toast.js';
 import { requestProcessGuardedLaunch } from './detail_pane.js';
+import { createListEditor } from './list_editor.js';
 
 let unlistenCaptureStatus = null;
 // Tracks whether a batch is actively running so refreshLaunchGuard() never
@@ -181,6 +182,8 @@ export async function refreshLaunchGuard(state) {
 
 let initCommands = [];
 let customCommands = [];
+let initCommandsEditor = null;
+let customCommandsEditor = null;
 
 /** Scrapes the current Init/Custom Commands state for settings persistence
  *  (raw, untrimmed — mirrors in-progress edits rather than the filtered
@@ -207,74 +210,8 @@ export function hydrateCommandsState(persistedInitCommands, persistedCustomComma
         offsetSeconds: typeof c.offset_seconds === 'number' ? c.offset_seconds : 2.0,
       }))
     : [];
-  renderInitCommandsList();
-  renderCustomCommandsList();
-}
-
-function escAttr(s) {
-  return String(s ?? '').replace(/"/g, '&quot;');
-}
-
-function renderInitCommandsList() {
-  const container = document.querySelector('#init-commands-list');
-  if (!container) return;
-  container.innerHTML = '';
-  initCommands.forEach((cmd, idx) => {
-    const row = document.createElement('div');
-    row.className = 'input-row init-command-row';
-    row.innerHTML = `
-      <input type="text" class="init-command-input" placeholder="e.g. mirv_streams add all" style="flex: 1;" value="${escAttr(cmd)}" />
-      <button type="button" class="remove-init-command-btn">Remove</button>
-    `;
-    row.querySelector('.init-command-input').addEventListener('input', (e) => {
-      initCommands[idx] = e.target.value;
-      notifySettingsChange();
-    });
-    row.querySelector('.remove-init-command-btn').addEventListener('click', () => {
-      initCommands.splice(idx, 1);
-      renderInitCommandsList();
-      notifySettingsChange();
-    });
-    container.appendChild(row);
-  });
-}
-
-function renderCustomCommandsList() {
-  const container = document.querySelector('#custom-commands-list');
-  if (!container) return;
-  container.innerHTML = '';
-  customCommands.forEach((cmd, idx) => {
-    const row = document.createElement('div');
-    row.className = 'input-row custom-command-row';
-    row.innerHTML = `
-      <input type="text" class="custom-command-input" placeholder="Command" style="flex: 1;" value="${escAttr(cmd.command)}" />
-      <select class="custom-command-relation">
-        <option value="Before" ${cmd.relation === 'Before' ? 'selected' : ''}>Before</option>
-        <option value="After" ${cmd.relation === 'After' ? 'selected' : ''}>After</option>
-      </select>
-      <input type="number" class="custom-command-offset" step="0.1" min="0" style="width: 70px;" value="${cmd.offsetSeconds}" />
-      <button type="button" class="remove-custom-command-btn">Remove</button>
-    `;
-    row.querySelector('.custom-command-input').addEventListener('input', (e) => {
-      cmd.command = e.target.value;
-      notifySettingsChange();
-    });
-    row.querySelector('.custom-command-relation').addEventListener('change', (e) => {
-      cmd.relation = e.target.value;
-      notifySettingsChange();
-    });
-    row.querySelector('.custom-command-offset').addEventListener('input', (e) => {
-      const v = parseFloat(e.target.value);
-      cmd.offsetSeconds = Number.isNaN(v) ? 0 : v;
-      notifySettingsChange();
-    });
-    row.querySelector('.remove-custom-command-btn').addEventListener('click', () => {
-      customCommands.splice(idx, 1);
-      renderCustomCommandsList();
-      notifySettingsChange();
-    });
-    container.appendChild(row);
-  });
+  initCommandsEditor?.render();
+  customCommandsEditor?.render();
 }
 
 // ── Clear Previews audit modal ─────────────────────────────────────────────
@@ -474,26 +411,38 @@ export function initCaptureUI(getState, onSettingsChange) {
   currentGetState = getState;
   currentOnSettingsChange = onSettingsChange || null;
 
-  renderInitCommandsList();
-  renderCustomCommandsList();
+  initCommandsEditor = createListEditor({
+    container: document.querySelector('#init-commands-list'),
+    getItems: () => initCommands,
+    fields: [{ key: 'value', type: 'text', primitive: true, placeholder: 'e.g. mirv_streams add all' }],
+    onChange: notifySettingsChange,
+  });
+
+  customCommandsEditor = createListEditor({
+    container: document.querySelector('#custom-commands-list'),
+    getItems: () => customCommands,
+    fields: [
+      { key: 'command', type: 'text', placeholder: 'Command' },
+      { key: 'relation', type: 'select', options: ['Before', 'After'] },
+      { key: 'offsetSeconds', type: 'number', step: 0.1, min: 0, width: '70px' },
+    ],
+    onChange: notifySettingsChange,
+  });
+
   initClearPreviewsModal();
   initStandaloneLaunchButton();
 
   const addInitCommandBtn = document.querySelector('#add-init-command-btn');
   if (addInitCommandBtn) {
     addInitCommandBtn.addEventListener('click', () => {
-      initCommands.push('');
-      renderInitCommandsList();
-      notifySettingsChange();
+      initCommandsEditor.addItem('');
     });
   }
 
   const addCustomCommandBtn = document.querySelector('#add-custom-command-btn');
   if (addCustomCommandBtn) {
     addCustomCommandBtn.addEventListener('click', () => {
-      customCommands.push({ command: '', relation: 'Before', offsetSeconds: 2.0 });
-      renderCustomCommandsList();
-      notifySettingsChange();
+      customCommandsEditor.addItem({ command: '', relation: 'Before', offsetSeconds: 2.0 });
     });
   }
 

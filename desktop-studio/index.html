@@ -253,7 +253,7 @@
                   <button id="open-clear-previews-btn">Clear Previews...</button>
                 </div>
               </div>
-              <ul id="target-drive-list" style="margin-top: 8px;"></ul>
+              <div id="target-drive-list" class="list-editor-list"></div>
             </div>
 
             <!-- Tab Content: Custom Commands -->
@@ -261,13 +261,13 @@
               <div class="input-row">
                 <strong>Initial Commands (executed once at demo load):</strong>
               </div>
-              <div id="init-commands-list" style="display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px;"></div>
+              <div id="init-commands-list" class="list-editor-list"></div>
               <button id="add-init-command-btn">+ Add Init Command</button>
 
               <div class="input-row" style="margin-top: 16px;">
                 <strong>Custom Commands (scheduled relative to each highlight):</strong>
               </div>
-              <div id="custom-commands-list" style="display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px;"></div>
+              <div id="custom-commands-list" class="list-editor-list"></div>
               <button id="add-custom-command-btn">+ Add Custom Command</button>
             </div>
 
@@ -294,7 +294,7 @@
               <button id="add-render-folder-btn">Add Render Folder</button>
               <button id="browse-render-folder-btn">Browse Render Folder</button>
             </div>
-            <ul id="render-folder-list"></ul>
+            <div id="render-folder-list" class="list-editor-list"></div>
 
             <!-- Render Configuration -->
             <div class="inline-controls" style="margin-top: 8px;">
@@ -323,7 +323,7 @@
               <button id="add-render-export-dir-btn">Add Drive</button>
               <button id="browse-render-export-btn">Browse Drive</button>
             </div>
-            <ul id="render-export-dir-list" class="drive-pool-list"></ul>
+            <div id="render-export-dir-list" class="list-editor-list"></div>
             <div class="input-row" style="margin-top: 4px; align-items: center;">
               <strong>Total Export Pool Free:</strong>
               <span id="render-export-pool-free">0.0 GB</span>

@@ -18,6 +18,7 @@ import { initAnalyzerPane } from './analyzer_pane.js';
 import { switchNavTab, setCaptureDetailSubtab } from './nav.js';
 import { analyzeDemo } from './ipc_bridge.js';
 import { showToast } from './toast.js';
+import { createListEditor } from './list_editor.js';
 
 window.addEventListener("DOMContentLoaded", async () => {
   let scanPaths = [];
@@ -54,6 +55,67 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   // Initialize modular UI panes
   initAuditorPane();
+
+  async function pickTargetDrive() {
+    try {
+      return await open({ directory: true, multiple: false, title: 'Select Target Output Drive/Directory' });
+    } catch (err) {
+      console.error("Error opening target drive dialog:", err);
+      return null;
+    }
+  }
+
+  async function pickRenderFolder() {
+    try {
+      return await open({ directory: true, multiple: false, title: 'Select Render Directory' });
+    } catch (err) {
+      console.error("Error opening render directory dialog:", err);
+      return null;
+    }
+  }
+
+  async function pickRenderExportDir() {
+    try {
+      return await open({ directory: true, multiple: false, title: 'Select Render Export Directory' });
+    } catch (err) {
+      console.error("Error opening render export directory dialog:", err);
+      return null;
+    }
+  }
+
+  // Shared editable-list widget (list_editor.js) for the three folder/drive
+  // pools — Drive Overrides, Render Folders, and Render Studio's Export
+  // Drives all get add/edit/remove/reorder/browse from one implementation.
+  const driveOverridesEditor = createListEditor({
+    container: document.querySelector('#target-drive-list'),
+    getItems: () => targetDrives,
+    fields: [{ key: 'value', type: 'text', primitive: true, placeholder: 'Target output drive path...' }],
+    unique: true,
+    browse: pickTargetDrive,
+    onChange: () => {
+      updateExportPoolIndicator();
+      persistAppSettings();
+      refreshLaunchGuard({ targetDrives, currentScannedDemos });
+    },
+  });
+
+  const renderFoldersEditor = createListEditor({
+    container: document.querySelector('#render-folder-list'),
+    getItems: () => renderFolders,
+    fields: [{ key: 'value', type: 'text', primitive: true, placeholder: 'Render directory path...' }],
+    unique: true,
+    browse: pickRenderFolder,
+    onChange: () => persistAppSettings(),
+  });
+
+  const renderExportDirsEditor = createListEditor({
+    container: document.querySelector('#render-export-dir-list'),
+    getItems: () => renderExportDirs,
+    fields: [{ key: 'value', type: 'text', primitive: true, placeholder: 'Export drive/folder path...' }],
+    unique: true,
+    browse: pickRenderExportDir,
+    onChange: () => persistAppSettings(),
+  });
 
   // Helper to persist application settings
   async function persistAppSettings() {
@@ -223,30 +285,16 @@ window.addEventListener("DOMContentLoaded", async () => {
       scanFoldersForDemos = !!settings.scan_folders_for_demos;
       if (Array.isArray(settings.target_drives) && settings.target_drives.length > 0) {
         targetDrives = [...settings.target_drives];
-        const driveListEl = document.querySelector('#target-drive-list');
-        if (driveListEl) {
-          targetDrives.forEach(drivePath => {
-            const li = document.createElement('li');
-            li.textContent = drivePath;
-            driveListEl.appendChild(li);
-          });
-        }
+        driveOverridesEditor.render();
         updateExportPoolIndicator();
       }
       if (Array.isArray(settings.render_folders) && settings.render_folders.length > 0) {
         renderFolders = [...settings.render_folders];
-        const renderFolderListEl = document.querySelector('#render-folder-list');
-        if (renderFolderListEl) {
-          renderFolders.forEach(folderPath => {
-            const li = document.createElement('li');
-            li.textContent = folderPath;
-            renderFolderListEl.appendChild(li);
-          });
-        }
+        renderFoldersEditor.render();
       }
       if (Array.isArray(settings.render_export_dirs) && settings.render_export_dirs.length > 0) {
         renderExportDirs = [...settings.render_export_dirs];
-        renderExportDirs.forEach(dirPath => addRenderExportDirRow(dirPath));
+        renderExportDirsEditor.render();
       }
       hydrateCommandsState(settings.init_commands, settings.custom_commands);
     }
@@ -627,110 +675,47 @@ window.addEventListener("DOMContentLoaded", async () => {
   }
 
   // Target drives management
-  document.querySelector('#add-drive-btn').addEventListener('click', async () => {
+  document.querySelector('#add-drive-btn').addEventListener('click', () => {
     const driveEl = document.querySelector('#drive-path-input');
     const drivePath = driveEl.value.trim();
-    if (drivePath && !targetDrives.includes(drivePath)) {
-      targetDrives.push(drivePath);
+    if (drivePath && driveOverridesEditor.addItem(drivePath)) {
       driveEl.value = "";
-      const li = document.createElement('li');
-      li.textContent = drivePath;
-      document.querySelector('#target-drive-list').appendChild(li);
-      updateExportPoolIndicator();
-      await persistAppSettings();
-      refreshLaunchGuard({ targetDrives, currentScannedDemos });
     }
   });
 
   const browseDriveBtn = document.querySelector('#browse-drive-btn');
   if (browseDriveBtn) {
     browseDriveBtn.addEventListener('click', async () => {
-      try {
-        const selected = await open({
-          directory: true,
-          multiple: false,
-          title: 'Select Target Output Drive/Directory'
-        });
-        if (selected && !targetDrives.includes(selected)) {
-          targetDrives.push(selected);
-          const li = document.createElement('li');
-          li.textContent = selected;
-          document.querySelector('#target-drive-list').appendChild(li);
-          updateExportPoolIndicator();
-          await persistAppSettings();
-          refreshLaunchGuard({ targetDrives, currentScannedDemos });
-        }
-      } catch (err) {
-        console.error("Error opening target drive dialog:", err);
-      }
+      const selected = await pickTargetDrive();
+      if (selected) driveOverridesEditor.addItem(selected);
     });
   }
 
   // Render folders management
-  document.querySelector('#add-render-folder-btn').addEventListener('click', async () => {
+  document.querySelector('#add-render-folder-btn').addEventListener('click', () => {
     const inputEl = document.querySelector('#render-path-input');
     const path = inputEl.value.trim();
-    if (path && !renderFolders.includes(path)) {
-      renderFolders.push(path);
+    if (path && renderFoldersEditor.addItem(path)) {
       inputEl.value = "";
-      const li = document.createElement('li');
-      li.textContent = path;
-      document.querySelector('#render-folder-list').appendChild(li);
-      await persistAppSettings();
     }
   });
 
   const browseRenderFolderBtn = document.querySelector('#browse-render-folder-btn');
   if (browseRenderFolderBtn) {
     browseRenderFolderBtn.addEventListener('click', async () => {
-      try {
-        const selected = await open({
-          directory: true,
-          multiple: false,
-          title: 'Select Render Directory'
-        });
-        if (selected && !renderFolders.includes(selected)) {
-          renderFolders.push(selected);
-          const li = document.createElement('li');
-          li.textContent = selected;
-          document.querySelector('#render-folder-list').appendChild(li);
-          await persistAppSettings();
-        }
-      } catch (err) {
-        console.error("Error opening render directory dialog:", err);
-      }
+      const selected = await pickRenderFolder();
+      if (selected) renderFoldersEditor.addItem(selected);
     });
   }
 
-  // JIT multi-drive export pool for Render Studio — add/remove, no reorder
-  // (dev's own hlcr/ui.rs never exposed reordering for export_directories
-  // either, only Capture Studio's separate drive-override list does).
-  function addRenderExportDirRow(path) {
-    const li = document.createElement('li');
-    li.textContent = path;
-    const removeBtn = document.createElement('button');
-    removeBtn.textContent = '🗑';
-    removeBtn.title = 'Remove this export drive';
-    removeBtn.className = 'drive-pool-remove-btn';
-    removeBtn.addEventListener('click', async () => {
-      renderExportDirs = renderExportDirs.filter((d) => d !== path);
-      li.remove();
-      await persistAppSettings();
-    });
-    li.appendChild(removeBtn);
-    document.querySelector('#render-export-dir-list')?.appendChild(li);
-  }
-
+  // JIT multi-drive export pool for Render Studio
   const addRenderExportDirBtn = document.querySelector('#add-render-export-dir-btn');
   if (addRenderExportDirBtn) {
-    addRenderExportDirBtn.addEventListener('click', async () => {
+    addRenderExportDirBtn.addEventListener('click', () => {
       const inputEl = document.querySelector('#render-export-dir-input');
       const path = inputEl?.value?.trim();
-      if (path && !renderExportDirs.includes(path)) {
-        renderExportDirs.push(path);
-        if (inputEl) inputEl.value = '';
-        addRenderExportDirRow(path);
-        await persistAppSettings();
+      if (path && renderExportDirsEditor.addItem(path) && inputEl) {
+        inputEl.value = '';
       }
     });
   }
@@ -738,23 +723,10 @@ window.addEventListener("DOMContentLoaded", async () => {
   const browseRenderExportBtn = document.querySelector('#browse-render-export-btn');
   if (browseRenderExportBtn) {
     browseRenderExportBtn.addEventListener('click', async () => {
-      try {
-        const selected = await open({
-          directory: true,
-          multiple: false,
-          title: 'Select Render Export Directory'
-        });
-        if (selected && !renderExportDirs.includes(selected)) {
-          renderExportDirs.push(selected);
-          addRenderExportDirRow(selected);
-          await persistAppSettings();
-        }
-      } catch (err) {
-        console.error("Error opening render export directory dialog:", err);
-      }
+      const selected = await pickRenderExportDir();
+      if (selected) renderExportDirsEditor.addItem(selected);
     });
   }
-
 
   // Export Configuration tab switching
   const tabBtns = document.querySelectorAll('.config-tab-btn');
