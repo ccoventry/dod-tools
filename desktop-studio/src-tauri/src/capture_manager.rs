@@ -339,6 +339,55 @@ pub async fn start_capture_batch_impl(
             return;
         }
 
+        // ── Write each job's patched demo before the capture engine copies it ───
+        // build_batch_queue only plans where each patched demo should land
+        // (output_demo paths, drive routing, scheduled commands) — it never
+        // writes the bytes. Do that here, one StreamPatcher pass per job,
+        // before spawn_capture_engine tries to copy patched_demo_path into
+        // the game's dod/ directory (it would otherwise fail with "file not
+        // found" since output_demo never existed).
+        let total_patch_jobs = patch_jobs.len() as u32;
+        for (idx, job) in patch_jobs.iter().enumerate() {
+            if cancel_token_arc.load(std::sync::atomic::Ordering::Relaxed) {
+                let mut running = is_running_arc.lock().unwrap_or_else(|p| p.into_inner());
+                *running = false;
+                let _ = app_handle_clone.emit("capture_status", serde_json::json!({
+                    "running": false,
+                    "status": "Cancelled"
+                }));
+                return;
+            }
+            let _ = app_handle_clone.emit("capture_status", serde_json::json!({
+                "running": true,
+                "index": idx as u32,
+                "total": total_patch_jobs,
+                "status": format!("Patching {} / {}", idx + 1, total_patch_jobs)
+            }));
+            if let Err(e) = StreamPatcher::new(&job.source_demo, &job.output_demo)
+                .patch(job, &patcher_config, &cancel_token_arc)
+            {
+                if e.kind() == std::io::ErrorKind::Interrupted {
+                    let _ = std::fs::remove_file(&job.output_demo);
+                    let mut running = is_running_arc.lock().unwrap_or_else(|p| p.into_inner());
+                    *running = false;
+                    let _ = app_handle_clone.emit("capture_status", serde_json::json!({
+                        "running": false,
+                        "status": "Cancelled"
+                    }));
+                    return;
+                }
+                log::error!("Failed to patch {}: {}", job.source_demo, e);
+                let mut running = is_running_arc.lock().unwrap_or_else(|p| p.into_inner());
+                *running = false;
+                let _ = app_handle_clone.emit("capture_status", serde_json::json!({
+                    "running": false,
+                    "error": true,
+                    "status": format!("Failed to patch {}: {}", job.source_demo, e)
+                }));
+                return;
+            }
+        }
+
         let capture_jobs: Vec<CaptureJob> = patch_jobs
             .into_iter()
             .map(|job| {
