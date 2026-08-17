@@ -18,7 +18,13 @@ export function initAuditorPane() {
   const spinnerEl = document.querySelector('#audit-spinner');
   const statusTextEl = document.querySelector('#audit-status-text');
   const footerEl = document.querySelector('#audit-list-footer');
+  const pinnedFooterEl = document.querySelector('#footer-audit-summary');
   const tbody = document.querySelector('#audit-results-body');
+
+  function setAuditFooterSummary(text) {
+    if (footerEl) footerEl.textContent = text;
+    if (pinnedFooterEl) pinnedFooterEl.textContent = text;
+  }
 
   function refreshStartButtonState() {
     if (!runAuditBtn) return;
@@ -120,7 +126,7 @@ export function initAuditorPane() {
     if (currentAuditResults.length === 0) {
       tbody.innerHTML = '<tr><td colspan="5" class="table-empty">No duplicates found! Your demos are clean.</td></tr>';
       if (deleteBtn) deleteBtn.disabled = true;
-      if (footerEl) footerEl.textContent = `Duplicates Found: 0 | Wasted Space: 0.00 GB`;
+      setAuditFooterSummary('Duplicates Found: 0 | Wasted Space: 0.00 GB');
       return;
     }
 
@@ -219,7 +225,7 @@ export function initAuditorPane() {
     });
 
     const wastedGb = (totalWastedBytes / (1024 * 1024 * 1024)).toFixed(2);
-    if (footerEl) footerEl.textContent = `Duplicates Found: ${duplicateCount} | Wasted Space: ${wastedGb} GB`;
+    setAuditFooterSummary(`Duplicates Found: ${duplicateCount} | Wasted Space: ${wastedGb} GB`);
 
     updateDeleteButtonState();
   }

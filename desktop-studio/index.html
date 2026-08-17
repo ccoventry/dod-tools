@@ -494,11 +494,21 @@
         </section>
       </main>
 
-      <!-- Pinned Bottom Action / Status Bar -->
+      <!-- Pinned Bottom Status Bar — unique content per tab, toggled by
+           switchNavTab() (nav.js) the same way the tab panes themselves are. -->
       <footer id="pinned-action-bar">
-        <div id="export-pool-free-indicator">Capture Output Free: 0.0 GB</div>
-        <div class="action-bar-right">
-          <button id="proceed-capture-nav-btn" class="action-next-btn">Proceed to Capture &rarr;</button>
+        <div id="footer-capture-studio" class="pinned-footer-content">
+          <div id="export-pool-free-indicator">Capture Output Free: 0.0 GB</div>
+        </div>
+        <div id="footer-render-studio" class="pinned-footer-content" style="display: none;">
+          <div id="render-footer-pool-free">Export Pool Free: 0.0 GB</div>
+          <div id="render-footer-queue-summary">0 queued &middot; 0 rendering &middot; 0 done</div>
+        </div>
+        <div id="footer-demo-auditor" class="pinned-footer-content" style="display: none;">
+          <div id="footer-audit-summary">Duplicates Found: 0 | Wasted Space: 0.00 GB</div>
+        </div>
+        <div id="footer-demo-analyzer" class="pinned-footer-content" style="display: none;">
+          <div id="footer-analyzer-current-file">No demo loaded</div>
         </div>
       </footer>
 
