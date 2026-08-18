@@ -1,7 +1,10 @@
 ## Web AI State
-- **Overarching Goal:** Architectural UI decoupling, Top Navigation migration, and scan cancellation completed. Preview CLI target operational with interactive and headless execution. Next phase: Tauri & Vite frontend migration (`feature/tauri-migration`).
-- **Last Edited:** `native/src/bin/cli/main.rs`, `analysis/src/localization.rs`, `docs/engineering_backlog.md`.
-- **Unresolved Errors/Bugs:** None.
+- **Overarching Goal:** Get `feature/tauri-migration` merged to `dev`. All High-Priority parity gaps are resolved; two Medium-Priority items (Clear Previews modal, Standalone Game Launch) are also now done. Since the last doc sync (`4b26ffd`, 2026-08-13) the branch picked up a run of side work — a standalone `xash-transcode` HLDEMO->IDEM browser-preview transcoder crate (own `[workspace]`, not built by `cargo build --workspace`) and Demo Analyzer load-performance Tiers 1-3 (on-disk cache, progress events, dead-code removal — see `docs/demo_analyzer_load_performance.md`) — the analyzer work was reflected in `engineering_backlog.md`/`milestones.md` this pass; the `xash-transcode` crate was split off entirely onto its own `experimental/xash-transcode` branch (2026-08-18, see that branch's `docs/web_preview_viewer.md`) rather than tracked here, since it's experimental and shouldn't ride into `dev`.
+- **2026-08-16/17 user-testing pass (through `8641dba`):** User ran Capture Studio and Render Studio end-to-end and reported a run of real bugs found live, not from code review — most seriously, **batch capture was failing 100% of the time**: `build_batch_queue()` never actually wrote patched demo bytes (`StreamPatcher::patch()` was never called on the batch path, only on the separate Preview path), so every batch failed immediately trying to copy a file that never existed. Also fixed: Save/Load Project Session unusable outside AppData-scoped paths, Master Demo Queue highlight counts mixing every player in the match (root cause: POV filter gated on the unreliable `is_pov` flag instead of `local_player_index`), an opt-in/opt-out `selected` mismatch that could have captured unselected highlights, a Capture Studio Configuration auto-save audit (several fields never persisted at all), new persistence for Save Local Patched Copy/Allocation Strategy/all of Render Studio, and session-file UX (remembers the loaded/saved path, Ctrl+O consistency fix, filename indicator). Full detail in `engineering_backlog.md`'s Completed Tasks and `bugs.md`'s Completed/Resolved Bugs (the 4 most severe ones). **After the batch-capture fix, user confirmed a full Capture Studio + Render Studio run "working great."**
+- **Branch relationship to `dev`:** `dev`'s tip (`80feaaf`) *is* the merge-base — `feature/tauri-migration` already contains all of `dev`'s history. There is no divergence/conflict to reconcile; the remaining work is closing out backlog polish items and deciding whether to merge now or after more of the Medium/Low priority list.
+- **Verification (2026-08-16):** `cargo build --workspace` clean. `cargo test --workspace --no-fail-fast` clean across every crate except 4 pre-existing `analysis` failures (localization loader/test key-prefix mismatch, one fixture-dependent demo test) — confirmed byte-identical at the `dev` merge-base via diff, so not a regression from this branch. Every fix from the 2026-08-16/17 testing pass above was `cargo check`-verified individually as it landed; a full workspace `cargo build`/`test` re-run since then is still outstanding before merge.
+- **Verification (2026-08-18):** Full re-run of `cargo build --workspace` (clean) and `cargo test --workspace --no-fail-fast` reconfirmed clean except the same 4 pre-existing `analysis` failures (3 localization key-prefix mismatches, 1 missing demo fixture) — byte-identical to the set already confirmed present at the `dev` merge-base. No regressions from the 2026-08-16/17 fixes or the `xash-transcode` branch split.
+- **Next Steps:** No open blockers remain — `feature/tauri-migration` is ready to merge into `dev`. `xash-transcode` has been split out onto `experimental/xash-transcode` and is no longer part of this branch's history going forward; remaining Medium/Low priority backlog items are not merge blockers and can continue on `dev` after.
 
 ## Active Epics
 - **Headless Preview CLI:** COMPLETED
@@ -12,16 +15,18 @@
   - Migrated hardcoded GUI/CLI/scanner strings to localizations. Updated `analysis::localization` to support transparent dual-key lookups (`#key` and `key`) for Valve KeyValues and AMXX files.
 - **HLTV Active Frame Injection:** COMPLETED
   - Standalone `DRC_CMD_INEYE` frame injection implemented in `native/src/patch/engine.rs`.
-- **Frontend Migration:** IN PROGRESS (Branch: `feature/tauri-migration`)
-  - Transitioning frontend stack to Tauri + Vite architecture in the `desktop-studio/` workspace (`src-tauri/`).
 - **Dynamic Drive Failover:** COMPLETED
   - AOT capture routing, duration math parity, JIT render routing, and UI/UX export pool indicators with dynamic vector list reordering.
+- **Frontend Migration & Capture Studio Parity:** IN PROGRESS (Branch: `feature/tauri-migration`)
+  - Transitioning frontend stack to Tauri + Vite architecture in `desktop-studio/`, restoring parity with legacy `dev` branch.
 
 ## IDE AI State
-- **Current Goal:** Frontend migration audit & Tauri/Vite integration (`feature/tauri-migration`).
-- **Last Evaluated:** Updated `docs/engineering_backlog.md` and `docs/active_sprint_state.md` with complete backlog statuses.
-- **Status:** All workspace tests and localization test suites passing. `preview_cli` binary target fully functioning in both headless and interactive modes.
-- **Next Task:** Audit scaffolding in `desktop-studio/` and `src-tauri/` on branch `feature/tauri-migration`.
+- **Current Goal:** All High-Priority Capture Studio parity gaps in `engineering_backlog.md` are resolved — `PatcherConfig` Full Persistence, Pre-Flight Disk Allocation & Pre-Scan Estimator, and Running Process Guard & Detector Modal all closed 2026-08-13, on top of Custom Engine Commands Integration from earlier in the sprint. The three feature diffs (previously one uncommitted working-tree blob) have since been split into three scoped commits — `b3c47e1` (settings persistence), `f36196c` (disk estimator), `d9b9f10` (process guard) — on `feature/tauri-migration`. `feature/tauri-migration` is ready for end-to-end verification, testing, and merge to `dev`; only Medium/Low priority polish items remain in the backlog.
+- **Last Evaluated:** 2026-08-13
+- **Status:** Working tree is clean against `HEAD` except for `docs/staging_lessons.md` (three new engine-quirk/workflow bullets appended this pass, not yet committed) and this file being rewritten in the same pass. No open compile errors or IDE diagnostics; the last `cargo check -p desktop-studio` (pre-split) was clean. Immediate Sprint Focus is cleared (all items resolved, see below); all High Priority parity items in `engineering_backlog.md` are closed. Next step is branch verification/merge, not further feature work.
+
+### Immediate Sprint Focus (Top Priorities)
+*(Cleared 2026-08-13 — every item previously tracked here, and every High Priority item in `engineering_backlog.md`'s parity backlog, is resolved. Full detail lives in `engineering_backlog.md`'s Completed Tasks section. Remaining work is Medium/Low priority polish plus end-to-end branch verification before merge.)*
 
 ## Sprint Takeaways & Architectural Rules
 * **Standalone CLI Portability:** Strictly avoid dynamic disk-based localization lookups for headless binaries (`preview_cli`). Hardcoded literals prevent silent failures on target machines missing dictionary files.

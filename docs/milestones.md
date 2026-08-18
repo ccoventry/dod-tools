@@ -18,16 +18,35 @@ IMMUTABLE MILESTONES ARCHITECTURE RULES:
 - [x] Task: Packet Audit — Injected a strict 2MB bounds guard into the binary scanner to prevent memory overruns and alignment drift on extended demos.
 - [x] Chore: Cruft Purge — Aggressively pruned deprecated `target_player` and `min_kills` filters from configuration structs and ingestion loops.
 - [x] Chore: Standardize Milestones Architecture — Design and document a strict, immutable markdown layout for this file to completely prevent AI-driven format drift across future sessions.
-- [x] Task: Director Events Pipeline - Fixed premature DEMO_END assignment and properly anchored MATCH_START director events to the parsed frame times.
+- [x] Task: Director Events Pipeline — Fixed premature DEMO_END assignment and properly anchored MATCH_START director events to the parsed frame times.
+
+### Rendering & Finalization
+- [x] Task: Rendering & Finalization — Native FFmpeg transcoding pipeline, raw `.mov` image sequence take ingestion, mezzanine export routing, and render queue execution via Tauri IPC.
 
 ### Dynamic Drive Failover
 - [x] Task: AOT Capture Routing & JIT Render Routing — Automated capacity simulation loop, unified duration math parity, FFmpeg mezzanine threshold polling (>20 GB guard), and NTFS directory junction drive swapping below 15 GB.
 
-### Frontend Migration
-- [ ] Feature: Tauri & Vite Integration — Ongoing migration of the frontend stack from native `egui` to a Tauri + Vite architecture. (Note: Excluded from primary architecture docs until finalized).
+### Frontend Migration & Capture Studio Parity
+- [x] Feature: Tauri & Vite Core Migration — Completed initial frontend stack migration from native `egui` to Tauri + Vite architecture in `desktop-studio/`.
+- [x] Task: Fix Capture Output Drives & Session ID Pipeline Defect — Rebound `capture_directories` to the Target Output Drives pool (with Primary/Backup Media Dir fallback) and stamped a `session_YYYYMMDD_HHMMSS` `session_id` in the payload, extracted into `PatcherConfig` on the Rust side.
+- [x] Feature: Restore Global & Per-Demo `viewdemo` Bookmark Previews — Patched per-highlight `svc_director` bookmark events via `build_preview_patch_jobs` and launch HLAE directly against `viewdemo` for a single demo, or generate bookmarked preview files across the whole selection without launching.
+- [x] Task: Capture Studio UI Polish & Defect Fixes — Renamed tab to "Capture Studio"; fixed the leading-comma/missing-weapon bug at its root (a `localizations/` path-resolution failure in the Tauri app's runtime working directory, not the JS join logic); restored visible "Sel" checkboxes (a global `appearance: none` CSS reset had stripped native checkbox rendering app-wide); added dropdown chevrons; removed the dead "POV Only" toggle.
+- [x] Task: Custom Engine Commands Integration — Added Init/Custom Commands tab to Export Configuration with full Add/Remove/edit UI, wired through `buildCapturePayload()` into the existing `native::patch` engine support for `init_commands`/`custom_commands`.
+- [x] Task: Capture Studio High-Priority Parity Backlog Resolved — Closed all three remaining audited High Priority gaps: full `AppSettings` persistence for every Export Configuration field (resolution, HUD, auto-clear flags, timing, media dirs, target drives, custom commands); an overlap-merged pre-flight disk estimator with a hard Launch-button lock (including the zero-drive case) replacing the old post-click soft warning; and a `sysinfo`-backed running-process guard with a "Half-Life Preview Detector" modal (Force Relaunch / Copy View Command / Cancel) gating preview launches against a still-running `hl.exe`/`hlae.exe`.
+- [x] Task: "Clear Previews" Audit Modal — Sweeps `<hl>/dod` for orphaned `*_preview.dem` bookmark previews (identified by their hidden `.dodtools_preview` sidecar), reports reclaimable disk space, and purges them from a modal via new `scan_orphaned_previews`/`delete_orphaned_previews` IPC commands.
+- [x] Task: Standalone Game Launch — Restored the "Launch Game (HLAE)" button; boots `hl.exe` with no demo loaded, applying persisted resolution/HUD/init-command settings, and reuses the existing running-process guard modal via a generalized `requestProcessGuardedLaunch()` hook shared with the preview-launch path.
+- [x] Task: Demo Analyzer Load Performance Tiers 1-3 — On-disk analysis cache (cold ~1.3s -> warm cache-hit ~10-15ms), throttled progress events, dead-code removal, and Capture Studio folder scans warming the analyzer cache. Tier 4/5 (selective netmessage parsing) deliberately blocked on a future player-stats review — see `docs/demo_analyzer_load_performance.md`.
+- [x] Task: Branch Merge Readiness Verification (2026-08-16) — `cargo build --workspace` and `cargo test --workspace --no-fail-fast` both clean except 4 pre-existing `analysis` crate failures (3 localization loader/test key-prefix mismatches, 1 missing local demo fixture) confirmed present identically at the `dev` merge-base (`80feaaf`) — not a regression introduced by this branch. `feature/tauri-migration` currently contains all of `dev`'s history (`dev`'s tip *is* the merge-base), so there is no divergence to reconcile before merging.
+- [ ] Task: Fix pre-existing `analysis` localization test/loader key-prefix mismatch and missing-fixture `test_inspect_lenn_demo`, independent of the merge itself.
+- [x] Task: Save/Load Project Session Fixed (2026-08-16) — was calling `@tauri-apps/plugin-fs` directly, which only ever succeeds inside the app's own AppConfig/AppData dirs; routed through new unscoped `save_project_session`/`load_project_session` Tauri commands instead.
+- [x] Task: Master Demo Queue Highlight-Count & POV-Filter Bug Fixed (2026-08-16) — root cause was the POV filter gating on the unreliable `demo.is_pov` flag (fires on an ordinary player demo whenever an HLTV caster was merely spectating) instead of whether `local_player_index` actually resolved; also redesigned the queue's columns (plain Highlights total, dropped the misleading Status badge, Actions column moved to the end) and made it live-refresh on selection/status edits.
+- [x] Task: Opt-In Streak Selection Semantics Fixed (2026-08-16) — `computeRequiredCaptureBytes`, `renderTimeline`, and `buildCapturePayload` all treated an untouched `streak.selected` (`undefined`) as selected instead of unselected; the `buildCapturePayload` instance meant a capture batch could include every player's highlights from any demo never opened in the detail view.
+- [x] Task: Capture Studio Configuration Auto-Save Audit (2026-08-16) — Timing Options' Start Lead/Stop Trail/Initial Delay, the whole Custom Commands tab, Add Condebug, the Auto-clear checkboxes, and Primary Media Dir's Browse button were all readable by `persistAppSettings()` but had no change listener wired to it; added a shared `onSettingsChange` callback threaded through `initCaptureUI`/`initRenderUI`. Also added persistence (previously nonexistent) for Save Local Patched Copy, Allocation Strategy, and every Render Studio field.
+- [x] Task: Batch Capture Pipeline Missing Patch Step Fixed (2026-08-17) — `build_batch_queue()` only ever planned each patched demo's output path/routing/commands and never wrote the bytes via `StreamPatcher::patch()`, so every capture batch failed immediately trying to copy a file that never existed. Added the missing patch loop in `capture_manager.rs`; verified end-to-end through Capture Studio and Render Studio.
+- [x] Task: Session File Memory & UX (2026-08-17) — Save Session now writes back to the last loaded/saved file instead of prompting Save-As every time; added a filename indicator beside Save/Load Session; fixed Ctrl+O to always open Load Session (was conditional on the active Capture Studio sub-tab); fixed a silent no-op when saving with nothing scanned yet.
 
 ### UI/UX Polish
-- [x] Feature: Workspace Layout Updates - Transposed paths and disk space estimators, added highlight status columns to the Master List, removed legacy folder pickers, and mounted a global "Total Export Pool Free" indicator with dynamic vector list reordering.
+- [x] Feature: Workspace Layout Updates — Transposed paths and disk space estimators, added highlight status columns to the Master List, removed legacy folder pickers, and mounted a global "Total Export Pool Free" indicator with dynamic vector list reordering.
 
 ## 📋 General Backlog (Future Roadmap Items)
 
@@ -98,19 +117,6 @@ IMMUTABLE MILESTONES ARCHITECTURE RULES:
 - [x] Feature: Target Directory Selector — Implemented a UI directory picker to define where raw BMP/WAV takes are saved. Routed off the OS drive.
 - [x] Feature: Disk Space Pre-Flight Check — Integrated `sysinfo` check before launching engine to halt if target drive has < 15GB free space.
 - [x] Chore: Temp Demo Cleanup — Gated the `std::fs::remove_file` cleanup step inside `capture_engine.rs` behind `cfg(not(debug_assertions))` to automatically delete patched demos in release builds.
-
-### Capture Engine & Engine Quirk Fixes (June 30, 2026)
-- [x] Task: HLAE Dummy Folder Sandbox Escape — Bypassed GoldSrc's engine block on `exec` commands during playback by using `mirv_movie_filename` to create a dummy directory on the OS, triggering our Rust Reaper to safely terminate the batch.
-- [x] Task: Taskkill Reaper — Replaced the fragile `child.try_wait()` loop with an aggressive polling loop that explicitly runs `taskkill /F /IM hl.exe` when the dummy directory trigger is detected.
-- [x] Refactor: Absolute Time-to-Frame Mapping — Completely purged `demo_fps` average math. Fixed POV timeline drift by implementing a raw binary frame-parsing loop in the scanner to extract exact float timestamps (`Arc<Vec<f32>>`), mapping absolute times to precise frame indices via binary search.
-- [x] Refactor: UI Resolution & Defensive I/O — Upgraded the Capture Studio with reactive `width` and `height` resolution settings. Added defensive pathing with `std::fs::create_dir_all` session ID generation, piping I/O errors to the `CaptureState::Error` UI block.
-- [x] Feature: Reactive Disk Space Math — Replaced static disk caching with a dynamic frame size multiplication formula tied to the live resolution and `capture_fps` configuration.
-
-### Capture Engine & Engine Quirk Fixes (June 29, 2026)
-- [x] Task: Command Truncation Fix — Shortened injected `echo` commands and decoupled `mirv_recordmovie_stop` to respect the strict 64-byte payload limit inside GoldSrc `ConsoleCommand` frames.
-- [x] Feature: Local Demo Debug Output — Added a `save_local_patched_copy` UI toggle to the Capture Studio to easily duplicate patched `.dem` files to the workspace `demos/` directory.
-- [x] Task: GoldSrc Demo `quit` Filter Bypass — Fixed an issue where the game refused to close after recording because GoldSrc actively drops any `ConsoleCommand` containing the string `quit` during demo playback. Bypassed the security check by scheduling `dodtools_exit` in the `.dem` and mapping it to `+alias dodtools_exit quit` in the engine startup arguments.
-- [x] Refactor: Frame-based Tick Insertion — Moved from time-based offsets back to exact `file_tick` mapping for command insertion, ensuring reliable synchronization between highlight bounds and engine rendering frames.
 
 ## 📦 Completed Project Phases (Historical Archive)
 

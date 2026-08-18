@@ -1,0 +1,1198 @@
+/* ── Absolute CSS reset — overrides Vite/browser defaults ─────────────────── */
+/* Must appear before any other rules so specificity is established early.    */
+
+/* Remove Vite's injected link styling that shows blue underlined anchors. */
+a, a:visited, a:hover, a:active {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* Prevent browsers from applying their UA button styles which Vite doesn't
+   fully suppress in dev-mode (Chromium applies a system font and border). */
+button, input, select, textarea {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+/* Checkboxes/radios need their native control box + checkmark — the reset
+   above strips it entirely with nothing to replace it, leaving an invisible
+   (but still clickable) hit area. Re-enable native rendering and theme it. */
+input[type="checkbox"], input[type="radio"] {
+  appearance: auto;
+  -webkit-appearance: auto;
+  accent-color: var(--primary-accent);
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+}
+
+/* Vite's index.css resets line-height to 1 which collapses egui-style rows. */
+html {
+  line-height: 1.4;
+}
+
+/* ── Layout / Box model reset ─────────────────────────────────────────────── */
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 13px;
+  line-height: 1.4;
+  color: #d0d0d0;
+  background-color: #121212;
+
+  --bg-dark: #121212;
+  --bg-panel: #1e1e1e;
+  --bg-card: #252525;
+  --bg-input: #181818;
+  --border-color: #383838;
+  --border-accent: #555555;
+  --primary-accent: #2b5c8f;
+  --primary-hover: #3772b0;
+  --success-color: #388e3c;
+  --text-muted: #888888;
+}
+
+body {
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+  background: var(--bg-dark);
+  color: #d0d0d0;
+  user-select: none;
+}
+
+#app-container {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  width: 100vw;
+}
+
+/* Top Navigation Bar */
+#top-navbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: #181818;
+  border-bottom: 1px solid var(--border-color);
+  padding: 4px 12px;
+  height: 38px;
+  flex-shrink: 0;
+}
+
+.nav-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: bold;
+}
+
+.brand-title {
+  color: #ffffff;
+  font-size: 14px;
+}
+
+.brand-sub {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.nav-tabs {
+  display: flex;
+  gap: 4px;
+}
+
+.nav-tab-btn {
+  background: #222222;
+  color: #aaaaaa;
+  border: 1px solid var(--border-color);
+  border-radius: 2px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.nav-tab-btn.active {
+  background: var(--primary-accent);
+  color: #ffffff;
+  border-color: #4a82bd;
+}
+
+.nav-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.session-file-indicator {
+  color: var(--text-muted);
+  font-size: 11px;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Main Split Content Area */
+#main-content-split {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+.content-pane {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+#pane-workspace {
+  border-right: 1px solid var(--border-color);
+  background: #161616;
+}
+
+#pane-details-config {
+  background: #1a1a1a;
+}
+
+/* egui Panel & Cards Styling */
+.egui-panel, .egui-card {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-color);
+  border-radius: 2px;
+  padding: 10px;
+}
+
+.panel-header {
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 6px;
+}
+
+.panel-header h2, .panel-header h3 {
+  font-size: 14px;
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.flex-between {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.row-inputs, .input-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.input-row label {
+  min-width: 150px;
+  font-weight: 500;
+  color: #cccccc;
+}
+
+input[type="text"], input[type="number"], select {
+  background: var(--bg-input);
+  color: #ffffff;
+  border: 1px solid var(--border-color);
+  border-radius: 2px;
+  padding: 4px 8px;
+  font-size: 12px;
+  outline: none;
+}
+
+input[type="text"]:focus, input[type="number"]:focus, select:focus {
+  border-color: var(--primary-accent);
+}
+
+/* Custom dropdown chevron — the global `appearance: none` reset (top of this
+   file) strips the native arrow with nothing to replace it, so every
+   <select> otherwise looks indistinguishable from a plain text field. */
+select {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'><path d='M1 1l5 5 5-5' fill='none' stroke='%23aaaaaa' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  background-size: 10px 6px;
+  padding-right: 26px;
+  cursor: pointer;
+}
+
+button {
+  background: #2a2a2a;
+  color: #dddddd;
+  border: 1px solid var(--border-color);
+  border-radius: 2px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  background: #383838;
+  border-color: var(--border-accent);
+  color: #ffffff;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+button.primary-btn {
+  background: var(--primary-accent);
+  color: #ffffff;
+  border-color: #4a82bd;
+}
+
+button.primary-btn:hover:not(:disabled) {
+  background: var(--primary-hover);
+}
+
+/* Master Demo Queue Table */
+.table-wrapper {
+  overflow-x: auto;
+  border: 1px solid var(--border-color);
+  border-radius: 2px;
+}
+
+#master-demo-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 12px;
+}
+
+#master-demo-table th {
+  background: #222222;
+  color: #aaaaaa;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border-color);
+  font-weight: 600;
+}
+
+#master-demo-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid #282828;
+}
+
+#master-demo-table tr:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+/* Highlight table "Details" column (weapon/timing chain) — wraps instead of
+   truncating so multi-kill timelines remain fully readable without relying
+   on the title="" hover tooltip. */
+.details-cell {
+  padding: 8px;
+  font-size: 0.8em;
+  white-space: normal;
+  word-break: break-word;
+}
+
+.table-row-selected {
+  background: rgba(43, 92, 143, 0.3) !important;
+}
+
+.table-empty {
+  text-align: center;
+  color: var(--text-muted);
+  padding: 16px !important;
+}
+
+/* Configuration Tabs */
+.config-tabs-nav {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 6px;
+  margin-bottom: 10px;
+}
+
+.config-tab-btn {
+  background: #222222;
+  color: #aaaaaa;
+  border: 1px solid var(--border-color);
+  border-radius: 2px;
+  padding: 4px 12px;
+}
+
+.config-tab-btn.active {
+  background: var(--primary-accent);
+  color: #ffffff;
+  border-color: #4a82bd;
+}
+
+.config-tab-content {
+  display: none;
+}
+
+.config-tab-content.active-tab {
+  display: block;
+}
+
+.inline-controls, .grid-controls {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-top: 8px;
+}
+
+.control-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Pinned Bottom Status Bar — one child per tab (index.html), toggled by
+   switchNavTab() (nav.js); only the active tab's content is visible. */
+#pinned-action-bar {
+  display: flex;
+  align-items: center;
+  background: #161616;
+  border-top: 1px solid var(--border-color);
+  padding: 6px 12px;
+  height: 40px;
+  flex-shrink: 0;
+}
+
+.pinned-footer-content {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+#export-pool-free-indicator,
+#render-footer-pool-free,
+#footer-audit-summary {
+  font-weight: bold;
+  color: #4caf50;
+  font-size: 12px;
+}
+
+#render-footer-queue-summary,
+#footer-analyzer-current-file,
+#footer-allocation-strategy {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+/* Color set inline by refreshLaunchGuard() (capture_pane.js) — red once the
+   estimate exceeds available space, same threshold that already disables
+   Start Capture, so this reads as a preview of that gate rather than a
+   separate opinion. */
+#footer-required-space {
+  font-weight: bold;
+  font-size: 12px;
+}
+
+/* Progress Bars */
+.progress-bar-container {
+  width: 100%;
+  height: 6px;
+  background: #2a2a2a;
+  border-radius: 2px;
+  overflow: hidden;
+  margin-top: 6px;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  background: var(--primary-accent);
+  transition: width 0.2s ease-in-out;
+}
+
+/* Shared editable row-list widget (list_editor.js) — Capture Output,
+   Render Folders, Export Drives, Init Commands, and Custom Commands. */
+.list-editor-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 4px 0 8px;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.list-editor-row {
+  margin-bottom: 0;
+}
+
+.list-editor-browse-btn,
+.list-editor-move-btn,
+.list-editor-remove-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px 4px;
+  flex-shrink: 0;
+  font-size: 12px;
+}
+
+.list-editor-browse-btn:hover,
+.list-editor-move-btn:hover:not(:disabled) {
+  color: #ffffff;
+}
+
+.list-editor-remove-btn:hover {
+  color: #ef4444;
+}
+
+.list-editor-move-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+/* Small inline scan/audit-in-progress indicator */
+.spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--border-color);
+  border-top-color: var(--primary-accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  vertical-align: middle;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Modal Overlay */
+.modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(0, 0, 0, 0.8);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal-content {
+  width: 80%;
+  max-width: 900px;
+  max-height: 85vh;
+  overflow-y: auto;
+  background: var(--bg-panel);
+}
+
+.telemetry-data-box {
+  background: var(--bg-card);
+  padding: 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 2px;
+  margin-top: 4px;
+}
+
+/* Toast Container */
+#toast-container {
+  position: fixed;
+  bottom: 50px;
+  right: 20px;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.toast-fade-out {
+  animation: toastFadeOut 0.5s ease-in-out forwards;
+}
+
+@keyframes toastFadeOut {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+
+/* ── Capture Studio — in-workflow Highlights/Configuration phase switch ──────── */
+
+.capture-detail-subtabs {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.capture-detail-subtab-btn {
+  background: #222222;
+  color: #aaaaaa;
+  border: 1px solid var(--border-color);
+  border-radius: 2px;
+  padding: 4px 12px;
+}
+
+.capture-detail-subtab-btn.active {
+  background: var(--primary-accent);
+  color: #ffffff;
+  border-color: #4a82bd;
+}
+
+/* ── Demo Analyzer ─────────────────────────────────────────────────────────── */
+
+.analyzer-subtabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 6px;
+  margin-bottom: 10px;
+  flex-shrink: 0;
+}
+
+.analyzer-subtab-btn {
+  background: #222222;
+  color: #aaaaaa;
+  border: 1px solid var(--border-color);
+  border-radius: 2px;
+  padding: 4px 12px;
+}
+
+.analyzer-subtab-btn.active {
+  background: var(--primary-accent);
+  color: #ffffff;
+  border-color: #4a82bd;
+}
+
+.analyzer-tab-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 2px;
+}
+
+.analyzer-empty {
+  color: var(--text-muted);
+  padding: 24px;
+  text-align: center;
+}
+
+.analyzer-heading {
+  font-size: 15px;
+  color: #fff;
+  margin-bottom: 10px;
+}
+
+.analyzer-section {
+  margin-bottom: 14px;
+}
+
+.analyzer-section-title {
+  font-size: 12px;
+  color: #ccc;
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 4px;
+  margin-bottom: 6px;
+}
+
+.analyzer-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 16px;
+}
+
+.analyzer-kv-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.analyzer-kv-table .kv-label {
+  color: var(--text-muted);
+  padding: 3px 10px 3px 0;
+  white-space: nowrap;
+  vertical-align: top;
+}
+
+.analyzer-kv-table .kv-value {
+  padding: 3px 0;
+  color: #eee;
+}
+
+.analyzer-kv-table thead th {
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border-color);
+  font-size: 11px;
+}
+
+.analyzer-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 12px;
+}
+
+.analyzer-table th {
+  background: #222222;
+  color: #aaaaaa;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border-color);
+  font-weight: 600;
+  position: sticky;
+  top: 0;
+}
+
+.analyzer-table td {
+  padding: 5px 8px;
+  border-bottom: 1px solid #282828;
+}
+
+.scoreboard-group-header td {
+  padding-top: 10px;
+  font-weight: 700;
+  border-bottom: 1px solid #333;
+}
+
+.scoreboard-spacer-row td {
+  padding: 2px;
+  border-bottom: none;
+}
+
+.scoreboard-player-row:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.analyzer-total-row td {
+  border-top: 1px solid var(--border-color);
+  font-weight: 600;
+  color: #ccc;
+}
+
+.analyzer-warning-banner {
+  background: rgba(251, 191, 36, 0.12);
+  border: 1px solid rgba(251, 191, 36, 0.4);
+  color: #fbbf24;
+  border-radius: 3px;
+  padding: 8px 12px;
+  font-size: 12px;
+  margin-bottom: 10px;
+}
+
+.analyzer-toolbar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.analyzer-hero-card {
+  border: 1.5px solid var(--border-color);
+  border-radius: 4px;
+  padding: 12px;
+  background: var(--bg-card);
+  margin-bottom: 12px;
+}
+
+.analyzer-hero-name {
+  font-size: 20px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.analyzer-hero-sub {
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  margin-top: 2px;
+}
+
+.analyzer-hero-links a {
+  color: #4a90e2;
+  text-decoration: underline;
+}
+
+.analyzer-hero-status {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-color);
+  font-size: 11px;
+  color: #ccc;
+}
+
+.analyzer-stat-cards {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.analyzer-stat-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  padding: 10px;
+}
+
+.stat-title {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.stat-value {
+  font-size: 20px;
+  font-weight: 700;
+  color: #fff;
+  margin-top: 4px;
+}
+
+.stat-badge {
+  font-size: 10.5px;
+  margin-top: 2px;
+}
+
+.analyzer-two-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.analyzer-progress {
+  display: inline-block;
+  width: 60px;
+  height: 6px;
+  background: #2a2a2a;
+  border-radius: 2px;
+  overflow: hidden;
+  vertical-align: middle;
+}
+
+.analyzer-progress-fill {
+  height: 100%;
+  background: var(--primary-accent);
+}
+
+.analyzer-progress-label {
+  font-size: 10.5px;
+  color: #999;
+  margin-left: 4px;
+}
+
+.killstreak-subrow td {
+  color: #999;
+  border-bottom: none;
+}
+
+.analyzer-collapsible {
+  margin-bottom: 10px;
+}
+
+.analyzer-collapsible summary {
+  cursor: pointer;
+  font-weight: 600;
+  padding: 6px 0;
+}
+
+.analyzer-timeline-legend {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+
+.analyzer-timeline-tooltip {
+  position: absolute;
+  pointer-events: none;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  padding: 4px 8px;
+  font-size: 11px;
+  white-space: nowrap;
+  z-index: 5;
+}
+
+.analyzer-weapon-filters {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+  font-size: 11px;
+}
+
+.weapon-filter-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.weapon-filter-toggle-all {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+}
+
+.weapon-filter-group label {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  white-space: nowrap;
+}
+
+.legend-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  margin-right: 5px;
+  vertical-align: middle;
+}
+
+.analyzer-chat-log {
+  max-height: 60vh;
+  overflow-y: auto;
+  background: #141414;
+  border: 1px solid var(--border-color);
+  border-radius: 2px;
+  padding: 6px 10px;
+}
+
+.analyzer-chat-row {
+  font-size: 12px;
+  padding: 2px 0;
+  line-height: 1.5;
+}
+
+.chat-timestamp {
+  color: #666;
+  font-family: monospace;
+  margin-right: 4px;
+}
+
+/* Demo Analyzer — Explorer sidebar (Quick Links + folder tree) + single-folder
+   Demos panel docked above the report tabs. See docs/tauri_parity_audit.md
+   Area 3 for the dev layout this mirrors. */
+
+#pane-demo-analyzer {
+  flex-direction: row;
+  /* Overrides .content-pane's 10px gap to 0 — the resize handle below is
+     itself sized to the standard 10px so the total space between the
+     sidebar and main column matches every other .content-pane split
+     exactly, instead of stacking an extra gap on both sides of it. */
+  gap: 0;
+}
+
+.analyzer-explorer-sidebar {
+  width: 260px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* Drag handle between the Explorer sidebar and the main column — JS-driven
+   (analyzer_pane.js) rather than native CSS `resize` so width can persist
+   to settings.json the same way every other layout preference does. Sized
+   to the standard 10px .content-pane gap (see #pane-demo-analyzer above)
+   with a thin 1px line centered inside it, rather than an extra bar on top
+   of that gap — keeps the resting look identical to every other split in
+   the app, only revealing itself as interactive on hover/drag. */
+.analyzer-resize-handle {
+  width: 10px;
+  flex-shrink: 0;
+  cursor: col-resize;
+  display: flex;
+  justify-content: center;
+}
+
+.analyzer-resize-handle::before {
+  content: "";
+  width: 1px;
+  align-self: stretch;
+  background: var(--border-color);
+}
+
+.analyzer-resize-handle:hover::before,
+.analyzer-resize-handle.resizing::before {
+  width: 2px;
+  background: var(--primary-accent);
+}
+
+.analyzer-main-column {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.analyzer-demos-panel {
+  flex: none;
+  max-height: 260px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.analyzer-demos-table-wrap {
+  flex: 1;
+  overflow: auto;
+}
+
+.analyzer-report-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.analyzer-browser-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.analyzer-browser-toolbar button {
+  flex-shrink: 0;
+  padding: 3px 8px;
+  font-size: 11px;
+}
+
+/* Quick Links — Windows-11-style Quick Access: Pinned + Recent + Local
+   tiers, each hidden when empty. */
+.analyzer-quick-links {
+  max-height: 140px;
+  overflow-y: auto;
+  font-size: 12px;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 4px;
+}
+
+.quicklink-tier-label {
+  padding: 4px 6px 2px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+}
+
+.quicklink-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.quicklink-row:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.quicklink-row.selected {
+  background: rgba(43, 92, 143, 0.35);
+  color: #ffffff;
+}
+
+.quicklink-pin-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  opacity: 0.35;
+  flex-shrink: 0;
+  padding: 0 2px;
+  font-size: 12px;
+}
+
+.quicklink-pin-btn.pinned {
+  opacity: 1;
+}
+
+.quicklink-pin-btn:hover {
+  opacity: 0.8;
+}
+
+.quicklink-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+
+.quicklink-empty {
+  padding: 8px 6px;
+  font-size: 11px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Native Explorer Tree — lazily-loaded, cached, real expand/collapse. */
+.analyzer-tree {
+  flex: 1;
+  overflow: auto;
+  font-size: 12px;
+  min-height: 0;
+}
+
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px 2px;
+  border-radius: 2px;
+}
+
+.tree-row:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.tree-row.selected .tree-label {
+  background: rgba(43, 92, 143, 0.35);
+  color: #ffffff;
+}
+
+.tree-toggle {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  width: 16px;
+  flex-shrink: 0;
+  font-size: 10px;
+  padding: 0;
+}
+
+.tree-label {
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 1px 4px;
+  border-radius: 2px;
+  flex: 1;
+}
+
+.tree-children {
+  margin-left: 13px;
+  border-left: 1px solid rgba(255, 255, 255, 0.06);
+  padding-left: 4px;
+}
+
+.tree-loading {
+  color: var(--text-muted);
+  font-size: 11px;
+  padding: 2px 8px;
+}
+
+.analyzer-explorer-settings {
+  flex-shrink: 0;
+  border-top: 1px solid var(--border-color);
+  padding-top: 6px;
+  font-size: 11px;
+}
+
+.analyzer-explorer-settings summary {
+  cursor: pointer;
+  color: var(--text-muted);
+  user-select: none;
+}
+
+.analyzer-explorer-settings summary:hover {
+  color: #dddddd;
+}
+
+.settings-checkbox-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 8px 2px 4px;
+  cursor: pointer;
+}
+
+.settings-checkbox-row input {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+#analyzer-add-pin-btn {
+  width: 100%;
+  padding: 3px 8px;
+  font-size: 11px;
+}
+
+.analyzer-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.analyzer-filter-bar input[type="text"] {
+  flex: 1;
+  min-width: 70px;
+}
+
+.analyzer-table th[data-sort] {
+  cursor: pointer;
+  user-select: none;
+}
+
+.analyzer-table th[data-sort]:hover {
+  color: #dddddd;
+}
+
+.analyzer-demo-row {
+  cursor: pointer;
+}
+
+.analyzer-demo-row:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.analyzer-demo-row.selected {
+  background: rgba(43, 92, 143, 0.35);
+  color: #ffffff;
+}
+
+.text-muted {
+  color: var(--text-muted);
+}
+
+/* Keyboard Navigation Highlight */
+tr.keyboard-selected {
+  outline: 1px solid #4a90e2;
+  outline-offset: -1px;
+  background-color: rgba(74, 144, 226, 0.1) !important;
+}
