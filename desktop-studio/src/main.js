@@ -19,6 +19,7 @@ import { switchNavTab, setCaptureDetailSubtab } from './nav.js';
 import { analyzeDemo } from './ipc_bridge.js';
 import { showToast } from './toast.js';
 import { createListEditor } from './list_editor.js';
+import { preserveHighlightState } from './take_index.js';
 
 window.addEventListener("DOMContentLoaded", async () => {
   let scanPaths = [];
@@ -517,7 +518,11 @@ window.addEventListener("DOMContentLoaded", async () => {
       newlyScanned.forEach((demo) => {
         const existingIdx = indexByPath.get(demo.path);
         if (existingIdx !== undefined) {
-          currentScannedDemos[existingIdx] = demo;
+          // A re-scan produces brand new streak objects, so replacing outright
+          // would wipe every status, selection, note and Kill Range edit on
+          // this demo. Carry that user-owned state across by highlight uid.
+          currentScannedDemos[existingIdx] =
+            preserveHighlightState(currentScannedDemos[existingIdx], demo);
         } else {
           indexByPath.set(demo.path, currentScannedDemos.length);
           currentScannedDemos.push(demo);
@@ -734,7 +739,16 @@ window.addEventListener("DOMContentLoaded", async () => {
     scanPaths,
     targetDrives,
     currentScannedDemos
-  }), persistAppSettings);
+  }), persistAppSettings, () => {
+    // A verified capture just advanced highlight statuses. Both tables read
+    // status and neither observes the streak objects, so re-render both — the
+    // Master Queue for its Pending/Captured/Rendered counts, and the detail
+    // view for the per-row status dropdowns.
+    renderMasterList(currentScannedDemos, selectedDemoIdx);
+    if (selectedDemoIdx !== null && currentScannedDemos[selectedDemoIdx]) {
+      renderDetailView(currentScannedDemos[selectedDemoIdx], selectedDemoIdx);
+    }
+  });
 
   // Initialize Render Studio UI
   initRenderUI(() => renderFolders, () => renderExportDirs, persistAppSettings);

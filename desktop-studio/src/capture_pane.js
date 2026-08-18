@@ -18,6 +18,11 @@ let currentGetState = null;
 // being saved incidentally whenever some unrelated action (e.g. browsing
 // for hlae.exe) happens to also call it.
 let currentOnSettingsChange = null;
+// Fired after a verified capture advances highlight statuses, so the panes
+// that render status (Master Queue counts, Highlight Details rows) re-render.
+// Neither watches the streak objects, so without this the tables stay stale
+// until the next unrelated interaction.
+let currentOnStatusChange = null;
 // The most recent batch dispatched from this window: its session id and the
 // live streak objects, in the exact order they were sent. The backend's take
 // manifest indexes into that same order, which is what lets a verified block
@@ -428,7 +433,7 @@ function initClearPreviewsModal() {
   }
 }
 
-export function initCaptureUI(getState, onSettingsChange) {
+export function initCaptureUI(getState, onSettingsChange, onStatusChange) {
   const startBtn = document.querySelector('#start-capture-btn') || document.querySelector('#start-batch-btn');
   const cancelBtn = document.querySelector('#cancel-batch-btn');
   const statusEl = document.querySelector('#batch-status');
@@ -437,6 +442,7 @@ export function initCaptureUI(getState, onSettingsChange) {
 
   currentGetState = getState;
   currentOnSettingsChange = onSettingsChange || null;
+  currentOnStatusChange = onStatusChange || null;
 
   initCommandsEditor = createListEditor({
     container: document.querySelector('#init-commands-list'),
@@ -552,8 +558,7 @@ export function initCaptureUI(getState, onSettingsChange) {
     });
   }
 
-  // Post-batch take verification. Observe-only for now: it reports what landed
-  // on disk but does not yet touch any highlight's status (Phase 2).
+  // Post-batch take verification: advances each verified highlight to Captured.
   if (!unlistenTakesVerified) {
     listen('capture_takes_verified', (event) => {
       const payload = event.payload || {};
@@ -562,21 +567,36 @@ export function initCaptureUI(getState, onSettingsChange) {
       const captured = payload.captured_count ?? 0;
       const renderable = payload.renderable_count ?? 0;
 
-      const resolved = blocks.map(block => ({
-        ...block,
-        streaks: (block.source_streak_indices || [])
-          .map(i => lastDispatch?.streaks?.[i])
-          .filter(Boolean),
-      }));
-      console.info('[take-verify]', payload.session_id, resolved);
+      let advanced = 0;
+      blocks.forEach(block => {
+        if (!block.captured) return;
+        // A block can cover several highlights — overlapping ones are recorded
+        // as one continuous take — so every highlight it covers advances.
+        (block.source_streak_indices || []).forEach(i => {
+          const streak = lastDispatch?.streaks?.[i];
+          if (!streak) return;
+          // Status only ever moves forward. Re-capturing something already
+          // rendered must not knock it back down to Captured.
+          if (streak.status === 'Rendered') return;
+          if (streak.status !== 'Captured') advanced += 1;
+          streak.status = 'Captured';
+        });
+      });
 
       if (total === 0) return;
+
+      if (advanced > 0) {
+        // Both tables read status, and neither re-renders on its own.
+        if (currentOnStatusChange) currentOnStatusChange();
+      }
+
+      const marked = advanced > 0 ? ` ${advanced} highlight(s) marked Captured.` : '';
       if (captured < total) {
-        showToast(`${captured}/${total} takes found on disk — ${total - captured} missing.`, 'error');
+        showToast(`${captured}/${total} takes found on disk — ${total - captured} missing.${marked}`, 'error');
       } else if (renderable < total) {
-        showToast(`${captured}/${total} takes captured, but ${total - renderable} won't be seen by Render Studio.`, 'info');
+        showToast(`${captured}/${total} takes captured, but ${total - renderable} won't be seen by Render Studio.${marked}`, 'info');
       } else {
-        showToast(`All ${total} takes verified on disk.`, 'success');
+        showToast(`All ${total} takes verified on disk.${marked}`, 'success');
       }
     }).then(unlistenFn => {
       unlistenTakesVerified = unlistenFn;
