@@ -256,10 +256,9 @@ window.addEventListener("DOMContentLoaded", async () => {
       }
       const saveLocalPatchedEl = document.querySelector('#config-save-local-patched');
       if (saveLocalPatchedEl) saveLocalPatchedEl.checked = !!settings.save_local_patched_copy;
-      if (settings.allocation_strategy) {
-        const inputEl = document.querySelector('#allocation-strategy');
-        if (inputEl) inputEl.value = settings.allocation_strategy;
-      }
+      // allocation_strategy intentionally NOT hydrated — the dropdown is
+      // disabled and locked to Maximize Space (see index.html), so a
+      // Chronological value saved before that lockdown must not be restored.
       if (settings.render_codec) {
         const inputEl = document.querySelector('#render-codec-select');
         if (inputEl) inputEl.value = settings.render_codec;

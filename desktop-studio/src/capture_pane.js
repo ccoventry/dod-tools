@@ -99,6 +99,24 @@ function computeRequiredCaptureBytes(currentScannedDemos, opts) {
   return requiredBytes;
 }
 
+const ALLOCATION_STRATEGY_LABELS = {
+  MaximizeSpace: 'Maximize Space',
+  Chronological: 'Chronological',
+};
+
+/** Mirrors the Drive Overrides tab's Allocation Strategy <select> into the
+ *  pinned footer, in plain English rather than the raw enum value. Doesn't
+ *  affect the "Capture Output Free" total shown alongside it — that's a
+ *  straight sum across every configured directory regardless of strategy;
+ *  the strategy only governs which specific drive each job's output lands
+ *  on once a capture is actually running. */
+function updateAllocationStrategyFooter() {
+  const el = document.querySelector('#footer-allocation-strategy');
+  if (!el) return;
+  const raw = document.querySelector('#allocation-strategy')?.value || 'MaximizeSpace';
+  el.textContent = `Allocation: ${ALLOCATION_STRATEGY_LABELS[raw] || raw}`;
+}
+
 /**
  * Recomputes required-vs-available disk space and hard-locks the Launch
  * button (rather than just toasting at click time) whenever the capture
@@ -167,6 +185,13 @@ export async function refreshLaunchGuard(state) {
       warningEl.style.display = 'none';
       warningEl.textContent = '';
     }
+  }
+
+  const footerRequiredEl = document.querySelector('#footer-required-space');
+  if (footerRequiredEl) {
+    const requiredGb = (requiredBytes / (1024 * 1024 * 1024)).toFixed(2);
+    footerRequiredEl.textContent = `Required: ${requiredGb} GB`;
+    footerRequiredEl.style.color = insufficientSpace ? '#f44336' : '#4caf50';
   }
 
   return { requiredBytes, availableBytes, blocked };
@@ -471,7 +496,13 @@ export function initCaptureUI(getState, onSettingsChange) {
   // above, but previously not part of AppSettings at all — reset to default
   // every restart.
   const allocationStrategyEl = document.querySelector('#allocation-strategy');
-  if (allocationStrategyEl) allocationStrategyEl.addEventListener('change', () => notifySettingsChange());
+  if (allocationStrategyEl) {
+    allocationStrategyEl.addEventListener('change', () => {
+      notifySettingsChange();
+      updateAllocationStrategyFooter();
+    });
+  }
+  updateAllocationStrategyFooter();
   refreshLaunchGuard();
 
   if (!unlistenCaptureStatus) {
