@@ -4,6 +4,7 @@
 
 ### Capture Studio Feature Parity & UI Restorations
 - [x] **Task: Verify Branch Merge Readiness (2026-08-16):** `dev`'s tip (`80feaaf`) *is* the merge-base with `feature/tauri-migration` — the branch already contains 100% of `dev`'s history, nothing to reconcile. `cargo build --workspace` clean; `cargo test --workspace --no-fail-fast` clean except 4 failures in `analysis`, confirmed byte-identical/pre-existing at the `dev` merge-base (not caused by this branch) — see Medium Priority below.
+- [x] **Task: Full Re-Verification After 2026-08-16/17 Fixes + xash-transcode Split (2026-08-18):** Re-ran full `cargo build --workspace` (clean) and `cargo test --workspace --no-fail-fast` after the batch-capture/session/POV-filter fixes and the `xash-transcode` branch split — same 4 pre-existing `analysis` failures as above, no new failures. `feature/tauri-migration` has no remaining merge blockers.
 - [ ] **Task: Fix pre-existing `analysis` test debt before/after merge (not blocking):** 3 localization tests (`test_parse_localization_content`, `test_parse_amxx_localization`, `test_real_localization_loading`) assert against `#`-prefixed keys, but `parse_localization_content` stores keys literally without adding `#` (by design — `translate_key` normalizes at lookup time instead, per `staging_lessons.md`). Tests and loader have drifted out of sync. `test_inspect_lenn_demo` fails on a missing local demo fixture (`Demo file not found at either path`) — needs a real `.dem` file on disk that isn't committed to the repo.
 
 ---
