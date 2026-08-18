@@ -44,7 +44,7 @@
 
 ## Recent Architectural Changes
 - **Dynamic Per-Block Drive Routing:** The AOT simulation (`build_batch_queue`) now evaluates capacity and allocates target drives on a per-block basis rather than per-demo.
-- **Dual-Allocation Strategies:** Implemented `DriveAllocationStrategy` enum allowing users to choose between `MaximizeSpace` (First Fit algorithm) and `Chronological` (Next Fit algorithm) via the UI.
+- **First-Fit-Decreasing Bin-Packing (2026-08-18):** The `Chronological` allocation strategy (Next Fit, no drive backtracking — could fail a batch outright even with enough total free space across drives) was removed entirely; `DriveAllocationStrategy` no longer exists. `build_batch_queue` now always allocates each demo's clip blocks largest-byte-estimate-first (First-Fit-Decreasing) across the configured capture drives, so a big clip doesn't get stranded because an earlier, smaller clip already claimed the only drive with room for it.
 - **Junction-Based Pathing:** Bypassed GoldSrc string limit and escape constraints by generating temporary OS-level directory junctions (`_route_N`) in the game directory.
 - **Alias Injection:** The VDM generation now maps `mirv_movie_filename` commands to the generated junctions via aliases in `dodtools_helper.cfg`.
 - **UI State Fixes:** 

@@ -386,8 +386,7 @@ button.primary-btn:hover:not(:disabled) {
 }
 
 #render-footer-queue-summary,
-#footer-analyzer-current-file,
-#footer-allocation-strategy {
+#footer-analyzer-current-file {
   color: var(--text-muted);
   font-size: 12px;
 }
