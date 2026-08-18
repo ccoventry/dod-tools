@@ -2,18 +2,12 @@
 name = "native"
 version.workspace = true
 edition.workspace = true
-default-run = "dod-tools-gui"
 
 [dependencies]
 analysis = { path = "../analysis" }
 clap = { workspace = true, features = ["derive"] }
 dem = { workspace = true }
 dod = { path = "../dod" }
-eframe = { workspace = true }
-egui = { workspace = true }
-egui_extras = { workspace = true }
-egui-file-dialog = { workspace = true }
-egui_plot = { workspace = true }
 filetime = { workspace = true }
 humantime = { workspace = true }
 serde = { workspace = true }
@@ -33,10 +27,6 @@ rfd = "0.14"
 open = "5.1"
 sysinfo = "0.29"
 keepawake = "0.6"
-
-[[bin]]
-name = "dod-tools-gui"
-path = "src/bin/gui/main.rs"
 
 [[bin]]
 name = "preview_cli"

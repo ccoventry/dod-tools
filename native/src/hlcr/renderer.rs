@@ -102,6 +102,7 @@ pub async fn run_render_job(
     } else {
         match config.target_codec {
             super::config::RenderCodec::NvencH264 => codec_args.extend_from_slice(&["-c:v", "h264_nvenc", "-preset", "p6", "-tune", "hq", "-cq", "15", "-pix_fmt", "yuv420p"]),
+            super::config::RenderCodec::H264Software => codec_args.extend_from_slice(&["-c:v", "libx264", "-preset", "fast", "-crf", "16", "-pix_fmt", "yuv420p"]),
             super::config::RenderCodec::ProRes => codec_args.extend_from_slice(&["-c:v", "prores_ks", "-profile:v", "3", "-pix_fmt", "yuv422p10le"]),
             super::config::RenderCodec::DnxHr => codec_args.extend_from_slice(&["-c:v", "dnxhd", "-profile:v", "dnxhr_hq", "-pix_fmt", "yuv422p"]),
         }
@@ -340,6 +341,23 @@ pub async fn run_render_job(
             let _ = tx.send(RenderUpdate::Finished(job_id, false, Some(error_msg)));
         }
     }
+}
+
+/// Opaque wake-lock guard for a render batch's duration. Wrapped so
+/// `desktop-studio/src-tauri` never needs `keepawake` as a direct
+/// dependency — `native` already depends on it (see
+/// `capture_engine.rs::CaptureCleanupGuard`'s own wake lock, the
+/// capture-side equivalent of this).
+pub struct RenderWakeLock(#[allow(dead_code)] keepawake::KeepAwake);
+
+pub fn hold_render_wake_lock() -> Option<RenderWakeLock> {
+    keepawake::Builder::default()
+        .display(false)
+        .idle(true)
+        .sleep(true)
+        .create()
+        .ok()
+        .map(RenderWakeLock)
 }
 
 #[allow(dead_code)]

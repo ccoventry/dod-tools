@@ -1,0 +1,574 @@
+// desktop-studio/src-tauri/src/render_manager.rs
+//
+// Calls into native::hlcr's real render pipeline (renderer.rs/config.rs/
+// autosave.rs/scanner.rs — byte-identical to dev, previously orphaned, see
+// docs/tauri_parity_audit.md Area 5) instead of the from-scratch
+// reimplementation this module used to carry. Owns the Tauri-side
+// orchestration dev's now-deleted `hlcr/ui.rs` used to provide: concurrent
+// job scheduling, a JIT multi-drive export pool, per-job progress/state,
+// a `.render_autosave.json` crash-recovery lockfile, and a wake lock held
+// for the batch's duration.
+
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+use serde::{Deserialize, Serialize};
+use native::hlcr::autosave::{RenderJob as AutosaveJob, RenderJobStatus as AutosaveJobStatus, RenderSessionData};
+use native::hlcr::config::{RenderCodec, RenderConfig};
+use native::hlcr::renderer::{hold_render_wake_lock, run_render_job, RenderUpdate, RenderWakeLock};
+use native::hlcr::scanner::{scan_folder_background, ClipData};
+use tauri::{AppHandle, Emitter};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SerializedRenderJob {
+    pub take_folder: String,
+    pub clip_type: String,
+    pub img_folder: String,
+    pub wav_file: String,
+    pub base_name: String,
+    pub frame_count: usize,
+    pub date: String,
+}
+
+impl From<ClipData> for SerializedRenderJob {
+    fn from(c: ClipData) -> Self {
+        Self {
+            take_folder: c.take_folder,
+            clip_type: c.clip_type,
+            img_folder: c.img_folder,
+            wav_file: c.wav_file,
+            base_name: c.base_name,
+            frame_count: c.frame_count,
+            date: c.date,
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn scan_render_directories(paths: Vec<String>) -> Result<Vec<SerializedRenderJob>, String> {
+    tokio::task::spawn_blocking(move || {
+        let source_folders: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
+        let (clip_tx, clip_rx) = std::sync::mpsc::channel();
+        let (status_tx, _status_rx) = std::sync::mpsc::channel();
+
+        // scan_folder_background is blocking and exhausts sends before returning.
+        // try_recv is therefore race-free here.
+        scan_folder_background(source_folders, clip_tx, status_tx);
+
+        let mut results = Vec::new();
+        while let Ok(clip) = clip_rx.try_recv() {
+            results.push(SerializedRenderJob::from(clip));
+        }
+
+        results.sort_by(|a, b| {
+            a.take_folder.cmp(&b.take_folder)
+                .then_with(|| a.img_folder.cmp(&b.img_folder))
+                .then_with(|| a.clip_type.cmp(&b.clip_type))
+        });
+
+        Ok(results)
+    })
+    .await
+    .map_err(|e| format!("Task join failed: {}", e))?
+}
+
+/// Codec is a string id ("prores" | "dnxhr" | "h264" | "h264_nvenc") mapped
+/// to `RenderCodec` via `RenderCodec::from_str_id` — see
+/// docs/tauri_parity_audit.md Area 5 for why `h264`/software libx264 exists
+/// alongside dev's NVENC-only H.264 variant.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RenderBatchPayload {
+    pub render_directories: Vec<String>,
+    pub codec: String,
+    pub fps: u32,
+    pub ffmpeg_path: Option<String>,
+    /// JIT multi-drive export pool, priority order — `run_render_job` picks
+    /// the first entry with 20 GiB+ free.
+    pub export_directories: Vec<String>,
+    pub max_concurrent_renders: usize,
+}
+
+/// Resolve the FFmpeg binary path using the same fallback chain as the
+/// legacy `settings::resolve_ffmpeg_path()`: override → bundled local →
+/// system PATH.
+fn resolve_ffmpeg(override_path: Option<&String>) -> PathBuf {
+    if let Some(p) = override_path {
+        let pb = PathBuf::from(p);
+        if !p.trim().is_empty() && pb.exists() {
+            return pb;
+        }
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            let local = parent.join("local/tools/ffmpeg.exe");
+            if local.exists() {
+                return local;
+            }
+        }
+    }
+    PathBuf::from("ffmpeg")
+}
+
+fn autosave_path() -> PathBuf {
+    native::shared::paths::get_appdata_dir().join(".render_autosave.json")
+}
+
+// ── Per-job runtime state ───────────────────────────────────────────────────
+
+struct RenderJobRuntime {
+    id: String,
+    clip: ClipData,
+    status: String, // "Queued" | "Rendering" | "Finished" | "Error" | "Cancelled"
+    speed: String,
+    progress: u32,
+    error_log: Option<String>,
+    cancel_flag: Arc<AtomicBool>,
+}
+
+#[derive(Clone, Serialize)]
+pub struct RenderJobView {
+    pub id: String,
+    pub name: String,
+    pub stream: String,
+    pub frames: usize,
+    pub date: String,
+    pub status: String,
+    pub speed: String,
+    pub progress: u32,
+    pub error_log: Option<String>,
+}
+
+impl RenderJobRuntime {
+    fn to_view(&self) -> RenderJobView {
+        RenderJobView {
+            id: self.id.clone(),
+            name: self.clip.base_name.clone(),
+            stream: if self.clip.clip_type == "hud_only" { "HUD ONLY".to_string() } else { self.clip.img_folder.clone() },
+            frames: self.clip.frame_count,
+            date: self.clip.date.clone(),
+            status: self.status.clone(),
+            speed: self.speed.clone(),
+            progress: self.progress,
+            error_log: self.error_log.clone(),
+        }
+    }
+}
+
+// ── Manager state ────────────────────────────────────────────────────────────
+
+pub struct RenderManager {
+    jobs: Arc<Mutex<Vec<RenderJobRuntime>>>,
+    is_rendering: Arc<AtomicBool>,
+    global_cancel: Arc<AtomicBool>,
+    wake_lock: Arc<Mutex<Option<RenderWakeLock>>>,
+    render_session: Arc<Mutex<Option<RenderSessionData>>>,
+    /// Persisted so Reset can resume the scheduler on the existing job list
+    /// without a fresh scan+payload (mirrors dev's `start_rendering()`
+    /// operating on `self.jobs` directly, independent of the scan step).
+    last_config: Arc<Mutex<Option<RenderConfig>>>,
+}
+
+struct SchedulerHandles {
+    jobs: Arc<Mutex<Vec<RenderJobRuntime>>>,
+    is_rendering: Arc<AtomicBool>,
+    global_cancel: Arc<AtomicBool>,
+    wake_lock: Arc<Mutex<Option<RenderWakeLock>>>,
+    render_session: Arc<Mutex<Option<RenderSessionData>>>,
+}
+
+impl RenderManager {
+    pub fn new() -> Self {
+        Self {
+            jobs: Arc::new(Mutex::new(Vec::new())),
+            is_rendering: Arc::new(AtomicBool::new(false)),
+            global_cancel: Arc::new(AtomicBool::new(false)),
+            wake_lock: Arc::new(Mutex::new(None)),
+            render_session: Arc::new(Mutex::new(None)),
+            last_config: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    fn handles(&self) -> SchedulerHandles {
+        SchedulerHandles {
+            jobs: self.jobs.clone(),
+            is_rendering: self.is_rendering.clone(),
+            global_cancel: self.global_cancel.clone(),
+            wake_lock: self.wake_lock.clone(),
+            render_session: self.render_session.clone(),
+        }
+    }
+}
+
+fn write_autosave(render_session: &Arc<Mutex<Option<RenderSessionData>>>, jobs: &[RenderJobRuntime], config: &RenderConfig) {
+    let session = RenderSessionData {
+        source_folder: config.source_folder.clone(),
+        fps: config.fps,
+        target_codec: format!("{:?}", config.target_codec),
+        jobs: jobs.iter().map(|j| AutosaveJob {
+            take_folder: j.clip.take_folder.clone(),
+            output_path: String::new(), // never populated by dev's own run_render_job either
+            status: AutosaveJobStatus::Pending,
+            name: j.clip.base_name.clone(),
+        }).collect(),
+    };
+    if let Ok(json) = serde_json::to_string_pretty(&session) {
+        if let Err(e) = std::fs::write(autosave_path(), json) {
+            log::warn!("[render_autosave] Failed to write lockfile: {}", e);
+        }
+    }
+    *render_session.lock().unwrap() = Some(session);
+}
+
+fn emit_jobs_snapshot(app: &AppHandle, jobs: &Arc<Mutex<Vec<RenderJobRuntime>>>) {
+    let views: Vec<RenderJobView> = jobs.lock().unwrap().iter().map(RenderJobRuntime::to_view).collect();
+    let _ = app.emit("render_jobs_snapshot", views);
+}
+
+fn apply_render_update(
+    jobs: &Arc<Mutex<Vec<RenderJobRuntime>>>,
+    render_session: &Arc<Mutex<Option<RenderSessionData>>>,
+    update: RenderUpdate,
+) {
+    match update {
+        RenderUpdate::Progress(id, pct) => {
+            if let Some(job) = jobs.lock().unwrap().iter_mut().find(|j| j.id == id) {
+                job.progress = pct;
+            }
+        }
+        RenderUpdate::Speed(id, speed) => {
+            if let Some(job) = jobs.lock().unwrap().iter_mut().find(|j| j.id == id) {
+                job.speed = speed;
+            }
+        }
+        RenderUpdate::Status(id, status) => {
+            if let Some(job) = jobs.lock().unwrap().iter_mut().find(|j| j.id == id) {
+                job.status = status;
+            }
+        }
+        RenderUpdate::Finished(id, success, err_log) => {
+            {
+                let mut guard = jobs.lock().unwrap();
+                if let Some(job) = guard.iter_mut().find(|j| j.id == id) {
+                    if job.status == "Rendering" {
+                        job.status = if err_log.is_some() { "Error".to_string() } else { "Finished".to_string() };
+                        if job.status == "Finished" {
+                            job.progress = 100;
+                        }
+                    }
+                    job.error_log = err_log;
+                }
+            }
+            // Autosave only tracks success — matches dev's ui.rs exactly.
+            if success {
+                if let Some(session) = render_session.lock().unwrap().as_mut() {
+                    if let Ok(idx) = id.parse::<usize>() {
+                        if let Some(rj) = session.jobs.get_mut(idx) {
+                            rj.status = AutosaveJobStatus::Completed;
+                        }
+                    }
+                    if let Ok(json) = serde_json::to_string_pretty(session) {
+                        let _ = std::fs::write(autosave_path(), json);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Concurrent job scheduler — ports dev's `HlcrState::update_channels`
+/// per-frame scheduling loop (`hlcr/ui.rs`, deleted at HEAD) to a periodic
+/// async poll: starts queued jobs up to `max_concurrent_renders`, giving a
+/// lone job all available CPU threads via the same `effective_concurrent`
+/// calculation dev used, and tears down (wake lock, autosave lockfile) once
+/// nothing is Rendering or Queued.
+fn spawn_scheduler(app: AppHandle, handles: SchedulerHandles, config: RenderConfig) {
+    tokio::spawn(async move {
+        let (tx, rx) = std::sync::mpsc::channel::<RenderUpdate>();
+        let max_concurrent = config.max_concurrent_renders.max(1);
+
+        loop {
+            if handles.global_cancel.load(Ordering::SeqCst) {
+                let mut guard = handles.jobs.lock().unwrap();
+                for job in guard.iter_mut() {
+                    if job.status == "Rendering" || job.status == "Queued" {
+                        job.cancel_flag.store(true, Ordering::Relaxed);
+                        if job.status == "Queued" {
+                            job.status = "Cancelled".to_string();
+                        }
+                    }
+                }
+            }
+
+            let mut dirty = false;
+            while let Ok(update) = rx.try_recv() {
+                apply_render_update(&handles.jobs, &handles.render_session, update);
+                dirty = true;
+            }
+
+            let started_any = {
+                let mut guard = handles.jobs.lock().unwrap();
+                let active_count = guard.iter().filter(|j| j.status == "Rendering").count();
+                let mut started = 0usize;
+                if active_count < max_concurrent {
+                    let limit = max_concurrent - active_count;
+                    let queued_count = guard.iter().filter(|j| j.status == "Queued").count();
+                    let jobs_starting = queued_count.min(limit);
+                    // Real concurrent count (already-running + newly starting), capped —
+                    // gives a lone job all available threads instead of only 1/max of them.
+                    let effective_concurrent = (active_count + jobs_starting).min(max_concurrent).max(1);
+
+                    for job in guard.iter_mut() {
+                        if started >= limit {
+                            break;
+                        }
+                        if job.status == "Queued" {
+                            job.status = "Rendering".to_string();
+                            let job_id = job.id.clone();
+                            let clip = job.clip.clone();
+                            let cancel_flag = job.cancel_flag.clone();
+                            let mut job_config = config.clone();
+                            job_config.max_concurrent_renders = effective_concurrent;
+                            let tx2 = tx.clone();
+                            tokio::spawn(async move {
+                                run_render_job(job_id, clip, job_config, tx2, cancel_flag).await;
+                            });
+                            started += 1;
+                        }
+                    }
+                }
+                started > 0
+            };
+
+            if dirty || started_any {
+                emit_jobs_snapshot(&app, &handles.jobs);
+            }
+
+            let has_active_or_queued = {
+                let guard = handles.jobs.lock().unwrap();
+                guard.iter().any(|j| j.status == "Rendering" || j.status == "Queued")
+            };
+            if !has_active_or_queued {
+                break;
+            }
+
+            tokio::time::sleep(Duration::from_millis(150)).await;
+        }
+
+        handles.is_rendering.store(false, Ordering::SeqCst);
+        handles.global_cancel.store(false, Ordering::SeqCst);
+        *handles.wake_lock.lock().unwrap() = None; // Drop releases the wake lock.
+
+        let _ = std::fs::remove_file(autosave_path());
+        *handles.render_session.lock().unwrap() = None;
+
+        emit_jobs_snapshot(&app, &handles.jobs);
+        let _ = app.emit("render_batch_finished", serde_json::json!({}));
+    });
+}
+
+#[tauri::command]
+pub async fn execute_render_batch(
+    app: AppHandle,
+    state: tauri::State<'_, RenderManager>,
+    payload: RenderBatchPayload,
+) -> Result<(), String> {
+    if state.is_rendering.swap(true, Ordering::SeqCst) {
+        return Err("Render batch already in progress".to_string());
+    }
+    state.global_cancel.store(false, Ordering::SeqCst);
+
+    let scan_result = tokio::task::spawn_blocking({
+        let dirs = payload.render_directories.clone();
+        move || {
+            let source_folders: Vec<PathBuf> = dirs.into_iter().map(PathBuf::from).collect();
+            let (clip_tx, clip_rx) = std::sync::mpsc::channel();
+            let (status_tx, _status_rx) = std::sync::mpsc::channel();
+            scan_folder_background(source_folders, clip_tx, status_tx);
+            let mut clips: Vec<ClipData> = Vec::new();
+            while let Ok(clip) = clip_rx.try_recv() {
+                clips.push(clip);
+            }
+            clips
+        }
+    })
+    .await
+    .map_err(|e| format!("Task join failed: {}", e))?;
+
+    if scan_result.is_empty() {
+        state.is_rendering.store(false, Ordering::SeqCst);
+        let _ = app.emit("render_jobs_snapshot", Vec::<RenderJobView>::new());
+        let _ = app.emit("render_batch_finished", serde_json::json!({ "status": "No takes found to render" }));
+        return Ok(());
+    }
+
+    let ffmpeg_path = resolve_ffmpeg(payload.ffmpeg_path.as_ref()).to_string_lossy().into_owned();
+    let export_directories: Vec<PathBuf> = payload.export_directories.iter().map(PathBuf::from).collect();
+    let config = RenderConfig {
+        ffmpeg_path,
+        source_folder: payload.render_directories.first().cloned().unwrap_or_default(),
+        export_directories,
+        fps: payload.fps.max(1),
+        target_codec: RenderCodec::from_str_id(&payload.codec),
+        max_concurrent_renders: payload.max_concurrent_renders.max(1),
+    };
+
+    let jobs: Vec<RenderJobRuntime> = scan_result.into_iter().enumerate().map(|(i, clip)| RenderJobRuntime {
+        id: i.to_string(),
+        clip,
+        status: "Queued".to_string(),
+        speed: String::new(),
+        progress: 0,
+        error_log: None,
+        cancel_flag: Arc::new(AtomicBool::new(false)),
+    }).collect();
+
+    write_autosave(&state.render_session, &jobs, &config);
+    *state.jobs.lock().unwrap() = jobs;
+    *state.last_config.lock().unwrap() = Some(config.clone());
+    *state.wake_lock.lock().unwrap() = hold_render_wake_lock();
+
+    emit_jobs_snapshot(&app, &state.jobs);
+    spawn_scheduler(app, state.handles(), config);
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn cancel_render_batch(state: tauri::State<'_, RenderManager>) -> Result<(), String> {
+    state.global_cancel.store(true, Ordering::SeqCst);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn cancel_render_job(state: tauri::State<'_, RenderManager>, job_id: String) -> Result<(), String> {
+    let mut jobs = state.jobs.lock().unwrap();
+    if let Some(job) = jobs.iter_mut().find(|j| j.id == job_id) {
+        job.cancel_flag.store(true, Ordering::Relaxed);
+        if job.status == "Queued" {
+            job.status = "Cancelled".to_string();
+        }
+    }
+    Ok(())
+}
+
+/// Resets a Finished/Error/Cancelled job back to Queued. If the batch has
+/// already fully drained (nothing else Rendering/Queued), immediately
+/// resumes the scheduler on the existing job list — a small UX improvement
+/// over dev, which required a separate "Start Render" click after Reset to
+/// notice the re-queued job at all.
+#[tauri::command]
+pub async fn reset_render_job(app: AppHandle, state: tauri::State<'_, RenderManager>, job_id: String) -> Result<(), String> {
+    {
+        let mut jobs = state.jobs.lock().unwrap();
+        if let Some(job) = jobs.iter_mut().find(|j| j.id == job_id) {
+            job.status = "Queued".to_string();
+            job.progress = 0;
+            job.speed = String::new();
+            job.error_log = None;
+            job.cancel_flag = Arc::new(AtomicBool::new(false));
+        }
+    }
+    emit_jobs_snapshot(&app, &state.jobs);
+
+    if !state.is_rendering.swap(true, Ordering::SeqCst) {
+        let config = state.last_config.lock().unwrap().clone();
+        match config {
+            Some(config) => {
+                state.global_cancel.store(false, Ordering::SeqCst);
+                if state.wake_lock.lock().unwrap().is_none() {
+                    *state.wake_lock.lock().unwrap() = hold_render_wake_lock();
+                }
+                spawn_scheduler(app, state.handles(), config);
+            }
+            None => {
+                state.is_rendering.store(false, Ordering::SeqCst);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_export_pool_free_gb(directories: Vec<String>) -> f64 {
+    let mut total: u64 = 0;
+    for dir in &directories {
+        let free = native::sys::disk::get_available_bytes(&PathBuf::from(dir));
+        if free != u64::MAX {
+            total += free;
+        }
+    }
+    total as f64 / 1_073_741_824.0
+}
+
+#[derive(Serialize)]
+pub struct RenderAutosaveSummary {
+    pub source_folder: String,
+    pub pending_count: usize,
+    pub completed_count: usize,
+}
+
+#[tauri::command]
+pub fn check_render_autosave() -> Option<RenderAutosaveSummary> {
+    let json = std::fs::read_to_string(autosave_path()).ok()?;
+    let session: RenderSessionData = serde_json::from_str(&json).ok()?;
+    let pending_count = session.jobs.iter().filter(|j| j.status == AutosaveJobStatus::Pending).count();
+    let completed_count = session.jobs.iter().filter(|j| j.status == AutosaveJobStatus::Completed).count();
+    Some(RenderAutosaveSummary { source_folder: session.source_folder, pending_count, completed_count })
+}
+
+#[tauri::command]
+pub fn discard_render_autosave() -> Result<(), String> {
+    match std::fs::remove_file(autosave_path()) {
+        Ok(_) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Repopulates the job table from `.render_autosave.json` — Completed jobs
+/// show as "Finished"/100%, Pending ones as "Queued"/0%, both via stub
+/// `ClipData` (the snapshot only stores take_folder/name/status, not the
+/// full scanner output). Matches dev's own recovery flow exactly
+/// (`main.rs`'s render-recovery modal rebuilds the same kind of stub with
+/// blank stream/frames/date — dev never had richer data to recover either).
+/// Does not auto-start rendering; the user still clicks Start Render.
+#[tauri::command]
+pub fn recover_render_batch(state: tauri::State<'_, RenderManager>) -> Result<Vec<RenderJobView>, String> {
+    let json = std::fs::read_to_string(autosave_path()).map_err(|e| e.to_string())?;
+    let session: RenderSessionData = serde_json::from_str(&json).map_err(|e| e.to_string())?;
+
+    let jobs: Vec<RenderJobRuntime> = session.jobs.iter().enumerate().map(|(i, rj)| {
+        let (status, progress) = if rj.status == AutosaveJobStatus::Completed {
+            ("Finished".to_string(), 100u32)
+        } else {
+            ("Queued".to_string(), 0u32)
+        };
+        RenderJobRuntime {
+            id: i.to_string(),
+            clip: ClipData {
+                take_folder: rj.take_folder.clone(),
+                clip_type: "single".to_string(),
+                img_folder: String::new(),
+                wav_file: "sound.wav".to_string(),
+                base_name: rj.name.clone(),
+                frame_count: 0,
+                date: String::new(),
+            },
+            status,
+            speed: String::new(),
+            progress,
+            error_log: None,
+            cancel_flag: Arc::new(AtomicBool::new(false)),
+        }
+    }).collect();
+
+    let views: Vec<RenderJobView> = jobs.iter().map(RenderJobRuntime::to_view).collect();
+
+    *state.jobs.lock().unwrap() = jobs;
+    *state.render_session.lock().unwrap() = Some(session);
+    let _ = std::fs::remove_file(autosave_path());
+
+    Ok(views)
+}

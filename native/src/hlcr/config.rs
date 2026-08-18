@@ -6,6 +6,11 @@ use std::path::PathBuf;
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Debug)]
 pub enum RenderCodec {
     NvencH264,
+    /// Software libx264 — not in dev's original 3-variant enum. Added to
+    /// preserve the Tauri rebuild's deliberate choice (see
+    /// docs/tauri_parity_audit.md Area 5) to keep both software and NVENC
+    /// H.264 as separate, explicit options rather than picking one.
+    H264Software,
     ProRes,
     DnxHr,
 }
@@ -19,6 +24,20 @@ pub struct RenderConfig {
     pub fps: u32,
     pub target_codec: RenderCodec,
     pub max_concurrent_renders: usize,
+}
+
+impl RenderCodec {
+    /// Maps the frontend's codec-select string values to the enum used by
+    /// `run_render_job`. Unrecognized values fall back to ProRes, matching
+    /// `desktop-studio`'s prior `codec_args_and_ext()` default.
+    pub fn from_str_id(id: &str) -> Self {
+        match id {
+            "h264" => Self::H264Software,
+            "h264_nvenc" => Self::NvencH264,
+            "dnxhr" => Self::DnxHr,
+            _ => Self::ProRes,
+        }
+    }
 }
 
 impl Default for RenderConfig {
