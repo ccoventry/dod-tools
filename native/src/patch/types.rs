@@ -125,18 +125,6 @@ pub struct PatchJob {
     pub block_routes: Vec<(i32, i32, usize)>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum DriveAllocationStrategy {
-    MaximizeSpace,
-    Chronological,
-}
-
-impl Default for DriveAllocationStrategy {
-    fn default() -> Self {
-        Self::MaximizeSpace
-    }
-}
-
 // ── Patcher configuration ─────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -169,8 +157,6 @@ pub struct PatcherConfig {
     pub auto_clear_logs: bool,
     pub auto_clear_previews: bool,
     pub auto_clear_temp_demos: bool,
-    #[serde(default)]
-    pub allocation_strategy: DriveAllocationStrategy,
 }
 
 impl PatcherConfig {
@@ -248,7 +234,6 @@ impl Default for PatcherConfig {
             auto_clear_logs: false,
             auto_clear_previews: false,
             auto_clear_temp_demos: false,
-            allocation_strategy: DriveAllocationStrategy::MaximizeSpace,
         }
     }
 }

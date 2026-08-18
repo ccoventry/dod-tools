@@ -143,7 +143,6 @@ window.addEventListener("DOMContentLoaded", async () => {
     const fastForwardSpeed = parseFloat(document.querySelector('#config-fast-forward-speed')?.value) || 0.05;
 
     const saveLocalPatchedCopy = document.querySelector('#config-save-local-patched')?.checked || false;
-    const allocationStrategy = document.querySelector('#allocation-strategy')?.value || 'MaximizeSpace';
 
     const renderCodec = document.querySelector('#render-codec-select')?.value || 'prores';
     const renderFps = parseInt(document.querySelector('#render-fps-input')?.value, 10) || 300;
@@ -178,7 +177,6 @@ window.addEventListener("DOMContentLoaded", async () => {
       init_commands,
       custom_commands,
       save_local_patched_copy: saveLocalPatchedCopy,
-      allocation_strategy: allocationStrategy,
       render_folders: renderFolders,
       render_codec: renderCodec,
       render_fps: renderFps,
@@ -256,9 +254,6 @@ window.addEventListener("DOMContentLoaded", async () => {
       }
       const saveLocalPatchedEl = document.querySelector('#config-save-local-patched');
       if (saveLocalPatchedEl) saveLocalPatchedEl.checked = !!settings.save_local_patched_copy;
-      // allocation_strategy intentionally NOT hydrated — the dropdown is
-      // disabled and locked to Maximize Space (see index.html), so a
-      // Chronological value saved before that lockdown must not be restored.
       if (settings.render_codec) {
         const inputEl = document.querySelector('#render-codec-select');
         if (inputEl) inputEl.value = settings.render_codec;

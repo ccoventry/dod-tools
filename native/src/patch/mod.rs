@@ -63,7 +63,6 @@ pub use types::{
     PatchJob,
     PatcherConfig,
     HighlightRules,
-    DriveAllocationStrategy,
     HighlightStatus,
 };
 

@@ -14,7 +14,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use native::patch::{PatcherConfig, CaptureStreak, PatchJob, StreamPatcher, build_batch_queue, build_preview_patch_jobs, DriveAllocationStrategy, CustomCommand, CommandRelation};
+use native::patch::{PatcherConfig, CaptureStreak, PatchJob, StreamPatcher, build_batch_queue, build_preview_patch_jobs, CustomCommand, CommandRelation};
 use native::capture_engine::{spawn_capture_engine, CaptureJob, EngineEvent};
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager};
@@ -52,8 +52,6 @@ pub struct CapturePayload {
     pub capture_fps: i32,
     /// Output drives for AOT capacity simulation and media routing.
     pub drives: Vec<String>,
-    /// Matches native `DriveAllocationStrategy`: "MaximizeSpace" | "Chronological".
-    pub allocation_strategy: String,
     #[serde(default)]
     pub record_start_lead: f32,
     #[serde(default)]
@@ -219,10 +217,6 @@ fn config_from_payload(payload: &CapturePayload) -> PatcherConfig {
     // Capture Output is the sole (required) source of output directories —
     // the frontend already blocks the batch if `drives` is empty.
     cfg.primary_media_dir = payload.drives.first().map(std::path::PathBuf::from);
-    cfg.allocation_strategy = match payload.allocation_strategy.as_str() {
-        "Chronological" => DriveAllocationStrategy::Chronological,
-        _ => DriveAllocationStrategy::MaximizeSpace,
-    };
     cfg
 }
 
