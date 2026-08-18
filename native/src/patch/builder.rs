@@ -68,6 +68,11 @@ fn find_tick_forwards(start_frame: usize, gap_seconds: f32, frame_times: &[f32],
 
 const LOG_TAG: &str = "[dod-tools]";
 
+/// How far ahead of the record start `stopsound` fires, to flush audio the
+/// fast-forward left in a bad state. Clamped down to the pre-roll when the
+/// pre-roll is shorter, so it never lands while still fast-forwarding.
+const SOUND_FLUSH_LEAD_SECONDS: f32 = 1.0;
+
 fn build_safe_echos(tick: i32, message: &str) -> Vec<(i32, String)> {
     let mut result = Vec::new();
     let mut current_tick = tick;
@@ -536,8 +541,14 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
                 .unwrap_or(streak.end_tick as usize);
 
             let record_start_tick = find_tick_backwards(physical_frame, config.record_start_lead, frame_times_ref, demo_fps);
-            let s_speed_tick = find_tick_backwards(record_start_tick.max(0) as usize, 3.0, frame_times_ref, demo_fps);
-            let s_sound_tick = find_tick_backwards(record_start_tick.max(0) as usize, 1.0, frame_times_ref, demo_fps);
+            // Pre-roll is the settle window: playback drops back to normal speed
+            // this far ahead of the record start so audio isn't glitched by the
+            // fast-forward, then stopsound flushes just before recording begins.
+            // The sound flush is clamped so it can never precede the speed drop
+            // (which it would for any pre-roll under a second).
+            let s_speed_tick = find_tick_backwards(record_start_tick.max(0) as usize, config.pre_roll_seconds, frame_times_ref, demo_fps);
+            let sound_lead = config.pre_roll_seconds.min(SOUND_FLUSH_LEAD_SECONDS);
+            let s_sound_tick = find_tick_backwards(record_start_tick.max(0) as usize, sound_lead, frame_times_ref, demo_fps);
             let mut r_stop = find_tick_forwards(physical_end_frame, config.record_stop_trail, frame_times_ref, demo_fps);
             let mut s_end = find_tick_forwards(r_stop.max(0) as usize, config.post_roll_seconds, frame_times_ref, demo_fps);
 

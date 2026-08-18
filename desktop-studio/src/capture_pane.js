@@ -60,7 +60,11 @@ function updateRowBadges(statusText, colorHex) {
  * `separate_hud` triples the total (HUD pass recorded as its own stream).
  */
 function computeRequiredCaptureBytes(currentScannedDemos, opts) {
-  const { preRollSeconds, postRollSeconds, captureFps, resWidth, resHeight, separateHud } = opts;
+  const {
+    preRollSeconds, postRollSeconds,
+    recordStartLead, recordStopTrail,
+    captureFps, resWidth, resHeight, separateHud,
+  } = opts;
   let totalSeconds = 0;
 
   (currentScannedDemos || []).forEach(demo => {
@@ -73,28 +77,38 @@ function computeRequiredCaptureBytes(currentScannedDemos, opts) {
       .filter(streak => streak.selected === true)
       .map(streak => {
         const fps = streak.demo_fps || 100;
-        const startSec = (streak.start_tick / fps) - preRollSeconds;
-        const endSec = (streak.end_tick / fps) + postRollSeconds;
+        const startSec = streak.start_tick / fps;
+        const endSec = streak.end_tick / fps;
         return [startSec, endSec];
       })
       .sort((a, b) => a[0] - b[0]);
 
+    // Two different windows are at play, and mixing them up is what this used
+    // to get wrong:
+    //  - whether two highlights collapse into ONE take is decided by
+    //    pre/post-roll (native/src/patch/builder.rs's blocks_merge), and
+    //  - how many frames actually get written is start-lead -> stop-trail
+    //    (PatcherConfig::calculate_total_capture_duration).
+    // So merge on the roll window, then bill the lead/trail window.
     let mergedStart = null;
     let mergedEnd = null;
+    const bill = () => {
+      totalSeconds += recordStartLead + (mergedEnd - mergedStart) + recordStopTrail;
+    };
     intervals.forEach(([start, end]) => {
       if (mergedStart === null) {
         mergedStart = start;
         mergedEnd = end;
-      } else if (start <= mergedEnd) {
+      } else if (start - preRollSeconds <= mergedEnd + postRollSeconds) {
         mergedEnd = Math.max(mergedEnd, end);
       } else {
-        totalSeconds += (mergedEnd - mergedStart);
+        bill();
         mergedStart = start;
         mergedEnd = end;
       }
     });
     if (mergedStart !== null) {
-      totalSeconds += (mergedEnd - mergedStart);
+      bill();
     }
   });
 
@@ -124,6 +138,8 @@ export async function refreshLaunchGuard(state) {
 
   const preRollVal = parseFloat(document.querySelector("#config-pre-roll")?.value) || 2.0;
   const postRollVal = parseFloat(document.querySelector("#config-post-roll")?.value) || 0.6;
+  const recordStartLeadVal = parseFloat(document.querySelector("#config-record-start-lead")?.value) || 0.0;
+  const recordStopTrailVal = parseFloat(document.querySelector("#config-record-stop-trail")?.value) || 0.0;
   const captureFpsVal = parseInt(document.querySelector("#config-capture-fps")?.value, 10) || 300;
   const resWidthVal = parseInt(document.querySelector("#config-res-width")?.value, 10) || 1280;
   const resHeightVal = parseInt(document.querySelector("#config-res-height")?.value, 10) || 720;
@@ -132,6 +148,8 @@ export async function refreshLaunchGuard(state) {
   const requiredBytes = computeRequiredCaptureBytes(resolvedState.currentScannedDemos, {
     preRollSeconds: preRollVal,
     postRollSeconds: postRollVal,
+    recordStartLead: recordStartLeadVal,
+    recordStopTrail: recordStopTrailVal,
     captureFps: captureFpsVal,
     resWidth: resWidthVal,
     resHeight: resHeightVal,
@@ -462,16 +480,18 @@ export function initCaptureUI(getState, onSettingsChange) {
   // settings.json on edit — previously nothing wired them to a save at all,
   // so values only survived a restart by coincidence, if some unrelated
   // action (e.g. browsing for hlae.exe) happened to save afterward.
+  // Start-lead/stop-trail belong in this list too: they define the recorded
+  // window, so they change the disk estimate the guard is built on.
   ['#config-res-width', '#config-res-height', '#config-separate-hud',
-   '#config-pre-roll', '#config-post-roll', '#config-capture-fps'].forEach(selector => {
+   '#config-pre-roll', '#config-post-roll', '#config-capture-fps',
+   '#config-record-start-lead', '#config-record-stop-trail'].forEach(selector => {
     const el = document.querySelector(selector);
     if (el) el.addEventListener('input', () => { refreshLaunchGuard(); notifySettingsChange(); });
   });
-  ['#config-record-start-lead', '#config-record-stop-trail', '#config-initial-delay']
-    .forEach(selector => {
-      const el = document.querySelector(selector);
-      if (el) el.addEventListener('input', () => notifySettingsChange());
-    });
+  ['#config-initial-delay'].forEach(selector => {
+    const el = document.querySelector(selector);
+    if (el) el.addEventListener('input', () => notifySettingsChange());
+  });
   // Checkboxes read by persistAppSettings/buildCapturePayload but with no
   // change listener of their own — same missing-wiring bug as the Timing
   // Options fields above, just on Path Routing / Capture Output checkboxes.
