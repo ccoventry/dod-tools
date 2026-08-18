@@ -579,6 +579,7 @@ mod tests {
             scheduled_commands: vec![(10, "some_command".to_string())],
             director_events: Vec::new(),
             block_routes: Vec::new(),
+            blocks: Vec::new(),
         };
 
         let config = PatcherConfig {
@@ -677,6 +678,7 @@ mod tests {
             scheduled_commands: vec![(10, "some_command".to_string())],
             director_events: Vec::new(),
             block_routes: Vec::new(),
+            blocks: Vec::new(),
         };
 
         let config = PatcherConfig {

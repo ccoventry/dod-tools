@@ -200,15 +200,18 @@ fn allocate_blocks_first_fit_decreasing(
 // ── Batch queue builder ───────────────────────────────────────────────────────
 
 pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig, global_arrays: &std::collections::HashMap<std::path::PathBuf, std::sync::Arc<Vec<f32>>>) -> Result<Vec<PatchJob>, std::io::Error> {
-    // tickrate is extracted dynamically from streaks per-demo
-    let mut grouped: std::collections::HashMap<(&str, Option<&str>), Vec<&CaptureStreak>> = std::collections::HashMap::new();
-    for streak in &raw_streaks {
-        grouped.entry((streak.source_demo.as_str(), streak.target_player.as_deref())).or_default().push(streak);
+    // tickrate is extracted dynamically from streaks per-demo.
+    // Each streak is carried alongside its index in `raw_streaks` so the blocks
+    // built below can point back at the exact highlights the caller dispatched,
+    // even after the overlap merge collapses several into one recording.
+    let mut grouped: std::collections::HashMap<(&str, Option<&str>), Vec<(usize, &CaptureStreak)>> = std::collections::HashMap::new();
+    for (idx, streak) in raw_streaks.iter().enumerate() {
+        grouped.entry((streak.source_demo.as_str(), streak.target_player.as_deref())).or_default().push((idx, streak));
     }
 
     // Sort grouped chronologically by the start_tick of their first streak
     let mut sorted_groups: Vec<_> = grouped.into_iter().collect();
-    sorted_groups.sort_by_key(|(_, streaks)| streaks.iter().map(|s| s.start_tick).min().unwrap_or(0));
+    sorted_groups.sort_by_key(|(_, streaks)| streaks.iter().map(|(_, s)| s.start_tick).min().unwrap_or(0));
 
     let mut jobs = Vec::new();
     let total_jobs = sorted_groups.len();
@@ -320,6 +323,7 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
             scheduled_commands: primer_scheduled,
             director_events: Vec::new(),
             block_routes: Vec::new(),
+            blocks: Vec::new(),
         });
     }
 
@@ -327,8 +331,9 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
     let mut utilized_drives = std::collections::HashSet::new();
     for (job_idx, ((source_demo, target_player), mut streak_refs)) in sorted_groups.into_iter().enumerate() {
         // Sort by start_tick in ascending order
-        streak_refs.sort_by_key(|s| s.start_tick);
-        let streaks: Vec<CaptureStreak> = streak_refs.into_iter().cloned().collect();
+        streak_refs.sort_by_key(|(_, s)| s.start_tick);
+        let (streak_payload_indices, streaks): (Vec<usize>, Vec<CaptureStreak>) =
+            streak_refs.into_iter().map(|(idx, s)| (idx, s.clone())).unzip();
 
         let total_demo_frames = streaks.first().map(|s| s.total_demo_frames).unwrap_or(0);
 
@@ -357,21 +362,29 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
 
         // ── AOT failover routing (Per-Block) ───────────────────────────────────
         
-        // Overlap Merge Logic
+        // Overlap Merge Logic.
+        // `merged_sources` stays index-aligned with `merged_streaks`, recording
+        // which dispatched highlights each recording block ended up covering —
+        // the merge itself keeps only the first streak's fields, so without this
+        // the mapping back to the caller's highlights would be lost here.
         let mut merged_streaks: Vec<CaptureStreak> = Vec::new();
-        for current in streaks {
+        let mut merged_sources: Vec<Vec<usize>> = Vec::new();
+        for (current, payload_idx) in streaks.into_iter().zip(streak_payload_indices) {
             if merged_streaks.is_empty() {
                 merged_streaks.push(current);
+                merged_sources.push(vec![payload_idx]);
             } else {
                 let dynamic_pre_roll_ticks = (config.pre_roll_seconds * demo_fps) as i32;
                 let dynamic_post_roll_ticks = (config.post_roll_seconds * demo_fps) as i32;
-                
+
                 let adjusted_start = (current.start_tick - dynamic_pre_roll_ticks).max(0);
                 let last = merged_streaks.last_mut().unwrap();
                 if adjusted_start <= last.end_tick + dynamic_post_roll_ticks {
                     last.end_tick = last.end_tick.max(current.end_tick);
+                    merged_sources.last_mut().unwrap().push(payload_idx);
                 } else {
                     merged_streaks.push(current);
+                    merged_sources.push(vec![payload_idx]);
                 }
             }
         }
@@ -403,6 +416,7 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
         // Route aliases key off each block's original index in merged_streaks,
         // not allocation order, so the scheduled-command lookup below (which
         // still walks merged_streaks in its original order) is unaffected.
+        let mut blocks: Vec<crate::patch::types::CaptureBlock> = Vec::new();
         for (block_index, drive_idx) in assignments {
             let streak = &merged_streaks[block_index];
             block_routes.push((streak.start_tick, streak.end_tick, drive_idx));
@@ -411,7 +425,38 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
                 "alias {}_route_{} \"mirv_movie_filename _route_{}/{}_b{}\"\n",
                 demo_name, block_index, drive_idx, demo_name, block_index
             ));
+
+            // Mirror of the junction target built after this loop, so the two
+            // can't drift: _route_{drive} links to <capture_dir>/<session_id>,
+            // and HLAE writes <demo_name>_b<block_index> underneath it.
+            let take_folder = match config.capture_directories.get(drive_idx) {
+                Some(out_dir) => {
+                    let absolute_drive = std::path::absolute(out_dir)?;
+                    let session_root = if config.session_id.is_empty() {
+                        absolute_drive
+                    } else {
+                        absolute_drive.join(&config.session_id)
+                    };
+                    session_root.join(format!("{}_b{}", demo_name, block_index))
+                }
+                // No capture directories configured — the drive_free sentinel
+                // path. Falls back to the session dir resolved from
+                // primary_media_dir above, matching where output actually lands.
+                None => session_dir.join(format!("{}_b{}", demo_name, block_index)),
+            };
+
+            blocks.push(crate::patch::types::CaptureBlock {
+                demo_name: demo_name.clone(),
+                block_index,
+                drive_index: drive_idx,
+                take_key: crate::shared::paths::take_key(&take_folder).unwrap_or_default(),
+                take_folder,
+                source_streak_indices: merged_sources[block_index].clone(),
+                start_tick: streak.start_tick,
+                end_tick: streak.end_tick,
+            });
         }
+        blocks.sort_by_key(|b| b.block_index);
 
         // Resolve physical output path for the demo file itself (always use primary/first drive).
         if let Some(out_dir) = config.capture_directories.first() {
@@ -607,6 +652,7 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
             scheduled_commands,
             director_events,
             block_routes,
+            blocks,
         });
     }
     
@@ -861,6 +907,7 @@ pub fn build_preview_patch_jobs(
             scheduled_commands: Vec::new(),
             director_events,
             block_routes: Vec::new(),
+            blocks: Vec::new(),
         });
     }
 
@@ -1063,6 +1110,34 @@ mod tests {
         assert_eq!(job.streaks[0].end_tick, 1500); // Merged 1000-1200 and 1300-1500
         assert_eq!(job.streaks[1].start_tick, 2000);
         assert_eq!(job.streaks[1].end_tick, 2200);
+
+        // The merge above collapsed raw streaks 0 and 1 into one recording
+        // block — the manifest has to say so, or a finished take can't be
+        // traced back to every highlight it actually covers.
+        assert_eq!(job.blocks.len(), 2, "one block per merged recording");
+        assert_eq!(job.blocks[0].block_index, 0);
+        assert_eq!(job.blocks[0].source_streak_indices, vec![0, 1]);
+        assert_eq!(job.blocks[1].block_index, 1);
+        assert_eq!(job.blocks[1].source_streak_indices, vec![2]);
+
+        // Block bounds mirror the merged streak, and the take folder/key follow
+        // the naming the helper cfg's _route_N alias writes to.
+        assert_eq!(job.blocks[0].start_tick, 1000);
+        assert_eq!(job.blocks[0].end_tick, 1500);
+        assert_eq!(job.blocks[0].demo_name, "chain_01");
+        assert!(
+            job.blocks[0].take_folder.ends_with("chain_01_b0"),
+            "expected take folder to end with chain_01_b0, got {:?}",
+            job.blocks[0].take_folder
+        );
+        assert!(
+            job.blocks[0].take_key.ends_with("/chain_01_b0"),
+            "expected take key to end with /chain_01_b0, got {:?}",
+            job.blocks[0].take_key
+        );
+
+        // The primer never records anything, so it must carry no blocks.
+        assert!(primer.blocks.is_empty());
     }
 
     #[test]

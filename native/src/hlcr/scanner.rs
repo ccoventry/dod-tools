@@ -16,6 +16,55 @@ pub struct ClipData {
     pub date: String,
 }
 
+/// `.wav` files sitting directly in a take folder, sorted case-insensitively
+/// so take selection is deterministic.
+fn collect_wav_files(take_folder: &Path) -> Vec<String> {
+    let mut wav_files = Vec::new();
+    if let Ok(read_dir) = std::fs::read_dir(take_folder) {
+        for sub_entry in read_dir.flatten() {
+            if let Ok(file_type) = sub_entry.file_type() {
+                if file_type.is_file() {
+                    let path = sub_entry.path();
+                    if let Some(ext) = path.extension() {
+                        if ext.to_string_lossy().to_lowercase() == "wav" {
+                            if let Some(name) = path.file_name() {
+                                wav_files.push(name.to_string_lossy().into_owned());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    wav_files.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+    wav_files
+}
+
+/// Immediate subdirectories of a take folder that hold an HLAE frame sequence,
+/// identified by a `00000.bmp` first frame.
+fn collect_image_folders(take_folder: &Path) -> Vec<PathBuf> {
+    let mut image_folders = Vec::new();
+    if let Ok(read_dir) = std::fs::read_dir(take_folder) {
+        for sub_entry in read_dir.flatten() {
+            if let Ok(file_type) = sub_entry.file_type() {
+                if file_type.is_dir() && sub_entry.path().join("00000.bmp").exists() {
+                    image_folders.push(sub_entry.path());
+                }
+            }
+        }
+    }
+    image_folders
+}
+
+/// Whether Render Studio's scanner would admit this folder as a renderable take.
+///
+/// Shared with the capture-side take verification so "the capture succeeded"
+/// and "Render Studio can actually see it" can never silently disagree — if
+/// this predicate changes, both sides change together.
+pub fn is_renderable_take(take_folder: &Path) -> bool {
+    !collect_wav_files(take_folder).is_empty() && !collect_image_folders(take_folder).is_empty()
+}
+
 pub fn scan_folder_background(
     source_folders: Vec<PathBuf>,
     tx: mpsc::Sender<ClipData>,
@@ -43,47 +92,12 @@ pub fn scan_folder_background(
                 continue;
             }
 
-            // Identify wav files in the current directory
-            let mut wav_files = Vec::new();
-            if let Ok(read_dir) = std::fs::read_dir(&take_folder) {
-                for sub_entry in read_dir.flatten() {
-                    if let Ok(file_type) = sub_entry.file_type() {
-                        if file_type.is_file() {
-                            let path = sub_entry.path();
-                            if let Some(ext) = path.extension() {
-                                if ext.to_string_lossy().to_lowercase() == "wav" {
-                                    if let Some(name) = path.file_name() {
-                                        wav_files.push(name.to_string_lossy().into_owned());
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
+            let wav_files = collect_wav_files(&take_folder);
             if wav_files.is_empty() {
                 continue;
             }
 
-            // Sort alphabetically to be deterministic
-            wav_files.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
-
-            // Scan subdirectories for HLAE frame outputs
-            let mut image_folders = Vec::new();
-            if let Ok(read_dir) = std::fs::read_dir(&take_folder) {
-                for sub_entry in read_dir.flatten() {
-                    if let Ok(file_type) = sub_entry.file_type() {
-                        if file_type.is_dir() {
-                            let bmp_check = sub_entry.path().join("00000.bmp");
-                            if bmp_check.exists() {
-                                image_folders.push(sub_entry.path());
-                            }
-                        }
-                    }
-                }
-            }
-
+            let mut image_folders = collect_image_folders(&take_folder);
             if image_folders.is_empty() {
                 continue;
             }
@@ -217,4 +231,62 @@ fn get_clip_date(img_folder_path: &Path) -> String {
         }
     }
     "-".to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scratch_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("dod_scanner_test_{}", name));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("failed to create scratch dir");
+        dir
+    }
+
+    fn write_frames(take: &Path, stream: &str) {
+        let folder = take.join(stream);
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("00000.bmp"), b"bmp").unwrap();
+    }
+
+    #[test]
+    fn test_renderable_take_needs_both_wav_and_frames() {
+        let take = scratch_dir("complete");
+        std::fs::write(take.join("sound.wav"), b"wav").unwrap();
+        write_frames(&take, "all");
+        assert!(is_renderable_take(&take));
+    }
+
+    #[test]
+    fn test_take_without_wav_is_not_renderable() {
+        // The realistic partial-capture case: frames landed, audio never flushed.
+        let take = scratch_dir("no_wav");
+        write_frames(&take, "all");
+        assert!(!is_renderable_take(&take));
+    }
+
+    #[test]
+    fn test_take_without_frames_is_not_renderable() {
+        let take = scratch_dir("no_frames");
+        std::fs::write(take.join("sound.wav"), b"wav").unwrap();
+        assert!(!is_renderable_take(&take));
+    }
+
+    #[test]
+    fn test_subfolder_without_first_frame_does_not_count() {
+        // A frame folder is identified by 00000.bmp specifically — an empty or
+        // partially-written stream folder must not qualify.
+        let take = scratch_dir("empty_stream");
+        std::fs::write(take.join("sound.wav"), b"wav").unwrap();
+        std::fs::create_dir_all(take.join("all")).unwrap();
+        assert!(!is_renderable_take(&take));
+    }
+
+    #[test]
+    fn test_missing_take_folder_is_not_renderable() {
+        let missing = std::env::temp_dir().join("dod_scanner_test_does_not_exist");
+        let _ = std::fs::remove_dir_all(&missing);
+        assert!(!is_renderable_take(&missing));
+    }
 }

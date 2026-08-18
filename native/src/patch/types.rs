@@ -111,6 +111,30 @@ impl CaptureStreak {
     }
 }
 
+/// One recording block — the unit HLAE actually writes to disk as a take folder.
+///
+/// Distinct from a highlight: `build_batch_queue` merges highlights that overlap
+/// (once pre/post-roll is applied) into a single continuous recording, so one
+/// block can be the source of several highlight rows. `source_streak_indices`
+/// carries that fan-out, indexing into the `raw_streaks` slice the caller passed
+/// in — i.e. positions in the dispatched capture payload.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CaptureBlock {
+    /// Chained demo name this block belongs to, e.g. `chain_01`.
+    pub demo_name: String,
+    /// Index into the job's merged blocks; matches the `_route_{N}` alias and
+    /// the `_b{N}` suffix on the take folder.
+    pub block_index: usize,
+    pub drive_index: usize,
+    /// Absolute path HLAE is expected to write this take to.
+    pub take_folder: std::path::PathBuf,
+    /// `session_id/chain_JJ_bN` — see `crate::shared::paths::take_key`.
+    pub take_key: String,
+    pub source_streak_indices: Vec<usize>,
+    pub start_tick: i32,
+    pub end_tick: i32,
+}
+
 #[derive(Debug, Clone)]
 pub struct PatchJob {
     pub source_demo: String,
@@ -123,6 +147,9 @@ pub struct PatchJob {
     /// in the `viewdemo` Event List labelled "<N> kills: <timeline_string>".
     pub director_events: Vec<(i32, String)>,
     pub block_routes: Vec<(i32, i32, usize)>,
+    /// Where each block's frames will land, and which payload highlights it
+    /// covers. Empty for the primer job and for preview-only jobs.
+    pub blocks: Vec<CaptureBlock>,
 }
 
 // ── Patcher configuration ─────────────────────────────────────────────────────

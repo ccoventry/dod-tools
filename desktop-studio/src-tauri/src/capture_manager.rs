@@ -14,7 +14,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use native::patch::{PatcherConfig, CaptureStreak, PatchJob, StreamPatcher, build_batch_queue, build_preview_patch_jobs, CustomCommand, CommandRelation};
+use native::patch::{PatcherConfig, CaptureStreak, CaptureBlock, PatchJob, StreamPatcher, build_batch_queue, build_preview_patch_jobs, CustomCommand, CommandRelation};
 use native::capture_engine::{spawn_capture_engine, CaptureJob, EngineEvent};
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager};
@@ -164,6 +164,9 @@ pub struct CaptureManager {
     pub cancel_token: Arc<std::sync::atomic::AtomicBool>,
     /// Cached config from the most recent run (used for status queries).
     pub last_config: Arc<Mutex<Option<PatcherConfig>>>,
+    /// Recording blocks the most recent batch planned, used to verify takes
+    /// against disk once the batch ends.
+    pub last_manifest: Arc<Mutex<Option<CaptureManifest>>>,
 }
 
 impl CaptureManager {
@@ -172,6 +175,7 @@ impl CaptureManager {
             is_running: Arc::new(Mutex::new(false)),
             cancel_token: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             last_config: Arc::new(Mutex::new(None)),
+            last_manifest: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -220,15 +224,109 @@ fn config_from_payload(payload: &CapturePayload) -> PatcherConfig {
     cfg
 }
 
-/// Derives the expected HLCR capture output folder from a patched demo path.
-fn expected_take_folder(job: &PatchJob, dod_dir: &PathBuf) -> PathBuf {
-    let stem = job
-        .output_demo
-        .file_stem()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .to_string();
-    dod_dir.join("hlcr_captures").join(stem)
+// ── Take verification ──────────────────────────────────────────────────────────
+
+/// Every recording block a dispatched batch planned, flattened across jobs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CaptureManifest {
+    pub session_id: String,
+    pub blocks: Vec<CaptureBlock>,
+}
+
+/// One block's post-batch verdict, checked against what's actually on disk.
+#[derive(Debug, Clone, Serialize)]
+pub struct VerifiedBlock {
+    pub take_key: String,
+    pub take_folder: String,
+    pub demo_name: String,
+    pub block_index: usize,
+    /// Positions in the dispatched payload's `streaks` array that this block
+    /// covers — several when overlapping highlights merged into one recording.
+    pub source_streak_indices: Vec<usize>,
+    /// Tier 1: the take folder exists and isn't empty.
+    pub captured: bool,
+    /// Tier 2: Render Studio's scanner would actually admit this take.
+    pub renderable: bool,
+}
+
+fn take_folder_has_content(path: &Path) -> bool {
+    std::fs::read_dir(path)
+        .map(|mut entries| entries.next().is_some())
+        .unwrap_or(false)
+}
+
+/// Checks each planned block against disk after a batch ends.
+///
+/// Two tiers on purpose: "captured" is the loose check that drives status, so
+/// an unanticipated HLAE output layout degrades to a warning rather than
+/// silently marking nothing; "renderable" reuses Render Studio's own admission
+/// predicate so the two views can't disagree without saying so.
+fn verify_capture_takes(manifest: &CaptureManifest) -> Vec<VerifiedBlock> {
+    let mut verified: Vec<VerifiedBlock> = manifest
+        .blocks
+        .iter()
+        .map(|block| VerifiedBlock {
+            take_key: block.take_key.clone(),
+            take_folder: block.take_folder.to_string_lossy().into_owned(),
+            demo_name: block.demo_name.clone(),
+            block_index: block.block_index,
+            source_streak_indices: block.source_streak_indices.clone(),
+            captured: take_folder_has_content(&block.take_folder),
+            renderable: native::hlcr::scanner::is_renderable_take(&block.take_folder),
+        })
+        .collect();
+
+    // HLAE is force-killed the moment the exit trigger appears, so a take can
+    // still be mid-flush when we first look. Re-check only the misses once.
+    if verified.iter().any(|v| !v.captured) {
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+        for (v, block) in verified.iter_mut().zip(manifest.blocks.iter()) {
+            if !v.captured {
+                v.captured = take_folder_has_content(&block.take_folder);
+            }
+            if !v.renderable {
+                v.renderable = native::hlcr::scanner::is_renderable_take(&block.take_folder);
+            }
+        }
+    }
+
+    verified
+}
+
+/// Runs verification for the batch that just ended and reports it to the
+/// frontend. Phase 1 is observe-only — nothing consumes this to change a
+/// highlight's status yet.
+fn emit_take_verification(app: &tauri::AppHandle, manifest_slot: &Arc<Mutex<Option<CaptureManifest>>>) {
+    let manifest = {
+        let guard = manifest_slot.lock().unwrap_or_else(|p| p.into_inner());
+        match guard.as_ref() {
+            Some(m) if !m.blocks.is_empty() => m.clone(),
+            _ => return,
+        }
+    };
+
+    let blocks = verify_capture_takes(&manifest);
+    let captured_count = blocks.iter().filter(|b| b.captured).count();
+    let renderable_count = blocks.iter().filter(|b| b.renderable).count();
+
+    log::info!(
+        "[take-verify] session {}: {}/{} takes on disk, {} renderable",
+        manifest.session_id, captured_count, blocks.len(), renderable_count
+    );
+    for block in blocks.iter().filter(|b| !b.captured || !b.renderable) {
+        log::warn!(
+            "[take-verify] {} captured={} renderable={} at {}",
+            block.take_key, block.captured, block.renderable, block.take_folder
+        );
+    }
+
+    let _ = app.emit("capture_takes_verified", serde_json::json!({
+        "session_id": manifest.session_id,
+        "total_count": blocks.len(),
+        "captured_count": captured_count,
+        "renderable_count": renderable_count,
+        "blocks": blocks,
+    }));
 }
 
 // ── Public command handler ─────────────────────────────────────────────────────
@@ -290,12 +388,9 @@ pub async fn start_capture_batch_impl(
     // ── Clone Arcs into the worker closure ────────────────────────────────────
     let is_running_arc = Arc::clone(&manager.is_running);
     let cancel_token_arc = Arc::clone(&manager.cancel_token);
+    let manifest_arc = Arc::clone(&manager.last_manifest);
     let hlae_path = PathBuf::from(&patcher_config.hlae_path);
     let hl_path = PathBuf::from(&patcher_config.game_path);
-    let dod_dir = hl_path
-        .parent()
-        .map(|p| p.join("dod"))
-        .unwrap_or_else(|| PathBuf::from("dod"));
 
     let app_handle_clone = app_handle.clone();
 
@@ -315,6 +410,15 @@ pub async fn start_capture_batch_impl(
                 return;
             }
         };
+
+        {
+            let manifest = CaptureManifest {
+                session_id: patcher_config.session_id.clone(),
+                blocks: patch_jobs.iter().flat_map(|j| j.blocks.iter().cloned()).collect(),
+            };
+            let mut slot = manifest_arc.lock().unwrap_or_else(|p| p.into_inner());
+            *slot = Some(manifest);
+        }
 
         if patch_jobs.is_empty() {
             log::warn!("build_batch_queue produced no jobs");
@@ -378,19 +482,14 @@ pub async fn start_capture_batch_impl(
 
         let capture_jobs: Vec<CaptureJob> = patch_jobs
             .into_iter()
-            .map(|job| {
-                let expected = expected_take_folder(&job, &dod_dir);
-                CaptureJob {
-                    patched_demo_path: job.output_demo,
-                    expected_take_folder: expected,
-                }
-            })
+            .map(|job| CaptureJob { patched_demo_path: job.output_demo })
             .collect();
 
         let (engine_tx, engine_rx) = std::sync::mpsc::channel();
 
         // Spawn a listener to clear the running flag when the batch terminates and forward events to frontend
         let is_running_clone = Arc::clone(&is_running_arc);
+        let manifest_for_listener = Arc::clone(&manifest_arc);
         let app_emitter = app_handle_clone.clone();
         std::thread::spawn(move || {
             let mut total_jobs: u32 = 0;
@@ -426,15 +525,6 @@ pub async fn start_capture_batch_impl(
                             "status": "Finished"
                         }));
                     }
-                    EngineEvent::Verified(name) => {
-                        let _ = app_emitter.emit("capture_status", serde_json::json!({
-                            "running": true,
-                            "index": current_idx,
-                            "total": total_jobs,
-                            "name": name,
-                            "status": "Verified"
-                        }));
-                    }
                     EngineEvent::Error(msg) => {
                         let mut running = is_running_clone.lock().unwrap_or_else(|p| p.into_inner());
                         *running = false;
@@ -454,6 +544,7 @@ pub async fn start_capture_batch_impl(
                             "index": total_jobs,
                             "total": total_jobs
                         }));
+                        emit_take_verification(&app_emitter, &manifest_for_listener);
                         break;
                     }
                     EngineEvent::Cancelled => {
@@ -463,6 +554,9 @@ pub async fn start_capture_batch_impl(
                             "running": false,
                             "status": "Cancelled"
                         }));
+                        // A cancelled batch still leaves real finished takes on
+                        // disk — verify anyway rather than discarding them.
+                        emit_take_verification(&app_emitter, &manifest_for_listener);
                         break;
                     }
                 }
