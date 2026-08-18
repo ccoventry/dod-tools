@@ -401,6 +401,17 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
                 let last = merged_streaks.last_mut().unwrap();
                 if blocks_merge(last.end_tick, current.start_tick, dynamic_pre_roll_ticks, dynamic_post_roll_ticks) {
                     last.end_tick = last.end_tick.max(current.end_tick);
+                    // The record-stop mark is derived from kills[end_index] below,
+                    // not from end_tick, so the absorbed highlight's final kill has
+                    // to join this block's kill list too. Without it recording stops
+                    // at the *first* highlight's last kill and everything merged in
+                    // after that is missing from the take — while still looking like
+                    // one successfully captured block.
+                    let absorbed_last = current.end_index.min(current.kills.len().saturating_sub(1));
+                    if let Some(kill) = current.kills.get(absorbed_last).cloned() {
+                        last.kills.push(kill);
+                        last.end_index = last.kills.len() - 1;
+                    }
                     merged_sources.last_mut().unwrap().push(payload_idx);
                 } else {
                     merged_streaks.push(current);
@@ -1164,6 +1175,72 @@ mod tests {
 
         // The primer never records anything, so it must carry no blocks.
         assert!(primer.blocks.is_empty());
+    }
+
+    fn streak_with_kills(start_tick: i32, end_tick: i32, kill_frames: &[i32]) -> CaptureStreak {
+        CaptureStreak {
+            start_tick,
+            end_tick,
+            source_demo: "demo1.dem".to_string(),
+            target_player: None,
+            kill_count: kill_frames.len(),
+            timeline_string: String::new(),
+            duration_string: String::new(),
+            player_index: 0,
+            kills: kill_frames.iter().map(|&f| (f, f as f32 / 100.0, "k98".to_string())).collect(),
+            start_index: 0,
+            end_index: kill_frames.len().saturating_sub(1),
+            total_demo_frames: 30000,
+            demo_fps: 100.0,
+            viewdemo_times: Vec::new(),
+            frame_times: std::sync::Arc::new(Vec::new()),
+            match_start_tick: None,
+            status: Default::default(),
+        }
+    }
+
+    fn mock_config() -> PatcherConfig {
+        let mut config = PatcherConfig::default();
+        let temp_game_path = std::env::temp_dir().join("dod_test_mock");
+        std::fs::create_dir_all(temp_game_path.join("dod")).expect("Failed to create dummy dod dir");
+        config.game_path = temp_game_path.to_string_lossy().to_string();
+        config.primary_media_dir = Some(temp_game_path);
+        config
+    }
+
+    #[test]
+    fn test_merged_block_records_through_the_absorbed_highlights_last_kill() {
+        // Two highlights close enough to merge into one continuous recording.
+        // The merge keeps the first streak's fields and only extends end_tick —
+        // but the record-stop mark is derived from kills[end_index], so unless
+        // the absorbed streak's final kill is carried over, recording stops at
+        // the FIRST highlight's last kill and the merged-in one never lands in
+        // the take at all (while still being reported as one captured block).
+        let config = mock_config();
+        let raw_streaks = vec![
+            streak_with_kills(1000, 1200, &[1000, 1200]),
+            streak_with_kills(1300, 1500, &[1300, 1500]),
+        ];
+
+        let jobs = build_batch_queue(raw_streaks, &config, &std::collections::HashMap::new()).unwrap();
+        let job = &jobs[1];
+
+        assert_eq!(job.streaks.len(), 1, "the two highlights should merge into one block");
+        assert_eq!(job.blocks[0].source_streak_indices, vec![0, 1]);
+
+        let record_stop = job
+            .scheduled_commands
+            .iter()
+            .find(|(_, cmd)| cmd == "sys_record_stop")
+            .map(|(tick, _)| *tick)
+            .expect("merged block must schedule a record stop");
+
+        assert!(
+            record_stop >= 1500,
+            "recording stopped at tick {} — before the merged-in highlight's last kill at 1500, \
+             so that highlight was never actually captured",
+            record_stop
+        );
     }
 
     #[test]
