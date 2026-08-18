@@ -138,6 +138,22 @@ fn build_safe_echos(tick: i32, message: &str) -> Vec<(i32, String)> {
 }
 
 
+// ── Block merging ─────────────────────────────────────────────────────────────
+
+/// Whether a highlight starting at `next_start` folds into the recording block
+/// ending at `prev_end`, once pre/post-roll padding is applied — i.e. whether
+/// HLAE records them as one continuous take rather than two.
+///
+/// Note this reads pre/post-roll only: `record_start_lead`/`record_stop_trail`
+/// shift the scheduled record commands and the disk estimate, but never change
+/// how blocks are cut.
+///
+/// Public so the `find_overlaps` diagnostic can ask the same question without
+/// running a capture, and can't drift from the real decision.
+pub fn blocks_merge(prev_end: i32, next_start: i32, pre_roll_ticks: i32, post_roll_ticks: i32) -> bool {
+    (next_start - pre_roll_ticks).max(0) <= prev_end + post_roll_ticks
+}
+
 // ── Drive allocation ──────────────────────────────────────────────────────────
 
 /// First-Fit-Decreasing: assigns each block (identified by its index into
@@ -377,9 +393,8 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
                 let dynamic_pre_roll_ticks = (config.pre_roll_seconds * demo_fps) as i32;
                 let dynamic_post_roll_ticks = (config.post_roll_seconds * demo_fps) as i32;
 
-                let adjusted_start = (current.start_tick - dynamic_pre_roll_ticks).max(0);
                 let last = merged_streaks.last_mut().unwrap();
-                if adjusted_start <= last.end_tick + dynamic_post_roll_ticks {
+                if blocks_merge(last.end_tick, current.start_tick, dynamic_pre_roll_ticks, dynamic_post_roll_ticks) {
                     last.end_tick = last.end_tick.max(current.end_tick);
                     merged_sources.last_mut().unwrap().push(payload_idx);
                 } else {
@@ -1138,6 +1153,28 @@ mod tests {
 
         // The primer never records anything, so it must carry no blocks.
         assert!(primer.blocks.is_empty());
+    }
+
+    #[test]
+    fn test_blocks_merge_only_when_padding_closes_the_gap() {
+        // 100-tick gap between blocks. No padding: stays separate.
+        assert!(!blocks_merge(1000, 1100, 0, 0));
+        // Pre-roll alone reaches back far enough.
+        assert!(blocks_merge(1000, 1100, 100, 0));
+        // Post-roll alone reaches forward far enough.
+        assert!(blocks_merge(1000, 1100, 0, 100));
+        // Split across both, summing to exactly the gap — boundary is inclusive.
+        assert!(blocks_merge(1000, 1100, 60, 40));
+        // One tick short.
+        assert!(!blocks_merge(1000, 1100, 60, 39));
+    }
+
+    #[test]
+    fn test_blocks_merge_clamps_negative_adjusted_start() {
+        // A highlight near tick 0 with a large pre-roll must clamp at 0 rather
+        // than going negative and merging with something it doesn't touch.
+        assert!(blocks_merge(0, 50, 500, 0));
+        assert!(!blocks_merge(-100, 50, 500, 0));
     }
 
     #[test]
