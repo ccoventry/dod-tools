@@ -60,6 +60,7 @@ pub use types::{
     CommandRelation,
     PatchOptions,
     CaptureStreak,
+    CaptureBlock,
     PatchJob,
     PatcherConfig,
     HighlightRules,

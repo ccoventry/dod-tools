@@ -5,7 +5,6 @@ use crate::log_markdown;
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct CaptureJob {
     pub patched_demo_path: std::path::PathBuf,
-    pub expected_take_folder: std::path::PathBuf,
 }
 
 #[derive(Clone, Debug)]
@@ -13,7 +12,6 @@ pub enum EngineEvent {
     Starting(usize),
     Launching(String),
     Finished(String),
-    Verified(String),
     Error(String),
     AllCompleted,
     /// Posted when the cancellation token is raised mid-batch.

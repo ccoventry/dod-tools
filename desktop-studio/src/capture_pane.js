@@ -18,6 +18,12 @@ let currentGetState = null;
 // being saved incidentally whenever some unrelated action (e.g. browsing
 // for hlae.exe) happens to also call it.
 let currentOnSettingsChange = null;
+// The most recent batch dispatched from this window: its session id and the
+// live streak objects, in the exact order they were sent. The backend's take
+// manifest indexes into that same order, which is what lets a verified block
+// resolve back to the highlights it actually recorded.
+let lastDispatch = null;
+let unlistenTakesVerified = null;
 
 function notifySettingsChange() {
   if (currentOnSettingsChange) currentOnSettingsChange();
@@ -526,6 +532,39 @@ export function initCaptureUI(getState, onSettingsChange) {
     });
   }
 
+  // Post-batch take verification. Observe-only for now: it reports what landed
+  // on disk but does not yet touch any highlight's status (Phase 2).
+  if (!unlistenTakesVerified) {
+    listen('capture_takes_verified', (event) => {
+      const payload = event.payload || {};
+      const blocks = payload.blocks || [];
+      const total = payload.total_count ?? blocks.length;
+      const captured = payload.captured_count ?? 0;
+      const renderable = payload.renderable_count ?? 0;
+
+      const resolved = blocks.map(block => ({
+        ...block,
+        streaks: (block.source_streak_indices || [])
+          .map(i => lastDispatch?.streaks?.[i])
+          .filter(Boolean),
+      }));
+      console.info('[take-verify]', payload.session_id, resolved);
+
+      if (total === 0) return;
+      if (captured < total) {
+        showToast(`${captured}/${total} takes found on disk — ${total - captured} missing.`, 'error');
+      } else if (renderable < total) {
+        showToast(`${captured}/${total} takes captured, but ${total - renderable} won't be seen by Render Studio.`, 'info');
+      } else {
+        showToast(`All ${total} takes verified on disk.`, 'success');
+      }
+    }).then(unlistenFn => {
+      unlistenTakesVerified = unlistenFn;
+    }).catch(err => {
+      console.error("Failed to register capture_takes_verified listener:", err);
+    });
+  }
+
   /**
    * Reads every Batch Capture Config field from the DOM plus the given
    * cross-pane `state` (scanned demos, target drives) and assembles the
@@ -547,6 +586,12 @@ export function initCaptureUI(getState, onSettingsChange) {
         }
       });
     }
+
+    // Remembered so the post-batch take verification can map each block's
+    // source_streak_indices back to these exact live streak objects — the
+    // backend preserves this array's order, so index N here is index N there.
+    const sessionId = generateSessionId();
+    lastDispatch = { sessionId, streaks: selectedStreaks };
 
     const captureFpsVal = parseInt(document.querySelector("#config-capture-fps")?.value, 10) || 300;
     const preRollVal = parseFloat(document.querySelector("#config-pre-roll")?.value) || 2.0;
@@ -623,7 +668,7 @@ export function initCaptureUI(getState, onSettingsChange) {
       auto_clear_logs: autoClearLogsVal,
       auto_clear_previews: autoClearPreviewsVal,
       auto_clear_temp_demos: autoClearTempDemosVal,
-      session_id: generateSessionId(),
+      session_id: sessionId,
       init_commands: initCommandsPayload,
       custom_commands: customCommandsPayload,
     };
