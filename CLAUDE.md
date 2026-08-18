@@ -25,7 +25,8 @@ Cargo workspace (`Cargo.toml`, resolver "3", edition 2024) containing the follow
 - **`hl-demo-auditor/`** — Standalone duplicate-demo detector using size + header hash (`fnv1a_hash`).
 - **`benchmark/`** — Performance benchmarking binary for the parsing/patching pipeline.
 - **`desktop-studio/`** — Active Tauri v2 + Vite/JS frontend workspace (`src-tauri/` backend and `src/*.js` frontend modules).
-- **`xash-transcode/`** — GoldSrc HLDEMO → Xash3D IDEM container transcoder, clip cutter, and demo-driven content packer for the browser preview viewer. **Standalone crate**: declares its own `[workspace]`, so it is deliberately *not* a member of the root workspace and `cargo build --workspace` skips it. Never compiled — see handoff doc before touching. Read `docs/web_preview_viewer.md` first; paired with the sibling repo `../dod-web-demo-viewer/`.
+
+> The experimental `xash-transcode/` crate (GoldSrc HLDEMO → Xash3D IDEM transcoder for the browser preview viewer) lives on its own `experimental/xash-transcode` branch, not on `main`/`dev`/`feature/tauri-migration`. See that branch's `docs/web_preview_viewer.md` before touching it.
 
 ---
 
