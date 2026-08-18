@@ -226,9 +226,14 @@
                 <button id="add-drive-btn">Add Directory</button>
                 <button id="browse-drive-btn">Browse</button>
                 <label for="allocation-strategy">Allocation Strategy:</label>
-                <select id="allocation-strategy">
-                  <option value="MaximizeSpace">Maximize Space</option>
-                  <option value="Chronological">Chronological</option>
+                <!-- Chronological is disabled pending removal (no drive
+                     backtracking -> can fail a batch outright even when
+                     there's enough total free space; see
+                     docs/engineering_backlog.md). Locked to Maximize Space
+                     until that removal lands. -->
+                <select id="allocation-strategy" disabled title="Locked to Maximize Space — Chronological is being removed (see engineering_backlog.md)">
+                  <option value="MaximizeSpace" selected>Maximize Space</option>
+                  <option value="Chronological" disabled>Chronological</option>
                 </select>
               </div>
               <div class="inline-controls">
@@ -501,6 +506,8 @@
       <footer id="pinned-action-bar">
         <div id="footer-capture-studio" class="pinned-footer-content">
           <div id="export-pool-free-indicator">Capture Output Free: 0.0 GB</div>
+          <div id="footer-required-space">Required: 0.00 GB</div>
+          <div id="footer-allocation-strategy">Allocation: Maximize Space</div>
         </div>
         <div id="footer-render-studio" class="pinned-footer-content" style="display: none;">
           <div id="render-footer-pool-free">Export Pool Free: 0.0 GB</div>

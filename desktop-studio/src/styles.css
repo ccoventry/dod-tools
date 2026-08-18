@@ -386,8 +386,18 @@ button.primary-btn:hover:not(:disabled) {
 }
 
 #render-footer-queue-summary,
-#footer-analyzer-current-file {
+#footer-analyzer-current-file,
+#footer-allocation-strategy {
   color: var(--text-muted);
+  font-size: 12px;
+}
+
+/* Color set inline by refreshLaunchGuard() (capture_pane.js) — red once the
+   estimate exceeds available space, same threshold that already disables
+   Start Capture, so this reads as a preview of that gate rather than a
+   separate opinion. */
+#footer-required-space {
+  font-weight: bold;
   font-size: 12px;
 }
 
