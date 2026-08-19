@@ -61,8 +61,31 @@ fn collect_image_folders(take_folder: &Path) -> Vec<PathBuf> {
 /// Shared with the capture-side take verification so "the capture succeeded"
 /// and "Render Studio can actually see it" can never silently disagree — if
 /// this predicate changes, both sides change together.
+///
+/// HLAE's `mirv_movie` plugin auto-numbers each recording into a `take0000`,
+/// `take0001`, ... subfolder under whatever directory `mirv_movie_filename`
+/// points at, to avoid overwriting a previous take written to the same path —
+/// so the wav/bmp sequence actually lands one level deeper than the folder we
+/// asked it to write to. `scan_folder_background` below dodges this for free
+/// because `WalkDir` recurses into every subdirectory on its own; this check
+/// has to look explicitly since it only tests one specific folder.
 pub fn is_renderable_take(take_folder: &Path) -> bool {
-    !collect_wav_files(take_folder).is_empty() && !collect_image_folders(take_folder).is_empty()
+    if !collect_wav_files(take_folder).is_empty() && !collect_image_folders(take_folder).is_empty() {
+        return true;
+    }
+    if let Ok(read_dir) = std::fs::read_dir(take_folder) {
+        for entry in read_dir.flatten() {
+            if entry.file_type().map(|t| t.is_dir()).unwrap_or(false)
+                && entry.file_name().to_string_lossy().to_lowercase().starts_with("take")
+            {
+                let sub = entry.path();
+                if !collect_wav_files(&sub).is_empty() && !collect_image_folders(&sub).is_empty() {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 pub fn scan_folder_background(
@@ -288,5 +311,20 @@ mod tests {
         let missing = std::env::temp_dir().join("dod_scanner_test_does_not_exist");
         let _ = std::fs::remove_dir_all(&missing);
         assert!(!is_renderable_take(&missing));
+    }
+
+    #[test]
+    fn test_renderable_take_nested_under_hlae_take_number_folder() {
+        // HLAE's mirv_movie plugin auto-numbers each recording into a
+        // take0000, take0001, ... subfolder under the directory we point
+        // mirv_movie_filename at, to avoid overwriting a previous take
+        // written to the same path — confirmed on a real capture where the
+        // block folder itself was empty except for exactly this layout.
+        let block_folder = scratch_dir("nested_under_take_number");
+        let take0000 = block_folder.join("take0000");
+        std::fs::create_dir_all(&take0000).unwrap();
+        std::fs::write(take0000.join("sound.wav"), b"wav").unwrap();
+        write_frames(&take0000, "all");
+        assert!(is_renderable_take(&block_folder));
     }
 }
