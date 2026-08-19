@@ -11,6 +11,7 @@ import {
   recoverRenderBatch,
 } from './ipc_bridge.js';
 import { showToast } from './toast.js';
+import { streakUid, resolveTake } from './take_index.js';
 
 let jobs = []; // RenderJobView[] — latest snapshot from 'render_jobs_snapshot'
 
@@ -47,7 +48,7 @@ function renderJobsTable() {
   if (!tbody) return;
 
   if (jobs.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="8" class="table-empty">No render jobs queued. Scan a folder, then click Start Render Batch.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" class="table-empty">No render jobs queued. Scan a folder, then click Start Render Batch.</td></tr>';
     return;
   }
 
@@ -57,6 +58,7 @@ function renderJobsTable() {
       <td>${esc(j.stream)}</td>
       <td>${j.frames}</td>
       <td>${esc(j.date)}</td>
+      <td>${esc(j.settings_summary)}</td>
       <td style="color:${statusColor(j.status)};">${esc(j.status)}</td>
       <td>${esc(j.speed)}</td>
       <td>
@@ -153,15 +155,69 @@ export async function checkRenderRecoveryOnStartup(onRecovered) {
   }, { once: true });
 }
 
-export function initRenderUI(getRenderFolders, getExportDirs, onSettingsChange) {
+export function initRenderUI(getRenderFolders, getExportDirs, onSettingsChange, takeTracking) {
   const scanRenderBtn = document.querySelector('#scan-render-btn');
   const startRenderBtn = document.querySelector('#start-render-btn');
   const cancelRenderBtn = document.querySelector('#cancel-render-btn');
   const renderStatusEl = document.querySelector('#render-status');
 
+  const getTakeIndex = takeTracking?.getTakeIndex || null;
+  const getAllDemos = takeTracking?.getAllDemos || null;
+  const onTakeStatusChange = takeTracking?.onStatusChange || null;
+
   initErrorLogModal();
 
-  // Real-time per-job state, pushed by the backend scheduler.
+  // A take finishing renders — advances every highlight the take index says
+  // fed that take_key to Rendered. The take index is what makes this work
+  // even after a restart or re-scan replaced the original streak objects:
+  // it was recorded by uid at capture time, not by a live object reference.
+  listen('render_take_finished', (event) => {
+    const { take_key: takeKey, take_folder: takeFolder } = event.payload || {};
+    if (!takeKey) {
+      // Folder has no session parent to derive a key from (e.g. copied out
+      // of its session folder) — documented limitation, not an error.
+      console.warn(`[render] Take finished with no resolvable take_key: ${takeFolder}`);
+      return;
+    }
+    const takeIndex = getTakeIndex ? getTakeIndex() : null;
+    const demos = getAllDemos ? getAllDemos() : null;
+    if (!takeIndex || !demos) return;
+
+    const uids = new Set(resolveTake(takeIndex, takeKey));
+    // Logged unconditionally (hit or miss) so a lookup against a real,
+    // already-loaded index is visible even when it resolves nothing — the
+    // index's total entry count here is exactly what the previous
+    // "[take-index] Loaded from ..." log reported, proving this lookup runs
+    // against that same loaded data rather than something rebuilt in memory.
+    console.log(`[take-index] Resolving ${takeKey} against ${Object.keys(takeIndex).length} loaded take(s) — found ${uids.size} uid(s)`, Array.from(uids));
+    if (uids.size === 0) return;
+
+    let advanced = 0;
+    demos.forEach(demo => {
+      (demo.streaks || []).forEach(streak => {
+        if (!uids.has(streakUid(demo.path, streak))) return;
+        // Idempotent: separate_hud produces two render jobs (all + hudcolor)
+        // sharing one take_key, so this fires twice per take — the second
+        // pass is just a no-op instead of a double-toast.
+        if (streak.status === 'Rendered') return;
+        streak.status = 'Rendered';
+        advanced += 1;
+      });
+    });
+
+    if (advanced > 0) {
+      showToast(`${advanced} highlight(s) marked Rendered.`, 'success');
+      if (onTakeStatusChange) onTakeStatusChange();
+    }
+  });
+
+  // Real-time per-job state, pushed by the backend scheduler. This is the
+  // single source of truth for whether a batch is actually running — driving
+  // Start/Cancel off it (rather than only off the Start button's own click
+  // handler and render_batch_finished) matters because reset_render_job can
+  // resume the scheduler on its own, bypassing both of those. Without this,
+  // Start Render Batch stayed clickable during a reset-triggered resume and
+  // just repeatedly failed with "Render batch already in progress".
   listen('render_jobs_snapshot', (event) => {
     jobs = event.payload || [];
     renderJobsTable();
@@ -171,6 +227,8 @@ export function initRenderUI(getRenderFolders, getExportDirs, onSettingsChange) 
         ? `Status: Rendering (${jobs.length - activeOrQueued}/${jobs.length} done)`
         : 'Status: Waiting...';
     }
+    if (startRenderBtn) startRenderBtn.disabled = activeOrQueued > 0;
+    if (cancelRenderBtn) cancelRenderBtn.disabled = activeOrQueued === 0;
   });
 
   listen('render_batch_finished', (event) => {

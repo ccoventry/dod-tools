@@ -38,6 +38,29 @@ impl RenderCodec {
             _ => Self::ProRes,
         }
     }
+
+    /// Inverse of `from_str_id` — round-trips through the same string ids
+    /// (not `Debug` formatting) so autosave recovery can parse a persisted
+    /// codec back into the enum without a second, drifting mapping.
+    pub fn to_str_id(self) -> &'static str {
+        match self {
+            Self::H264Software => "h264",
+            Self::NvencH264 => "h264_nvenc",
+            Self::DnxHr => "dnxhr",
+            Self::ProRes => "prores",
+        }
+    }
+
+    /// Short human-readable label for UI display (e.g. the render job
+    /// table's per-job Settings column).
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::H264Software => "H.264 (Software)",
+            Self::NvencH264 => "H.264 (NVENC)",
+            Self::DnxHr => "DNxHR",
+            Self::ProRes => "ProRes",
+        }
+    }
 }
 
 impl Default for RenderConfig {
@@ -113,4 +136,24 @@ pub fn save_config(config: &RenderConfig) -> Result<(), String> {
     std::fs::write(&path, content)
         .map_err(|e| format!("Failed to write config file to {}: {}", path.display(), e))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_str_id_round_trips_through_every_codec() {
+        // to_str_id/from_str_id must stay inverses — autosave recovery
+        // (render_manager.rs's recover_render_batch) round-trips a persisted
+        // codec through exactly this pair.
+        for codec in [RenderCodec::NvencH264, RenderCodec::H264Software, RenderCodec::ProRes, RenderCodec::DnxHr] {
+            assert_eq!(RenderCodec::from_str_id(codec.to_str_id()), codec);
+        }
+    }
+
+    #[test]
+    fn test_from_str_id_unrecognized_falls_back_to_prores() {
+        assert_eq!(RenderCodec::from_str_id("not_a_real_codec"), RenderCodec::ProRes);
+    }
 }
