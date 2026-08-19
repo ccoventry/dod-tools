@@ -96,17 +96,39 @@ pub async fn run_render_job(
         return;
     }
 
+    // Extension decided in the same match as the codec args, not looked up
+    // separately, so the two can't silently drift apart the way the old
+    // string-keyed get_codec_preset() already had (it matched "h264" for
+    // .mp4, but RenderCodec::NvencH264 has always mapped to the distinct
+    // "h264_nvenc" id — dead code, removed, never actually wired to a
+    // render). Alpha/HUD output always needs a MOV container regardless of
+    // the selected codec (QuickTime-style alpha), matching dev's own
+    // behaviour and the dropdown's "MP4" label applying only to the
+    // non-alpha H.264 variants.
     let mut codec_args: Vec<&'static str> = Vec::new();
-    if is_hud {
+    let file_ext = if is_hud {
         codec_args.extend_from_slice(&["-c:v", "prores_ks", "-profile:v", "4444", "-pix_fmt", "yuva444p10le"]);
+        ".mov"
     } else {
         match config.target_codec {
-            super::config::RenderCodec::NvencH264 => codec_args.extend_from_slice(&["-c:v", "h264_nvenc", "-preset", "p6", "-tune", "hq", "-cq", "15", "-pix_fmt", "yuv420p"]),
-            super::config::RenderCodec::H264Software => codec_args.extend_from_slice(&["-c:v", "libx264", "-preset", "fast", "-crf", "16", "-pix_fmt", "yuv420p"]),
-            super::config::RenderCodec::ProRes => codec_args.extend_from_slice(&["-c:v", "prores_ks", "-profile:v", "3", "-pix_fmt", "yuv422p10le"]),
-            super::config::RenderCodec::DnxHr => codec_args.extend_from_slice(&["-c:v", "dnxhd", "-profile:v", "dnxhr_hq", "-pix_fmt", "yuv422p"]),
+            super::config::RenderCodec::NvencH264 => {
+                codec_args.extend_from_slice(&["-c:v", "h264_nvenc", "-preset", "p6", "-tune", "hq", "-cq", "15", "-pix_fmt", "yuv420p"]);
+                ".mp4"
+            }
+            super::config::RenderCodec::H264Software => {
+                codec_args.extend_from_slice(&["-c:v", "libx264", "-preset", "fast", "-crf", "16", "-pix_fmt", "yuv420p"]);
+                ".mp4"
+            }
+            super::config::RenderCodec::ProRes => {
+                codec_args.extend_from_slice(&["-c:v", "prores_ks", "-profile:v", "3", "-pix_fmt", "yuv422p10le"]);
+                ".mov"
+            }
+            super::config::RenderCodec::DnxHr => {
+                codec_args.extend_from_slice(&["-c:v", "dnxhd", "-profile:v", "dnxhr_hq", "-pix_fmt", "yuv422p"]);
+                ".mov"
+            }
         }
-    }
+    };
 
     let stream_type = if is_hud { "hud" } else { "all" };
     let wav_stem = std::path::Path::new(&clip.wav_file).file_stem().unwrap_or_default().to_string_lossy();
@@ -123,7 +145,7 @@ pub async fn run_render_job(
     let take_name = take_path.file_name().unwrap_or_default().to_string_lossy();
     let demo_name = take_path.parent().and_then(|p| p.file_name()).unwrap_or_default().to_string_lossy();
 
-    let final_name = format!("{}_{}{}_{}_{}.mov", demo_name, take_name, wav_part, stream_type, hash_str);
+    let final_name = format!("{}_{}{}_{}_{}{}", demo_name, take_name, wav_part, stream_type, hash_str, file_ext);
     let out_file = output_folder.join(&final_name);
 
     // Calculate thread scaling

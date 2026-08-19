@@ -76,36 +76,6 @@ impl Default for RenderConfig {
     }
 }
 
-pub struct CodecPreset {
-    pub standard: Vec<&'static str>,
-    pub alpha: Vec<&'static str>,
-    pub ext_standard: &'static str,
-    pub ext_alpha: &'static str,
-}
-
-pub fn get_codec_preset(codec: &str) -> CodecPreset {
-    match codec {
-        "h264" => CodecPreset {
-            standard: vec!["-c:v", "libx264", "-preset", "fast", "-crf", "16", "-pix_fmt", "yuv420p"],
-            alpha: vec!["-c:v", "prores_ks", "-profile:v", "4444", "-pix_fmt", "yuva444p10le"],
-            ext_standard: ".mp4",
-            ext_alpha: ".mov",
-        },
-        "dnxhr" => CodecPreset {
-            standard: vec!["-c:v", "dnxhd", "-profile:v", "dnxhr_hq", "-pix_fmt", "yuv422p"],
-            alpha: vec!["-c:v", "dnxhd", "-profile:v", "dnxhr_444", "-pix_fmt", "yuv444p10le"],
-            ext_standard: ".mov",
-            ext_alpha: ".mov",
-        },
-        _ => CodecPreset { // Default is ProRes
-            standard: vec!["-c:v", "prores", "-profile:v", "3", "-pix_fmt", "yuv422p10le"],
-            alpha: vec!["-c:v", "prores_ks", "-profile:v", "4444", "-pix_fmt", "yuva444p10le"],
-            ext_standard: ".mov",
-            ext_alpha: ".mov",
-        },
-    }
-}
-
 pub fn get_config_path() -> PathBuf {
     if let Ok(exe_path) = std::env::current_exe() {
         if let Some(parent) = exe_path.parent() {
