@@ -73,6 +73,19 @@ const LOG_TAG: &str = "[dod-tools]";
 /// pre-roll is shorter, so it never lands while still fast-forwarding.
 const SOUND_FLUSH_LEAD_SECONDS: f32 = 1.0;
 
+/// Minimum breathing room between one take's `mirv_recordmovie_stop` and the
+/// next one's start. Two highlights closer than this are merged into a single
+/// take rather than risking a stop/start cycle that tight.
+///
+/// This is a deliberately conservative guard, not a measured threshold — how
+/// long HLAE needs to finalise a take (flush the BMP sequence, write the WAV)
+/// before accepting a new one isn't something the demo side can observe. The
+/// failure it guards against is a take landing without its audio, which is
+/// exactly the "captured but not renderable" case take verification reports.
+/// Merging instead costs a second of connective footage inside one clip, which
+/// is a far cheaper outcome than a silent take.
+pub const MIN_TAKE_SEPARATION_SECONDS: f32 = 1.0;
+
 fn build_safe_echos(tick: i32, message: &str) -> Vec<(i32, String)> {
     let mut result = Vec::new();
     let mut current_tick = tick;
@@ -145,18 +158,40 @@ fn build_safe_echos(tick: i32, message: &str) -> Vec<(i32, String)> {
 
 // ── Block merging ─────────────────────────────────────────────────────────────
 
-/// Whether a highlight starting at `next_start` folds into the recording block
-/// ending at `prev_end`, once pre/post-roll padding is applied — i.e. whether
-/// HLAE records them as one continuous take rather than two.
+/// Whether two windows around `prev_end` and `next_start` collide once the
+/// given padding is applied to each side.
 ///
-/// Note this reads pre/post-roll only: `record_start_lead`/`record_stop_trail`
-/// shift the scheduled record commands and the disk estimate, but never change
-/// how blocks are cut.
+/// Called twice per highlight pair, with different padding, to answer two
+/// different questions (see `build_batch_queue`'s merge loop):
 ///
-/// Public so the `find_overlaps` diagnostic can ask the same question without
+/// - with start-lead/stop-trail: do the **recordings** overlap? If so the two
+///   highlights physically cannot be separate takes and must be merged.
+/// - with start-lead+pre-roll / stop-trail+post-roll: do the **speed-change**
+///   windows collide? If so the clips stay separate takes, but the
+///   fast-forward between them is dropped and playback just stays at normal
+///   speed across the gap.
+///
+/// Public so the `find_overlaps` diagnostic can ask the same questions without
 /// running a capture, and can't drift from the real decision.
-pub fn blocks_merge(prev_end: i32, next_start: i32, pre_roll_ticks: i32, post_roll_ticks: i32) -> bool {
-    (next_start - pre_roll_ticks).max(0) <= prev_end + post_roll_ticks
+pub fn blocks_merge(prev_end: i32, next_start: i32, lead_ticks: i32, trail_ticks: i32) -> bool {
+    (next_start - lead_ticks).max(0) <= prev_end + trail_ticks
+}
+
+/// Frame index of a highlight's first recorded kill, honouring a Kill Range
+/// edit. Falls back to the streak's tick bound when kill data is absent.
+///
+/// The merge decision and the scheduled record marks must both key off this
+/// rather than `start_tick`, or a Kill Range edit moves the recording without
+/// moving the decision about whether it collides with its neighbour.
+fn first_kill_frame(streak: &CaptureStreak) -> i32 {
+    streak.kills.get(streak.start_index).map(|k| k.0).unwrap_or(streak.start_tick)
+}
+
+/// Frame index of a highlight's last recorded kill, honouring a Kill Range
+/// edit. For a merged block this is the absorbed highlight's final kill.
+fn last_kill_frame(streak: &CaptureStreak) -> i32 {
+    let idx = streak.end_index.min(streak.kills.len().saturating_sub(1));
+    streak.kills.get(idx).map(|k| k.0).unwrap_or(streak.end_tick)
 }
 
 // ── Drive allocation ──────────────────────────────────────────────────────────
@@ -383,40 +418,80 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
 
         // ── AOT failover routing (Per-Block) ───────────────────────────────────
         
-        // Overlap Merge Logic.
+        // Block cutting.
+        //
+        // Two separate questions, deliberately not conflated (they used to be,
+        // which made every roll-window collision collapse into one take full of
+        // dead air between the two highlights):
+        //
+        //  1. Do the recordings themselves overlap? Only then must the two
+        //     highlights become a single take — you can't run two
+        //     mirv_recordmovie sessions at once.
+        //  2. Otherwise they stay separate takes, but if the fast-forward
+        //     round trip between them doesn't fit, it's dropped and playback
+        //     just stays at normal speed across the gap. Costs a couple of
+        //     seconds of real-time playback and yields two clean clips instead
+        //     of one blob. The stopsound flush goes with it — that exists to
+        //     repair audio the fast-forward desyncs, and there's no
+        //     fast-forward here to repair.
+        //
         // `merged_sources` stays index-aligned with `merged_streaks`, recording
-        // which dispatched highlights each recording block ended up covering —
-        // the merge itself keeps only the first streak's fields, so without this
-        // the mapping back to the caller's highlights would be lost here.
+        // which dispatched highlights each block covers — the merge keeps only
+        // the first streak's fields, so the mapping back to the caller's
+        // highlights would otherwise be lost here. `chained_to_previous` marks
+        // blocks that run straight on from the one before at normal speed.
+        let dynamic_pre_roll_ticks = (config.pre_roll_seconds * demo_fps) as i32;
+        let dynamic_post_roll_ticks = (config.post_roll_seconds * demo_fps) as i32;
+        let start_lead_ticks = (config.record_start_lead * demo_fps) as i32;
+        let stop_trail_ticks = (config.record_stop_trail * demo_fps) as i32;
+
         let mut merged_streaks: Vec<CaptureStreak> = Vec::new();
         let mut merged_sources: Vec<Vec<usize>> = Vec::new();
+        let mut chained_to_previous: Vec<bool> = Vec::new();
+
         for (current, payload_idx) in streaks.into_iter().zip(streak_payload_indices) {
             if merged_streaks.is_empty() {
                 merged_streaks.push(current);
                 merged_sources.push(vec![payload_idx]);
-            } else {
-                let dynamic_pre_roll_ticks = (config.pre_roll_seconds * demo_fps) as i32;
-                let dynamic_post_roll_ticks = (config.post_roll_seconds * demo_fps) as i32;
+                chained_to_previous.push(false);
+                continue;
+            }
 
+            let prev_stop = last_kill_frame(merged_streaks.last().unwrap());
+            let next_start = first_kill_frame(&current);
+
+            // Recordings overlap, or sit too close for a safe stop/start cycle.
+            let min_separation_ticks = (MIN_TAKE_SEPARATION_SECONDS * demo_fps) as i32;
+            if blocks_merge(
+                prev_stop,
+                next_start,
+                start_lead_ticks,
+                stop_trail_ticks + min_separation_ticks,
+            ) {
                 let last = merged_streaks.last_mut().unwrap();
-                if blocks_merge(last.end_tick, current.start_tick, dynamic_pre_roll_ticks, dynamic_post_roll_ticks) {
-                    last.end_tick = last.end_tick.max(current.end_tick);
-                    // The record-stop mark is derived from kills[end_index] below,
-                    // not from end_tick, so the absorbed highlight's final kill has
-                    // to join this block's kill list too. Without it recording stops
-                    // at the *first* highlight's last kill and everything merged in
-                    // after that is missing from the take — while still looking like
-                    // one successfully captured block.
-                    let absorbed_last = current.end_index.min(current.kills.len().saturating_sub(1));
-                    if let Some(kill) = current.kills.get(absorbed_last).cloned() {
-                        last.kills.push(kill);
-                        last.end_index = last.kills.len() - 1;
-                    }
-                    merged_sources.last_mut().unwrap().push(payload_idx);
-                } else {
-                    merged_streaks.push(current);
-                    merged_sources.push(vec![payload_idx]);
+                last.end_tick = last.end_tick.max(current.end_tick);
+                // The record-stop mark is derived from kills[end_index] below,
+                // not from end_tick, so the absorbed highlight's final kill has
+                // to join this block's kill list too. Without it recording stops
+                // at the *first* highlight's last kill and everything merged in
+                // after that is missing from the take — while still looking like
+                // one successfully captured block.
+                let absorbed_last = current.end_index.min(current.kills.len().saturating_sub(1));
+                if let Some(kill) = current.kills.get(absorbed_last).cloned() {
+                    last.kills.push(kill);
+                    last.end_index = last.kills.len() - 1;
                 }
+                merged_sources.last_mut().unwrap().push(payload_idx);
+            } else {
+                let rolls_collide = blocks_merge(
+                    prev_stop,
+                    next_start,
+                    start_lead_ticks + dynamic_pre_roll_ticks,
+                    stop_trail_ticks + dynamic_post_roll_ticks,
+                );
+                merged_streaks.push(current);
+                merged_sources.push(vec![payload_idx]);
+                chained_to_previous.push(rolls_collide);
             }
         }
 
@@ -542,14 +617,8 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
             // start), while frame_times_ref[] contains demo-playback timestamps starting
             // near 0.0. The two domains are incompatible — a position() search would
             // always return None → unwrap_or(0) → every command collapsed to tick 0.
-            let physical_frame = streak.kills.get(streak.start_index)
-                .map(|k| k.0 as usize)
-                .unwrap_or(streak.start_tick as usize);
-
-            let end_kill_idx = streak.end_index.min(streak.kills.len().saturating_sub(1));
-            let physical_end_frame = streak.kills.get(end_kill_idx)
-                .map(|k| k.0 as usize)
-                .unwrap_or(streak.end_tick as usize);
+            let physical_frame = first_kill_frame(streak).max(0) as usize;
+            let physical_end_frame = last_kill_frame(streak).max(0) as usize;
 
             let record_start_tick = find_tick_backwards(physical_frame, config.record_start_lead, frame_times_ref, demo_fps);
             // Pre-roll is the settle window: playback drops back to normal speed
@@ -608,18 +677,25 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
                 scheduled_commands.push((target_tick, custom.command.clone()));
             }
 
-            // At Speed Flush (Stage 1)
-            scheduled_commands.push((s_speed_tick, "sys_normal_speed".to_string()));
-            scheduled_commands.push((s_speed_tick + 1, "sys_normal_speed".to_string()));
-            scheduled_commands.push((s_speed_tick + 2, "sys_normal_speed".to_string()));
-            for (t, echo_cmd) in build_safe_echos(s_speed_tick, &format!("SPEED_FLUSH - Tick {}", s_speed_tick)) {
-                scheduled_commands.push((t, echo_cmd));
-            }
+            // Stages 1 and 1.5 are the exit from fast-forward. A block chained
+            // to the one before it never left normal speed, so there's nothing
+            // to drop back to and no fast-forward-induced audio drift to flush.
+            let resumes_from_fast_forward = !chained_to_previous.get(i).copied().unwrap_or(false);
 
-            // At Sound Flush (Stage 1.5)
-            scheduled_commands.push((s_sound_tick, "sys_sound".to_string()));
-            for (t, echo_cmd) in build_safe_echos(s_sound_tick, &format!("AUDIO_SYNC - Tick {}", s_sound_tick)) {
-                scheduled_commands.push((t, echo_cmd));
+            if resumes_from_fast_forward {
+                // At Speed Flush (Stage 1)
+                scheduled_commands.push((s_speed_tick, "sys_normal_speed".to_string()));
+                scheduled_commands.push((s_speed_tick + 1, "sys_normal_speed".to_string()));
+                scheduled_commands.push((s_speed_tick + 2, "sys_normal_speed".to_string()));
+                for (t, echo_cmd) in build_safe_echos(s_speed_tick, &format!("SPEED_FLUSH - Tick {}", s_speed_tick)) {
+                    scheduled_commands.push((t, echo_cmd));
+                }
+
+                // At Sound Flush (Stage 1.5)
+                scheduled_commands.push((s_sound_tick, "sys_sound".to_string()));
+                for (t, echo_cmd) in build_safe_echos(s_sound_tick, &format!("AUDIO_SYNC - Tick {}", s_sound_tick)) {
+                    scheduled_commands.push((t, echo_cmd));
+                }
             }
 
             // At Start Frame (Stage 2)
@@ -635,10 +711,15 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
                 scheduled_commands.push((t, echo_cmd));
             }
 
-            // At Post-Roll End (Stage 4)
-            scheduled_commands.push((s_end, "sys_fast_forward".to_string()));
-            for (t, echo_cmd) in build_safe_echos(s_end, &format!("FAST_FORWARD - Tick {}", s_end)) {
-                scheduled_commands.push((t, echo_cmd));
+            // At Post-Roll End (Stage 4).
+            // Skipped when the next block starts too soon for the round trip to
+            // fit — playback just stays at normal speed into it instead.
+            let next_block_chained = chained_to_previous.get(i + 1).copied().unwrap_or(false);
+            if !next_block_chained {
+                scheduled_commands.push((s_end, "sys_fast_forward".to_string()));
+                for (t, echo_cmd) in build_safe_echos(s_end, &format!("FAST_FORWARD - Tick {}", s_end)) {
+                    scheduled_commands.push((t, echo_cmd));
+                }
             }
 
             if i == merged_streaks.len() - 1 {
@@ -1241,6 +1322,101 @@ mod tests {
              so that highlight was never actually captured",
             record_stop
         );
+    }
+
+    /// Ticks at which a given command is scheduled, in order.
+    fn ticks_for(job: &PatchJob, cmd: &str) -> Vec<i32> {
+        job.scheduled_commands
+            .iter()
+            .filter(|(_, c)| c == cmd)
+            .map(|(t, _)| *t)
+            .collect()
+    }
+
+    #[test]
+    fn test_non_overlapping_recordings_stay_separate_takes() {
+        // 40s apart at 100fps — far outside every window. Two independent
+        // takes, each with its own fast-forward round trip.
+        let config = mock_config();
+        let raw_streaks = vec![
+            streak_with_kills(1000, 1200, &[1000, 1200]),
+            streak_with_kills(5000, 5200, &[5000, 5200]),
+        ];
+
+        let job = &build_batch_queue(raw_streaks, &config, &std::collections::HashMap::new()).unwrap()[1];
+
+        assert_eq!(job.streaks.len(), 2, "should not merge");
+        assert_eq!(job.blocks.len(), 2);
+        assert_eq!(ticks_for(job, "sys_record_start").len(), 2);
+        assert_eq!(ticks_for(job, "sys_record_stop").len(), 2);
+        // Each block drops out of fast-forward for itself, and the first block
+        // resumes it afterwards.
+        assert_eq!(ticks_for(job, "sys_normal_speed").len(), 6, "3-frame redundancy per block");
+        assert_eq!(ticks_for(job, "sys_sound").len(), 2);
+    }
+
+    #[test]
+    fn test_colliding_rolls_keep_separate_takes_without_fast_forwarding_between() {
+        // Recordings are 2s apart (200 ticks @ 100fps): clear of the 1s
+        // separation guard so they stay two takes, but inside the 2.6s the
+        // pre-roll and post-roll need, so the fast-forward round trip between
+        // them can't fit and is dropped instead of collapsing the two
+        // highlights into one clip full of dead air.
+        let mut config = mock_config();
+        config.pre_roll_seconds = 2.0;
+        config.post_roll_seconds = 0.6;
+        let raw_streaks = vec![
+            streak_with_kills(1000, 1200, &[1000, 1200]),
+            streak_with_kills(1400, 1600, &[1400, 1600]),
+        ];
+
+        let job = &build_batch_queue(raw_streaks, &config, &std::collections::HashMap::new()).unwrap()[1];
+
+        assert_eq!(job.streaks.len(), 2, "recordings don't overlap, so don't merge");
+        assert_eq!(job.blocks.len(), 2);
+        assert_eq!(job.blocks[0].source_streak_indices, vec![0]);
+        assert_eq!(job.blocks[1].source_streak_indices, vec![1]);
+
+        // Both clips still get their own recording.
+        assert_eq!(ticks_for(job, "sys_record_start").len(), 2);
+        assert_eq!(ticks_for(job, "sys_record_stop").len(), 2);
+
+        // But only the first block exits fast-forward, and nothing re-enters it
+        // between the two — playback simply stays at normal speed across the gap.
+        assert_eq!(
+            ticks_for(job, "sys_normal_speed").len(), 3,
+            "only the first block should drop out of fast-forward"
+        );
+        assert_eq!(
+            ticks_for(job, "sys_sound").len(), 1,
+            "no fast-forward before the second clip means no audio to flush"
+        );
+        let fast_forwards = ticks_for(job, "sys_fast_forward");
+        let record_stops = ticks_for(job, "sys_record_stop");
+        assert!(
+            !fast_forwards.iter().any(|&t| t > record_stops[0] && t < record_stops[1]),
+            "fast-forward must not be scheduled between the two takes, got {:?}",
+            fast_forwards
+        );
+    }
+
+    #[test]
+    fn test_takes_too_close_together_are_merged_rather_than_restarted() {
+        // Only 0.5s (50 ticks @ 100fps) between one recording stopping and the
+        // next starting — under MIN_TAKE_SEPARATION_SECONDS, so they merge
+        // instead of risking a stop/start cycle that tight.
+        let config = mock_config();
+        let raw_streaks = vec![
+            streak_with_kills(1000, 1200, &[1000, 1200]),
+            streak_with_kills(1250, 1400, &[1250, 1400]),
+        ];
+
+        let job = &build_batch_queue(raw_streaks, &config, &std::collections::HashMap::new()).unwrap()[1];
+
+        assert_eq!(job.streaks.len(), 1, "too close to be separate takes");
+        assert_eq!(job.blocks[0].source_streak_indices, vec![0, 1]);
+        assert_eq!(ticks_for(job, "sys_record_start").len(), 1);
+        assert_eq!(ticks_for(job, "sys_record_stop").len(), 1);
     }
 
     #[test]
