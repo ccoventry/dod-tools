@@ -263,12 +263,20 @@ fn apply_render_update(
             }
         }
         RenderUpdate::Finished(id, success, err_log) => {
-            // Captured only when this call is the one that actually flips the
-            // job to Finished — guards against a dedicated event firing twice
-            // for the same take (e.g. if Finished were ever sent more than
-            // once for one job) and against recover_render_batch, which
-            // repopulates already-Finished jobs by constructing them directly
-            // rather than replaying this update, so it can never trigger here.
+            // `just_finished` is keyed on `success` alone, deliberately not
+            // on the `job.status == "Rendering"` guard below: on the real
+            // completion path run_render_job sends Status("Finished") *then*
+            // Finished(true, None), so by the time this arrives job.status
+            // already reads "Finished" and that guard has already tripped —
+            // it exists to stop this generic transition from clobbering a
+            // more specific status a preceding Status update already set
+            // (e.g. never overwrite "Cancelled" with "Error"), not to gate
+            // "is this the one authoritative completion". Each run_render_job
+            // invocation sends exactly one Finished, at its single return
+            // point, so success=true can't double-fire this within one run;
+            // recover_render_batch separately can't trigger it at all, since
+            // it repopulates already-Finished jobs by constructing them
+            // directly rather than replaying this update.
             let mut just_finished = None;
             {
                 let mut guard = jobs.lock().unwrap();
@@ -277,14 +285,14 @@ fn apply_render_update(
                         job.status = if err_log.is_some() { "Error".to_string() } else { "Finished".to_string() };
                         if job.status == "Finished" {
                             job.progress = 100;
-                            if success {
-                                just_finished = Some((
-                                    job.clip.take_folder.clone(),
-                                    job.clip.base_name.clone(),
-                                    job.clip.clip_type.clone(),
-                                ));
-                            }
                         }
+                    }
+                    if success {
+                        just_finished = Some((
+                            job.clip.take_folder.clone(),
+                            job.clip.base_name.clone(),
+                            job.clip.clip_type.clone(),
+                        ));
                     }
                     job.error_log = err_log;
                 }
