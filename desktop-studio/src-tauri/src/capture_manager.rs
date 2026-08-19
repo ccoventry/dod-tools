@@ -16,6 +16,7 @@ use std::sync::{Arc, Mutex};
 
 use native::patch::{PatcherConfig, CaptureStreak, CaptureBlock, PatchJob, StreamPatcher, build_batch_queue, build_preview_patch_jobs, CustomCommand, CommandRelation};
 use native::capture_engine::{spawn_capture_engine, CaptureJob, EngineEvent};
+use native::log_markdown;
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager};
 
@@ -309,15 +310,15 @@ fn emit_take_verification(app: &tauri::AppHandle, manifest_slot: &Arc<Mutex<Opti
     let captured_count = blocks.iter().filter(|b| b.captured).count();
     let renderable_count = blocks.iter().filter(|b| b.renderable).count();
 
-    log::info!(
+    log_markdown(&format!(
         "[take-verify] session {}: {}/{} takes on disk, {} renderable",
         manifest.session_id, captured_count, blocks.len(), renderable_count
-    );
-    for block in blocks.iter().filter(|b| !b.captured || !b.renderable) {
-        log::warn!(
+    ));
+    for block in &blocks {
+        log_markdown(&format!(
             "[take-verify] {} captured={} renderable={} at {}",
             block.take_key, block.captured, block.renderable, block.take_folder
-        );
+        ));
     }
 
     let _ = app.emit("capture_takes_verified", serde_json::json!({
@@ -491,7 +492,10 @@ pub async fn start_capture_batch_impl(
         let is_running_clone = Arc::clone(&is_running_arc);
         let manifest_for_listener = Arc::clone(&manifest_arc);
         let app_emitter = app_handle_clone.clone();
+        let is_running_for_panic = Arc::clone(&is_running_arc);
+        let app_emitter_for_panic = app_handle_clone.clone();
         std::thread::spawn(move || {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let mut total_jobs: u32 = 0;
             let mut current_idx: u32 = 0;
             while let Ok(event) = engine_rx.recv() {
@@ -560,6 +564,23 @@ pub async fn start_capture_batch_impl(
                         break;
                     }
                 }
+            }
+            }));
+
+            if let Err(panic_payload) = result {
+                let msg = panic_payload
+                    .downcast_ref::<&str>()
+                    .map(|s| s.to_string())
+                    .or_else(|| panic_payload.downcast_ref::<String>().cloned())
+                    .unwrap_or_else(|| "unknown panic payload".to_string());
+                log_markdown(&format!("[capture] Event listener thread panicked: {}", msg));
+                let mut running = is_running_for_panic.lock().unwrap_or_else(|p| p.into_inner());
+                *running = false;
+                let _ = app_emitter_for_panic.emit("capture_status", serde_json::json!({
+                    "running": false,
+                    "error": true,
+                    "status": format!("Internal error in capture event listener: {}", msg)
+                }));
             }
         });
 

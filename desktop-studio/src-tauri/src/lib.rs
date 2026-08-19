@@ -150,6 +150,10 @@ fn simulate_aot_capacity(
 /// Cancel a running capture batch.
 #[tauri::command]
 async fn cancel_capture_batch(state: tauri::State<'_, CaptureManager>) -> Result<(), String> {
+    native::log_markdown(&format!(
+        "[capture] Cancel requested (is_running={})",
+        state.is_running()
+    ));
     state
         .cancel_token
         .store(true, std::sync::atomic::Ordering::Relaxed);
