@@ -3,6 +3,7 @@ import { listen } from '@tauri-apps/api/event';
 import { showToast } from './toast.js';
 import { requestProcessGuardedLaunch } from './detail_pane.js';
 import { createListEditor } from './list_editor.js';
+import { streakUid, recordTake } from './take_index.js';
 
 let unlistenCaptureStatus = null;
 // Tracks whether a batch is actively running so refreshLaunchGuard() never
@@ -23,6 +24,11 @@ let currentOnSettingsChange = null;
 // Neither watches the streak objects, so without this the tables stay stale
 // until the next unrelated interaction.
 let currentOnStatusChange = null;
+// Returns the live project-level take index object (take_key -> uid[]) owned
+// by main.js, so recording into it here persists into the same object that
+// gets serialized on Save Session. Null in Quick-Clip-only contexts where
+// main.js hasn't wired one up yet.
+let currentGetTakeIndex = null;
 // The most recent batch dispatched from this window: its session id and the
 // live streak objects, in the exact order they were sent. The backend's take
 // manifest indexes into that same order, which is what lets a verified block
@@ -433,7 +439,7 @@ function initClearPreviewsModal() {
   }
 }
 
-export function initCaptureUI(getState, onSettingsChange, onStatusChange) {
+export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTakeIndex) {
   const startBtn = document.querySelector('#start-capture-btn') || document.querySelector('#start-batch-btn');
   const cancelBtn = document.querySelector('#cancel-batch-btn');
   const statusEl = document.querySelector('#batch-status');
@@ -443,6 +449,7 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange) {
   currentGetState = getState;
   currentOnSettingsChange = onSettingsChange || null;
   currentOnStatusChange = onStatusChange || null;
+  currentGetTakeIndex = getTakeIndex || null;
 
   initCommandsEditor = createListEditor({
     container: document.querySelector('#init-commands-list'),
@@ -567,20 +574,31 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange) {
       const captured = payload.captured_count ?? 0;
       const renderable = payload.renderable_count ?? 0;
 
+      const takeIndex = currentGetTakeIndex ? currentGetTakeIndex() : null;
+
       let advanced = 0;
       blocks.forEach(block => {
         if (!block.captured) return;
         // A block can cover several highlights — overlapping ones are recorded
         // as one continuous take — so every highlight it covers advances.
+        const uids = [];
         (block.source_streak_indices || []).forEach(i => {
           const streak = lastDispatch?.streaks?.[i];
           if (!streak) return;
+          const demoPath = lastDispatch?.demoPaths?.[i];
+          uids.push(streakUid(demoPath, streak));
           // Status only ever moves forward. Re-capturing something already
           // rendered must not knock it back down to Captured.
           if (streak.status === 'Rendered') return;
           if (streak.status !== 'Captured') advanced += 1;
           streak.status = 'Captured';
         });
+        // Recorded even when the take isn't renderable yet — a future render
+        // still needs to resolve this take_key back to these highlights once
+        // it succeeds, and the index outlives this dispatch's in-memory state.
+        if (takeIndex && block.take_key) {
+          recordTake(takeIndex, block.take_key, uids);
+        }
       });
 
       if (total === 0) return;
@@ -614,6 +632,10 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange) {
    */
   function buildCapturePayload(state) {
     const selectedStreaks = [];
+    // Index-aligned with selectedStreaks — the owning demo's path, needed to
+    // derive each streak's durable uid (streakUid takes demoPath + streak)
+    // for the take index below.
+    const selectedDemoPaths = [];
     if (state.currentScannedDemos) {
       state.currentScannedDemos.forEach(demo => {
         if (demo.streaks) {
@@ -621,6 +643,7 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange) {
             // Opt-in model (detail_pane.js) — see computeRequiredCaptureBytes above.
             if (streak.selected === true) {
               selectedStreaks.push(streak);
+              selectedDemoPaths.push(demo.path);
             }
           });
         }
@@ -631,7 +654,7 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange) {
     // source_streak_indices back to these exact live streak objects — the
     // backend preserves this array's order, so index N here is index N there.
     const sessionId = generateSessionId();
-    lastDispatch = { sessionId, streaks: selectedStreaks };
+    lastDispatch = { sessionId, streaks: selectedStreaks, demoPaths: selectedDemoPaths };
 
     const captureFpsVal = parseInt(document.querySelector("#config-capture-fps")?.value, 10) || 300;
     const preRollVal = parseFloat(document.querySelector("#config-pre-roll")?.value) || 2.0;

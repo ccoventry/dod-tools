@@ -59,3 +59,51 @@ export function preserveHighlightState(previousDemo, freshDemo) {
 
   return freshDemo;
 }
+
+// ── Durable take index ──────────────────────────────────────────────────────
+//
+// take_key -> uid[]. Recorded when a capture batch verifies a block on disk
+// (capture_pane.js) so a render finishing later — possibly after a restart,
+// re-scan, or project reload that produced entirely new streak objects — can
+// still resolve which highlights to flip to Rendered. Plain object (not a
+// Map) so it round-trips through JSON.stringify/parse with the rest of the
+// project file with no extra conversion step.
+
+/**
+ * Records that the highlights identified by `uids` produced the take at
+ * `takeKey`. Additive: a take key can cover more than one highlight (an
+ * overlap merge recording several highlights into one block), and recording
+ * the same key again (e.g. a re-capture) just unions the uid sets rather
+ * than dropping the earlier ones.
+ */
+export function recordTake(takeIndex, takeKey, uids) {
+  if (!takeIndex || !takeKey || !uids || uids.length === 0) return;
+  const existing = takeIndex[takeKey] || [];
+  takeIndex[takeKey] = Array.from(new Set([...existing, ...uids]));
+}
+
+/**
+ * Highlight uids the given take key maps to, or an empty array if this take
+ * was never recorded (e.g. captured before Phase 3, or from a project saved
+ * on an older version that had no take index at all).
+ */
+export function resolveTake(takeIndex, takeKey) {
+  if (!takeIndex || !takeKey) return [];
+  return takeIndex[takeKey] || [];
+}
+
+/**
+ * Drops index entries for uids no longer present in the current highlight
+ * set (a demo removed from the queue, say), so the index doesn't grow
+ * forever across a project's lifetime. Entries left with zero surviving
+ * uids are dropped entirely rather than kept as an empty array.
+ */
+export function pruneTakeIndex(takeIndex, knownUids) {
+  const known = new Set(knownUids);
+  const pruned = {};
+  for (const [key, uids] of Object.entries(takeIndex || {})) {
+    const kept = uids.filter(uid => known.has(uid));
+    if (kept.length > 0) pruned[key] = kept;
+  }
+  return pruned;
+}

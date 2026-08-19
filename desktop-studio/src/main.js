@@ -19,7 +19,7 @@ import { switchNavTab, setCaptureDetailSubtab } from './nav.js';
 import { analyzeDemo } from './ipc_bridge.js';
 import { showToast } from './toast.js';
 import { createListEditor } from './list_editor.js';
-import { preserveHighlightState } from './take_index.js';
+import { preserveHighlightState, streakUid, pruneTakeIndex } from './take_index.js';
 
 window.addEventListener("DOMContentLoaded", async () => {
   let scanPaths = [];
@@ -42,6 +42,21 @@ window.addEventListener("DOMContentLoaded", async () => {
   // once set, "Save Session" writes straight back to it instead of asking
   // Save-As every time (matches Ctrl+S's behavior in every other app).
   let currentSessionPath = null;
+  // take_key -> uid[]. Recorded by capture_pane.js when a batch verifies a
+  // block on disk; resolved by render_pane.js when that take finishes
+  // rendering, so status can auto-advance even after a restart or re-scan
+  // replaced the original streak objects. Persisted in the project file.
+  let takeIndex = {};
+
+  /** Every highlight's durable uid across every currently-scanned demo — the
+   *  "still exists" set pruneTakeIndex() checks the take index against on save. */
+  function collectAllUids() {
+    const uids = [];
+    currentScannedDemos.forEach(demo => {
+      (demo.streaks || []).forEach(streak => uids.push(streakUid(demo.path, streak)));
+    });
+    return uids;
+  }
 
   function updateSessionFileIndicator() {
     const el = document.querySelector('#session-file-indicator');
@@ -316,11 +331,14 @@ window.addEventListener("DOMContentLoaded", async () => {
           const hlaePath = document.querySelector('#hlae-path-input')?.value || "";
           const hlPath = document.querySelector('#hl-path-input')?.value || "";
           const projectData = JSON.stringify({
-            version: "0.10.0",
+            version: "0.11.0",
             scanPaths: scanPaths,
             demos: currentScannedDemos,
             hlaePath: hlaePath,
-            hlPath: hlPath
+            hlPath: hlPath,
+            // Pruned against what's actually still scanned so the index
+            // doesn't accumulate uids for demos removed from the project.
+            takeIndex: pruneTakeIndex(takeIndex, collectAllUids())
           }, null, 2);
           await invoke('save_project_session', { path: filePath, contents: projectData });
           currentSessionPath = filePath;
@@ -357,6 +375,16 @@ window.addEventListener("DOMContentLoaded", async () => {
               const hlInput = document.querySelector('#hl-path-input');
               if (hlInput) hlInput.value = data.hlPath;
             }
+            // Tolerant: a 0.10.0 project file has no takeIndex at all — load
+            // as empty rather than reject the file. Auto-Rendered just won't
+            // retroactively apply to takes captured before this existed.
+            takeIndex = data.takeIndex || {};
+            // Deliberately verbose: this is the only place takeIndex is ever
+            // populated from disk, so logging it here — with exactly what
+            // came out of the file, before anything else touches it — is
+            // what makes it possible to prove a later auto-Rendered flip
+            // came from this loaded data and not a leftover in-memory state.
+            console.log(`[take-index] Loaded from ${selected}: ${Object.keys(takeIndex).length} take(s)`, takeIndex);
             if (data.demos) {
               currentScannedDemos = data.demos;
               selectedDemoIdx = currentScannedDemos.length > 0 ? 0 : null;
@@ -735,23 +763,29 @@ window.addEventListener("DOMContentLoaded", async () => {
   });
 
   // Initialize Capture Batch UI
-  initCaptureUI(() => ({
-    scanPaths,
-    targetDrives,
-    currentScannedDemos
-  }), persistAppSettings, () => {
-    // A verified capture just advanced highlight statuses. Both tables read
-    // status and neither observes the streak objects, so re-render both — the
-    // Master Queue for its Pending/Captured/Rendered counts, and the detail
-    // view for the per-row status dropdowns.
+  // Shared by both auto-status paths (a verified capture, a finished render):
+  // both tables read status and neither observes the streak objects on its
+  // own, so re-render both — the Master Queue for its Pending/Captured/
+  // Rendered counts, and the detail view for the per-row status dropdowns.
+  const onHighlightStatusChange = () => {
     renderMasterList(currentScannedDemos, selectedDemoIdx);
     if (selectedDemoIdx !== null && currentScannedDemos[selectedDemoIdx]) {
       renderDetailView(currentScannedDemos[selectedDemoIdx], selectedDemoIdx);
     }
-  });
+  };
+
+  initCaptureUI(() => ({
+    scanPaths,
+    targetDrives,
+    currentScannedDemos
+  }), persistAppSettings, onHighlightStatusChange, () => takeIndex);
 
   // Initialize Render Studio UI
-  initRenderUI(() => renderFolders, () => renderExportDirs, persistAppSettings);
+  initRenderUI(() => renderFolders, () => renderExportDirs, persistAppSettings, {
+    getTakeIndex: () => takeIndex,
+    getAllDemos: () => currentScannedDemos,
+    onStatusChange: onHighlightStatusChange
+  });
 
   // Render-batch crash-recovery prompt — checked once on startup, same
   // pattern as dev's StartupState::PendingRenderRecovery.
