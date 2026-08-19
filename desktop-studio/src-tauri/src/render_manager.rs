@@ -18,6 +18,8 @@ use native::hlcr::autosave::{RenderJob as AutosaveJob, RenderJobStatus as Autosa
 use native::hlcr::config::{RenderCodec, RenderConfig};
 use native::hlcr::renderer::{hold_render_wake_lock, run_render_job, RenderUpdate, RenderWakeLock};
 use native::hlcr::scanner::{scan_folder_background, ClipData};
+use native::shared::paths::take_key;
+use native::log_markdown;
 use tauri::{AppHandle, Emitter};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -124,6 +126,13 @@ struct RenderJobRuntime {
     progress: u32,
     error_log: Option<String>,
     cancel_flag: Arc<AtomicBool>,
+    // Snapshotted onto the job itself (VirtualDub-style job queue, not one
+    // shared live config) so Reset to Queued always re-renders with exactly
+    // what this job was queued with — never silently picks up a codec/fps
+    // change made to the panel afterward, and never silently ignores one
+    // either: the Settings column shows precisely what's about to run.
+    codec: RenderCodec,
+    fps: u32,
 }
 
 #[derive(Clone, Serialize)]
@@ -137,6 +146,11 @@ pub struct RenderJobView {
     pub speed: String,
     pub progress: u32,
     pub error_log: Option<String>,
+    /// e.g. "ProRes @ 300fps" — this job's own settings, not the panel's
+    /// current ones. A single summary string rather than separate
+    /// codec/fps columns so a future new setting doesn't need its own
+    /// column too.
+    pub settings_summary: String,
 }
 
 impl RenderJobRuntime {
@@ -151,6 +165,7 @@ impl RenderJobRuntime {
             speed: self.speed.clone(),
             progress: self.progress,
             error_log: self.error_log.clone(),
+            settings_summary: format!("{} @ {}fps", self.codec.label(), self.fps),
         }
     }
 }
@@ -204,7 +219,7 @@ fn write_autosave(render_session: &Arc<Mutex<Option<RenderSessionData>>>, jobs: 
     let session = RenderSessionData {
         source_folder: config.source_folder.clone(),
         fps: config.fps,
-        target_codec: format!("{:?}", config.target_codec),
+        target_codec: config.target_codec.to_str_id().to_string(),
         jobs: jobs.iter().map(|j| AutosaveJob {
             take_folder: j.clip.take_folder.clone(),
             output_path: String::new(), // never populated by dev's own run_render_job either
@@ -226,6 +241,7 @@ fn emit_jobs_snapshot(app: &AppHandle, jobs: &Arc<Mutex<Vec<RenderJobRuntime>>>)
 }
 
 fn apply_render_update(
+    app: &AppHandle,
     jobs: &Arc<Mutex<Vec<RenderJobRuntime>>>,
     render_session: &Arc<Mutex<Option<RenderSessionData>>>,
     update: RenderUpdate,
@@ -247,6 +263,13 @@ fn apply_render_update(
             }
         }
         RenderUpdate::Finished(id, success, err_log) => {
+            // Captured only when this call is the one that actually flips the
+            // job to Finished — guards against a dedicated event firing twice
+            // for the same take (e.g. if Finished were ever sent more than
+            // once for one job) and against recover_render_batch, which
+            // repopulates already-Finished jobs by constructing them directly
+            // rather than replaying this update, so it can never trigger here.
+            let mut just_finished = None;
             {
                 let mut guard = jobs.lock().unwrap();
                 if let Some(job) = guard.iter_mut().find(|j| j.id == id) {
@@ -254,10 +277,31 @@ fn apply_render_update(
                         job.status = if err_log.is_some() { "Error".to_string() } else { "Finished".to_string() };
                         if job.status == "Finished" {
                             job.progress = 100;
+                            if success {
+                                just_finished = Some((
+                                    job.clip.take_folder.clone(),
+                                    job.clip.base_name.clone(),
+                                    job.clip.clip_type.clone(),
+                                ));
+                            }
                         }
                     }
                     job.error_log = err_log;
                 }
+            }
+            if let Some((take_folder, base_name, clip_type)) = just_finished {
+                let key = take_key(std::path::Path::new(&take_folder));
+                log_markdown(&format!(
+                    "[render-take-finished] job {} take_key={:?} take_folder={} base_name={} clip_type={}",
+                    id, key, take_folder, base_name, clip_type
+                ));
+                let _ = app.emit("render_take_finished", serde_json::json!({
+                    "job_id": id.clone(),
+                    "take_key": key,
+                    "take_folder": take_folder,
+                    "base_name": base_name,
+                    "clip_type": clip_type,
+                }));
             }
             // Autosave only tracks success — matches dev's ui.rs exactly.
             if success {
@@ -302,7 +346,7 @@ fn spawn_scheduler(app: AppHandle, handles: SchedulerHandles, config: RenderConf
 
             let mut dirty = false;
             while let Ok(update) = rx.try_recv() {
-                apply_render_update(&handles.jobs, &handles.render_session, update);
+                apply_render_update(&app, &handles.jobs, &handles.render_session, update);
                 dirty = true;
             }
 
@@ -327,7 +371,14 @@ fn spawn_scheduler(app: AppHandle, handles: SchedulerHandles, config: RenderConf
                             let job_id = job.id.clone();
                             let clip = job.clip.clone();
                             let cancel_flag = job.cancel_flag.clone();
+                            // Codec/fps come from the job itself, not the
+                            // scheduler's shared config — see the comment on
+                            // RenderJobRuntime. Everything else (ffmpeg path,
+                            // export pool, concurrency) genuinely is
+                            // batch-wide, so still comes from config.
                             let mut job_config = config.clone();
+                            job_config.target_codec = job.codec;
+                            job_config.fps = job.fps;
                             job_config.max_concurrent_renders = effective_concurrent;
                             let tx2 = tx.clone();
                             tokio::spawn(async move {
@@ -355,6 +406,7 @@ fn spawn_scheduler(app: AppHandle, handles: SchedulerHandles, config: RenderConf
             tokio::time::sleep(Duration::from_millis(150)).await;
         }
 
+        log_markdown("[render] scheduler loop exiting: nothing left Rendering or Queued");
         handles.is_rendering.store(false, Ordering::SeqCst);
         handles.global_cancel.store(false, Ordering::SeqCst);
         *handles.wake_lock.lock().unwrap() = None; // Drop releases the wake lock.
@@ -374,8 +426,13 @@ pub async fn execute_render_batch(
     payload: RenderBatchPayload,
 ) -> Result<(), String> {
     if state.is_rendering.swap(true, Ordering::SeqCst) {
+        log_markdown("[render] execute_render_batch rejected: a batch is already in progress");
         return Err("Render batch already in progress".to_string());
     }
+    log_markdown(&format!(
+        "[render] execute_render_batch starting: {} source dir(s), codec={}, fps={}, max_concurrent={}",
+        payload.render_directories.len(), payload.codec, payload.fps, payload.max_concurrent_renders
+    ));
     state.global_cancel.store(false, Ordering::SeqCst);
 
     let scan_result = tokio::task::spawn_blocking({
@@ -396,11 +453,13 @@ pub async fn execute_render_batch(
     .map_err(|e| format!("Task join failed: {}", e))?;
 
     if scan_result.is_empty() {
+        log_markdown("[render] execute_render_batch: no takes found in the scanned directories, aborting");
         state.is_rendering.store(false, Ordering::SeqCst);
         let _ = app.emit("render_jobs_snapshot", Vec::<RenderJobView>::new());
         let _ = app.emit("render_batch_finished", serde_json::json!({ "status": "No takes found to render" }));
         return Ok(());
     }
+    log_markdown(&format!("[render] execute_render_batch: {} take(s) found, dispatching to scheduler", scan_result.len()));
 
     let ffmpeg_path = resolve_ffmpeg(payload.ffmpeg_path.as_ref()).to_string_lossy().into_owned();
     let export_directories: Vec<PathBuf> = payload.export_directories.iter().map(PathBuf::from).collect();
@@ -421,6 +480,8 @@ pub async fn execute_render_batch(
         progress: 0,
         error_log: None,
         cancel_flag: Arc::new(AtomicBool::new(false)),
+        codec: config.target_codec,
+        fps: config.fps,
     }).collect();
 
     write_autosave(&state.render_session, &jobs, &config);
@@ -436,12 +497,14 @@ pub async fn execute_render_batch(
 
 #[tauri::command]
 pub async fn cancel_render_batch(state: tauri::State<'_, RenderManager>) -> Result<(), String> {
+    log_markdown("[render] cancel_render_batch requested");
     state.global_cancel.store(true, Ordering::SeqCst);
     Ok(())
 }
 
 #[tauri::command]
 pub async fn cancel_render_job(state: tauri::State<'_, RenderManager>, job_id: String) -> Result<(), String> {
+    log_markdown(&format!("[render] cancel_render_job requested for {}", job_id));
     let mut jobs = state.jobs.lock().unwrap();
     if let Some(job) = jobs.iter_mut().find(|j| j.id == job_id) {
         job.cancel_flag.store(true, Ordering::Relaxed);
@@ -457,11 +520,20 @@ pub async fn cancel_render_job(state: tauri::State<'_, RenderManager>, job_id: S
 /// resumes the scheduler on the existing job list — a small UX improvement
 /// over dev, which required a separate "Start Render" click after Reset to
 /// notice the re-queued job at all.
+///
+/// Deliberately does not touch `codec`/`fps` — a reset job re-renders with
+/// exactly the settings it already carries (VirtualDub-style: each job owns
+/// its settings, the panel is only ever a template for *new* jobs), never
+/// whatever the panel currently shows. The `last_config` used below to
+/// resume the scheduler only supplies batch-wide infrastructure (ffmpeg
+/// path, export pool, concurrency) — never per-job creative settings.
 #[tauri::command]
 pub async fn reset_render_job(app: AppHandle, state: tauri::State<'_, RenderManager>, job_id: String) -> Result<(), String> {
+    let mut previous_status = None;
     {
         let mut jobs = state.jobs.lock().unwrap();
         if let Some(job) = jobs.iter_mut().find(|j| j.id == job_id) {
+            previous_status = Some(job.status.clone());
             job.status = "Queued".to_string();
             job.progress = 0;
             job.speed = String::new();
@@ -469,12 +541,17 @@ pub async fn reset_render_job(app: AppHandle, state: tauri::State<'_, RenderMana
             job.cancel_flag = Arc::new(AtomicBool::new(false));
         }
     }
+    log_markdown(&format!(
+        "[render] reset_render_job {} (was {:?}) -> Queued",
+        job_id, previous_status
+    ));
     emit_jobs_snapshot(&app, &state.jobs);
 
     if !state.is_rendering.swap(true, Ordering::SeqCst) {
         let config = state.last_config.lock().unwrap().clone();
         match config {
             Some(config) => {
+                log_markdown(&format!("[render] reset_render_job {} resumed the scheduler", job_id));
                 state.global_cancel.store(false, Ordering::SeqCst);
                 if state.wake_lock.lock().unwrap().is_none() {
                     *state.wake_lock.lock().unwrap() = hold_render_wake_lock();
@@ -482,9 +559,18 @@ pub async fn reset_render_job(app: AppHandle, state: tauri::State<'_, RenderMana
                 spawn_scheduler(app, state.handles(), config);
             }
             None => {
+                log_markdown(&format!(
+                    "[render] reset_render_job {} could not resume: no last_config to schedule against",
+                    job_id
+                ));
                 state.is_rendering.store(false, Ordering::SeqCst);
             }
         }
+    } else {
+        log_markdown(&format!(
+            "[render] reset_render_job {} left as Queued — a scheduler is already running and will pick it up",
+            job_id
+        ));
     }
 
     Ok(())
@@ -538,6 +624,14 @@ pub fn discard_render_autosave() -> Result<(), String> {
 pub fn recover_render_batch(state: tauri::State<'_, RenderManager>) -> Result<Vec<RenderJobView>, String> {
     let json = std::fs::read_to_string(autosave_path()).map_err(|e| e.to_string())?;
     let session: RenderSessionData = serde_json::from_str(&json).map_err(|e| e.to_string())?;
+    // The autosave snapshot only ever recorded one session-wide codec/fps
+    // (written once at batch start, before per-job settings existed) — every
+    // recovered job gets that same pair. A job individually reset to a
+    // different codec before a crash won't recover with that override; a
+    // known, pre-existing recovery-fidelity gap (see the doc comment below),
+    // not a regression from per-job settings.
+    let recovered_codec = RenderCodec::from_str_id(&session.target_codec);
+    let recovered_fps = session.fps;
 
     let jobs: Vec<RenderJobRuntime> = session.jobs.iter().enumerate().map(|(i, rj)| {
         let (status, progress) = if rj.status == AutosaveJobStatus::Completed {
@@ -561,6 +655,8 @@ pub fn recover_render_batch(state: tauri::State<'_, RenderManager>) -> Result<Ve
             progress,
             error_log: None,
             cancel_flag: Arc::new(AtomicBool::new(false)),
+            codec: recovered_codec,
+            fps: recovered_fps,
         }
     }).collect();
 
