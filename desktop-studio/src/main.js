@@ -894,7 +894,12 @@ window.addEventListener("DOMContentLoaded", async () => {
   checkRenderRecoveryOnStartup(() => switchNavTab('render-studio'));
 
   // Delete callback: remove a demo from the active scan list and re-render.
-  // Called by master_pane.js when the 🗑 button is clicked on a row.
+  // Called by master_pane.js when the 🗑 button is clicked on a row. Returns
+  // the new selectedDemoIdx so the caller's own renderMasterList call can
+  // pass it through for the row-highlight — master_pane.js doesn't otherwise
+  // know this file's selectedDemoIdx, and previously always re-rendered with
+  // no selection at all (visually dropping the highlight) even when the
+  // deleted row wasn't the selected one and the selection should have held.
   const onDeleteDemo = (deletedOriginalIdx, updatedDemos) => {
     currentScannedDemos = updatedDemos;
     // If the deleted demo was the selected one, clear the detail view.
@@ -910,18 +915,28 @@ window.addEventListener("DOMContentLoaded", async () => {
       selectedDemoIdx -= 1;
     }
     updateDemoFooter(currentScannedDemos);
+    return selectedDemoIdx;
   };
 
   // Shared by all three Clear actions below: swaps the scanned-demo list,
-  // resets selection/checkboxes, and re-renders both the queue and the
-  // (now probably stale) detail view.
+  // resets checkboxes, and re-renders both the queue and the detail view.
+  //
+  // Selection is preserved by object identity, not just reset to row 0:
+  // Clear Untracked/Selected/All can all leave the previously-selected demo
+  // still in the queue (it just wasn't the one removed), and jumping the
+  // selection to whatever's now first is jarring — you were looking at one
+  // demo's highlights and suddenly a different one's are shown. Only falls
+  // back to row 0 (or nothing) when the selected demo was actually the one
+  // that got removed.
   function replaceScannedDemos(newDemos) {
+    const previouslySelectedDemo = selectedDemoIdx !== null ? currentScannedDemos[selectedDemoIdx] : null;
     currentScannedDemos = newDemos;
-    selectedDemoIdx = currentScannedDemos.length > 0 ? 0 : null;
+    const preservedIdx = previouslySelectedDemo ? currentScannedDemos.indexOf(previouslySelectedDemo) : -1;
+    selectedDemoIdx = preservedIdx !== -1 ? preservedIdx : (currentScannedDemos.length > 0 ? 0 : null);
     clearCheckedPaths();
     updateDemoFooter(currentScannedDemos);
     renderMasterList(currentScannedDemos, selectedDemoIdx);
-    renderDetailView(selectedDemoIdx !== null ? currentScannedDemos[0] : null, selectedDemoIdx);
+    renderDetailView(selectedDemoIdx !== null ? currentScannedDemos[selectedDemoIdx] : null, selectedDemoIdx);
   }
 
   // One-line callout appended to Clear actions' toasts/summaries whenever an
