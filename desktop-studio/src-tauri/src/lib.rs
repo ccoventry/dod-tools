@@ -172,6 +172,15 @@ fn test_bridge(path: String) -> String {
     format!("Tauri Backend received target: {}. Engine ready.", path)
 }
 
+/// Writes one line to crash_log.md from the frontend. Exists for events that
+/// have no other Tauri command to piggyback logging on — the Master Demo
+/// Queue's Clear Untracked/Selected/All and row-delete actions are pure
+/// frontend array mutations with nothing else calling into Rust.
+#[tauri::command]
+fn log_frontend_event(message: String) {
+    native::log_markdown(&message);
+}
+
 #[tauri::command]
 async fn scan_directory(
     app_handle: tauri::AppHandle,
@@ -388,6 +397,7 @@ pub fn run() {
         .manage(AuditManager::default())
         .invoke_handler(tauri::generate_handler![
             test_bridge,
+            log_frontend_event,
             validate_paths,
             analyze_demo,
             analyze_demo_full,

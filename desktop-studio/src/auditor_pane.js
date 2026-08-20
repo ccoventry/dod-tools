@@ -1,4 +1,4 @@
-import { open } from '@tauri-apps/plugin-dialog';
+import { open, confirm } from '@tauri-apps/plugin-dialog';
 import { listen } from '@tauri-apps/api/event';
 import { runDemoAudit, deleteAuditFiles, cancelAudit, revealInExplorer } from './ipc_bridge.js';
 import { showToast } from './toast.js';
@@ -253,7 +253,7 @@ export function initAuditorPane() {
       const filesToDelete = Array.from(checked).map(cb => cb.dataset.file);
 
       if (filesToDelete.length === 0) return;
-      if (!confirm(`Are you sure you want to permanently delete ${filesToDelete.length} files?`)) return;
+      if (!(await confirm(`Are you sure you want to permanently delete ${filesToDelete.length} files?`))) return;
 
       deleteBtn.disabled = true;
       try {

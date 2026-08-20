@@ -2,6 +2,7 @@ import { switchNavTab } from './nav.js';
 import { openAnalyzerDemo } from './analyzer_pane.js';
 import { launchDemoPreview, generateAllPreviews, checkEngineProcesses, killEngineProcesses } from './ipc_bridge.js';
 import { showToast } from './toast.js';
+import { isRangeModified as isKillRangeModified } from './take_index.js';
 
 let currentDemo = null;
 let currentDemoIdx = null;
@@ -402,7 +403,15 @@ export function renderDetailView(demo, selectedDemoIdx) {
     const statusColor = statusColors[statusLabel] || '#888';
 
     const maxKillIdx = Math.max((streak.kills || []).length - 1, 0);
-    const isRangeModified = streak.start_index > 0 || streak.end_index < maxKillIdx;
+    const isRangeModified = isKillRangeModified(streak);
+
+    // Set by capture_pane.js's capture_takes_verified handler when this
+    // highlight's take was an overlap merge covering more than one highlight
+    // (builder.rs's merge loop) — surfaced so it's obvious at a glance why
+    // two rows flipped to Captured together instead of independently.
+    const mergedBadge = streak.mergedTakeKey
+      ? `<span title="Merged with ${streak.mergedCount - 1} other highlight(s) into one take — they were recorded together and share this take folder." style="margin-left:6px;font-size:0.75em;color:#ff9800;border:1px solid #ff9800;border-radius:2px;padding:1px 4px;cursor:help;">merged → ${streak.mergedTakeKey.split('/').pop()}</span>`
+      : '';
 
     tr.innerHTML = `
       <td style="padding: 8px;">${rowNum}</td>
@@ -427,7 +436,7 @@ export function renderDetailView(demo, selectedDemoIdx) {
           ${['None', 'Pending', 'Captured', 'Rendered'].map(s =>
             `<option value="${s}" ${s === statusLabel ? 'selected' : ''}>${s}</option>`
           ).join('')}
-        </select>
+        </select>${mergedBadge}
       </td>
       <td style="padding: 8px;">
         <input type="text" class="streak-notes-input" placeholder="Add note..." value="${(streak.notes || '').replace(/"/g, '&quot;')}" style="background: #1a1a1a; color: #fff; border: 1px solid #444; border-radius: 3px; padding: 2px; width: 100%;" />
@@ -449,12 +458,14 @@ export function renderDetailView(demo, selectedDemoIdx) {
       streak.start_index = Number.isNaN(v) ? 0 : v;
       updateStreakVisuals(streak);
       renderDetailView(currentDemo, currentDemoIdx);
+      if (currentOnSelectionChange) currentOnSelectionChange();
     });
     endInput.addEventListener('change', () => {
       const v = Math.max(Math.min(parseInt(endInput.value, 10) - 1, maxKillIdx), streak.start_index);
       streak.end_index = Number.isNaN(v) ? maxKillIdx : v;
       updateStreakVisuals(streak);
       renderDetailView(currentDemo, currentDemoIdx);
+      if (currentOnSelectionChange) currentOnSelectionChange();
     });
 
     const resetBtn = tr.querySelector('.kr-reset-btn');
@@ -464,6 +475,7 @@ export function renderDetailView(demo, selectedDemoIdx) {
         streak.end_index = maxKillIdx;
         updateStreakVisuals(streak);
         renderDetailView(currentDemo, currentDemoIdx);
+        if (currentOnSelectionChange) currentOnSelectionChange();
       });
     }
 
@@ -477,6 +489,13 @@ export function renderDetailView(demo, selectedDemoIdx) {
     const notesInput = tr.querySelector('.streak-notes-input');
     notesInput.addEventListener('input', (e) => {
       streak.notes = e.target.value;
+    });
+    // Master Queue's tracked badge (master_pane.js) depends on whether this
+    // streak has a note — 'change' (fires on blur/Enter, not per keystroke)
+    // rather than 'input' so typing a note doesn't rebuild the whole Master
+    // Queue table on every character, matching the Kill Range inputs above.
+    notesInput.addEventListener('change', () => {
+      if (currentOnSelectionChange) currentOnSelectionChange();
     });
 
     tbody.appendChild(tr);
