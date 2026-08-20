@@ -50,6 +50,8 @@ plan.
 - [ ] Typing a search that matches zero demos shows "No demos match the current search" instead of clearing anything
 - [ ] Regression: 2 untracked demos total, search narrows to 1 visible untracked — after Clear Untracked, toast says just "Removed 1 untracked demo(s)" with NO "kept ... with tracked work" claim (the hidden one is untracked too, not kept for being tracked — fixed 2026-08-19)
 - [ ] After clicking, a "[queue] Clear Untracked: ..." line appears in crash_log.md (%APPDATA%/dod-tools/logs/crash_log.md) with the right count and demo names
+- [ ] Regression: select a tracked demo (so it survives the clear), click Clear Untracked — that same demo stays selected/highlighted afterward instead of jumping to row 1 (fixed 2026-08-20, see engineering_backlog.md)
+- [ ] With a search active, select a tracked demo that's visible, click Clear Untracked — same demo stays selected afterward, same as without a search
 
 ## Clear Selected
 
@@ -69,6 +71,8 @@ plan.
 - [ ] That scenario's confirm/toast mentions the hidden checked demo(s) that were left alone
 - [ ] If every checked row is hidden by the current search, clicking shows a toast saying nothing visible to remove — doesn't error
 - [ ] After clicking, a "[queue] Clear Selected: ..." line appears in crash_log.md with the right count and demo names
+- [ ] Regression: select demo A, check a DIFFERENT demo B, click Clear Selected — demo A stays selected/highlighted afterward instead of jumping to row 1 (fixed 2026-08-20, see engineering_backlog.md)
+- [ ] With a search narrowing 5 demos to 4 visible: select the 4th visible one, check a different visible one, click Clear Selected — the selected demo stays selected afterward, same as without a search
 
 ## Clear All
 
@@ -83,6 +87,7 @@ plan.
 - [ ] After clicking, a "[queue] Clear All: ..." line appears in crash_log.md with the right count and demo names
 - [ ] Regression: load a session, then Clear All the entire queue down to 0 demos (both via Confirm Anyway and via plain confirm() with nothing tracked) — no devtools RangeError/stack overflow, toast appears normally (was a real crash, fixed 2026-08-19, see bugs.md)
 - [ ] Regression: same as above but via a plain "+ Add Demo Files"/"+ Add Folder" scan instead of Load Session — no devtools TypeError ("Cannot read properties of null"), toast appears normally, View Telemetry button disables cleanly (was a real crash, fixed 2026-08-19, see bugs.md)
+- [ ] Regression: select a demo, then type a search that hides it but leaves other demos visible, then click Clear All — the hidden, still-selected demo survives (it was outside the filter) and Highlight Details still shows it afterward, not reset to row 1 or blanked — no visible row highlight is expected since it's filtered out of view (fixed 2026-08-20, see engineering_backlog.md)
 
 ## Row delete (🗑 in Actions column)
 
@@ -94,6 +99,7 @@ plan.
 - [ ] Modal Save Session First saves, then removes just that row
 - [ ] Deleting the currently-selected demo clears/updates the detail view correctly
 - [ ] Deleting a demo above the selected one shifts the selection index down correctly
+- [ ] Regression: select a demo, then delete a DIFFERENT row's 🗑 (not the selected one) — the blue row highlight stays on the originally selected demo instead of disappearing, matching what Highlight Details shows (fixed 2026-08-20, previously the highlight always vanished regardless of which row's 🗑 was clicked — see engineering_backlog.md)
 - [ ] After deleting (tracked or untracked), a "[queue] Row delete: ..." line appears in crash_log.md, noting whether it had tracked work
 
 ## Layout

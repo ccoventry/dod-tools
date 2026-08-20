@@ -406,10 +406,14 @@ export function renderMasterList(demos, selectedDemoIdx, onSelectDemo) {
       const currentIdx = currentDemos.indexOf(demo);
       if (currentIdx === -1) return; // already removed some other way
       currentDemos.splice(currentIdx, 1);
-      if (currentOnDeleteDemo) currentOnDeleteDemo(currentIdx, currentDemos);
+      // main.js's onDeleteDemo returns the surviving selectedDemoIdx (the
+      // same demo, shifted down; or a fresh default if the deleted row was
+      // the one selected) — pass it straight to the re-render below so the
+      // row highlight matches Highlight Details instead of always dropping
+      // it, even when the deleted row wasn't the one selected.
+      const newSelectedIdx = currentOnDeleteDemo ? currentOnDeleteDemo(currentIdx, currentDemos) : null;
       logFrontendEvent(`[queue] Row delete: removed "${demo.name || demo.path}"${demoIsTracked ? ' (had tracked work; user confirmed)' : ''}`);
-      // Re-render: no demo is now "selected" at the old index
-      renderMasterList(currentDemos, null, currentOnSelectDemo);
+      renderMasterList(currentDemos, newSelectedIdx, currentOnSelectDemo);
     });
     tdActions.appendChild(deleteBtn);
 
