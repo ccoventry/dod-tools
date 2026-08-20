@@ -2,6 +2,17 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { showToast } from './toast.js';
 
+/** Writes one line to crash_log.md — for frontend-only events (the Master
+ *  Queue's Clear Untracked/Selected/All and row-delete actions) that have
+ *  no other IPC call to log from. Best-effort: logs to the console on
+ *  failure rather than toasting, since a lost log line isn't worth
+ *  interrupting the user over. */
+export function logFrontendEvent(message) {
+  invoke('log_frontend_event', { message }).catch((err) => {
+    console.error("IPC Execution Error (log_frontend_event):", err);
+  });
+}
+
 export async function scanDirectory(scanPaths) {
   return invoke("scan_directory", { paths: scanPaths })
     .catch((err) => {

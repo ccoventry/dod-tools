@@ -1,5 +1,6 @@
 import { startCaptureBatch, cancelCaptureBatch, validatePaths, calculateExportPoolSpace, scanOrphanedPreviews, deleteOrphanedPreviews, checkEngineProcesses, launchStandaloneGame } from './ipc_bridge.js';
 import { listen } from '@tauri-apps/api/event';
+import { confirm } from '@tauri-apps/plugin-dialog';
 import { showToast } from './toast.js';
 import { requestProcessGuardedLaunch } from './detail_pane.js';
 import { createListEditor } from './list_editor.js';
@@ -47,17 +48,6 @@ function generateSessionId() {
   const now = new Date();
   const pad = (n) => String(n).padStart(2, '0');
   return `session_${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
-}
-
-function updateRowBadges(statusText, colorHex) {
-  const tableBody = document.querySelector('#master-demo-table-body');
-  if (tableBody) {
-    const statusSpans = tableBody.querySelectorAll('td span');
-    statusSpans.forEach(span => {
-      span.textContent = statusText;
-      span.style.color = colorHex;
-    });
-  }
 }
 
 // ── Pre-Flight Disk Space Estimator ───────────────────────────────────────────
@@ -423,7 +413,7 @@ function initClearPreviewsModal() {
       const checked = document.querySelectorAll('.clear-previews-row-cb:checked');
       const pathsToDelete = Array.from(checked).map(cb => cb.dataset.path);
       if (pathsToDelete.length === 0) return;
-      if (!confirm(`Permanently delete ${pathsToDelete.length} orphaned preview demo(s)?`)) return;
+      if (!(await confirm(`Permanently delete ${pathsToDelete.length} orphaned preview demo(s)?`))) return;
 
       deleteBtn.disabled = true;
       try {
@@ -534,7 +524,6 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
         }
         const statusText = payload.name ? `${payload.status || "Capturing"}: ${payload.name}` : (payload.status || "Capturing...");
         if (statusEl) statusEl.textContent = statusText;
-        updateRowBadges(payload.status || "Capturing...", "#ff9800");
         if (startBtn) startBtn.disabled = true;
         if (cancelBtn) cancelBtn.disabled = false;
       } else {
@@ -544,16 +533,13 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
 
         if (payload.error) {
           showToast(`Capture error: ${payload.status || "Unknown error"}`, "error");
-          updateRowBadges("Error", "#f44336");
           if (statusEl) statusEl.textContent = `Error: ${payload.status || "Capture failed"}`;
         } else if (payload.status === "Cancelled") {
           showToast("Batch capture cancelled.", "info");
-          updateRowBadges("Cancelled", "#f44336");
           if (progressBar) progressBar.style.width = '0%';
           if (statusEl) statusEl.textContent = "Cancelled";
         } else {
           showToast("Batch capture completed successfully!", "success");
-          updateRowBadges("Completed", "#4caf50");
           if (progressBar) progressBar.style.width = '100%';
           if (statusEl) statusEl.textContent = "Completed";
         }
@@ -582,11 +568,21 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
         // A block can cover several highlights — overlapping ones are recorded
         // as one continuous take — so every highlight it covers advances.
         const uids = [];
-        (block.source_streak_indices || []).forEach(i => {
+        const sourceIndices = block.source_streak_indices || [];
+        sourceIndices.forEach(i => {
           const streak = lastDispatch?.streaks?.[i];
           if (!streak) return;
           const demoPath = lastDispatch?.demoPaths?.[i];
           uids.push(streakUid(demoPath, streak));
+          // Merged blocks (2+ source highlights recorded into one take) get a
+          // visible affordance in Highlight Details (detail_pane.js) so it's
+          // obvious why the rows flipped together. Non-enumerable, same as
+          // `.uid`, so it never leaks into a future capture payload sent
+          // over IPC (buildCapturePayload pushes the live streak object).
+          if (sourceIndices.length > 1 && block.take_key) {
+            Object.defineProperty(streak, 'mergedTakeKey', { value: block.take_key, enumerable: false, configurable: true });
+            Object.defineProperty(streak, 'mergedCount', { value: sourceIndices.length, enumerable: false, configurable: true });
+          }
           // Status only ever moves forward. Re-capturing something already
           // rendered must not knock it back down to Captured.
           if (streak.status === 'Rendered') return;
@@ -770,7 +766,6 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
       showToast("Initializing capture batch...", "info");
       startBtn.disabled = true;
       if (cancelBtn) cancelBtn.disabled = false;
-      updateRowBadges("Queued", "#2196f3");
 
       startCaptureBatch(activePayload)
         .then(() => {
@@ -781,7 +776,6 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
         .catch((err) => {
           console.error("IPC Execution Error (start_capture_batch):", err);
           showToast("Error starting batch: " + err, "error");
-          updateRowBadges("Failed", "#f44336");
           if (cancelBtn) cancelBtn.disabled = true;
           capturingInFlight = false;
           refreshLaunchGuard(state);
@@ -795,7 +789,6 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
       cancelBtn.disabled = true;
       cancelCaptureBatch()
         .then(() => {
-          updateRowBadges("Cancelled", "#f44336");
           if (progressBar) progressBar.style.width = '0%';
           capturingInFlight = false;
           refreshLaunchGuard();

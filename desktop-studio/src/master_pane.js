@@ -2,14 +2,78 @@
 // Renders the Master Demo Queue table with live per-demo status columns,
 // selected-streak yield counts, and a functional delete action (M1-M4 parity).
 
+import { isDemoTracked, isRangeModified } from './take_index.js';
+import { logFrontendEvent } from './ipc_bridge.js';
+import { confirm } from '@tauri-apps/plugin-dialog';
+
+// Feather "bookmark" icon, same stroke="currentColor" pattern as
+// list_editor.js's trash icon — WebView2 renders emoji as a flat monochrome
+// glyph that ignores CSS color, so an inline SVG is what actually themes.
+const TRACKED_ICON_SVG = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path></svg>`;
+
+/** Which of the three "tracked" reasons (take_index.js's isHighlightTracked)
+ *  apply anywhere in this demo, for the tracked badge's tooltip. Must stay
+ *  in sync with isHighlightTracked's own checks. */
+function describeTrackedReasons(demo) {
+  const streaks = demo?.streaks || [];
+  let hasStatus = false, hasNotes = false, hasRange = false;
+  streaks.forEach(s => {
+    if (s.status === 'Captured' || s.status === 'Rendered') hasStatus = true;
+    if (s.notes && s.notes.trim()) hasNotes = true;
+    if (isRangeModified(s)) hasRange = true;
+  });
+  const reasons = [];
+  if (hasStatus) reasons.push('a Captured/Rendered status');
+  if (hasNotes) reasons.push('a note');
+  if (hasRange) reasons.push('an edited kill range');
+  return reasons;
+}
+
 let currentDemos = [];
 let currentOnSelectDemo = null;
 let currentOnDeleteDemo = null;
+// Tracks whether the queue was already empty on the last render, so the
+// "queue just became empty" notification to currentOnSelectDemo only fires
+// once per transition — see renderMasterList's empty-queue branch.
+let wasEmptyQueue = false;
+// main.js-owned async confirmation for deleting a *tracked* demo via the
+// row's 🗑 button — opens the same Clear Selected/All modal (with its
+// Save-First option) rather than a lesser plain confirm() just because it's
+// one row. Resolves true/false; undefined here only if main.js never wires
+// it, in which case the delete handler falls back to a plain confirm().
+let currentOnRequestTrackedDeleteConfirm = null;
 let currentSearchTerm = '';
+// Row checkboxes for Clear Selected (Phase 4) — keyed by demo.path rather
+// than array index, since delete-from-queue splices currentDemos and would
+// otherwise leave an index-based selection pointing at the wrong rows.
+const checkedPaths = new Set();
 
-export function initMasterPane(onDeleteDemo) {
+/** Single source of truth for what the search box currently matches — used
+ *  by rendering, the select-all header checkbox, and (via getVisibleDemos,
+ *  exported for main.js) every bulk Clear action, so they can't drift apart
+ *  on what "visible" means. */
+function matchesSearch(demo, term) {
+  if (!term) return true;
+  return (demo.name && demo.name.toLowerCase().includes(term)) ||
+    (demo.path && demo.path.toLowerCase().includes(term)) ||
+    (demo.map_name && demo.map_name.toLowerCase().includes(term));
+}
+
+/** The demos currently visible under the active search filter (or every
+ *  scanned demo, with no filter). Bulk Clear actions (main.js) scope to
+ *  this rather than the full queue, matching the select-all checkbox's
+ *  existing scoping — a search filter should narrow what a bulk action
+ *  touches, not just what's on screen. */
+export function getVisibleDemos() {
+  return currentDemos.filter((d) => matchesSearch(d, currentSearchTerm));
+}
+
+export function initMasterPane(onDeleteDemo, onRequestTrackedDeleteConfirm) {
   if (onDeleteDemo) {
     currentOnDeleteDemo = onDeleteDemo;
+  }
+  if (onRequestTrackedDeleteConfirm) {
+    currentOnRequestTrackedDeleteConfirm = onRequestTrackedDeleteConfirm;
   }
 
   const searchInput =
@@ -19,6 +83,22 @@ export function initMasterPane(onDeleteDemo) {
   if (searchInput) {
     searchInput.addEventListener('input', (e) => {
       currentSearchTerm = (e.target.value || '').toLowerCase().trim();
+      renderMasterList(currentDemos, null, currentOnSelectDemo);
+    });
+  }
+
+  const selectAllCb = document.querySelector('#master-select-all-cb');
+  if (selectAllCb) {
+    selectAllCb.addEventListener('change', (e) => {
+      // Header checkbox only ever acts on the currently visible (filtered)
+      // rows — checking it with an active search shouldn't silently select
+      // demos that are hidden right now.
+      const visiblePaths = getVisibleDemos().map(d => d.path);
+      if (e.target.checked) {
+        visiblePaths.forEach(p => checkedPaths.add(p));
+      } else {
+        visiblePaths.forEach(p => checkedPaths.delete(p));
+      }
       renderMasterList(currentDemos, null, currentOnSelectDemo);
     });
   }
@@ -89,6 +169,50 @@ function countByStatus(streaks, status) {
   return (streaks || []).filter((s) => (s.status || 'Pending') === status).length;
 }
 
+// ── Row selection (Clear Selected) ──────────────────────────────────────────
+
+/** Demo paths currently checked in the Master Queue, for Clear Selected. */
+export function getCheckedDemoPaths() {
+  return Array.from(checkedPaths);
+}
+
+/** Clears all row checkboxes — call after Clear Untracked/All, or any other
+ *  action that changes the queue wholesale and makes the old selection
+ *  meaningless. Clear Selected does NOT use this for rows it never touched —
+ *  see setCheckedDemoPaths below. */
+export function clearCheckedPaths() {
+  checkedPaths.clear();
+  const selectAllCb = document.querySelector('#master-select-all-cb');
+  if (selectAllCb) { selectAllCb.checked = false; selectAllCb.indeterminate = false; }
+  syncClearSelectedButtonState();
+}
+
+/** Replaces the checked set outright — used by Clear Selected (main.js) to
+ *  restore the checkboxes on rows it left untouched because a search filter
+ *  hid them. Those demos were never acted on, so their checked state
+ *  shouldn't be wiped just because clearCheckedPaths() runs as part of the
+ *  same click (it resets everything, including rows the action never saw). */
+export function setCheckedDemoPaths(paths) {
+  checkedPaths.clear();
+  (paths || []).forEach((p) => checkedPaths.add(p));
+  syncClearSelectedButtonState();
+}
+
+/** Clear Selected only makes sense with something checked. */
+function syncClearSelectedButtonState() {
+  const btn = document.querySelector('#clear-selected-btn');
+  if (btn) btn.disabled = checkedPaths.size === 0;
+}
+
+function syncSelectAllCheckboxState(visibleDemos) {
+  const selectAllCb = document.querySelector('#master-select-all-cb');
+  if (!selectAllCb) return;
+  const visiblePaths = visibleDemos.map(d => d.path);
+  const checkedVisible = visiblePaths.filter(p => checkedPaths.has(p));
+  selectAllCb.checked = visiblePaths.length > 0 && checkedVisible.length === visiblePaths.length;
+  selectAllCb.indeterminate = checkedVisible.length > 0 && checkedVisible.length < visiblePaths.length;
+}
+
 // ── Render ───────────────────────────────────────────────────────────────────
 
 export function renderMasterList(demos, selectedDemoIdx, onSelectDemo) {
@@ -105,29 +229,43 @@ export function renderMasterList(demos, selectedDemoIdx, onSelectDemo) {
 
   if (!currentDemos || currentDemos.length === 0) {
     tableBody.innerHTML =
-      '<tr><td colspan="6" class="table-empty">No demos found in specified directories.</td></tr>';
-    if (currentOnSelectDemo) currentOnSelectDemo(null, null);
+      '<tr><td colspan="7" class="table-empty">No demos found in specified directories.</td></tr>';
+    // Notify only on the transition INTO empty, not on every re-render of an
+    // already-empty queue. Without this guard, a currentOnSelectDemo(null,
+    // null) implementation that calls renderDetailView (Load Session's does)
+    // can cascade back into detail_pane.js's onSelectionChange callback,
+    // which calls renderMasterList again — still empty, notifies again,
+    // forever. Real crash: RangeError, Maximum call stack size exceeded,
+    // hit via Clear All emptying the queue after a session had been loaded.
+    if (!wasEmptyQueue) {
+      wasEmptyQueue = true;
+      if (currentOnSelectDemo) currentOnSelectDemo(null, null);
+    }
+    clearCheckedPaths();
     return;
   }
+  wasEmptyQueue = false;
 
   const searchInput = document.querySelector('#demo-search-input');
   if (searchInput && searchInput.value !== undefined) {
     currentSearchTerm = searchInput.value.toLowerCase().trim();
   }
 
-  const filteredDemos = currentDemos.filter((demo) => {
-    if (!currentSearchTerm) return true;
-    const matchName = demo.name && demo.name.toLowerCase().includes(currentSearchTerm);
-    const matchPath = demo.path && demo.path.toLowerCase().includes(currentSearchTerm);
-    const matchMap  = demo.map_name && demo.map_name.toLowerCase().includes(currentSearchTerm);
-    return matchName || matchPath || matchMap;
-  });
+  const filteredDemos = getVisibleDemos();
 
   if (filteredDemos.length === 0) {
     tableBody.innerHTML =
-      '<tr><td colspan="6" class="table-empty">No demos match your search.</td></tr>';
+      '<tr><td colspan="7" class="table-empty">No demos match your search.</td></tr>';
+    syncClearSelectedButtonState();
     return;
   }
+
+  // Drop checkboxes for demos no longer in the list at all (deleted, or a
+  // fresh scan/load replaced the array) so the Set can't accumulate stale
+  // paths that no row will ever un-check.
+  const allPaths = new Set(currentDemos.map(d => d.path));
+  Array.from(checkedPaths).forEach(p => { if (!allPaths.has(p)) checkedPaths.delete(p); });
+  syncClearSelectedButtonState();
 
   filteredDemos.forEach((demo) => {
     const originalIdx = currentDemos.indexOf(demo);
@@ -149,45 +287,90 @@ export function renderMasterList(demos, selectedDemoIdx, onSelectDemo) {
     }
 
     // ── Build cells ───────────────────────────────────────────────────────
-    // Col 1: Demo name
+    // Col 1: Row checkbox (Clear Selected)
+    const tdCheck = document.createElement('td');
+    tdCheck.style.padding = '6px 8px';
+    tdCheck.style.textAlign = 'center';
+    const rowCb = document.createElement('input');
+    rowCb.type = 'checkbox';
+    rowCb.checked = checkedPaths.has(demo.path);
+    rowCb.addEventListener('click', (e) => e.stopPropagation()); // don't select the row
+    rowCb.addEventListener('change', (e) => {
+      if (e.target.checked) checkedPaths.add(demo.path);
+      else checkedPaths.delete(demo.path);
+      syncSelectAllCheckboxState(filteredDemos);
+      syncClearSelectedButtonState();
+    });
+    tdCheck.appendChild(rowCb);
+
+    // Col 2: Demo name — plus a bookmark badge when the demo has tracked
+    // work on it (isDemoTracked, take_index.js), the same predicate Clear
+    // Untracked uses, so the row that survives it is visibly explained
+    // rather than just a mystery afterward.
     const tdName = document.createElement('td');
     tdName.style.padding = '6px 8px';
     tdName.style.fontWeight = 'bold';
     tdName.style.maxWidth = '200px';
-    tdName.style.overflow = 'hidden';
-    tdName.style.textOverflow = 'ellipsis';
-    tdName.style.whiteSpace = 'nowrap';
-    tdName.title = demo.name || '';
-    tdName.textContent = demo.name || '—';
+    tdName.style.display = 'flex';
+    tdName.style.alignItems = 'center';
+    tdName.style.gap = '5px';
 
-    // Col 2: Highlights (total streak count, recording player only)  [M2]
+    // Name comes first (not the badge) so every row's text starts at the
+    // same spot — a badge only some rows have would otherwise push the
+    // name over inconsistently and leave them visually unaligned.
+    const nameSpan = document.createElement('span');
+    // min-width: 0 overrides the flex-item default of min-width: auto,
+    // which otherwise refuses to shrink below the untruncated text's
+    // intrinsic width and silently defeats the ellipsis below.
+    nameSpan.style.minWidth = '0';
+    nameSpan.style.flex = '1 1 auto';
+    nameSpan.style.overflow = 'hidden';
+    nameSpan.style.textOverflow = 'ellipsis';
+    nameSpan.style.whiteSpace = 'nowrap';
+    nameSpan.title = demo.name || '';
+    nameSpan.textContent = demo.name || '—';
+    tdName.appendChild(nameSpan);
+
+    const demoIsTracked = isDemoTracked(demo);
+    if (demoIsTracked) {
+      const badge = document.createElement('span');
+      badge.innerHTML = TRACKED_ICON_SVG;
+      badge.style.color = '#ffa726';
+      badge.style.flexShrink = '0';
+      badge.style.display = 'inline-flex';
+      const reasons = describeTrackedReasons(demo);
+      badge.title = `Tracked — has ${reasons.join(', ')}. Protected from Clear Untracked in Workspace mode.`;
+      tdName.appendChild(badge);
+    }
+
+    // Col 3: Highlights (total streak count, recording player only)  [M2]
     const tdYield = document.createElement('td');
     tdYield.style.padding = '6px 8px';
     tdYield.style.textAlign = 'center';
     tdYield.textContent = `${ownStreaks.length}`;
 
-    // Col 3: Pending count   [M4]
+    // Col 4: Pending count   [M4]
     const tdPending = document.createElement('td');
     tdPending.style.padding = '6px 8px';
     tdPending.style.textAlign = 'center';
     tdPending.style.color = pending > 0 ? '#ffa726' : '#555';
     tdPending.textContent = pending;
 
-    // Col 4: Captured count  [M4]
+    // Col 5: Captured count  [M4]
     const tdCaptured = document.createElement('td');
     tdCaptured.style.padding = '6px 8px';
     tdCaptured.style.textAlign = 'center';
     tdCaptured.style.color = captured > 0 ? '#4caf50' : '#555';
     tdCaptured.textContent = captured;
 
-    // Col 5: Rendered count  [M4]
+    // Col 6: Rendered count  [M4]
     const tdRendered = document.createElement('td');
     tdRendered.style.padding = '6px 8px';
     tdRendered.style.textAlign = 'center';
     tdRendered.style.color = rendered > 0 ? '#2196f3' : '#555';
     tdRendered.textContent = rendered;
 
-    // Col 6: Actions — remove-from-queue only, no status badge  [M3]
+    // Col 7: Actions — remove-from-queue only, no status badge  [M3]
     const tdActions = document.createElement('td');
     tdActions.style.padding = '6px 8px';
     tdActions.style.textAlign = 'center';
@@ -203,15 +386,34 @@ export function renderMasterList(demos, selectedDemoIdx, onSelectDemo) {
     deleteBtn.style.borderRadius = '2px';
     deleteBtn.style.cursor = 'pointer';
     deleteBtn.style.color = '#aaa';
-    deleteBtn.addEventListener('click', (e) => {
+    deleteBtn.addEventListener('click', async (e) => {
       e.stopPropagation(); // do not select the row when deleting
-      currentDemos.splice(originalIdx, 1);
-      if (currentOnDeleteDemo) currentOnDeleteDemo(originalIdx, currentDemos);
+      // Untracked deletes stay frictionless (matches Clear Untracked/Clear
+      // Selected — nothing worth protecting). Tracked ones get the same
+      // Clear Selected/All modal (Save-First included) via main.js's
+      // callback; falls back to a plain confirm() only if that was never
+      // wired up.
+      if (demoIsTracked) {
+        const proceed = currentOnRequestTrackedDeleteConfirm
+          ? await currentOnRequestTrackedDeleteConfirm(demo)
+          : await confirm(`Remove "${demo.name || demo.path}" from the queue? It has tracked work (Captured/Rendered status, a note, or an edited kill range) that will be lost.`);
+        if (!proceed) return;
+      }
+      // Re-resolve the index by identity rather than trusting the closured
+      // originalIdx — the modal path awaits user input, during which
+      // another action (a different delete, a Clear button) could have
+      // already spliced this array and shifted every index after it.
+      const currentIdx = currentDemos.indexOf(demo);
+      if (currentIdx === -1) return; // already removed some other way
+      currentDemos.splice(currentIdx, 1);
+      if (currentOnDeleteDemo) currentOnDeleteDemo(currentIdx, currentDemos);
+      logFrontendEvent(`[queue] Row delete: removed "${demo.name || demo.path}"${demoIsTracked ? ' (had tracked work; user confirmed)' : ''}`);
       // Re-render: no demo is now "selected" at the old index
       renderMasterList(currentDemos, null, currentOnSelectDemo);
     });
     tdActions.appendChild(deleteBtn);
 
+    tr.appendChild(tdCheck);
     tr.appendChild(tdName);
     tr.appendChild(tdYield);
     tr.appendChild(tdPending);
@@ -229,4 +431,6 @@ export function renderMasterList(demos, selectedDemoIdx, onSelectDemo) {
 
     tableBody.appendChild(tr);
   });
+
+  syncSelectAllCheckboxState(filteredDemos);
 }

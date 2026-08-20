@@ -24,6 +24,17 @@
           <button class="nav-tab-btn" data-nav="demo-analyzer">Demo Analyzer</button>
         </div>
         <div class="nav-actions">
+          <div class="studio-mode-toggle">
+            <span class="studio-mode-label" id="studio-mode-label-quickclip" data-mode="quick-clip"
+                  title="Quick-Clip: nothing is saved to disk automatically — for grabbing a one-off clip. A re-scan replaces demos wholesale instead of preserving your edits.">Quick-Clip</span>
+            <label class="studio-mode-switch" title="Toggle between Quick-Clip and Workspace mode">
+              <input type="checkbox" id="studio-mode-switch-input" />
+              <span class="studio-mode-switch-slider"></span>
+            </label>
+            <span class="studio-mode-label" id="studio-mode-label-workspace" data-mode="workspace"
+                  title="Workspace: saves a project file and preserves your progress across restarts and re-scans.">Workspace</span>
+          </div>
+          <span id="studio-mode-caption" class="studio-mode-caption"></span>
           <span id="session-file-indicator" class="session-file-indicator" title="">No session loaded</span>
           <button id="save-project-btn" title="Save Project Session">Save Session</button>
           <button id="load-project-btn" title="Load Project Session">Load Session</button>
@@ -53,23 +64,29 @@
           <div id="master-pane" class="egui-panel">
             <div class="panel-header flex-between">
               <h3>Master Demo Queue</h3>
-              <input type="text" id="demo-search-input" placeholder="Search filename or map..." style="padding: 4px 8px; font-size: 12px; background: #1a1a1a; color: #fff; border: 1px solid #444; border-radius: 3px;" />
+              <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">
+                <input type="text" id="demo-search-input" placeholder="Search filename or map..." style="padding: 4px 8px; font-size: 12px; background: #1a1a1a; color: #fff; border: 1px solid #444; border-radius: 3px;" />
+                <button id="clear-untracked-btn" disabled title="Remove demos with no Captured/Rendered status, notes, or edited kill range. Tracked demos are kept, in either mode. Only affects demos matching the current search.">Clear Untracked</button>
+                <button id="clear-selected-btn" disabled title="Check one or more rows first.">Clear Selected</button>
+                <button id="clear-all-btn" disabled style="color: #ff5555; border-color: #ff5555;" title="Remove every demo matching the current search — the whole queue if search is empty.">Clear All</button>
+              </div>
             </div>
             <div class="table-wrapper">
               <table id="master-demo-table">
                 <thead>
                   <tr>
+                    <th class="col-center"><input type="checkbox" id="master-select-all-cb" title="Select/deselect all visible demos" /></th>
                     <th>Demo File</th>
-                    <th>Highlights</th>
-                    <th>Pending</th>
-                    <th>Captured</th>
-                    <th>Rendered</th>
-                    <th>Actions</th>
+                    <th class="col-center">Highlights</th>
+                    <th class="col-center">Pending</th>
+                    <th class="col-center">Captured</th>
+                    <th class="col-center">Rendered</th>
+                    <th class="col-center">Actions</th>
                   </tr>
                 </thead>
                 <tbody id="master-demo-table-body">
                   <tr>
-                    <td colspan="6" class="table-empty">No demos scanned yet. Add a directory and click 'Scan Demos'.</td>
+                    <td colspan="7" class="table-empty">No demos scanned yet. Add a directory and click 'Scan Demos'.</td>
                   </tr>
                 </tbody>
               </table>
@@ -528,6 +545,24 @@
           <button id="process-modal-force-relaunch-btn" class="primary-btn">Force Relaunch</button>
           <button id="process-modal-copy-command-btn">Copy View Command</button>
           <button id="process-modal-cancel-btn">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Shared "clear with tracked work at risk" confirmation — used by both
+         Clear All (Workspace mode; Quick-Clip just uses a native confirm(),
+         since nothing is protected there) and Clear Selected (either mode,
+         whenever the checked demos include tracked work). Enumerates what
+         would be lost and offers to save first, per the connected-workspace
+         plan's Phase 4. -->
+    <div id="clear-all-modal" class="modal" style="display: none;">
+      <div class="modal-content" style="max-width: 480px; padding: 20px;">
+        <h2 id="clear-all-title">Clear All Demos</h2>
+        <p id="clear-all-summary"></p>
+        <div style="display: flex; gap: 8px; margin-top: 16px; justify-content: flex-end; flex-wrap: wrap;">
+          <button id="clear-all-save-first-btn" class="primary-btn">Save Session First</button>
+          <button id="clear-all-confirm-btn" style="color: #ff5555; border-color: #ff5555;">Clear Anyway</button>
+          <button id="clear-all-cancel-btn">Cancel</button>
         </div>
       </div>
     </div>

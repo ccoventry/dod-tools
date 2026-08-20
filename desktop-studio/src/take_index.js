@@ -107,3 +107,42 @@ export function pruneTakeIndex(takeIndex, knownUids) {
   }
   return pruned;
 }
+
+// ── "Tracked" predicate (Workspace mode's Clear Untracked protection) ──────
+
+/** True if a streak's Kill Range has been narrowed from the full range. */
+export function isRangeModified(streak) {
+  const kills = streak.kills || [];
+  const maxKillIdx = Math.max(kills.length - 1, 0);
+  return (streak.start_index || 0) > 0 || (streak.end_index ?? maxKillIdx) < maxKillIdx;
+}
+
+/**
+ * True if this highlight carries anything the user did on purpose — real
+ * pipeline-earned status (Captured/Rendered), a note, or a narrowed kill
+ * range. This is deliberately a wide net (per user, 2026-08-19): any one of
+ * the three is enough to protect the row from Clear Untracked in Workspace
+ * mode.
+ *
+ * `Pending` deliberately does NOT count (revised 2026-08-19, was originally
+ * "status !== None"). `streak.status` starts as `undefined`, and the status
+ * dropdown displays undefined as "Pending" purely for convenience
+ * (`streak.status || 'Pending'` in detail_pane.js) without that ever
+ * actually writing to the field — so counting an explicit "Pending" as
+ * tracked meant re-selecting the exact same-looking value the row already
+ * displayed could silently flip a row from untracked to tracked, while
+ * every other untouched row kept showing "Pending" too, just without a
+ * badge. Confusing and not worth it: only Captured/Rendered reflect real
+ * progress a Clear should actually protect.
+ */
+export function isHighlightTracked(streak) {
+  if (!streak) return false;
+  if (streak.status === 'Captured' || streak.status === 'Rendered') return true;
+  if (streak.notes && streak.notes.trim()) return true;
+  return isRangeModified(streak);
+}
+
+/** True if any of a demo's highlights are tracked (see isHighlightTracked). */
+export function isDemoTracked(demo) {
+  return (demo?.streaks || []).some(isHighlightTracked);
+}
