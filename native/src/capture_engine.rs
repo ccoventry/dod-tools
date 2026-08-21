@@ -202,7 +202,7 @@ pub fn spawn_capture_engine(
             let session_dir = if !config.session_id.is_empty() {
                 active_export_dir.join(&config.session_id)
             } else {
-                active_export_dir
+                active_export_dir.clone()
             };
 
             let session_junction_str = session_junction.to_str().unwrap_or_default();
@@ -385,11 +385,6 @@ pub fn spawn_capture_engine(
                 return;
             }
 
-            let active_export_dir = config.primary_media_dir.clone().unwrap_or_else(|| {
-                let exe_path = std::env::current_exe().expect("Failed to resolve absolute exe path");
-                exe_path.parent().expect("Exe has no parent directory").to_path_buf()
-            });
-
             {
                 use sysinfo::{System, SystemExt, DiskExt};
                 let mut sys = System::new_all();
@@ -414,11 +409,7 @@ pub fn spawn_capture_engine(
             let condebug_flag = if config.add_condebug { "-condebug " } else { "" };
             let extra_args = format!("{}+exec dodtools_helper.cfg +playdemo primer", condebug_flag);
 
-            let primary_dir = config.primary_media_dir.clone().unwrap_or_else(|| {
-                let exe_path = std::env::current_exe().expect("Failed to resolve absolute exe path");
-                exe_path.parent().expect("Exe has no parent directory").to_path_buf()
-            });
-            let dummy_path = primary_dir.join("DOD_BATCH_DONE");
+            let dummy_path = active_export_dir.join("DOD_BATCH_DONE");
             let _ = std::fs::remove_dir_all(&dummy_path);
 
             let mut cmd = config.build_hlae_process(&extra_args);
