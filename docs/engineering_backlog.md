@@ -84,6 +84,44 @@ through the UI.
 - [ ] **Unit/logic-level tests (Vitest).** Near-zero-config to add — `desktop-studio` already builds on Vite. Start with exactly this session's regressions as the first cases: `isDemoTracked`/`isHighlightTracked` (`take_index.js`), `getVisibleDemos`/`matchesSearch` (`master_pane.js`), `replaceScannedDemos`'s selection-preservation logic, `filterScopeNote`'s wording. Mock `@tauri-apps/api/core`'s `invoke` and `@tauri-apps/plugin-dialog`'s `confirm`. **Real cost, not free**: a lot of this logic currently lives unexported inside `main.js`'s single `DOMContentLoaded` closure — getting good coverage means pulling pieces out into independently-callable, testable functions as part of writing each test, not just bolting tests onto the current structure unchanged.
 - [ ] **True end-to-end tests (`tauri-driver` + WebdriverIO).** Tauri's own supported e2e path — `tauri-driver` is a WebDriver bridge (Edge's WebDriver under the hood on Windows) that a real test runner drives against the actual running app, for things a unit test can't reach: does the native `confirm()` dialog genuinely appear, does `crash_log.md` really get written, does a real Tauri IPC round-trip work end to end. Heavier setup and slower/more brittle around native dialogs than the Vitest tier — worth it eventually, but a bigger lift; do the Vitest tier first since it covers most of what actually broke this session.
 
+### Live Capture Progress (qconsole.log tailing)
+Raised 2026-08-20/21, design discussion following the capture/render UX audit
+(`docs/capture-render-ux-audit.md`, Section 1 Finding #1 / Section 2 Feature
+#4) — the batch-capture progress bar is currently frozen at a static 50% for
+the whole run, with no per-clip position, because `capture_engine.rs`'s poll
+loop never reads back the `BREADCRUMB` breadcrumbs `build_batch_queue` already
+injects every 5000 ticks (`native/src/patch/builder.rs:742-751`). Design
+decided, not yet implemented:
+- **Make `add_condebug` permanently on, remove the UI toggle.** It's a
+  prerequisite for reading engine state at all during capture; negligible
+  cost, one less setting.
+- **Primary: tail `qconsole.log`, offset-tracked rather than deleted.** Record
+  the file's byte size the moment a capture batch starts, then each poll only
+  reads bytes appended after that offset — never delete or truncate the file
+  (unlike the current pre-run delete at `capture_engine.rs:86`/`builder.rs:854`).
+  This is strictly better than the delete-based approach the audit originally
+  proposed: it can't destroy qconsole.log content this tool didn't generate,
+  and it's cheaper since old content is never re-scanned either. Gives precise
+  per-tick/per-demo position since breadcrumbs are already correlated to
+  exactly which highlight is recording.
+- **Fallback: infer progress from the take folder's own BMP frame count on
+  disk** when the log can't be read (missing/locked/condebug somehow off) —
+  coarser (no exact tick, just "~N of expected frames" for whichever block is
+  currently routing to disk) but a real signal instead of nothing. Considered
+  and rejected condump as the primary mechanism instead of qconsole.log: it
+  needs an extra injected console command per snapshot (more Cbuf budget) and
+  on-the-fly numbering (`condump0.txt`, `condump1.txt`, ...) to find the
+  current file — more moving parts for no benefit once qconsole.log is
+  handled via the offset-tracking approach above.
+- **Both paths must fail gracefully** — if neither the log tail nor the
+  frame-count fallback can produce a number, show something like "Capturing…
+  (progress unavailable)" rather than reverting to the old static bar or
+  erroring.
+- [ ] Not yet implemented — new `EngineEvent::Progress { current_tick,
+      block_index, block_total }` variant, poll-loop log tail (bounded read,
+      last-few-KB not full-file), frame-count fallback, frontend consumer in
+      `capture_pane.js` replacing the static-50% branch.
+
 ### Demo Analyzer Load Performance (see `docs/demo_analyzer_load_performance.md`)
 - [x] Tier 1a — on-disk analyzer cache (cold parse ~1.3s, warm cache hit ~10-15ms).
 - [x] Tier 1b — real progress events for the analyzer's cold-parse path.
