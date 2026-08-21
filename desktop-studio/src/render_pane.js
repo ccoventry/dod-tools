@@ -9,6 +9,7 @@ import {
   checkRenderAutosave,
   discardRenderAutosave,
   recoverRenderBatch,
+  revealInExplorer,
 } from './ipc_bridge.js';
 import { showToast } from './toast.js';
 import { streakUid, resolveTake } from './take_index.js';
@@ -73,6 +74,9 @@ function renderJobsTable() {
             ? `<button class="render-job-reset-btn" data-job-id="${esc(j.id)}" title="Reset to Queued">🔄</button>`
             : ''}
         ${j.error_log ? `<button class="render-job-view-log-btn" data-job-id="${esc(j.id)}" title="View error log">⚠️ View Log</button>` : ''}
+        ${(j.status === 'Finished' && j.output_path) || j.take_folder
+          ? `<button class="render-job-reveal-btn" data-job-id="${esc(j.id)}" title="${j.status === 'Finished' && j.output_path ? 'Open the rendered file\'s folder' : 'Open the source take folder'}">📁 ${j.status === 'Finished' && j.output_path ? 'Open Output' : 'Open Take Folder'}</button>`
+          : ''}
       </td>
     </tr>`).join('');
 
@@ -81,6 +85,14 @@ function renderJobsTable() {
   });
   tbody.querySelectorAll('.render-job-reset-btn').forEach((btn) => {
     btn.addEventListener('click', () => resetRenderJob(btn.dataset.jobId).catch(() => {}));
+  });
+  tbody.querySelectorAll('.render-job-reveal-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const job = jobs.find((j) => j.id === btn.dataset.jobId);
+      if (!job) return;
+      const target = (job.status === 'Finished' && job.output_path) ? job.output_path : job.take_folder;
+      if (target) revealInExplorer(target).catch(() => {});
+    });
   });
   tbody.querySelectorAll('.render-job-view-log-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -253,17 +265,29 @@ export function initRenderUI(getRenderFolders, getExportDirs, onSettingsChange, 
   });
 
   if (scanRenderBtn) {
+    let scanFoundCount = 0;
+    listen('render_scan_status', () => {
+      // Payload is just "Found take: <name>" per take — the count is what
+      // the status line needs, not the name, so this stays a cheap counter
+      // rather than parsing/echoing every take's name into the DOM.
+      scanFoundCount += 1;
+      if (renderStatusEl) renderStatusEl.textContent = `Status: Scanning… found ${scanFoundCount} take(s) so far`;
+    });
+
     scanRenderBtn.addEventListener('click', () => {
       const renderFolders = getRenderFolders ? getRenderFolders() : [];
       if (!renderFolders || renderFolders.length === 0) {
         showToast('Please add at least one render directory.', 'error');
         return;
       }
+      scanFoundCount = 0;
       showToast('Scanning render directories...', 'info');
+      if (renderStatusEl) renderStatusEl.textContent = 'Status: Scanning…';
       scanRenderDirectories(renderFolders)
         .then((takes) => {
           const count = takes ? takes.length : 0;
           showToast(`Scanned ${count} render take(s).`, 'info');
+          if (renderStatusEl) renderStatusEl.textContent = `Status: Scan complete — ${count} take(s) found`;
 
           const container = document.querySelector('#render-job-container');
           if (container) {
@@ -285,6 +309,7 @@ export function initRenderUI(getRenderFolders, getExportDirs, onSettingsChange, 
         .catch((err) => {
           console.error('IPC Execution Error (scan_render_directories):', err);
           showToast('Error scanning render directories: ' + err, 'error');
+          if (renderStatusEl) renderStatusEl.textContent = 'Status: Scan failed';
         });
     });
   }
@@ -300,6 +325,7 @@ export function initRenderUI(getRenderFolders, getExportDirs, onSettingsChange, 
       const codecVal = document.querySelector('#render-codec-select')?.value || 'prores';
       const fpsVal = parseInt(document.querySelector('#render-fps-input')?.value, 10) || 300;
       const maxConcurrentVal = Math.min(8, Math.max(1, parseInt(document.querySelector('#render-max-concurrent-input')?.value, 10) || 2));
+      checkNvencConcurrencyWarning();
       const exportDirs = (getExportDirs ? getExportDirs() : []).filter(Boolean);
       // FFmpeg override is shared with the capture config panel.
       const ffmpegPathVal = document.querySelector('#ffmpeg-override-path-input')?.value?.trim() || null;
@@ -345,14 +371,31 @@ export function initRenderUI(getRenderFolders, getExportDirs, onSettingsChange, 
   // Codec/FPS/max-concurrent aren't read until Start Render Batch is
   // clicked, but they're still persisted settings — nothing previously
   // wired their edits to a save.
+  const codecEl = document.querySelector('#render-codec-select');
+  const maxConcurrentEl = document.querySelector('#render-max-concurrent-input');
+  // NVENC's concurrent-session limit is unlocked on Quadro/RTX 40-series+
+  // but commonly capped at 3-5 on consumer GeForce cards — exceeding it
+  // doesn't fail upfront, it surfaces as an opaque FFmpeg error buried in
+  // a job's error log. Warn eagerly rather than let that be a mystery.
+  function checkNvencConcurrencyWarning() {
+    const isNvenc = (codecEl?.value || '') === 'h264_nvenc';
+    const maxConcurrent = parseInt(maxConcurrentEl?.value, 10) || 0;
+    if (isNvenc && maxConcurrent > 3) {
+      showToast(
+        `${maxConcurrent} concurrent NVENC renders may exceed your GPU's encoder session limit (often 3-5 on consumer GeForce cards). If renders start failing, lower Max Concurrent Renders.`,
+        'warning',
+        6000
+      );
+    }
+  }
   if (onSettingsChange) {
-    const codecEl = document.querySelector('#render-codec-select');
     if (codecEl) codecEl.addEventListener('change', () => onSettingsChange());
     const fpsEl = document.querySelector('#render-fps-input');
     if (fpsEl) fpsEl.addEventListener('input', () => onSettingsChange());
-    const maxConcurrentEl = document.querySelector('#render-max-concurrent-input');
     if (maxConcurrentEl) maxConcurrentEl.addEventListener('input', () => onSettingsChange());
   }
+  if (codecEl) codecEl.addEventListener('change', checkNvencConcurrencyWarning);
+  if (maxConcurrentEl) maxConcurrentEl.addEventListener('change', checkNvencConcurrencyWarning);
 
   refreshExportPoolFree(getExportDirs);
   // Re-check free space periodically while the pane is open — cheap

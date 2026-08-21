@@ -16,6 +16,7 @@ pub enum RenderUpdate {
     Progress(String, u32),     // (job_id, percentage)
     Speed(String, String),     // (job_id, speed_text)
     Status(String, String),    // (job_id, status_text)
+    OutputPath(String, String), // (job_id, absolute path to the encoded file)
     Finished(String, bool, Option<String>), // (job_id, success, error_log)
 }
 
@@ -349,6 +350,7 @@ pub async fn run_render_job(
         Ok(status) if status.success() => {
             let _ = tx.send(RenderUpdate::Status(job_id.clone(), "Finished".to_string()));
             let _ = tx.send(RenderUpdate::Progress(job_id.clone(), 100));
+            let _ = tx.send(RenderUpdate::OutputPath(job_id.clone(), out_file_str.clone()));
             let _ = tx.send(RenderUpdate::Finished(job_id, true, None));
         }
         Ok(status) => {

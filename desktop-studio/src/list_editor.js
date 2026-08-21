@@ -72,11 +72,16 @@ export function createListEditor({ container, getItems, fields, unique = false, 
         else input.style.flex = '1';
         if (field.placeholder) input.placeholder = field.placeholder;
         input.value = value ?? '';
+        // Keep the in-memory item updated every keystroke, but only notify
+        // (-> settings autosave-to-disk) on 'change' (blur/Enter) — matches
+        // detail_pane.js's notes-field split, avoiding a full settings write
+        // per character while composing a value, notably free-text Custom
+        // Commands / Init Commands entries.
         input.addEventListener('input', (e) => {
           const v = field.type === 'number' ? (parseFloat(e.target.value) || 0) : e.target.value;
           setFieldValue(items, idx, field, v);
-          notify();
         });
+        input.addEventListener('change', () => notify());
       }
       input.className = 'list-editor-field';
       row.appendChild(input);
