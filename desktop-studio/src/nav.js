@@ -57,6 +57,17 @@ export function switchNavTab(navKey) {
   [footerCaptureStudio, footerRenderStudio, footerDemoAuditor, footerDemoAnalyzer]
     .forEach((el) => { if (el) el.style.display = 'none'; });
 
+  // Quick-Clip/Workspace mode and session Save/Load are a Capture+Render
+  // Studio concept (the project file drives what both studios operate on) —
+  // Demo Auditor and Demo Analyzer don't read or write it, so showing it
+  // there is just clutter. visibility (not display) so the hidden element
+  // keeps its layout box — #top-navbar's justify-content: space-between
+  // otherwise collapses to two children and shoves the tabs to the far edge.
+  const navActions = document.querySelector('.nav-actions');
+  if (navActions) {
+    navActions.style.visibility = (navKey === 'workspace' || navKey === 'render-studio') ? 'visible' : 'hidden';
+  }
+
   if (navKey === 'workspace') {
     if (workspacePane) workspacePane.style.display = 'flex';
     if (detailsPane) detailsPane.style.display = 'flex';

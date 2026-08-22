@@ -85,7 +85,7 @@ body {
   background: #181818;
   border-bottom: 1px solid var(--border-color);
   padding: 4px 12px;
-  height: 38px;
+  height: 52px;
   flex-shrink: 0;
 }
 
@@ -94,11 +94,20 @@ body {
   align-items: center;
   gap: 8px;
   font-weight: bold;
+  flex-shrink: 0;
+}
+
+.brand-logo {
+  width: 44px;
+  height: 44px;
+  border-radius: 5px;
+  flex-shrink: 0;
 }
 
 .brand-title {
   color: #ffffff;
-  font-size: 14px;
+  font-size: 17px;
+  white-space: nowrap;
 }
 
 .brand-sub {
@@ -133,6 +142,11 @@ body {
   gap: 6px;
 }
 
+.nav-actions button {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
 .session-file-indicator {
   color: var(--text-muted);
   font-size: 11px;
@@ -153,6 +167,7 @@ body {
   color: var(--text-muted);
   cursor: pointer;
   user-select: none;
+  white-space: nowrap;
 }
 
 .studio-mode-label.active {
@@ -203,14 +218,6 @@ body {
   transform: translateX(15px);
 }
 
-.studio-mode-caption {
-  color: var(--text-muted);
-  font-size: 11px;
-  max-width: 260px;
-  white-space: normal;
-  line-height: 1.3;
-}
-
 /* Fixed width sized to the longer of its two labels ("Save as Workspace…"
    vs "Save Session") so toggling studio mode doesn't change this button's
    footprint — #top-navbar's space-between layout would otherwise visibly
@@ -221,6 +228,41 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Narrow windows: the explanatory caption is already gone (moved to the
+   mode-label/switch title tooltips), so this mostly protects the session
+   filename and nav tab padding from crowding the mode toggle out. */
+@media (max-width: 900px) {
+  #top-navbar {
+    padding: 4px 8px;
+    gap: 6px;
+  }
+
+  .nav-tab-btn {
+    padding: 4px 7px;
+    font-size: 11px;
+  }
+
+  .nav-actions {
+    gap: 4px;
+  }
+
+  .nav-actions button {
+    padding: 4px 6px;
+    font-size: 11px;
+  }
+
+  #save-project-btn {
+    width: 108px;
+  }
+
+  /* The session filename is the first thing to go — it's already echoed by
+     save-project-btn's label ("Save as Workspace…" vs "Save Session") and
+     the window's min-width (800px) doesn't leave room for both. */
+  .session-file-indicator {
+    display: none;
+  }
 }
 
 /* Main Split Content Area */
