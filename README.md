@@ -63,12 +63,12 @@ Tests:
 
     cargo test --workspace
 
-> [!WARNING]
-> A handful of tests in `analysis/` currently fail: three localization tests
-> assert on translation keys absent from the shipped language files, and one
-> developer inspection test panics when a specific demo fixture is missing from
-> the working tree. None of them sit on the demo-parsing path, but the suite is
-> not green on a fresh clone.
+## Localization keys
+
+Tokens are stored **bare** — lowercase, no `#`. The `#` is a lookup-time sigil
+meaning "resolve this as a token", not part of the name, which is Valve's own
+convention: every shipped game file stores keys without it. `translate_key`
+normalizes on both insert and lookup, so a file written either way resolves.
 
 ## Why the fork of `dem`
 
