@@ -1,7 +1,8 @@
 > **Two independent work streams exist in this repo.** Everything below is the
-> Capture/Render Studio (Tauri migration) track. There is a second, unrelated stream —
-> demo-derived match stats for the KTP league — tracked in `docs/demo_stats_feasibility.md`,
-> not here. Check which one you're resuming before reading further.
+> Capture/Render Studio (Tauri migration + capture-block-manifest) track. There is a
+> second, unrelated stream — demo-derived match stats for the KTP league, living on
+> `dev`/`main` only — tracked in `docs/demo_stats_feasibility.md`, not here. Check which
+> one you're resuming before reading further.
 
 ## Web AI State
 - **Overarching Goal:** Get `feature/tauri-migration` merged to `dev`. All High-Priority parity gaps are resolved; two Medium-Priority items (Clear Previews modal, Standalone Game Launch) are also now done. Since the last doc sync (`4b26ffd`, 2026-08-13) the branch picked up a run of side work — a standalone `xash-transcode` HLDEMO->IDEM browser-preview transcoder crate (own `[workspace]`, not built by `cargo build --workspace`) and Demo Analyzer load-performance Tiers 1-3 (on-disk cache, progress events, dead-code removal — see `docs/demo_analyzer_load_performance.md`) — the analyzer work was reflected in `engineering_backlog.md`/`milestones.md` this pass; the `xash-transcode` crate was split off entirely onto its own `experimental/xash-transcode` branch (2026-08-18, see that branch's `docs/web_preview_viewer.md`) rather than tracked here, since it's experimental and shouldn't ride into `dev`.
