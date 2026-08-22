@@ -301,13 +301,20 @@ export function renderDetailView(demo, selectedDemoIdx) {
   if (!titleEl || !container) return;
 
   if (!demo) {
-    titleEl.textContent = 'Highlight Details (Select a Demo)';
+    // No "(Select a Demo)" here — the empty-state message below already
+    // says exactly that; repeating it in the title was pure redundancy.
+    titleEl.textContent = 'Highlight Details';
+    titleEl.title = '';
     container.innerHTML = '<p style="color: #888;">Select a demo in the Master List to view its killstreak details.</p>';
     return;
   }
 
   const minKills = parseInt(document.querySelector('#input-min-kills')?.value || "1", 10);
   titleEl.textContent = `Highlight Details: ${demo.name}`;
+  // CSS truncates this with an ellipsis at narrow widths (same treatment as
+  // the Master Queue's demo-name column) — the title attribute keeps the
+  // full name reachable on hover once it's cut off.
+  titleEl.title = `Highlight Details: ${demo.name}`;
   container.innerHTML = '';
 
   if (!demo.streaks || demo.streaks.length === 0) {

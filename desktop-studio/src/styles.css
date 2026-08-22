@@ -314,6 +314,34 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  /* Let the two sides drop to their own row when they don't both fit,
+   * rather than fighting over one row and squeezing/overlapping — a
+   * squeeze-to-fit approach here previously collapsed the Highlight
+   * Details title to zero width instead of actually wrapping. */
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+
+/* Highlight Details' title can carry a full demo filename. On the rare
+   width where it's alone on its row and still too long, truncate rather
+   than wrap into a ragged multi-line stack. min-width: 0 overrides flex's
+   default min-width: auto, which otherwise refuses to shrink below the
+   untruncated text's width and silently defeats the ellipsis (same fix
+   master_pane.js's row names use). */
+.header-title-group {
+  min-width: 0;
+}
+
+#detail-demo-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.header-controls {
+  flex-wrap: wrap;
+  row-gap: 6px;
 }
 
 .row-inputs, .input-row {
