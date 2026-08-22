@@ -22,19 +22,25 @@ pub fn set_active_language(lang: &'static str) {
     }
 }
 
+/// Canonical form of a localization token: lowercase, no `#`.
+///
+/// The `#` is a lookup-time sigil, not part of the token name — that is Valve's
+/// own convention, and the game's shipped files (`dod_english.txt`,
+/// `valve_english.txt`, `gameui_english.txt`) all store keys bare. AMXX files
+/// have no prefix by format. Normalizing on both insert and lookup means a file
+/// using either style resolves identically.
+fn normalize_key(key: &str) -> String {
+    key.trim().trim_start_matches('#').to_lowercase()
+}
+
 pub fn translate_key(key: &str) -> Option<String> {
-    let lower_key = key.to_lowercase();
-    let hash_key = if !lower_key.starts_with('#') {
-        format!("#{}", lower_key)
-    } else {
-        lower_key.clone()
-    };
+    let lookup_key = normalize_key(key);
 
     // 1. Try to read from cache first with a read lock
     {
         let read_lock = LOCALIZATIONS.read().unwrap();
         if let Some(ref map) = *read_lock {
-            return map.get(&hash_key).or_else(|| map.get(key)).cloned();
+            return map.get(&lookup_key).cloned();
         }
     }
 
@@ -44,7 +50,7 @@ pub fn translate_key(key: &str) -> Option<String> {
         let active = *ACTIVE_LANGUAGE.read().unwrap();
         *write_lock = Some(load_localizations_from_disk(active));
     }
-    write_lock.as_ref().unwrap().get(&hash_key).or_else(|| write_lock.as_ref().unwrap().get(key)).cloned()
+    write_lock.as_ref().unwrap().get(&lookup_key).cloned()
 }
 
 fn get_amxx_code(lang: &str) -> &str {
@@ -131,11 +137,11 @@ fn parse_localization_content(content: &str, map: &mut HashMap<String, String>, 
 
         // Try parsing as Valve KeyValues first (quoted key and value)
         if let Some((key, val)) = parse_kv_line(trimmed) {
-            let key_clean = key.trim().to_lowercase();
+            let key_clean = normalize_key(&key);
             map.insert(key_clean, val);
         } else if current_lang == target_lang {
             if let Some(pos) = trimmed.find('=') {
-                let key = trimmed[..pos].trim().to_lowercase();
+                let key = normalize_key(&trimmed[..pos]);
                 let val = trimmed[pos + 1..].trim().to_string();
                 if !key.is_empty() {
                     map.insert(key, val);
@@ -351,18 +357,23 @@ mod tests {
         let mut map = HashMap::new();
         parse_localization_content(content, &mut map, "en");
 
+        // Keys are canonicalized on insert: lowercased, `#` stripped. A file
+        // written either way lands in the map identically.
         assert_eq!(
-            map.get("#game_joined_team"),
+            map.get("game_joined_team"),
             Some(&"%s1 joined team %s2".to_string())
         );
         assert_eq!(
-            map.get("#game_join"),
+            map.get("game_join"),
             Some(&"%s1 joined the game".to_string())
         );
         assert_eq!(
-            map.get("#game_disconnected"),
+            map.get("game_disconnected"),
             Some(&"%s1 disconnected".to_string())
         );
+
+        // Nothing is ever stored with the sigil.
+        assert!(map.keys().all(|k| !k.starts_with('#')));
     }
 
     #[test]
@@ -379,22 +390,21 @@ mod tests {
         let mut map = HashMap::new();
         parse_localization_content(content, &mut map, "en");
 
+        // AMXX keys carry no prefix by format, and land in canonical form.
         assert_eq!(
             map.get("cho_fin_ext"),
             Some(
                 &"Choosing finished. Current map will be extended to next %.0f minutes".to_string()
             )
         );
-        assert_eq!(
-            map.get("#cho_fin_ext"),
-            Some(
-                &"Choosing finished. Current map will be extended to next %.0f minutes".to_string()
-            )
-        );
+        assert_eq!(map.get("#cho_fin_ext"), None);
         assert_eq!(
             map.get("cho_fin_next"),
             Some(&"Choosing finished. The nextmap will be %s".to_string())
         );
+
+        // The [de] section must not leak into an [en] load.
+        assert!(!map.values().any(|v| v.contains("Auswahl beendet")));
     }
 
     #[test]
@@ -409,5 +419,33 @@ mod tests {
 
         let class_kar = translate_key("#class_axis_kar98");
         assert_eq!(class_kar.as_deref(), Some("Grenadier"));
+    }
+
+    /// Callers pass keys both ways — `#game_joined_team` from chat handling,
+    /// `weapon.k98` from the weapon table — so a lookup must resolve either
+    /// query form. Before keys were canonicalized, a `#`-prefixed query could
+    /// never reach the game files, which store their 1,190 tokens bare.
+    #[test]
+    fn test_translate_key_resolves_both_prefix_forms() {
+        set_active_language("english");
+
+        // Stored bare, queried both ways.
+        assert_eq!(
+            translate_key("#game_joined_team").as_deref(),
+            Some("*%s1 joined %s2")
+        );
+        assert_eq!(
+            translate_key("game_joined_team").as_deref(),
+            Some("*%s1 joined %s2")
+        );
+
+        // Stored prefixed, queried both ways.
+        assert_eq!(translate_key("#weapon.k98").as_deref(), Some("Kar98k"));
+        assert_eq!(translate_key("weapon.k98").as_deref(), Some("Kar98k"));
+
+        // Case is normalized on the way in.
+        assert_eq!(translate_key("#Game_Joined_Team").as_deref(), Some("*%s1 joined %s2"));
+
+        assert_eq!(translate_key("#definitely_not_a_real_key"), None);
     }
 }
