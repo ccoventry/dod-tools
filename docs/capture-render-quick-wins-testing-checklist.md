@@ -5,6 +5,16 @@ Manual verification for commit `976034b` on `feature/capture-render-quick-wins`
 `npm run tauri dev` from `desktop-studio/`. Check off each item and note any
 deviation from the expected result.
 
+**Status as of 2026-08-22: none of this has been run yet.** All 21 boxes below
+are unchecked — deferred to a dedicated testing pass, not skipped. Branch is
+pushed to `origin/feature/capture-render-quick-wins` (`aa5c272`) but **not
+merged to `dev`** until this checklist (plus the two still-open
+`feature/capture-block-manifest` sections it stacks on — Merged Blocks and
+Settings Persistence, see `active_sprint_state.md`) actually gets run.
+Item 4's "close the app while a field still has focus" case is worth
+prioritizing — it's a real open question about whether an edit can get
+silently dropped, not just a sanity check.
+
 ---
 
 ## 1. Reveal in Explorer (render job rows)
