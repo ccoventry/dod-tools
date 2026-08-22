@@ -31,15 +31,6 @@ export async function validatePaths(hlaePath, hlPath) {
     });
 }
 
-export async function analyzeDemo(demoPath) {
-  return await invoke('analyze_demo', { demoPath })
-    .catch((err) => {
-      console.error("IPC Execution Error (analyze_demo):", err);
-      showToast(`Analysis error: ${err}`, 'error');
-      throw err;
-    });
-}
-
 export async function analyzeDemoFull(demoPath) {
   return await invoke('analyze_demo_full', { demoPath })
     .catch((err) => {
