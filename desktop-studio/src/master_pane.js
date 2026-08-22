@@ -5,6 +5,7 @@
 import { isDemoTracked, isRangeModified } from './take_index.js';
 import { logFrontendEvent } from './ipc_bridge.js';
 import { confirm } from '@tauri-apps/plugin-dialog';
+import { TRASH_ICON_SVG } from './list_editor.js';
 
 // Feather "bookmark" icon, same stroke="currentColor" pattern as
 // list_editor.js's trash icon — WebView2 renders emoji as a flat monochrome
@@ -156,7 +157,7 @@ export function initMasterPane(onDeleteDemo, onRequestTrackedDeleteConfirm) {
  * pipeline (scan_demo_for_highlights), so None here means "no resolvable
  * owner", not "is_pov".
  */
-function recordingPlayerStreaks(demo) {
+export function recordingPlayerStreaks(demo) {
   const streaks = demo.streaks || [];
   const recPlayer = demo.local_player_index;
   if (recPlayer === null || recPlayer === undefined) return streaks;
@@ -376,16 +377,15 @@ export function renderMasterList(demos, selectedDemoIdx, onSelectDemo) {
     tdActions.style.textAlign = 'center';
     tdActions.style.whiteSpace = 'nowrap';
 
+    // Same inline SVG list_editor.js uses for Capture Output/Custom Commands
+    // rows, not the 🗑 emoji — WebView2 renders that emoji as a flat
+    // monochrome glyph that ignores CSS `color` and reads as a pause icon.
     const deleteBtn = document.createElement('button');
-    deleteBtn.textContent = '🗑';
+    deleteBtn.type = 'button';
+    deleteBtn.className = 'list-editor-remove-btn';
+    deleteBtn.innerHTML = TRASH_ICON_SVG;
     deleteBtn.title = 'Remove demo from queue';
-    deleteBtn.style.padding = '1px 5px';
-    deleteBtn.style.fontSize = '11px';
-    deleteBtn.style.background = 'transparent';
-    deleteBtn.style.border = '1px solid #555';
-    deleteBtn.style.borderRadius = '2px';
-    deleteBtn.style.cursor = 'pointer';
-    deleteBtn.style.color = '#aaa';
+    deleteBtn.setAttribute('aria-label', 'Remove demo from queue');
     deleteBtn.addEventListener('click', async (e) => {
       e.stopPropagation(); // do not select the row when deleting
       // Untracked deletes stay frictionless (matches Clear Untracked/Clear
