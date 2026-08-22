@@ -132,21 +132,27 @@ work (Tier 4), that's the first thing to instrument.
 - **`Analysis` and `FileInfo` already derive `Serialize`/`Deserialize`**
   (`analysis/src/lib.rs` ~line 225, `native/src/lib.rs` ~line 29) — a JSON
   cache needs zero new derive work.
-- **Incidental bug, unrelated to load speed, found while tracing callers:**
-  `analyze_demo` (the *other* Tauri command, `desktop-studio/src-tauri/src/lib.rs`
-  ~line 207-255 — different from `analyze_demo_full`) is called from
-  `desktop-studio/src/main.js:466,484` to feed the "Advanced Diagnostics /
-  Match Telemetry" inline panel (`#telemetry-container`, distinct from the
-  Demo Analyzer tab). It does the full ~1.3s parse, then looks up
-  `analysis_json.get("scoreboard")`, `.get("chat_logs").or(.get("chat"))`,
+- **Incidental bug, unrelated to load speed, found while tracing callers —
+  resolved 2026-08-22, by removal rather than a fix.** `analyze_demo` (the
+  *other* Tauri command, `desktop-studio/src-tauri/src/lib.rs` ~line
+  207-255 — different from `analyze_demo_full`) fed the "Advanced
+  Diagnostics / Match Telemetry" inline panel (`#telemetry-container`,
+  distinct from the Demo Analyzer tab). It did the full ~1.3s parse, then
+  looked up `analysis_json.get("scoreboard")`,
+  `.get("chat_logs").or(.get("chat"))`,
   `.get("mortality_metrics").or(.get("deaths"))`,
   `.get("round_chronologies").or(.get("rounds"))` on the serialized
   `Analysis`. But `Analysis` serializes as `{"demo_info": {...}, "state":
   {...}, "events": [...]}` — **none of those top-level keys exist**, so all
-  four always resolve to `Null`. This panel pays the full parse cost and
-  renders nothing, every time. Separate bug from the perf work; worth a
-  follow-up (likely: return `state`'s real nested fields, or just pass
-  `analysis_json` through and let the frontend pick).
+  four always resolved to `Null`; the panel paid the full parse cost and
+  rendered nothing, every time. A user report of the always-blank panel led
+  straight back to this exact diagnosis. Fixing it properly meant real
+  backend rework (returning `state`'s actual nested fields under the right
+  names) for a feature that mostly duplicated the "View Match Telemetry"
+  button, which already jumps straight to the full Demo Analyzer report —
+  so it was removed instead: `analyze_demo`, `SerializedAnalysis`,
+  `telemetry_pane.js`, and the `analyzeDemo()` IPC wrapper are all gone.
+  The button and its jump to Demo Analyzer are untouched.
 - Confirmed directly in this session's own build output:
   `[profile.release]` in `desktop-studio/src-tauri/Cargo.toml` is silently
   ignored by Cargo ("profiles for the non root package will be ignored,
