@@ -438,7 +438,7 @@ export function renderDetailView(demo, selectedDemoIdx) {
       </td>
       <td style="padding: 8px; font-weight: bold;">${streak.kill_count}</td>
       <td style="padding: 8px;">${timeStr}</td>
-      <td style="padding: 8px;">${durSecs}s</td>
+      <td style="padding: 8px;">${STRINGS.HIGHLIGHTS.secondsSuffix(durSecs)}</td>
       <td style="padding: 8px;">
         <select class="streak-status-select" style="color: ${statusColor}; font-size: 0.85em;">
           ${STRINGS.HIGHLIGHTS.STATUS_OPTIONS.map(s =>
