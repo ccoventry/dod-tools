@@ -109,11 +109,13 @@ mod test {
     use super::*;
 
     #[test]
+    #[ignore = "needs ./src/tests/demotest.dem, a local fixture not committed to the repo"]
     fn open() {
         open_demo("./src/tests/demotest.dem").unwrap();
     }
 
     #[test]
+    #[ignore = "needs ./src/tests/demotest.dem, a local fixture not committed to the repo"]
     fn open_without_netmessage() {
         Demo::parse_from_file(
             "./src/tests/demotest.dem",
@@ -123,12 +125,14 @@ mod test {
     }
 
     #[test]
+    #[ignore = "needs ./src/tests/demotest.dem, a local fixture not committed to the repo"]
     fn write() {
         let dem = open_demo("./src/tests/demotest.dem").unwrap();
         dem.write_to_file("./src/tests/demotest_out.dem").unwrap();
     }
 
     #[test]
+    #[ignore = "needs a populated ./src/tests/ folder, not committed to the repo"]
     fn read_a_lot() {
         let folder = "./src/tests/";
 

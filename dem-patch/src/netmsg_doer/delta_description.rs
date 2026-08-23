@@ -1,5 +1,6 @@
 use std::str::from_utf8;
 
+use crate::nom_helper::nom_fail;
 use crate::types::{Delta, DeltaDecoder, DeltaDecoderS};
 
 use super::*;
@@ -36,23 +37,38 @@ impl Doer for SvcDeltaDescription {
             })
             .collect();
 
-        let decoder: DeltaDecoder = data
-            .iter()
-            .map(|entry| {
-                DeltaDecoderS {
-                    name: entry.get("name").unwrap().to_owned(),
-                    bits: u32::from_le_bytes(
-                        entry.get("bits").unwrap().as_slice().try_into().unwrap(),
-                    ), // heh
-                    divisor: f32::from_le_bytes(
-                        entry.get("divisor").unwrap().as_slice().try_into().unwrap(),
-                    ),
-                    flags: u32::from_le_bytes(
-                        entry.get("flags").unwrap().as_slice().try_into().unwrap(),
-                    ),
-                }
-            })
-            .collect();
+        // Some demos delta-compress each delta_description_t entry against the
+        // one before it within this same message (name/bits/divisor/flags only
+        // resent when changed), which this parser doesn't track a baseline for.
+        // Bail with a normal parse error instead of unwrapping a missing field,
+        // so a demo that hits this lands in the caller's existing
+        // skip-unreadable-demo path rather than crashing the process.
+        let mut decoder: DeltaDecoder = Vec::with_capacity(data.len());
+        for entry in &data {
+            let (Some(name), Some(bits), Some(divisor), Some(flags)) = (
+                entry.get("name"),
+                entry.get("bits"),
+                entry.get("divisor"),
+                entry.get("flags"),
+            ) else {
+                return nom_fail("delta_description_t entry missing name/bits/divisor/flags");
+            };
+
+            let (Ok(bits), Ok(divisor), Ok(flags)) = (
+                bits.as_slice().try_into().map(u32::from_le_bytes),
+                divisor.as_slice().try_into().map(f32::from_le_bytes),
+                flags.as_slice().try_into().map(u32::from_le_bytes),
+            ) else {
+                return nom_fail("delta_description_t entry had a malformed bits/divisor/flags field");
+            };
+
+            decoder.push(DeltaDecoderS {
+                name: name.to_owned(),
+                bits,
+                divisor,
+                flags,
+            });
+        }
 
         let range = br.get_consumed_bytes();
         let clone = &clone[..range];
