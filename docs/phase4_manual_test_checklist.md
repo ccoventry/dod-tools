@@ -110,11 +110,11 @@ plan.
 
 ## Merged blocks (needs a real capture batch)
 
-- [ ] Use `find_overlaps` (or tight roll settings) to find/force two highlights that merge into one take
-- [ ] After capture, both source highlight rows show the "merged → chain_NN_bN" badge in Highlight Details
-- [ ] Badge tooltip reads sensibly (names the shared take)
+- [x] Use `find_overlaps` (or tight roll settings) to find/force two highlights that merge into one take. **2026-08-22/23: happened incidentally during `MIN_TAKE_SEPARATION_SECONDS` calibration testing — a real capture using at-the-time-uncalibrated values triggered a genuine merge.**
+- [x] After capture, both source highlight rows show the "merged → chain_NN_bN" badge in Highlight Details. **2026-08-22/23: confirmed — both highlights flipped to Captured sharing one `merged → chain_01_b0` badge.**
+- [ ] Badge tooltip reads sensibly (names the shared take). **Not specifically verified — the badge itself was confirmed, its tooltip text wasn't separately checked.**
 
 ## Settings persistence sanity check
 
-- [ ] `studio_mode` round-trips correctly in `settings.json` after a restart
-- [ ] Project file's `mode` field is written on save (informational only — Load always forces Workspace regardless)
+- [x] `studio_mode` round-trips correctly in `settings.json` after a restart. **2026-08-23: confirmed directly — Quick-Clip, F5, still Quick-Clip; switched to Workspace, F5, still Workspace. Re-confirmed via a genuine full close+reopen (not just F5): loaded briefly showing the `"quick-clip"` default before the async `get_settings()` fetch resolved and flipped it to the saved Workspace value — expected startup sequencing, not a bug.**
+- [ ] Project file's `mode` field is written on save (informational only — Load always forces Workspace regardless). **Not specifically verified.**

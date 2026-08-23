@@ -15,6 +15,7 @@
       <!-- Top Navigation Bar -->
       <header id="top-navbar">
         <div class="nav-brand">
+          <img src="/src/icon.png" alt="" class="brand-logo" />
           <span class="brand-title">DoD Tools Studio</span>
         </div>
         <div class="nav-tabs">
@@ -34,7 +35,6 @@
             <span class="studio-mode-label" id="studio-mode-label-workspace" data-mode="workspace"
                   title="Workspace: saves a project file and preserves your progress across restarts and re-scans.">Workspace</span>
           </div>
-          <span id="studio-mode-caption" class="studio-mode-caption"></span>
           <span id="session-file-indicator" class="session-file-indicator" title="">No session loaded</span>
           <button id="save-project-btn" title="Save Project Session">Save Session</button>
           <button id="load-project-btn" title="Load Project Session">Load Session</button>
@@ -90,7 +90,7 @@
                   </tr>
                 </tbody>
               </table>
-              <div id="demo-list-footer" style="padding: 4px 8px; font-size: 11px; color: var(--text-muted); border-top: 1px solid var(--border-color);">Loaded Demos: 0 | Total Streaks: 0</div>
+              <div id="demo-list-footer" style="padding: 4px 8px; font-size: 11px; color: var(--text-muted); border-top: 1px solid var(--border-color);">Loaded Demos: 0 | Total Highlights: 0</div>
             </div>
           </div>
         </section>
@@ -112,7 +112,7 @@
           <div id="detail-pane" class="egui-panel">
             <div class="panel-header flex-between">
               <div class="header-title-group" style="display: flex; gap: 8px; align-items: center;">
-                <h3 id="detail-demo-title">Highlight Details (Select a Demo)</h3>
+                <h3 id="detail-demo-title">Highlight Details</h3>
                 <button id="btn-launch-preview" disabled title="Patches this demo and immediately launches it in HLAE via viewdemo.">Launch Preview</button>
               </div>
               <div class="header-controls" style="display: flex; gap: 8px; align-items: center;">
@@ -138,12 +138,6 @@
             <div class="diagnostics-content" style="margin-top: 10px;">
               <div style="padding: 10px; border-bottom: 1px solid #333; background: #1a1a1a;">
                 <canvas id="streak-timeline-canvas" height="60" style="width: 100%; border-radius: 2px; background: #121212; border: 1px solid #333;"></canvas>
-              </div>
-              <div id="telemetry-pane" style="margin-top: 10px;">
-                <h4 style="margin: 5px 0;">Match Telemetry</h4>
-                <div id="telemetry-container" style="max-height: 250px; overflow-y: auto; background-color: #181818; padding: 10px; border-radius: 2px;">
-                  <p class="placeholder-text" style="color: #888;">Select a demo to view telemetry data.</p>
-                </div>
               </div>
             </div>
           </details>
@@ -278,7 +272,7 @@
               <button id="add-custom-command-btn">+ Add Custom Command</button>
             </div>
 
-            <p id="disk-space-warning-banner" style="display: none; color: #f44336; font-weight: 600; margin-top: 10px;"></p>
+            <p id="disk-space-warning-banner" style="display: none; color: #f44336; font-weight: 600; margin-top: 10px; white-space: pre-line;"></p>
             <div class="action-footer flex-between" style="margin-top: 12px; border-top: 1px solid #383838; padding-top: 10px;">
               <div class="action-buttons">
                 <button id="start-capture-btn" class="primary-btn">Start Capture Batch</button>
@@ -526,6 +520,7 @@
         <div id="footer-demo-analyzer" class="pinned-footer-content" style="display: none;">
           <div id="footer-analyzer-current-file">No demo loaded</div>
         </div>
+        <button id="view-logs-btn" class="view-logs-btn" title="Open today's activity log in Explorer">View Logs</button>
       </footer>
 
     </div>

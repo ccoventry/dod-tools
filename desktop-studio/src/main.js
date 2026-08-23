@@ -1,27 +1,27 @@
 import { open, save, confirm } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import {
   scanDirectory,
   calculateExportPoolSpace,
   cancelScan,
   getSettings,
   saveSettings,
-  logFrontendEvent
+  logFrontendEvent,
+  openActivityLog
 } from './ipc_bridge.js';
 import { renderMasterList, initMasterPane } from './master_pane.js';
 import { renderDetailView, initDetailPane } from './detail_pane.js';
 import { initCaptureUI, getCommandsState, hydrateCommandsState, refreshLaunchGuard } from './capture_pane.js';
 import { initRenderUI, checkRenderRecoveryOnStartup } from './render_pane.js';
-import { renderTelemetry } from './telemetry_pane.js';
 import { initAuditorPane } from './auditor_pane.js';
 import { initAnalyzerPane } from './analyzer_pane.js';
 import { switchNavTab, setCaptureDetailSubtab } from './nav.js';
-import { analyzeDemo } from './ipc_bridge.js';
 import { showToast } from './toast.js';
 import { createListEditor } from './list_editor.js';
 import { preserveHighlightState, streakUid, pruneTakeIndex, isDemoTracked } from './take_index.js';
-import { getCheckedDemoPaths, clearCheckedPaths, setCheckedDemoPaths, getVisibleDemos } from './master_pane.js';
+import { getCheckedDemoPaths, clearCheckedPaths, setCheckedDemoPaths, getVisibleDemos, recordingPlayerStreaks } from './master_pane.js';
 import { initErrorReporter } from './error_reporter.js';
 
 // Registered at module load, before DOMContentLoaded — so it's catching
@@ -422,6 +422,11 @@ window.addEventListener("DOMContentLoaded", async () => {
     }
   }
 
+  const viewLogsBtn = document.querySelector('#view-logs-btn');
+  if (viewLogsBtn) {
+    viewLogsBtn.addEventListener('click', () => openActivityLog());
+  }
+
   const saveProjectBtn = document.querySelector('#save-project-btn');
   if (saveProjectBtn) {
     saveProjectBtn.addEventListener('click', () => saveProjectSession());
@@ -468,12 +473,9 @@ window.addEventListener("DOMContentLoaded", async () => {
             if (data.demos) {
               currentScannedDemos = data.demos;
               selectedDemoIdx = currentScannedDemos.length > 0 ? 0 : null;
-              renderMasterList(currentScannedDemos, selectedDemoIdx, (demo, idx) => {
-                selectedDemoIdx = idx;
-                renderDetailView(demo, selectedDemoIdx);
-              });
+              renderMasterList(currentScannedDemos, selectedDemoIdx, selectDemoAndRenderDetail);
               if (currentScannedDemos.length > 0) {
-                renderDetailView(currentScannedDemos[0], selectedDemoIdx);
+                selectDemoAndRenderDetail(currentScannedDemos[0], selectedDemoIdx);
               }
               updateDemoFooter(currentScannedDemos);
               showToast(`Loaded ${currentScannedDemos.length} demos from project file`, 'success');
@@ -551,12 +553,27 @@ window.addEventListener("DOMContentLoaded", async () => {
     });
   }
 
+  // ── Shared "a demo row was selected" handler ────────────────────────────────
+  // Extracted so every renderMasterList call site behaves identically —
+  // renderMasterList persists whichever callback it was last given
+  // (master_pane.js's currentOnSelectDemo) as the fallback for re-renders
+  // that don't pass one, so an inline callback that drifted from this one
+  // would apply inconsistently depending on which code path rendered last.
+  function selectDemoAndRenderDetail(demo, idx) {
+    selectedDemoIdx = idx;
+    renderDetailView(demo, selectedDemoIdx);
+  }
+
   // ── Demo list footer helper ────────────────────────────────────────────────
   function updateDemoFooter(demos) {
     const footerEl = document.querySelector('#demo-list-footer');
     if (footerEl) {
-      const totalStreaks = (demos || []).reduce((sum, d) => sum + (d.streaks ? d.streaks.length : 0), 0);
-      footerEl.textContent = `Loaded Demos: ${(demos || []).length} | Total Streaks: ${totalStreaks}`;
+      // Same recording-player filter the Highlights column uses (M2) — this
+      // used to sum every player's streaks in the demo, not just the
+      // recording player's, and could read in the hundreds where the
+      // visible Highlights column summed to a fraction of that.
+      const totalHighlights = (demos || []).reduce((sum, d) => sum + recordingPlayerStreaks(d).length, 0);
+      footerEl.textContent = `Loaded Demos: ${(demos || []).length} | Total Highlights: ${totalHighlights}`;
     }
     // Clear Untracked/Clear All only make sense with something in the
     // queue — Clear Selected already gates on its own checkbox state
@@ -658,48 +675,12 @@ window.addEventListener("DOMContentLoaded", async () => {
       selectedDemoIdx = newlyScanned.length > 0
         ? currentScannedDemos.indexOf(newlyScanned[0])
         : (currentScannedDemos.length > 0 ? 0 : null);
-      renderMasterList(currentScannedDemos, selectedDemoIdx, async (demo, idx) => {
-        selectedDemoIdx = idx;
-        renderDetailView(demo, selectedDemoIdx);
-        const telemBtn = document.querySelector('#view-telemetry-btn');
-        const telemContainer = document.getElementById('telemetry-container');
-        // renderMasterList calls this with (null, null) whenever the queue
-        // is empty (e.g. after Clear All) — nothing selected, so just reset
-        // the telemetry UI instead of dereferencing a demo that isn't there.
-        if (!demo) {
-          if (telemBtn) telemBtn.disabled = true;
-          if (telemContainer) telemContainer.innerHTML = '';
-          return;
-        }
-        // Update the View Telemetry button with the selected demo path.
-        if (telemBtn) {
-          telemBtn.dataset.demoPath = demo.path;
-          telemBtn.disabled = false;
-        }
-        if (telemContainer) telemContainer.innerHTML = '<p style="color: #888; padding: 6px;">Analyzing demo...</p>';
-        try {
-          const telemetryData = await analyzeDemo(demo.path);
-          renderTelemetry(telemetryData);
-        } catch (e) {
-          console.error("Analysis failed for", demo.path, e);
-          renderTelemetry(null);
-        }
-      });
+      // renderMasterList calls this with (null, null) whenever the queue is
+      // empty (e.g. after Clear All) — selectDemoAndRenderDetail resets the
+      // telemetry UI instead of dereferencing a demo that isn't there.
+      renderMasterList(currentScannedDemos, selectedDemoIdx, selectDemoAndRenderDetail);
       if (selectedDemoIdx !== null) {
-        const selectedDemo = currentScannedDemos[selectedDemoIdx];
-        renderDetailView(selectedDemo, selectedDemoIdx);
-        // Prime the telemetry button for the auto-selected demo.
-        const telemBtn = document.querySelector('#view-telemetry-btn');
-        if (telemBtn) {
-          telemBtn.dataset.demoPath = selectedDemo.path;
-          telemBtn.disabled = false;
-        }
-        const telemContainer = document.getElementById('telemetry-container');
-        if (telemContainer) telemContainer.innerHTML = '<p style="color: #888; padding: 6px;">Analyzing demo...</p>';
-        analyzeDemo(selectedDemo.path).then(renderTelemetry).catch((err) => {
-          console.error("Analysis failed for selected demo:", err);
-          renderTelemetry(null);
-        });
+        selectDemoAndRenderDetail(currentScannedDemos[selectedDemoIdx], selectedDemoIdx);
       }
     } catch (err) {
       console.error("Error scanning directories:", err);
@@ -892,6 +873,20 @@ window.addEventListener("DOMContentLoaded", async () => {
   // Render-batch crash-recovery prompt — checked once on startup, same
   // pattern as dev's StartupState::PendingRenderRecovery.
   checkRenderRecoveryOnStartup(() => switchNavTab('render-studio'));
+
+  // Flush any not-yet-persisted settings edit before the window actually
+  // closes. list_editor.js (Init/Custom Commands, numeric fields) only
+  // writes to disk on 'change' (blur/Enter), not every keystroke — closing
+  // the app while a field still has focus (never blurred) would otherwise
+  // silently drop that edit even though it's already reflected in the
+  // in-memory state persistAppSettings() reads from. Confirmed as a real,
+  // reproducible data-loss case 2026-08-23 (see engineering_backlog.md).
+  const appWindow = getCurrentWindow();
+  appWindow.onCloseRequested(async (event) => {
+    event.preventDefault();
+    await persistAppSettings();
+    await appWindow.destroy();
+  });
 
   // Delete callback: remove a demo from the active scan list and re-render.
   // Called by master_pane.js when the 🗑 button is clicked on a row. Returns

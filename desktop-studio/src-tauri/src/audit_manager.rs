@@ -124,6 +124,10 @@ pub fn delete_audit_files_impl(paths: Vec<String>) -> Result<(), String> {
 pub fn reveal_in_explorer_impl(path: String) -> Result<(), String> {
     let path_buf = PathBuf::from(&path);
 
+    if !path_buf.exists() {
+        return Err(format!("Path no longer exists: {}", path));
+    }
+
     #[cfg(target_os = "windows")]
     {
         std::process::Command::new("explorer")
