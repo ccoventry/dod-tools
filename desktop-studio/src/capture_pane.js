@@ -1,8 +1,10 @@
-import { startCaptureBatch, cancelCaptureBatch, validatePaths, calculateExportPoolSpace, scanOrphanedPreviews, deleteOrphanedPreviews, checkEngineProcesses, launchStandaloneGame } from './ipc_bridge.js';
+import { startCaptureBatch, cancelCaptureBatch, validatePaths, calculateExportPoolSpace, diagnoseCaptureOutputPaths, scanOrphanedPreviews, deleteOrphanedPreviews, checkEngineProcesses, launchStandaloneGame } from './ipc_bridge.js';
 import { listen } from '@tauri-apps/api/event';
+import { confirm } from '@tauri-apps/plugin-dialog';
 import { showToast } from './toast.js';
 import { requestProcessGuardedLaunch } from './detail_pane.js';
 import { createListEditor } from './list_editor.js';
+import { streakUid, recordTake } from './take_index.js';
 
 let unlistenCaptureStatus = null;
 // Tracks whether a batch is actively running so refreshLaunchGuard() never
@@ -18,6 +20,22 @@ let currentGetState = null;
 // being saved incidentally whenever some unrelated action (e.g. browsing
 // for hlae.exe) happens to also call it.
 let currentOnSettingsChange = null;
+// Fired after a verified capture advances highlight statuses, so the panes
+// that render status (Master Queue counts, Highlight Details rows) re-render.
+// Neither watches the streak objects, so without this the tables stay stale
+// until the next unrelated interaction.
+let currentOnStatusChange = null;
+// Returns the live project-level take index object (take_key -> uid[]) owned
+// by main.js, so recording into it here persists into the same object that
+// gets serialized on Save Session. Null in Quick-Clip-only contexts where
+// main.js hasn't wired one up yet.
+let currentGetTakeIndex = null;
+// The most recent batch dispatched from this window: its session id and the
+// live streak objects, in the exact order they were sent. The backend's take
+// manifest indexes into that same order, which is what lets a verified block
+// resolve back to the highlights it actually recorded.
+let lastDispatch = null;
+let unlistenTakesVerified = null;
 
 function notifySettingsChange() {
   if (currentOnSettingsChange) currentOnSettingsChange();
@@ -32,17 +50,6 @@ function generateSessionId() {
   return `session_${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
 }
 
-function updateRowBadges(statusText, colorHex) {
-  const tableBody = document.querySelector('#master-demo-table-body');
-  if (tableBody) {
-    const statusSpans = tableBody.querySelectorAll('td span');
-    statusSpans.forEach(span => {
-      span.textContent = statusText;
-      span.style.color = colorHex;
-    });
-  }
-}
-
 // ── Pre-Flight Disk Space Estimator ───────────────────────────────────────────
 
 /**
@@ -54,7 +61,11 @@ function updateRowBadges(statusText, colorHex) {
  * `separate_hud` triples the total (HUD pass recorded as its own stream).
  */
 function computeRequiredCaptureBytes(currentScannedDemos, opts) {
-  const { preRollSeconds, postRollSeconds, captureFps, resWidth, resHeight, separateHud } = opts;
+  const {
+    preRollSeconds, postRollSeconds,
+    recordStartLead, recordStopTrail,
+    captureFps, resWidth, resHeight, separateHud,
+  } = opts;
   let totalSeconds = 0;
 
   (currentScannedDemos || []).forEach(demo => {
@@ -67,28 +78,38 @@ function computeRequiredCaptureBytes(currentScannedDemos, opts) {
       .filter(streak => streak.selected === true)
       .map(streak => {
         const fps = streak.demo_fps || 100;
-        const startSec = (streak.start_tick / fps) - preRollSeconds;
-        const endSec = (streak.end_tick / fps) + postRollSeconds;
+        const startSec = streak.start_tick / fps;
+        const endSec = streak.end_tick / fps;
         return [startSec, endSec];
       })
       .sort((a, b) => a[0] - b[0]);
 
+    // Two different windows are at play, and mixing them up is what this used
+    // to get wrong:
+    //  - whether two highlights collapse into ONE take is decided by
+    //    pre/post-roll (native/src/patch/builder.rs's blocks_merge), and
+    //  - how many frames actually get written is start-lead -> stop-trail
+    //    (PatcherConfig::calculate_total_capture_duration).
+    // So merge on the roll window, then bill the lead/trail window.
     let mergedStart = null;
     let mergedEnd = null;
+    const bill = () => {
+      totalSeconds += recordStartLead + (mergedEnd - mergedStart) + recordStopTrail;
+    };
     intervals.forEach(([start, end]) => {
       if (mergedStart === null) {
         mergedStart = start;
         mergedEnd = end;
-      } else if (start <= mergedEnd) {
+      } else if (start - preRollSeconds <= mergedEnd + postRollSeconds) {
         mergedEnd = Math.max(mergedEnd, end);
       } else {
-        totalSeconds += (mergedEnd - mergedStart);
+        bill();
         mergedStart = start;
         mergedEnd = end;
       }
     });
     if (mergedStart !== null) {
-      totalSeconds += (mergedEnd - mergedStart);
+      bill();
     }
   });
 
@@ -97,6 +118,27 @@ function computeRequiredCaptureBytes(currentScannedDemos, opts) {
   let requiredBytes = frames * bytesPerFrame;
   if (separateHud) requiredBytes *= 3;
   return requiredBytes;
+}
+
+const PATH_PROBLEM_REASONS = {
+  not_absolute: (p) => `"${p}" isn't a full path (it needs a drive letter, e.g. C:\\...)`,
+  malformed: (p) => `"${p}" isn't a valid path (invalid characters or formatting)`,
+  not_found: (p) => `"${p}" doesn't exist on this computer (check the spelling, or that the drive is connected)`,
+  not_a_directory: (p) => `"${p}" points to a file, not a folder`,
+};
+
+const MAX_PROBLEM_PATHS_SHOWN = 3;
+
+/** Turns a list of non-"ok" diagnostics into a point-form list of reasons
+ *  (one bullet per line, `warningEl`'s `white-space: pre-line` renders the
+ *  `\n`s), capped so a long invalid list doesn't turn into a wall of text.
+ *  Falls back to a single plain sentence when there's just one problem. */
+function describeProblemPaths(problems) {
+  const shown = problems.slice(0, MAX_PROBLEM_PATHS_SHOWN)
+    .map((d) => PATH_PROBLEM_REASONS[d.status]?.(d.path) || `"${d.path}" is unusable`);
+  const remaining = problems.length - MAX_PROBLEM_PATHS_SHOWN;
+  if (remaining > 0) shown.push(`...and ${remaining} more`);
+  return shown.length === 1 ? shown[0] : shown.map((s) => `• ${s}`).join('\n');
 }
 
 /**
@@ -118,6 +160,8 @@ export async function refreshLaunchGuard(state) {
 
   const preRollVal = parseFloat(document.querySelector("#config-pre-roll")?.value) || 2.0;
   const postRollVal = parseFloat(document.querySelector("#config-post-roll")?.value) || 0.6;
+  const recordStartLeadVal = parseFloat(document.querySelector("#config-record-start-lead")?.value) || 0.0;
+  const recordStopTrailVal = parseFloat(document.querySelector("#config-record-stop-trail")?.value) || 0.0;
   const captureFpsVal = parseInt(document.querySelector("#config-capture-fps")?.value, 10) || 300;
   const resWidthVal = parseInt(document.querySelector("#config-res-width")?.value, 10) || 1280;
   const resHeightVal = parseInt(document.querySelector("#config-res-height")?.value, 10) || 720;
@@ -126,6 +170,8 @@ export async function refreshLaunchGuard(state) {
   const requiredBytes = computeRequiredCaptureBytes(resolvedState.currentScannedDemos, {
     preRollSeconds: preRollVal,
     postRollSeconds: postRollVal,
+    recordStartLead: recordStartLeadVal,
+    recordStopTrail: recordStopTrailVal,
     captureFps: captureFpsVal,
     resWidth: resWidthVal,
     resHeight: resHeightVal,
@@ -138,19 +184,45 @@ export async function refreshLaunchGuard(state) {
   const effectiveDrivePool = (resolvedState.targetDrives || []).filter(Boolean);
 
   let availableBytes = 0;
+  let problemPaths = [];
+  let willBeCreatedPaths = [];
   if (effectiveDrivePool.length > 0) {
     try {
       availableBytes = await calculateExportPoolSpace(effectiveDrivePool);
     } catch (err) {
       console.error("Error calculating export pool space for launch guard:", err);
     }
+    // Fetched unconditionally (not just when the pool is fully unusable) so a
+    // *partially* bad pool — some valid drives, some typo'd/missing ones —
+    // can still be called out below instead of going silently ignored just
+    // because the aggregate sum happens to clear.
+    try {
+      const diagnostics = await diagnoseCaptureOutputPaths(effectiveDrivePool);
+      problemPaths = diagnostics.filter((d) => !d.usable);
+      // Usable but not found yet: real drive, folder just hasn't been
+      // created — worth a quiet FYI (mainly to catch a typo of an intended
+      // *existing* folder) but not a "problem," since it's the same case
+      // get_available_bytes already counts as fine.
+      willBeCreatedPaths = diagnostics.filter((d) => d.usable && d.status === 'not_found');
+    } catch (err) {
+      console.error("Error diagnosing Capture Output paths:", err);
+    }
   }
 
   // Zero configured (or zero-space) drives must lock the button on its own —
   // `requiredBytes > availableBytes` alone would pass with requiredBytes 0.
-  const noDrivesConfigured = effectiveDrivePool.length === 0 || availableBytes === 0;
-  const insufficientSpace = !noDrivesConfigured && requiredBytes > availableBytes;
-  const blocked = noDrivesConfigured || insufficientSpace;
+  // Kept as two distinct booleans (not one merged "noDrivesConfigured") so
+  // the warning message can tell "you haven't added anything" apart from
+  // "you added something, but it doesn't resolve to a usable directory" —
+  // those used to share one message, which told the user to do something
+  // they'd already done.
+  const noDrivesConfigured = effectiveDrivePool.length === 0;
+  const noUsableSpace = !noDrivesConfigured && availableBytes === 0;
+  const insufficientSpace = !noDrivesConfigured && !noUsableSpace && requiredBytes > availableBytes;
+  // Pool is usable overall (at least one real drive with room) but not every
+  // configured entry is — worth a heads-up, not worth blocking the batch.
+  const hasPartialProblems = !noDrivesConfigured && !noUsableSpace && !insufficientSpace && problemPaths.length > 0;
+  const blocked = noDrivesConfigured || noUsableSpace || insufficientSpace;
 
   if (!capturingInFlight) {
     startBtn.disabled = blocked;
@@ -158,10 +230,33 @@ export async function refreshLaunchGuard(state) {
 
   if (warningEl) {
     if (noDrivesConfigured) {
+      warningEl.style.color = '#f44336';
       warningEl.textContent = "No Capture Output directories configured — add at least one with free space before starting a capture.";
       warningEl.style.display = 'block';
+    } else if (noUsableSpace) {
+      warningEl.style.color = '#f44336';
+      warningEl.textContent = problemPaths.length > 0
+        ? `Capture Output problem:\n${describeProblemPaths(problemPaths)}`
+        : "None of the configured Capture Output directories have any free space.";
+      warningEl.style.display = 'block';
     } else if (insufficientSpace) {
+      warningEl.style.color = '#f44336';
       warningEl.textContent = `Insufficient disk space: capture needs ~${(requiredBytes / 1e9).toFixed(2)} GB, only ${(availableBytes / 1e9).toFixed(2)} GB available across the export pool.`;
+      warningEl.style.display = 'block';
+    } else if (hasPartialProblems) {
+      warningEl.style.color = '#ffa726';
+      const wontBeUsed = problemPaths.length === 1 ? "entry won't be used" : "entries won't be used";
+      warningEl.textContent = `Some Capture Output ${wontBeUsed}:\n${describeProblemPaths(problemPaths)}\nCapture will proceed using the other configured directory/directories.`;
+      warningEl.style.display = 'block';
+    } else if (willBeCreatedPaths.length > 0) {
+      warningEl.style.color = '#64b5f6';
+      const shown = willBeCreatedPaths.slice(0, MAX_PROBLEM_PATHS_SHOWN).map((d) => `"${d.path}"`);
+      const remaining = willBeCreatedPaths.length - MAX_PROBLEM_PATHS_SHOWN;
+      if (remaining > 0) shown.push(`...and ${remaining} more`);
+      const doesnt = willBeCreatedPaths.length === 1 ? "doesn't" : "don't";
+      warningEl.textContent = shown.length === 1
+        ? `${shown[0]} ${doesnt} exist yet — it'll be created when the capture starts.`
+        : `These Capture Output entries ${doesnt} exist yet — they'll be created when the capture starts:\n${shown.map((s) => `• ${s}`).join('\n')}`;
       warningEl.style.display = 'block';
     } else {
       warningEl.style.display = 'none';
@@ -388,7 +483,7 @@ function initClearPreviewsModal() {
       const checked = document.querySelectorAll('.clear-previews-row-cb:checked');
       const pathsToDelete = Array.from(checked).map(cb => cb.dataset.path);
       if (pathsToDelete.length === 0) return;
-      if (!confirm(`Permanently delete ${pathsToDelete.length} orphaned preview demo(s)?`)) return;
+      if (!(await confirm(`Permanently delete ${pathsToDelete.length} orphaned preview demo(s)?`))) return;
 
       deleteBtn.disabled = true;
       try {
@@ -404,7 +499,7 @@ function initClearPreviewsModal() {
   }
 }
 
-export function initCaptureUI(getState, onSettingsChange) {
+export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTakeIndex) {
   const startBtn = document.querySelector('#start-capture-btn') || document.querySelector('#start-batch-btn');
   const cancelBtn = document.querySelector('#cancel-batch-btn');
   const statusEl = document.querySelector('#batch-status');
@@ -413,6 +508,8 @@ export function initCaptureUI(getState, onSettingsChange) {
 
   currentGetState = getState;
   currentOnSettingsChange = onSettingsChange || null;
+  currentOnStatusChange = onStatusChange || null;
+  currentGetTakeIndex = getTakeIndex || null;
 
   initCommandsEditor = createListEditor({
     container: document.querySelector('#init-commands-list'),
@@ -456,16 +553,18 @@ export function initCaptureUI(getState, onSettingsChange) {
   // settings.json on edit — previously nothing wired them to a save at all,
   // so values only survived a restart by coincidence, if some unrelated
   // action (e.g. browsing for hlae.exe) happened to save afterward.
+  // Start-lead/stop-trail belong in this list too: they define the recorded
+  // window, so they change the disk estimate the guard is built on.
   ['#config-res-width', '#config-res-height', '#config-separate-hud',
-   '#config-pre-roll', '#config-post-roll', '#config-capture-fps'].forEach(selector => {
+   '#config-pre-roll', '#config-post-roll', '#config-capture-fps',
+   '#config-record-start-lead', '#config-record-stop-trail'].forEach(selector => {
     const el = document.querySelector(selector);
     if (el) el.addEventListener('input', () => { refreshLaunchGuard(); notifySettingsChange(); });
   });
-  ['#config-record-start-lead', '#config-record-stop-trail', '#config-initial-delay']
-    .forEach(selector => {
-      const el = document.querySelector(selector);
-      if (el) el.addEventListener('input', () => notifySettingsChange());
-    });
+  ['#config-initial-delay'].forEach(selector => {
+    const el = document.querySelector(selector);
+    if (el) el.addEventListener('input', () => notifySettingsChange());
+  });
   // Checkboxes read by persistAppSettings/buildCapturePayload but with no
   // change listener of their own — same missing-wiring bug as the Timing
   // Options fields above, just on Path Routing / Capture Output checkboxes.
@@ -495,7 +594,6 @@ export function initCaptureUI(getState, onSettingsChange) {
         }
         const statusText = payload.name ? `${payload.status || "Capturing"}: ${payload.name}` : (payload.status || "Capturing...");
         if (statusEl) statusEl.textContent = statusText;
-        updateRowBadges(payload.status || "Capturing...", "#ff9800");
         if (startBtn) startBtn.disabled = true;
         if (cancelBtn) cancelBtn.disabled = false;
       } else {
@@ -505,16 +603,13 @@ export function initCaptureUI(getState, onSettingsChange) {
 
         if (payload.error) {
           showToast(`Capture error: ${payload.status || "Unknown error"}`, "error");
-          updateRowBadges("Error", "#f44336");
           if (statusEl) statusEl.textContent = `Error: ${payload.status || "Capture failed"}`;
         } else if (payload.status === "Cancelled") {
           showToast("Batch capture cancelled.", "info");
-          updateRowBadges("Cancelled", "#f44336");
           if (progressBar) progressBar.style.width = '0%';
           if (statusEl) statusEl.textContent = "Cancelled";
         } else {
           showToast("Batch capture completed successfully!", "success");
-          updateRowBadges("Completed", "#4caf50");
           if (progressBar) progressBar.style.width = '100%';
           if (statusEl) statusEl.textContent = "Completed";
         }
@@ -523,6 +618,74 @@ export function initCaptureUI(getState, onSettingsChange) {
       unlistenCaptureStatus = unlistenFn;
     }).catch(err => {
       console.error("Failed to register capture_status listener:", err);
+    });
+  }
+
+  // Post-batch take verification: advances each verified highlight to Captured.
+  if (!unlistenTakesVerified) {
+    listen('capture_takes_verified', (event) => {
+      const payload = event.payload || {};
+      const blocks = payload.blocks || [];
+      const total = payload.total_count ?? blocks.length;
+      const captured = payload.captured_count ?? 0;
+      const renderable = payload.renderable_count ?? 0;
+
+      const takeIndex = currentGetTakeIndex ? currentGetTakeIndex() : null;
+
+      let advanced = 0;
+      blocks.forEach(block => {
+        if (!block.captured) return;
+        // A block can cover several highlights — overlapping ones are recorded
+        // as one continuous take — so every highlight it covers advances.
+        const uids = [];
+        const sourceIndices = block.source_streak_indices || [];
+        sourceIndices.forEach(i => {
+          const streak = lastDispatch?.streaks?.[i];
+          if (!streak) return;
+          const demoPath = lastDispatch?.demoPaths?.[i];
+          uids.push(streakUid(demoPath, streak));
+          // Merged blocks (2+ source highlights recorded into one take) get a
+          // visible affordance in Highlight Details (detail_pane.js) so it's
+          // obvious why the rows flipped together. Non-enumerable, same as
+          // `.uid`, so it never leaks into a future capture payload sent
+          // over IPC (buildCapturePayload pushes the live streak object).
+          if (sourceIndices.length > 1 && block.take_key) {
+            Object.defineProperty(streak, 'mergedTakeKey', { value: block.take_key, enumerable: false, configurable: true });
+            Object.defineProperty(streak, 'mergedCount', { value: sourceIndices.length, enumerable: false, configurable: true });
+          }
+          // Status only ever moves forward. Re-capturing something already
+          // rendered must not knock it back down to Captured.
+          if (streak.status === 'Rendered') return;
+          if (streak.status !== 'Captured') advanced += 1;
+          streak.status = 'Captured';
+        });
+        // Recorded even when the take isn't renderable yet — a future render
+        // still needs to resolve this take_key back to these highlights once
+        // it succeeds, and the index outlives this dispatch's in-memory state.
+        if (takeIndex && block.take_key) {
+          recordTake(takeIndex, block.take_key, uids);
+        }
+      });
+
+      if (total === 0) return;
+
+      if (advanced > 0) {
+        // Both tables read status, and neither re-renders on its own.
+        if (currentOnStatusChange) currentOnStatusChange();
+      }
+
+      const marked = advanced > 0 ? ` ${advanced} highlight(s) marked Captured.` : '';
+      if (captured < total) {
+        showToast(`${captured}/${total} takes found on disk — ${total - captured} missing.${marked}`, 'error');
+      } else if (renderable < total) {
+        showToast(`${captured}/${total} takes captured, but ${total - renderable} won't be seen by Render Studio.${marked}`, 'info');
+      } else {
+        showToast(`All ${total} takes verified on disk.${marked}`, 'success');
+      }
+    }).then(unlistenFn => {
+      unlistenTakesVerified = unlistenFn;
+    }).catch(err => {
+      console.error("Failed to register capture_takes_verified listener:", err);
     });
   }
 
@@ -535,6 +698,10 @@ export function initCaptureUI(getState, onSettingsChange) {
    */
   function buildCapturePayload(state) {
     const selectedStreaks = [];
+    // Index-aligned with selectedStreaks — the owning demo's path, needed to
+    // derive each streak's durable uid (streakUid takes demoPath + streak)
+    // for the take index below.
+    const selectedDemoPaths = [];
     if (state.currentScannedDemos) {
       state.currentScannedDemos.forEach(demo => {
         if (demo.streaks) {
@@ -542,11 +709,18 @@ export function initCaptureUI(getState, onSettingsChange) {
             // Opt-in model (detail_pane.js) — see computeRequiredCaptureBytes above.
             if (streak.selected === true) {
               selectedStreaks.push(streak);
+              selectedDemoPaths.push(demo.path);
             }
           });
         }
       });
     }
+
+    // Remembered so the post-batch take verification can map each block's
+    // source_streak_indices back to these exact live streak objects — the
+    // backend preserves this array's order, so index N here is index N there.
+    const sessionId = generateSessionId();
+    lastDispatch = { sessionId, streaks: selectedStreaks, demoPaths: selectedDemoPaths };
 
     const captureFpsVal = parseInt(document.querySelector("#config-capture-fps")?.value, 10) || 300;
     const preRollVal = parseFloat(document.querySelector("#config-pre-roll")?.value) || 2.0;
@@ -623,7 +797,7 @@ export function initCaptureUI(getState, onSettingsChange) {
       auto_clear_logs: autoClearLogsVal,
       auto_clear_previews: autoClearPreviewsVal,
       auto_clear_temp_demos: autoClearTempDemosVal,
-      session_id: generateSessionId(),
+      session_id: sessionId,
       init_commands: initCommandsPayload,
       custom_commands: customCommandsPayload,
     };
@@ -662,7 +836,6 @@ export function initCaptureUI(getState, onSettingsChange) {
       showToast("Initializing capture batch...", "info");
       startBtn.disabled = true;
       if (cancelBtn) cancelBtn.disabled = false;
-      updateRowBadges("Queued", "#2196f3");
 
       startCaptureBatch(activePayload)
         .then(() => {
@@ -673,7 +846,6 @@ export function initCaptureUI(getState, onSettingsChange) {
         .catch((err) => {
           console.error("IPC Execution Error (start_capture_batch):", err);
           showToast("Error starting batch: " + err, "error");
-          updateRowBadges("Failed", "#f44336");
           if (cancelBtn) cancelBtn.disabled = true;
           capturingInFlight = false;
           refreshLaunchGuard(state);
@@ -687,7 +859,6 @@ export function initCaptureUI(getState, onSettingsChange) {
       cancelBtn.disabled = true;
       cancelCaptureBatch()
         .then(() => {
-          updateRowBadges("Cancelled", "#f44336");
           if (progressBar) progressBar.style.width = '0%';
           capturingInFlight = false;
           refreshLaunchGuard();

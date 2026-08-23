@@ -5,7 +5,6 @@ use crate::log_markdown;
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct CaptureJob {
     pub patched_demo_path: std::path::PathBuf,
-    pub expected_take_folder: std::path::PathBuf,
 }
 
 #[derive(Clone, Debug)]
@@ -13,7 +12,6 @@ pub enum EngineEvent {
     Starting(usize),
     Launching(String),
     Finished(String),
-    Verified(String),
     Error(String),
     AllCompleted,
     /// Posted when the cancellation token is raised mid-batch.
@@ -151,16 +149,10 @@ pub fn spawn_capture_engine(
                 ($tx:expr, $msg:expr) => {
                     {
                         log::error!("{}", $msg);
-                        use std::io::Write;
-                        let _ = (|| -> Result<(), Box<dyn std::error::Error>> {
-                            let log_dir = crate::shared::paths::get_appdata_dir().join("logs");
-                            std::fs::create_dir_all(&log_dir)?;
-                            let log_path = log_dir.join("crash_log.md");
-                            let mut file = std::fs::OpenOptions::new().create(true).append(true).open(&log_path)?;
-                            writeln!(file, "{}", $msg)?;
-                            Ok(())
-                        })();
-                        let _ = $tx.send(EngineEvent::Error("Capture Engine Aborted - Check AppData/logs/crash_log.md".to_string()));
+                        crate::log_markdown(&$msg);
+                        let _ = $tx.send(EngineEvent::Error(
+                            format!("Capture Engine Aborted — {} (see View Logs for details)", $msg)
+                        ));
                     }
                 };
             }
@@ -204,7 +196,7 @@ pub fn spawn_capture_engine(
             let session_dir = if !config.session_id.is_empty() {
                 active_export_dir.join(&config.session_id)
             } else {
-                active_export_dir
+                active_export_dir.clone()
             };
 
             let session_junction_str = session_junction.to_str().unwrap_or_default();
@@ -387,11 +379,6 @@ pub fn spawn_capture_engine(
                 return;
             }
 
-            let active_export_dir = config.primary_media_dir.clone().unwrap_or_else(|| {
-                let exe_path = std::env::current_exe().expect("Failed to resolve absolute exe path");
-                exe_path.parent().expect("Exe has no parent directory").to_path_buf()
-            });
-
             {
                 use sysinfo::{System, SystemExt, DiskExt};
                 let mut sys = System::new_all();
@@ -416,11 +403,7 @@ pub fn spawn_capture_engine(
             let condebug_flag = if config.add_condebug { "-condebug " } else { "" };
             let extra_args = format!("{}+exec dodtools_helper.cfg +playdemo primer", condebug_flag);
 
-            let primary_dir = config.primary_media_dir.clone().unwrap_or_else(|| {
-                let exe_path = std::env::current_exe().expect("Failed to resolve absolute exe path");
-                exe_path.parent().expect("Exe has no parent directory").to_path_buf()
-            });
-            let dummy_path = primary_dir.join("DOD_BATCH_DONE");
+            let dummy_path = active_export_dir.join("DOD_BATCH_DONE");
             let _ = std::fs::remove_dir_all(&dummy_path);
 
             let mut cmd = config.build_hlae_process(&extra_args);
@@ -448,7 +431,9 @@ pub fn spawn_capture_engine(
             let cfg_path = dod_dir.join("dod_quit.cfg");
             std::fs::write(&cfg_path, "quit\n").ok();
 
-            let _child = match cmd.spawn() {
+            log_markdown(&format!("[HLAE] Spawning: {:?} {:?}", cmd.get_program(), cmd.get_args().collect::<Vec<_>>()));
+
+            let mut child = match cmd.spawn() {
                 Ok(c) => c,
                 Err(e) => {
                     log_crash_abort!(tx, format!("Failed to spawn HLAE (OS Error): {}", e));
@@ -459,14 +444,109 @@ pub fn spawn_capture_engine(
                     return;
                 }
             };
+            log_markdown(&format!("[HLAE] Spawned (PID {})", child.id()));
 
+            // The HLAE launcher process (`_child` above) injects into `hl.exe` and then
+            // exits on its own under `-noGui -autoStart` — that is expected handoff
+            // behaviour, not a crash. The thing that actually matters is whether
+            // `hl.exe` itself is still alive, so liveness is tracked separately via
+            // process name rather than via the launcher's own exit status.
             let start_time = std::time::Instant::now();
+            let mut launcher_exit_logged = false;
+            let mut hl_seen_alive = false;
+            let mut failure_reason: Option<&'static str> = None;
+            let mut sys = {
+                use sysinfo::SystemExt;
+                sysinfo::System::new_all()
+            };
             loop {
-                if cancel_token.load(Ordering::Relaxed) || (start_time.elapsed().as_secs() > 10 && (dummy_path.exists() || exit_trigger.exists())) {
+                if !launcher_exit_logged {
+                    match child.try_wait() {
+                        Ok(Some(status)) => {
+                            launcher_exit_logged = true;
+                            log_markdown(&format!(
+                                "[HLAE] Launcher exited after {:.1}s (status: {:?}) — expected handoff behaviour, not a crash by itself",
+                                start_time.elapsed().as_secs_f32(),
+                                status
+                            ));
+                        }
+                        Ok(None) => {}
+                        Err(e) => log_markdown(&format!("[HLAE] try_wait() failed: {}", e)),
+                    }
+                }
+
+                let hl_alive = {
+                    use sysinfo::{SystemExt, ProcessExt};
+                    sys.refresh_processes();
+                    let alive = sys.processes().values().any(|p| p.name().eq_ignore_ascii_case("hl.exe"));
+                    if alive {
+                        hl_seen_alive = true;
+                    }
+                    alive
+                };
+
+                if cancel_token.load(Ordering::Relaxed) {
+                    log_markdown(&format!("[HLAE] Cancelled by user after {:.1}s", start_time.elapsed().as_secs_f32()));
                     std::process::Command::new("taskkill").args(&["/F", "/IM", "hl.exe"]).output().ok();
                     break;
                 }
+                if start_time.elapsed().as_secs() > 10 && (dummy_path.exists() || exit_trigger.exists()) {
+                    log_markdown(&format!(
+                        "[HLAE] Exit trigger detected after {:.1}s (done marker: {}, exit trigger: {}) — taskkilling hl.exe",
+                        start_time.elapsed().as_secs_f32(),
+                        dummy_path.exists(),
+                        exit_trigger.exists()
+                    ));
+                    std::process::Command::new("taskkill").args(&["/F", "/IM", "hl.exe"]).output().ok();
+                    break;
+                }
+                // Only treat this as a real failure once the launcher has handed off
+                // (or failed to) AND hl.exe itself is confirmed not running AND no
+                // exit trigger has appeared — i.e. nothing is left that could ever
+                // finish the batch. The 5s grace period covers the brief window
+                // between the launcher exiting and hl.exe's own process becoming
+                // visible to sysinfo.
+                if launcher_exit_logged
+                    && !hl_seen_alive
+                    && start_time.elapsed().as_secs() > 5
+                    && !dummy_path.exists()
+                    && !exit_trigger.exists()
+                {
+                    log_markdown(&format!(
+                        "[HLAE] hl.exe never came up after the launcher exited ({:.1}s elapsed) — treating as failure",
+                        start_time.elapsed().as_secs_f32()
+                    ));
+                    failure_reason = Some("hl.exe never started after the HLAE launcher exited");
+                    break;
+                }
+                // hl.exe was running and has now disappeared without ever writing
+                // an exit trigger/done marker — a genuine mid-capture crash rather
+                // than the normal quit-cfg-driven exit (which writes the trigger
+                // before the process goes away).
+                if hl_seen_alive && !hl_alive && !dummy_path.exists() && !exit_trigger.exists() {
+                    log_markdown(&format!(
+                        "[HLAE] hl.exe was running and is now gone with no exit trigger after {:.1}s — treating as a mid-capture crash",
+                        start_time.elapsed().as_secs_f32()
+                    ));
+                    failure_reason = Some("hl.exe started but crashed mid-capture (no exit trigger was ever written)");
+                    break;
+                }
                 std::thread::sleep(std::time::Duration::from_millis(500));
+            }
+
+            if let Some(reason) = failure_reason.filter(|_| !cancel_token.load(Ordering::Relaxed)) {
+                log_crash_abort!(tx, format!("{} — see [HLAE] lines above in this log for timing.", reason));
+                for path in &active_dest_paths {
+                    let _ = std::fs::remove_file(path);
+                }
+                std::fs::remove_file(&cfg_path).ok();
+                std::fs::remove_dir_all(&dummy_path).ok();
+                std::fs::remove_dir_all(&exit_trigger).ok();
+                let _ = std::fs::remove_dir(&session_junction);
+                for junction in &pool_junctions {
+                    let _ = std::fs::remove_dir(junction);
+                }
+                return;
             }
 
             if cancel_token.load(Ordering::Relaxed) {

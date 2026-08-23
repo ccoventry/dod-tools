@@ -9,8 +9,10 @@ import {
   checkRenderAutosave,
   discardRenderAutosave,
   recoverRenderBatch,
+  revealInExplorer,
 } from './ipc_bridge.js';
 import { showToast } from './toast.js';
+import { streakUid, resolveTake } from './take_index.js';
 
 let jobs = []; // RenderJobView[] — latest snapshot from 'render_jobs_snapshot'
 
@@ -47,7 +49,7 @@ function renderJobsTable() {
   if (!tbody) return;
 
   if (jobs.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="8" class="table-empty">No render jobs queued. Scan a folder, then click Start Render Batch.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" class="table-empty">No render jobs queued. Scan a folder, then click Start Render Batch.</td></tr>';
     return;
   }
 
@@ -57,6 +59,7 @@ function renderJobsTable() {
       <td>${esc(j.stream)}</td>
       <td>${j.frames}</td>
       <td>${esc(j.date)}</td>
+      <td>${esc(j.settings_summary)}</td>
       <td style="color:${statusColor(j.status)};">${esc(j.status)}</td>
       <td>${esc(j.speed)}</td>
       <td>
@@ -71,6 +74,9 @@ function renderJobsTable() {
             ? `<button class="render-job-reset-btn" data-job-id="${esc(j.id)}" title="Reset to Queued">🔄</button>`
             : ''}
         ${j.error_log ? `<button class="render-job-view-log-btn" data-job-id="${esc(j.id)}" title="View error log">⚠️ View Log</button>` : ''}
+        ${(j.status === 'Finished' && j.output_path) || j.take_folder
+          ? `<button class="render-job-reveal-btn" data-job-id="${esc(j.id)}" title="${j.status === 'Finished' && j.output_path ? 'Open the rendered file\'s folder' : 'Open the source take folder'}">📁 ${j.status === 'Finished' && j.output_path ? 'Open Output' : 'Open Take Folder'}</button>`
+          : ''}
       </td>
     </tr>`).join('');
 
@@ -79,6 +85,14 @@ function renderJobsTable() {
   });
   tbody.querySelectorAll('.render-job-reset-btn').forEach((btn) => {
     btn.addEventListener('click', () => resetRenderJob(btn.dataset.jobId).catch(() => {}));
+  });
+  tbody.querySelectorAll('.render-job-reveal-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const job = jobs.find((j) => j.id === btn.dataset.jobId);
+      if (!job) return;
+      const target = (job.status === 'Finished' && job.output_path) ? job.output_path : job.take_folder;
+      if (target) revealInExplorer(target).catch(() => {});
+    });
   });
   tbody.querySelectorAll('.render-job-view-log-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -153,15 +167,69 @@ export async function checkRenderRecoveryOnStartup(onRecovered) {
   }, { once: true });
 }
 
-export function initRenderUI(getRenderFolders, getExportDirs, onSettingsChange) {
+export function initRenderUI(getRenderFolders, getExportDirs, onSettingsChange, takeTracking) {
   const scanRenderBtn = document.querySelector('#scan-render-btn');
   const startRenderBtn = document.querySelector('#start-render-btn');
   const cancelRenderBtn = document.querySelector('#cancel-render-btn');
   const renderStatusEl = document.querySelector('#render-status');
 
+  const getTakeIndex = takeTracking?.getTakeIndex || null;
+  const getAllDemos = takeTracking?.getAllDemos || null;
+  const onTakeStatusChange = takeTracking?.onStatusChange || null;
+
   initErrorLogModal();
 
-  // Real-time per-job state, pushed by the backend scheduler.
+  // A take finishing renders — advances every highlight the take index says
+  // fed that take_key to Rendered. The take index is what makes this work
+  // even after a restart or re-scan replaced the original streak objects:
+  // it was recorded by uid at capture time, not by a live object reference.
+  listen('render_take_finished', (event) => {
+    const { take_key: takeKey, take_folder: takeFolder } = event.payload || {};
+    if (!takeKey) {
+      // Folder has no session parent to derive a key from (e.g. copied out
+      // of its session folder) — documented limitation, not an error.
+      console.warn(`[render] Take finished with no resolvable take_key: ${takeFolder}`);
+      return;
+    }
+    const takeIndex = getTakeIndex ? getTakeIndex() : null;
+    const demos = getAllDemos ? getAllDemos() : null;
+    if (!takeIndex || !demos) return;
+
+    const uids = new Set(resolveTake(takeIndex, takeKey));
+    // Logged unconditionally (hit or miss) so a lookup against a real,
+    // already-loaded index is visible even when it resolves nothing — the
+    // index's total entry count here is exactly what the previous
+    // "[take-index] Loaded from ..." log reported, proving this lookup runs
+    // against that same loaded data rather than something rebuilt in memory.
+    console.log(`[take-index] Resolving ${takeKey} against ${Object.keys(takeIndex).length} loaded take(s) — found ${uids.size} uid(s)`, Array.from(uids));
+    if (uids.size === 0) return;
+
+    let advanced = 0;
+    demos.forEach(demo => {
+      (demo.streaks || []).forEach(streak => {
+        if (!uids.has(streakUid(demo.path, streak))) return;
+        // Idempotent: separate_hud produces two render jobs (all + hudcolor)
+        // sharing one take_key, so this fires twice per take — the second
+        // pass is just a no-op instead of a double-toast.
+        if (streak.status === 'Rendered') return;
+        streak.status = 'Rendered';
+        advanced += 1;
+      });
+    });
+
+    if (advanced > 0) {
+      showToast(`${advanced} highlight(s) marked Rendered.`, 'success');
+      if (onTakeStatusChange) onTakeStatusChange();
+    }
+  });
+
+  // Real-time per-job state, pushed by the backend scheduler. This is the
+  // single source of truth for whether a batch is actually running — driving
+  // Start/Cancel off it (rather than only off the Start button's own click
+  // handler and render_batch_finished) matters because reset_render_job can
+  // resume the scheduler on its own, bypassing both of those. Without this,
+  // Start Render Batch stayed clickable during a reset-triggered resume and
+  // just repeatedly failed with "Render batch already in progress".
   listen('render_jobs_snapshot', (event) => {
     jobs = event.payload || [];
     renderJobsTable();
@@ -171,6 +239,8 @@ export function initRenderUI(getRenderFolders, getExportDirs, onSettingsChange) 
         ? `Status: Rendering (${jobs.length - activeOrQueued}/${jobs.length} done)`
         : 'Status: Waiting...';
     }
+    if (startRenderBtn) startRenderBtn.disabled = activeOrQueued > 0;
+    if (cancelRenderBtn) cancelRenderBtn.disabled = activeOrQueued === 0;
   });
 
   listen('render_batch_finished', (event) => {
@@ -195,17 +265,29 @@ export function initRenderUI(getRenderFolders, getExportDirs, onSettingsChange) 
   });
 
   if (scanRenderBtn) {
+    let scanFoundCount = 0;
+    listen('render_scan_status', () => {
+      // Payload is just "Found take: <name>" per take — the count is what
+      // the status line needs, not the name, so this stays a cheap counter
+      // rather than parsing/echoing every take's name into the DOM.
+      scanFoundCount += 1;
+      if (renderStatusEl) renderStatusEl.textContent = `Status: Scanning… found ${scanFoundCount} take(s) so far`;
+    });
+
     scanRenderBtn.addEventListener('click', () => {
       const renderFolders = getRenderFolders ? getRenderFolders() : [];
       if (!renderFolders || renderFolders.length === 0) {
         showToast('Please add at least one render directory.', 'error');
         return;
       }
+      scanFoundCount = 0;
       showToast('Scanning render directories...', 'info');
+      if (renderStatusEl) renderStatusEl.textContent = 'Status: Scanning…';
       scanRenderDirectories(renderFolders)
         .then((takes) => {
           const count = takes ? takes.length : 0;
           showToast(`Scanned ${count} render take(s).`, 'info');
+          if (renderStatusEl) renderStatusEl.textContent = `Status: Scan complete — ${count} take(s) found`;
 
           const container = document.querySelector('#render-job-container');
           if (container) {
@@ -227,6 +309,7 @@ export function initRenderUI(getRenderFolders, getExportDirs, onSettingsChange) 
         .catch((err) => {
           console.error('IPC Execution Error (scan_render_directories):', err);
           showToast('Error scanning render directories: ' + err, 'error');
+          if (renderStatusEl) renderStatusEl.textContent = 'Status: Scan failed';
         });
     });
   }
@@ -242,6 +325,7 @@ export function initRenderUI(getRenderFolders, getExportDirs, onSettingsChange) 
       const codecVal = document.querySelector('#render-codec-select')?.value || 'prores';
       const fpsVal = parseInt(document.querySelector('#render-fps-input')?.value, 10) || 300;
       const maxConcurrentVal = Math.min(8, Math.max(1, parseInt(document.querySelector('#render-max-concurrent-input')?.value, 10) || 2));
+      checkNvencConcurrencyWarning();
       const exportDirs = (getExportDirs ? getExportDirs() : []).filter(Boolean);
       // FFmpeg override is shared with the capture config panel.
       const ffmpegPathVal = document.querySelector('#ffmpeg-override-path-input')?.value?.trim() || null;
@@ -287,14 +371,31 @@ export function initRenderUI(getRenderFolders, getExportDirs, onSettingsChange) 
   // Codec/FPS/max-concurrent aren't read until Start Render Batch is
   // clicked, but they're still persisted settings — nothing previously
   // wired their edits to a save.
+  const codecEl = document.querySelector('#render-codec-select');
+  const maxConcurrentEl = document.querySelector('#render-max-concurrent-input');
+  // NVENC's concurrent-session limit is unlocked on Quadro/RTX 40-series+
+  // but commonly capped at 3-5 on consumer GeForce cards — exceeding it
+  // doesn't fail upfront, it surfaces as an opaque FFmpeg error buried in
+  // a job's error log. Warn eagerly rather than let that be a mystery.
+  function checkNvencConcurrencyWarning() {
+    const isNvenc = (codecEl?.value || '') === 'h264_nvenc';
+    const maxConcurrent = parseInt(maxConcurrentEl?.value, 10) || 0;
+    if (isNvenc && maxConcurrent > 3) {
+      showToast(
+        `${maxConcurrent} concurrent NVENC renders may exceed your GPU's encoder session limit (often 3-5 on consumer GeForce cards). If renders start failing, lower Max Concurrent Renders.`,
+        'warning',
+        6000
+      );
+    }
+  }
   if (onSettingsChange) {
-    const codecEl = document.querySelector('#render-codec-select');
     if (codecEl) codecEl.addEventListener('change', () => onSettingsChange());
     const fpsEl = document.querySelector('#render-fps-input');
     if (fpsEl) fpsEl.addEventListener('input', () => onSettingsChange());
-    const maxConcurrentEl = document.querySelector('#render-max-concurrent-input');
     if (maxConcurrentEl) maxConcurrentEl.addEventListener('input', () => onSettingsChange());
   }
+  if (codecEl) codecEl.addEventListener('change', checkNvencConcurrencyWarning);
+  if (maxConcurrentEl) maxConcurrentEl.addEventListener('change', checkNvencConcurrencyWarning);
 
   refreshExportPoolFree(getExportDirs);
   // Re-check free space periodically while the pane is open — cheap

@@ -71,6 +71,11 @@ pub struct AppSettings {
     /// JIT multi-drive export pool for Render Studio.
     #[serde(default)]
     pub render_export_dirs: Vec<String>,
+    /// Connected-workspace mode: "quick-clip" (nothing persists, blunt
+    /// clearing) or "workspace" (project file + take index persist, clearing
+    /// protects tracked demos). See docs/engineering_backlog.md Phase 4.
+    #[serde(default = "default_studio_mode")]
+    pub studio_mode: String,
 }
 
 fn default_resolution_width() -> i32 { 1280 }
@@ -82,6 +87,7 @@ fn default_render_codec() -> String { "prores".to_string() }
 fn default_render_fps() -> i32 { 300 }
 fn default_render_max_concurrent() -> i32 { 2 }
 fn default_analyzer_explorer_width() -> i32 { 260 }
+fn default_studio_mode() -> String { "quick-clip".to_string() }
 
 impl Default for AppSettings {
     fn default() -> Self {
@@ -117,6 +123,7 @@ impl Default for AppSettings {
             render_fps: default_render_fps(),
             render_max_concurrent: default_render_max_concurrent(),
             render_export_dirs: Vec::new(),
+            studio_mode: default_studio_mode(),
         }
     }
 }
@@ -200,6 +207,9 @@ mod tests {
 
         assert_eq!(settings.hlae_path, "C:/hlae/hlae.exe");
         assert_eq!(settings.capture_fps, 300);
+        // Pre-Phase-4 settings.json files have no studio_mode key at all —
+        // must default to Quick-Clip rather than fail deserialization.
+        assert_eq!(settings.studio_mode, "quick-clip");
     }
 
     #[test]
@@ -213,5 +223,6 @@ mod tests {
         assert_eq!(restored.capture_fps, original.capture_fps);
         assert_eq!(restored.fast_forward_speed, original.fast_forward_speed);
         assert_eq!(restored.render_codec, original.render_codec);
+        assert_eq!(restored.studio_mode, original.studio_mode);
     }
 }

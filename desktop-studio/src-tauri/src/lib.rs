@@ -150,6 +150,10 @@ fn simulate_aot_capacity(
 /// Cancel a running capture batch.
 #[tauri::command]
 async fn cancel_capture_batch(state: tauri::State<'_, CaptureManager>) -> Result<(), String> {
+    native::log_markdown(&format!(
+        "[capture] Cancel requested (is_running={})",
+        state.is_running()
+    ));
     state
         .cancel_token
         .store(true, std::sync::atomic::Ordering::Relaxed);
@@ -166,6 +170,22 @@ fn capture_status(state: tauri::State<'_, CaptureManager>) -> bool {
 #[tauri::command]
 fn test_bridge(path: String) -> String {
     format!("Tauri Backend received target: {}. Engine ready.", path)
+}
+
+/// Writes one line to today's activity log from the frontend. Exists for
+/// events that have no other Tauri command to piggyback logging on — the
+/// Master Demo Queue's Clear Untracked/Selected/All and row-delete actions
+/// are pure frontend array mutations with nothing else calling into Rust.
+#[tauri::command]
+fn log_frontend_event(message: String) {
+    native::log_markdown(&message);
+}
+
+/// Absolute path to today's activity log, for the top nav's "View Logs"
+/// button — most users won't know to go looking under AppData on their own.
+#[tauri::command]
+fn get_activity_log_path() -> String {
+    native::activity_log_path().to_string_lossy().to_string()
 }
 
 #[tauri::command]
@@ -215,6 +235,39 @@ fn calculate_export_pool_space(paths: Vec<String>) -> Result<u64, String> {
     Ok(total)
 }
 
+#[derive(serde::Serialize)]
+struct CaptureOutputDiagnostic {
+    path: String,
+    status: &'static str, // "ok" | "not_absolute" | "malformed" | "not_found" | "not_a_directory"
+    // Whether get_available_bytes (the same function backing the aggregate
+    // sum/footer) would actually count this path — a "not_found" path whose
+    // drive is real and mounted still passes (many output folders are
+    // auto-created at write time), while one on an unmounted/nonexistent
+    // drive doesn't. Reusing that exact check here, rather than deriving a
+    // second opinion from `status` alone, is what keeps this list and the
+    // footer's byte total from disagreeing about the same path.
+    usable: bool,
+}
+
+#[tauri::command]
+fn diagnose_capture_output_paths(paths: Vec<String>) -> Vec<CaptureOutputDiagnostic> {
+    paths
+        .into_iter()
+        .map(|path_str| {
+            let p = std::path::PathBuf::from(&path_str);
+            let status = match native::sys::disk::diagnose_path(&p) {
+                native::sys::disk::PathStatus::Ok => "ok",
+                native::sys::disk::PathStatus::NotAbsolute => "not_absolute",
+                native::sys::disk::PathStatus::Malformed => "malformed",
+                native::sys::disk::PathStatus::NotFound => "not_found",
+                native::sys::disk::PathStatus::NotADirectory => "not_a_directory",
+            };
+            let usable = native::sys::disk::get_available_bytes(&p) != u64::MAX;
+            CaptureOutputDiagnostic { path: path_str, status, usable }
+        })
+        .collect()
+}
+
 #[tauri::command]
 async fn validate_paths(hlae_path: String, hl_path: String) -> Result<bool, String> {
     let hlae_p = std::path::Path::new(&hlae_path);
@@ -229,70 +282,8 @@ async fn validate_paths(hlae_path: String, hl_path: String) -> Result<bool, Stri
     Ok(true)
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
-pub struct SerializedAnalysis {
-    pub scoreboard: serde_json::Value,
-    pub chat_logs: serde_json::Value,
-    pub mortality_metrics: serde_json::Value,
-    pub round_chronologies: serde_json::Value,
-    pub file_info: serde_json::Value,
-}
-
-#[tauri::command]
-async fn analyze_demo(demo_path: String) -> Result<SerializedAnalysis, String> {
-    tokio::task::spawn_blocking(move || {
-        let path = std::path::PathBuf::from(&demo_path);
-
-        if !path.exists() || !path.is_file() {
-            return Err(format!("Demo file not found: {}", demo_path));
-        }
-
-        match native::run_analyzer_with_progress(&path, |_, _| {}) {
-            Ok((file_info, analysis)) => {
-                let analysis_json = serde_json::to_value(&analysis)
-                    .map_err(|e| format!("Serialization error (analysis): {}", e))?;
-                let file_info_json = serde_json::to_value(&file_info)
-                    .map_err(|e| format!("Serialization error (file_info): {}", e))?;
-
-                let scoreboard = analysis_json
-                    .get("scoreboard")
-                    .cloned()
-                    .unwrap_or(serde_json::Value::Null);
-                let chat_logs = analysis_json
-                    .get("chat_logs")
-                    .or_else(|| analysis_json.get("chat"))
-                    .cloned()
-                    .unwrap_or(serde_json::Value::Null);
-                let mortality_metrics = analysis_json
-                    .get("mortality_metrics")
-                    .or_else(|| analysis_json.get("deaths"))
-                    .cloned()
-                    .unwrap_or(serde_json::Value::Null);
-                let round_chronologies = analysis_json
-                    .get("round_chronologies")
-                    .or_else(|| analysis_json.get("rounds"))
-                    .cloned()
-                    .unwrap_or(serde_json::Value::Null);
-
-                Ok(SerializedAnalysis {
-                    scoreboard,
-                    chat_logs,
-                    mortality_metrics,
-                    round_chronologies,
-                    file_info: file_info_json,
-                })
-            }
-            Err(e) => Err(format!("Analyzer error: {}", e)),
-        }
-    })
-    .await
-    .map_err(|e| format!("Task join error: {}", e))?
-}
-
 // ── Full-fidelity analysis payload for the standalone Demo Analyzer tab ─────────
-// Unlike `SerializedAnalysis` (which flattens a handful of sections into loose
-// JSON for the compact inline telemetry summary), this passes the typed
-// `analysis::DemoInfo`/`AnalyzerState` straight through so the frontend can
+// Passes the typed `analysis::DemoInfo`/`AnalyzerState` straight through so the frontend can
 // reconstruct every report sub-view (Summary/Scoreboard/Player Details/Team
 // Details/Timeline/Rounds/Chat) with full fidelity, matching the data the
 // egui report views on `dev` were built from.
@@ -384,8 +375,9 @@ pub fn run() {
         .manage(AuditManager::default())
         .invoke_handler(tauri::generate_handler![
             test_bridge,
+            log_frontend_event,
+            get_activity_log_path,
             validate_paths,
-            analyze_demo,
             analyze_demo_full,
             start_capture_batch,
             launch_demo_preview,
@@ -401,6 +393,7 @@ pub fn run() {
             scan_demos,
             cancel_scan,
             calculate_export_pool_space,
+            diagnose_capture_output_paths,
             simulate_aot_capacity,
             scan_render_directories,
             execute_render_batch,

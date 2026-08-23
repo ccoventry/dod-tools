@@ -15,6 +15,7 @@
       <!-- Top Navigation Bar -->
       <header id="top-navbar">
         <div class="nav-brand">
+          <img src="/src/icon.png" alt="" class="brand-logo" />
           <span class="brand-title">DoD Tools Studio</span>
         </div>
         <div class="nav-tabs">
@@ -24,6 +25,16 @@
           <button class="nav-tab-btn" data-nav="demo-analyzer">Demo Analyzer</button>
         </div>
         <div class="nav-actions">
+          <div class="studio-mode-toggle">
+            <span class="studio-mode-label" id="studio-mode-label-quickclip" data-mode="quick-clip"
+                  title="Quick-Clip: nothing is saved to disk automatically — for grabbing a one-off clip. A re-scan replaces demos wholesale instead of preserving your edits.">Quick-Clip</span>
+            <label class="studio-mode-switch" title="Toggle between Quick-Clip and Workspace mode">
+              <input type="checkbox" id="studio-mode-switch-input" />
+              <span class="studio-mode-switch-slider"></span>
+            </label>
+            <span class="studio-mode-label" id="studio-mode-label-workspace" data-mode="workspace"
+                  title="Workspace: saves a project file and preserves your progress across restarts and re-scans.">Workspace</span>
+          </div>
           <span id="session-file-indicator" class="session-file-indicator" title="">No session loaded</span>
           <button id="save-project-btn" title="Save Project Session">Save Session</button>
           <button id="load-project-btn" title="Load Project Session">Load Session</button>
@@ -53,27 +64,33 @@
           <div id="master-pane" class="egui-panel">
             <div class="panel-header flex-between">
               <h3>Master Demo Queue</h3>
-              <input type="text" id="demo-search-input" placeholder="Search filename or map..." style="padding: 4px 8px; font-size: 12px; background: #1a1a1a; color: #fff; border: 1px solid #444; border-radius: 3px;" />
+              <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">
+                <input type="text" id="demo-search-input" placeholder="Search filename or map..." style="padding: 4px 8px; font-size: 12px; background: #1a1a1a; color: #fff; border: 1px solid #444; border-radius: 3px;" />
+                <button id="clear-untracked-btn" disabled title="Remove demos with no Captured/Rendered status, notes, or edited kill range. Tracked demos are kept, in either mode. Only affects demos matching the current search.">Clear Untracked</button>
+                <button id="clear-selected-btn" disabled title="Check one or more rows first.">Clear Selected</button>
+                <button id="clear-all-btn" disabled style="color: #ff5555; border-color: #ff5555;" title="Remove every demo matching the current search — the whole queue if search is empty.">Clear All</button>
+              </div>
             </div>
             <div class="table-wrapper">
               <table id="master-demo-table">
                 <thead>
                   <tr>
+                    <th class="col-center"><input type="checkbox" id="master-select-all-cb" title="Select/deselect all visible demos" /></th>
                     <th>Demo File</th>
-                    <th>Highlights</th>
-                    <th>Pending</th>
-                    <th>Captured</th>
-                    <th>Rendered</th>
-                    <th>Actions</th>
+                    <th class="col-center">Highlights</th>
+                    <th class="col-center">Pending</th>
+                    <th class="col-center">Captured</th>
+                    <th class="col-center">Rendered</th>
+                    <th class="col-center">Actions</th>
                   </tr>
                 </thead>
                 <tbody id="master-demo-table-body">
                   <tr>
-                    <td colspan="6" class="table-empty">No demos scanned yet. Add a directory and click 'Scan Demos'.</td>
+                    <td colspan="7" class="table-empty">No demos scanned yet. Add a directory and click 'Scan Demos'.</td>
                   </tr>
                 </tbody>
               </table>
-              <div id="demo-list-footer" style="padding: 4px 8px; font-size: 11px; color: var(--text-muted); border-top: 1px solid var(--border-color);">Loaded Demos: 0 | Total Streaks: 0</div>
+              <div id="demo-list-footer" style="padding: 4px 8px; font-size: 11px; color: var(--text-muted); border-top: 1px solid var(--border-color);">Loaded Demos: 0 | Total Highlights: 0</div>
             </div>
           </div>
         </section>
@@ -95,7 +112,7 @@
           <div id="detail-pane" class="egui-panel">
             <div class="panel-header flex-between">
               <div class="header-title-group" style="display: flex; gap: 8px; align-items: center;">
-                <h3 id="detail-demo-title">Highlight Details (Select a Demo)</h3>
+                <h3 id="detail-demo-title">Highlight Details</h3>
                 <button id="btn-launch-preview" disabled title="Patches this demo and immediately launches it in HLAE via viewdemo.">Launch Preview</button>
               </div>
               <div class="header-controls" style="display: flex; gap: 8px; align-items: center;">
@@ -121,12 +138,6 @@
             <div class="diagnostics-content" style="margin-top: 10px;">
               <div style="padding: 10px; border-bottom: 1px solid #333; background: #1a1a1a;">
                 <canvas id="streak-timeline-canvas" height="60" style="width: 100%; border-radius: 2px; background: #121212; border: 1px solid #333;"></canvas>
-              </div>
-              <div id="telemetry-pane" style="margin-top: 10px;">
-                <h4 style="margin: 5px 0;">Match Telemetry</h4>
-                <div id="telemetry-container" style="max-height: 250px; overflow-y: auto; background-color: #181818; padding: 10px; border-radius: 2px;">
-                  <p class="placeholder-text" style="color: #888;">Select a demo to view telemetry data.</p>
-                </div>
               </div>
             </div>
           </details>
@@ -261,7 +272,7 @@
               <button id="add-custom-command-btn">+ Add Custom Command</button>
             </div>
 
-            <p id="disk-space-warning-banner" style="display: none; color: #f44336; font-weight: 600; margin-top: 10px;"></p>
+            <p id="disk-space-warning-banner" style="display: none; color: #f44336; font-weight: 600; margin-top: 10px; white-space: pre-line;"></p>
             <div class="action-footer flex-between" style="margin-top: 12px; border-top: 1px solid #383838; padding-top: 10px;">
               <div class="action-buttons">
                 <button id="start-capture-btn" class="primary-btn">Start Capture Batch</button>
@@ -334,6 +345,7 @@
                     <th>Stream</th>
                     <th>Frames</th>
                     <th>Date</th>
+                    <th title="Codec/FPS this job is queued to render with — its own setting, not necessarily what the panel above currently shows">Settings</th>
                     <th>Status</th>
                     <th>Speed</th>
                     <th style="width: 140px;">Progress</th>
@@ -341,7 +353,7 @@
                   </tr>
                 </thead>
                 <tbody id="render-jobs-tbody">
-                  <tr><td colspan="8" class="table-empty">No render jobs queued. Scan a folder, then click Start Render Batch.</td></tr>
+                  <tr><td colspan="9" class="table-empty">No render jobs queued. Scan a folder, then click Start Render Batch.</td></tr>
                 </tbody>
               </table>
             </div>
@@ -508,6 +520,7 @@
         <div id="footer-demo-analyzer" class="pinned-footer-content" style="display: none;">
           <div id="footer-analyzer-current-file">No demo loaded</div>
         </div>
+        <button id="view-logs-btn" class="view-logs-btn" title="Open today's activity log in Explorer">View Logs</button>
       </footer>
 
     </div>
@@ -527,6 +540,24 @@
           <button id="process-modal-force-relaunch-btn" class="primary-btn">Force Relaunch</button>
           <button id="process-modal-copy-command-btn">Copy View Command</button>
           <button id="process-modal-cancel-btn">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Shared "clear with tracked work at risk" confirmation — used by both
+         Clear All (Workspace mode; Quick-Clip just uses a native confirm(),
+         since nothing is protected there) and Clear Selected (either mode,
+         whenever the checked demos include tracked work). Enumerates what
+         would be lost and offers to save first, per the connected-workspace
+         plan's Phase 4. -->
+    <div id="clear-all-modal" class="modal" style="display: none;">
+      <div class="modal-content" style="max-width: 480px; padding: 20px;">
+        <h2 id="clear-all-title">Clear All Demos</h2>
+        <p id="clear-all-summary"></p>
+        <div style="display: flex; gap: 8px; margin-top: 16px; justify-content: flex-end; flex-wrap: wrap;">
+          <button id="clear-all-save-first-btn" class="primary-btn">Save Session First</button>
+          <button id="clear-all-confirm-btn" style="color: #ff5555; border-color: #ff5555;">Clear Anyway</button>
+          <button id="clear-all-cancel-btn">Cancel</button>
         </div>
       </div>
     </div>

@@ -16,6 +16,7 @@ pub enum RenderUpdate {
     Progress(String, u32),     // (job_id, percentage)
     Speed(String, String),     // (job_id, speed_text)
     Status(String, String),    // (job_id, status_text)
+    OutputPath(String, String), // (job_id, absolute path to the encoded file)
     Finished(String, bool, Option<String>), // (job_id, success, error_log)
 }
 
@@ -96,17 +97,53 @@ pub async fn run_render_job(
         return;
     }
 
+    // Extension decided in the same match as the codec args, not looked up
+    // separately, so the two can't silently drift apart the way the old
+    // string-keyed get_codec_preset() already had (it matched "h264" for
+    // .mp4, but RenderCodec::NvencH264 has always mapped to the distinct
+    // "h264_nvenc" id — dead code, removed, never actually wired to a
+    // render). Alpha/HUD output always needs a MOV container regardless of
+    // the selected codec (QuickTime-style alpha), matching dev's own
+    // behaviour and the dropdown's "MP4" label applying only to the
+    // non-alpha H.264 variants.
     let mut codec_args: Vec<&'static str> = Vec::new();
-    if is_hud {
+    let file_ext = if is_hud {
         codec_args.extend_from_slice(&["-c:v", "prores_ks", "-profile:v", "4444", "-pix_fmt", "yuva444p10le"]);
+        ".mov"
     } else {
         match config.target_codec {
-            super::config::RenderCodec::NvencH264 => codec_args.extend_from_slice(&["-c:v", "h264_nvenc", "-preset", "p6", "-tune", "hq", "-cq", "15", "-pix_fmt", "yuv420p"]),
-            super::config::RenderCodec::H264Software => codec_args.extend_from_slice(&["-c:v", "libx264", "-preset", "fast", "-crf", "16", "-pix_fmt", "yuv420p"]),
-            super::config::RenderCodec::ProRes => codec_args.extend_from_slice(&["-c:v", "prores_ks", "-profile:v", "3", "-pix_fmt", "yuv422p10le"]),
-            super::config::RenderCodec::DnxHr => codec_args.extend_from_slice(&["-c:v", "dnxhd", "-profile:v", "dnxhr_hq", "-pix_fmt", "yuv422p"]),
+            super::config::RenderCodec::NvencH264 => {
+                codec_args.extend_from_slice(&["-c:v", "h264_nvenc", "-preset", "p6", "-tune", "hq", "-cq", "15", "-pix_fmt", "yuv420p"]);
+                ".mp4"
+            }
+            super::config::RenderCodec::H264Software => {
+                codec_args.extend_from_slice(&["-c:v", "libx264", "-preset", "fast", "-crf", "16", "-pix_fmt", "yuv420p"]);
+                ".mp4"
+            }
+            super::config::RenderCodec::ProRes => {
+                codec_args.extend_from_slice(&["-c:v", "prores_ks", "-profile:v", "3", "-pix_fmt", "yuv422p10le"]);
+                ".mov"
+            }
+            super::config::RenderCodec::DnxHr => {
+                codec_args.extend_from_slice(&["-c:v", "dnxhd", "-profile:v", "dnxhr_hq", "-pix_fmt", "yuv422p"]);
+                ".mov"
+            }
         }
-    }
+    };
+
+    // MP4 has never had solid cross-player support for raw PCM audio — ffmpeg's
+    // MP4 muxer boxes it as `ipcm`, which FFmpeg/VLC read fine but which Vegas
+    // Pro (and likely other strict NLEs) can't decode, producing garbled/static
+    // audio despite the samples themselves being intact (confirmed: the exact
+    // same PCM bytes remuxed into a .mov container instead, where ffmpeg uses
+    // the older/broadly-supported `sowt` tag, play back correctly everywhere).
+    // AAC sidesteps the whole box-tag mess and is the standard choice for MP4
+    // audio; ProRes/DNxHD stay lossless PCM since those already output .mov.
+    let audio_codec_args: &[&str] = if file_ext == ".mp4" {
+        &["-c:a", "aac", "-b:a", "192k"]
+    } else {
+        &["-c:a", "pcm_s16le"]
+    };
 
     let stream_type = if is_hud { "hud" } else { "all" };
     let wav_stem = std::path::Path::new(&clip.wav_file).file_stem().unwrap_or_default().to_string_lossy();
@@ -123,7 +160,7 @@ pub async fn run_render_job(
     let take_name = take_path.file_name().unwrap_or_default().to_string_lossy();
     let demo_name = take_path.parent().and_then(|p| p.file_name()).unwrap_or_default().to_string_lossy();
 
-    let final_name = format!("{}_{}{}_{}_{}.mov", demo_name, take_name, wav_part, stream_type, hash_str);
+    let final_name = format!("{}_{}{}_{}_{}{}", demo_name, take_name, wav_part, stream_type, hash_str, file_ext);
     let out_file = output_folder.join(&final_name);
 
     // Calculate thread scaling
@@ -164,11 +201,12 @@ pub async fn run_render_job(
     let threads_str = threads_per_process.to_string();
     let out_file_str = out_file.to_string_lossy().into_owned();
 
+    cmd_args.extend(vec!["-threads", &threads_str]);
+    cmd_args.extend_from_slice(audio_codec_args);
     cmd_args.extend(vec![
-        "-threads", &threads_str,
+        "-shortest",
         // +faststart is only needed for HTTP streaming; omitting it avoids the
         // post-render moov-atom rewrite pass on what can be multi-GB files.
-        "-c:a", "pcm_s16le", "-shortest",
         "-progress", "pipe:1", "-loglevel", "error",
         &out_file_str,
     ]);
@@ -327,6 +365,7 @@ pub async fn run_render_job(
         Ok(status) if status.success() => {
             let _ = tx.send(RenderUpdate::Status(job_id.clone(), "Finished".to_string()));
             let _ = tx.send(RenderUpdate::Progress(job_id.clone(), 100));
+            let _ = tx.send(RenderUpdate::OutputPath(job_id.clone(), out_file_str.clone()));
             let _ = tx.send(RenderUpdate::Finished(job_id, true, None));
         }
         Ok(status) => {

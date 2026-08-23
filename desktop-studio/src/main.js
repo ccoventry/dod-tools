@@ -1,24 +1,33 @@
-import { open, save } from '@tauri-apps/plugin-dialog';
+import { open, save, confirm } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import {
   scanDirectory,
   calculateExportPoolSpace,
   cancelScan,
   getSettings,
-  saveSettings
+  saveSettings,
+  logFrontendEvent,
+  openActivityLog
 } from './ipc_bridge.js';
 import { renderMasterList, initMasterPane } from './master_pane.js';
 import { renderDetailView, initDetailPane } from './detail_pane.js';
 import { initCaptureUI, getCommandsState, hydrateCommandsState, refreshLaunchGuard } from './capture_pane.js';
 import { initRenderUI, checkRenderRecoveryOnStartup } from './render_pane.js';
-import { renderTelemetry } from './telemetry_pane.js';
 import { initAuditorPane } from './auditor_pane.js';
 import { initAnalyzerPane } from './analyzer_pane.js';
 import { switchNavTab, setCaptureDetailSubtab } from './nav.js';
-import { analyzeDemo } from './ipc_bridge.js';
 import { showToast } from './toast.js';
 import { createListEditor } from './list_editor.js';
+import { preserveHighlightState, streakUid, pruneTakeIndex, isDemoTracked } from './take_index.js';
+import { getCheckedDemoPaths, clearCheckedPaths, setCheckedDemoPaths, getVisibleDemos, recordingPlayerStreaks } from './master_pane.js';
+import { initErrorReporter } from './error_reporter.js';
+
+// Registered at module load, before DOMContentLoaded — so it's catching
+// from the earliest possible moment, not just once the app's own init
+// logic gets around to it.
+initErrorReporter();
 
 window.addEventListener("DOMContentLoaded", async () => {
   let scanPaths = [];
@@ -41,6 +50,57 @@ window.addEventListener("DOMContentLoaded", async () => {
   // once set, "Save Session" writes straight back to it instead of asking
   // Save-As every time (matches Ctrl+S's behavior in every other app).
   let currentSessionPath = null;
+  // take_key -> uid[]. Recorded by capture_pane.js when a batch verifies a
+  // block on disk; resolved by render_pane.js when that take finishes
+  // rendering, so status can auto-advance even after a restart or re-scan
+  // replaced the original streak objects. Persisted in the project file.
+  let takeIndex = {};
+  // Connected-workspace mode (Phase 4): "quick-clip" (nothing persists,
+  // blunt clearing, re-scan replaces demos wholesale) or "workspace"
+  // (project file + take index persist, clearing protects tracked demos,
+  // re-scan merges by uid). Defaults to Quick-Clip on a fresh install —
+  // Load Session or "Save as Workspace..." are what switch it to Workspace.
+  let studioMode = 'quick-clip';
+
+  const STUDIO_MODE_CAPTIONS = {
+    'quick-clip': "Nothing is saved to disk automatically — for grabbing a one-off clip. A re-scan replaces demos wholesale instead of preserving your edits.",
+    'workspace': "Saves a project file and preserves your progress across restarts and re-scans.",
+  };
+
+  function applyStudioModeUI() {
+    const switchInput = document.querySelector('#studio-mode-switch-input');
+    if (switchInput) switchInput.checked = studioMode === 'workspace';
+    document.querySelectorAll('.studio-mode-label').forEach(label => {
+      label.classList.toggle('active', label.dataset.mode === studioMode);
+    });
+    const captionEl = document.querySelector('#studio-mode-caption');
+    if (captionEl) captionEl.textContent = STUDIO_MODE_CAPTIONS[studioMode] || '';
+    const saveBtnEl = document.querySelector('#save-project-btn');
+    if (saveBtnEl) {
+      saveBtnEl.textContent = studioMode === 'quick-clip' ? 'Save as Workspace…' : 'Save Session';
+      saveBtnEl.title = studioMode === 'quick-clip'
+        ? 'Saves a project file and switches this window to Workspace mode.'
+        : 'Save Project Session';
+    }
+  }
+
+  function setStudioMode(mode) {
+    if (mode !== 'quick-clip' && mode !== 'workspace') return;
+    if (studioMode === mode) return;
+    studioMode = mode;
+    applyStudioModeUI();
+    persistAppSettings();
+  }
+
+  /** Every highlight's durable uid across every currently-scanned demo — the
+   *  "still exists" set pruneTakeIndex() checks the take index against on save. */
+  function collectAllUids() {
+    const uids = [];
+    currentScannedDemos.forEach(demo => {
+      (demo.streaks || []).forEach(streak => uids.push(streakUid(demo.path, streak)));
+    });
+    return uids;
+  }
 
   function updateSessionFileIndicator() {
     const el = document.querySelector('#session-file-indicator');
@@ -181,7 +241,8 @@ window.addEventListener("DOMContentLoaded", async () => {
       render_codec: renderCodec,
       render_fps: renderFps,
       render_max_concurrent: renderMaxConcurrent,
-      render_export_dirs: renderExportDirs
+      render_export_dirs: renderExportDirs,
+      studio_mode: studioMode
     };
     try {
       await saveSettings(settingsPayload);
@@ -290,47 +351,85 @@ window.addEventListener("DOMContentLoaded", async () => {
         renderExportDirsEditor.render();
       }
       hydrateCommandsState(settings.init_commands, settings.custom_commands);
+      if (settings.studio_mode === 'workspace' || settings.studio_mode === 'quick-clip') {
+        studioMode = settings.studio_mode;
+      }
     }
   } catch (err) {
     console.error("Error loading startup settings:", err);
   }
+  applyStudioModeUI();
 
-  // Save Project Session
+  const studioModeSwitchInput = document.querySelector('#studio-mode-switch-input');
+  if (studioModeSwitchInput) {
+    studioModeSwitchInput.addEventListener('change', (e) => {
+      setStudioMode(e.target.checked ? 'workspace' : 'quick-clip');
+    });
+  }
+  // Clicking either label also flips the switch — matches how most
+  // dual-label toggle switches behave, not just the slider itself.
+  document.querySelectorAll('.studio-mode-label').forEach(label => {
+    label.addEventListener('click', () => setStudioMode(label.dataset.mode));
+  });
+
+  // Save Project Session — also called from the Clear All modal's "Save
+  // Session First" action, so it lives here as a plain function rather than
+  // only inline in the button's click handler. Returns whether it actually
+  // wrote a file (false on "nothing to save" or a cancelled Save-As dialog).
+  async function saveProjectSession() {
+    if (currentScannedDemos.length === 0) {
+      showToast("Nothing to save yet — add demo files or load a session first.", 'info');
+      return false;
+    }
+    try {
+      // Once a session's been loaded or saved once in this window, keep
+      // writing back to that same file instead of asking Save-As again.
+      const filePath = currentSessionPath || await save({
+        title: 'Save Studio Project Session',
+        defaultPath: 'dod_project.json',
+        filters: [{ name: 'JSON Project File', extensions: ['json'] }]
+      });
+      if (!filePath) return false;
+
+      const hlaePath = document.querySelector('#hlae-path-input')?.value || "";
+      const hlPath = document.querySelector('#hl-path-input')?.value || "";
+      const projectData = JSON.stringify({
+        version: "0.12.0",
+        scanPaths: scanPaths,
+        demos: currentScannedDemos,
+        hlaePath: hlaePath,
+        hlPath: hlPath,
+        // Pruned against what's actually still scanned so the index
+        // doesn't accumulate uids for demos removed from the project.
+        takeIndex: pruneTakeIndex(takeIndex, collectAllUids()),
+        // Informational — Load Session always forces Workspace mode
+        // regardless of this value, since loading a persistent file is
+        // itself the thing that makes a window a Workspace.
+        mode: 'workspace'
+      }, null, 2);
+      await invoke('save_project_session', { path: filePath, contents: projectData });
+      currentSessionPath = filePath;
+      updateSessionFileIndicator();
+      showToast(`Project session saved successfully to ${filePath}`, 'success');
+      // Saving a project file is what makes a window a Workspace — a save
+      // from Quick-Clip mode is exactly the "Save as Workspace..." action.
+      setStudioMode('workspace');
+      return true;
+    } catch (err) {
+      console.error("Save project error:", err);
+      showToast("Error saving project session.", 'error');
+      return false;
+    }
+  }
+
+  const viewLogsBtn = document.querySelector('#view-logs-btn');
+  if (viewLogsBtn) {
+    viewLogsBtn.addEventListener('click', () => openActivityLog());
+  }
+
   const saveProjectBtn = document.querySelector('#save-project-btn');
   if (saveProjectBtn) {
-    saveProjectBtn.addEventListener('click', async () => {
-      if (currentScannedDemos.length === 0) {
-        showToast("Nothing to save yet — add demo files or load a session first.", 'info');
-        return;
-      }
-      try {
-        // Once a session's been loaded or saved once in this window, keep
-        // writing back to that same file instead of asking Save-As again.
-        const filePath = currentSessionPath || await save({
-          title: 'Save Studio Project Session',
-          defaultPath: 'dod_project.json',
-          filters: [{ name: 'JSON Project File', extensions: ['json'] }]
-        });
-        if (filePath) {
-          const hlaePath = document.querySelector('#hlae-path-input')?.value || "";
-          const hlPath = document.querySelector('#hl-path-input')?.value || "";
-          const projectData = JSON.stringify({
-            version: "0.10.0",
-            scanPaths: scanPaths,
-            demos: currentScannedDemos,
-            hlaePath: hlaePath,
-            hlPath: hlPath
-          }, null, 2);
-          await invoke('save_project_session', { path: filePath, contents: projectData });
-          currentSessionPath = filePath;
-          updateSessionFileIndicator();
-          showToast(`Project session saved successfully to ${filePath}`, 'success');
-        }
-      } catch (err) {
-        console.error("Save project error:", err);
-        showToast("Error saving project session.", 'error');
-      }
-    });
+    saveProjectBtn.addEventListener('click', () => saveProjectSession());
   }
 
   // Load Project Session
@@ -348,6 +447,11 @@ window.addEventListener("DOMContentLoaded", async () => {
           if (data) {
             currentSessionPath = selected;
             updateSessionFileIndicator();
+            // Loading a persistent project file is what makes a window a
+            // Workspace, regardless of what `data.mode` says (a hand-edited
+            // or older file might omit it or say otherwise).
+            setStudioMode('workspace');
+            clearCheckedPaths();
             if (data.hlaePath) {
               const hlaeInput = document.querySelector('#hlae-path-input');
               if (hlaeInput) hlaeInput.value = data.hlaePath;
@@ -356,16 +460,24 @@ window.addEventListener("DOMContentLoaded", async () => {
               const hlInput = document.querySelector('#hl-path-input');
               if (hlInput) hlInput.value = data.hlPath;
             }
+            // Tolerant: a 0.10.0 project file has no takeIndex at all — load
+            // as empty rather than reject the file. Auto-Rendered just won't
+            // retroactively apply to takes captured before this existed.
+            takeIndex = data.takeIndex || {};
+            // Deliberately verbose: this is the only place takeIndex is ever
+            // populated from disk, so logging it here — with exactly what
+            // came out of the file, before anything else touches it — is
+            // what makes it possible to prove a later auto-Rendered flip
+            // came from this loaded data and not a leftover in-memory state.
+            console.log(`[take-index] Loaded from ${selected}: ${Object.keys(takeIndex).length} take(s)`, takeIndex);
             if (data.demos) {
               currentScannedDemos = data.demos;
               selectedDemoIdx = currentScannedDemos.length > 0 ? 0 : null;
-              renderMasterList(currentScannedDemos, selectedDemoIdx, (demo, idx) => {
-                selectedDemoIdx = idx;
-                renderDetailView(demo, selectedDemoIdx);
-              });
+              renderMasterList(currentScannedDemos, selectedDemoIdx, selectDemoAndRenderDetail);
               if (currentScannedDemos.length > 0) {
-                renderDetailView(currentScannedDemos[0], selectedDemoIdx);
+                selectDemoAndRenderDetail(currentScannedDemos[0], selectedDemoIdx);
               }
+              updateDemoFooter(currentScannedDemos);
               showToast(`Loaded ${currentScannedDemos.length} demos from project file`, 'success');
             }
           }
@@ -441,12 +553,36 @@ window.addEventListener("DOMContentLoaded", async () => {
     });
   }
 
+  // ── Shared "a demo row was selected" handler ────────────────────────────────
+  // Extracted so every renderMasterList call site behaves identically —
+  // renderMasterList persists whichever callback it was last given
+  // (master_pane.js's currentOnSelectDemo) as the fallback for re-renders
+  // that don't pass one, so an inline callback that drifted from this one
+  // would apply inconsistently depending on which code path rendered last.
+  function selectDemoAndRenderDetail(demo, idx) {
+    selectedDemoIdx = idx;
+    renderDetailView(demo, selectedDemoIdx);
+  }
+
   // ── Demo list footer helper ────────────────────────────────────────────────
   function updateDemoFooter(demos) {
     const footerEl = document.querySelector('#demo-list-footer');
-    if (!footerEl) return;
-    const totalStreaks = (demos || []).reduce((sum, d) => sum + (d.streaks ? d.streaks.length : 0), 0);
-    footerEl.textContent = `Loaded Demos: ${(demos || []).length} | Total Streaks: ${totalStreaks}`;
+    if (footerEl) {
+      // Same recording-player filter the Highlights column uses (M2) — this
+      // used to sum every player's streaks in the demo, not just the
+      // recording player's, and could read in the hundreds where the
+      // visible Highlights column summed to a fraction of that.
+      const totalHighlights = (demos || []).reduce((sum, d) => sum + recordingPlayerStreaks(d).length, 0);
+      footerEl.textContent = `Loaded Demos: ${(demos || []).length} | Total Highlights: ${totalHighlights}`;
+    }
+    // Clear Untracked/Clear All only make sense with something in the
+    // queue — Clear Selected already gates on its own checkbox state
+    // (master_pane.js), this is the same idea for the other two.
+    const isEmpty = !demos || demos.length === 0;
+    const clearUntrackedBtnEl = document.querySelector('#clear-untracked-btn');
+    if (clearUntrackedBtnEl) clearUntrackedBtnEl.disabled = isEmpty;
+    const clearAllBtnEl = document.querySelector('#clear-all-btn');
+    if (clearAllBtnEl) clearAllBtnEl.disabled = isEmpty;
   }
 
   // ── scan_progress event listener (registered once on load) ────────────────
@@ -517,7 +653,15 @@ window.addEventListener("DOMContentLoaded", async () => {
       newlyScanned.forEach((demo) => {
         const existingIdx = indexByPath.get(demo.path);
         if (existingIdx !== undefined) {
-          currentScannedDemos[existingIdx] = demo;
+          // Workspace mode: a re-scan produces brand new streak objects, so
+          // replacing outright would wipe every status, selection, note and
+          // Kill Range edit on this demo — carry that user-owned state
+          // across by highlight uid. Quick-Clip mode intentionally keeps the
+          // old blunt behavior (nothing is meant to survive a re-scan there
+          // anyway) — simpler and matches "nothing persists" for that mode.
+          currentScannedDemos[existingIdx] = studioMode === 'workspace'
+            ? preserveHighlightState(currentScannedDemos[existingIdx], demo)
+            : demo;
         } else {
           indexByPath.set(demo.path, currentScannedDemos.length);
           currentScannedDemos.push(demo);
@@ -531,40 +675,12 @@ window.addEventListener("DOMContentLoaded", async () => {
       selectedDemoIdx = newlyScanned.length > 0
         ? currentScannedDemos.indexOf(newlyScanned[0])
         : (currentScannedDemos.length > 0 ? 0 : null);
-      renderMasterList(currentScannedDemos, selectedDemoIdx, async (demo, idx) => {
-        selectedDemoIdx = idx;
-        renderDetailView(demo, selectedDemoIdx);
-        // Update the View Telemetry button with the selected demo path.
-        const telemBtn = document.querySelector('#view-telemetry-btn');
-        if (telemBtn) {
-          telemBtn.dataset.demoPath = demo.path;
-          telemBtn.disabled = false;
-        }
-        const telemContainer = document.getElementById('telemetry-container');
-        if (telemContainer) telemContainer.innerHTML = '<p style="color: #888; padding: 6px;">Analyzing demo...</p>';
-        try {
-          const telemetryData = await analyzeDemo(demo.path);
-          renderTelemetry(telemetryData);
-        } catch (e) {
-          console.error("Analysis failed for", demo.path, e);
-          renderTelemetry(null);
-        }
-      });
+      // renderMasterList calls this with (null, null) whenever the queue is
+      // empty (e.g. after Clear All) — selectDemoAndRenderDetail resets the
+      // telemetry UI instead of dereferencing a demo that isn't there.
+      renderMasterList(currentScannedDemos, selectedDemoIdx, selectDemoAndRenderDetail);
       if (selectedDemoIdx !== null) {
-        const selectedDemo = currentScannedDemos[selectedDemoIdx];
-        renderDetailView(selectedDemo, selectedDemoIdx);
-        // Prime the telemetry button for the auto-selected demo.
-        const telemBtn = document.querySelector('#view-telemetry-btn');
-        if (telemBtn) {
-          telemBtn.dataset.demoPath = selectedDemo.path;
-          telemBtn.disabled = false;
-        }
-        const telemContainer = document.getElementById('telemetry-container');
-        if (telemContainer) telemContainer.innerHTML = '<p style="color: #888; padding: 6px;">Analyzing demo...</p>';
-        analyzeDemo(selectedDemo.path).then(renderTelemetry).catch((err) => {
-          console.error("Analysis failed for selected demo:", err);
-          renderTelemetry(null);
-        });
+        selectDemoAndRenderDetail(currentScannedDemos[selectedDemoIdx], selectedDemoIdx);
       }
     } catch (err) {
       console.error("Error scanning directories:", err);
@@ -730,21 +846,55 @@ window.addEventListener("DOMContentLoaded", async () => {
   });
 
   // Initialize Capture Batch UI
+  // Shared by both auto-status paths (a verified capture, a finished render):
+  // both tables read status and neither observes the streak objects on its
+  // own, so re-render both — the Master Queue for its Pending/Captured/
+  // Rendered counts, and the detail view for the per-row status dropdowns.
+  const onHighlightStatusChange = () => {
+    renderMasterList(currentScannedDemos, selectedDemoIdx);
+    if (selectedDemoIdx !== null && currentScannedDemos[selectedDemoIdx]) {
+      renderDetailView(currentScannedDemos[selectedDemoIdx], selectedDemoIdx);
+    }
+  };
+
   initCaptureUI(() => ({
     scanPaths,
     targetDrives,
     currentScannedDemos
-  }), persistAppSettings);
+  }), persistAppSettings, onHighlightStatusChange, () => takeIndex);
 
   // Initialize Render Studio UI
-  initRenderUI(() => renderFolders, () => renderExportDirs, persistAppSettings);
+  initRenderUI(() => renderFolders, () => renderExportDirs, persistAppSettings, {
+    getTakeIndex: () => takeIndex,
+    getAllDemos: () => currentScannedDemos,
+    onStatusChange: onHighlightStatusChange
+  });
 
   // Render-batch crash-recovery prompt — checked once on startup, same
   // pattern as dev's StartupState::PendingRenderRecovery.
   checkRenderRecoveryOnStartup(() => switchNavTab('render-studio'));
 
+  // Flush any not-yet-persisted settings edit before the window actually
+  // closes. list_editor.js (Init/Custom Commands, numeric fields) only
+  // writes to disk on 'change' (blur/Enter), not every keystroke — closing
+  // the app while a field still has focus (never blurred) would otherwise
+  // silently drop that edit even though it's already reflected in the
+  // in-memory state persistAppSettings() reads from. Confirmed as a real,
+  // reproducible data-loss case 2026-08-23 (see engineering_backlog.md).
+  const appWindow = getCurrentWindow();
+  appWindow.onCloseRequested(async (event) => {
+    event.preventDefault();
+    await persistAppSettings();
+    await appWindow.destroy();
+  });
+
   // Delete callback: remove a demo from the active scan list and re-render.
-  // Called by master_pane.js when the 🗑 button is clicked on a row.
+  // Called by master_pane.js when the 🗑 button is clicked on a row. Returns
+  // the new selectedDemoIdx so the caller's own renderMasterList call can
+  // pass it through for the row-highlight — master_pane.js doesn't otherwise
+  // know this file's selectedDemoIdx, and previously always re-rendered with
+  // no selection at all (visually dropping the highlight) even when the
+  // deleted row wasn't the selected one and the selection should have held.
   const onDeleteDemo = (deletedOriginalIdx, updatedDemos) => {
     currentScannedDemos = updatedDemos;
     // If the deleted demo was the selected one, clear the detail view.
@@ -759,9 +909,233 @@ window.addEventListener("DOMContentLoaded", async () => {
       // Shift selection index down if a demo above it was removed.
       selectedDemoIdx -= 1;
     }
+    updateDemoFooter(currentScannedDemos);
+    return selectedDemoIdx;
   };
 
-  initMasterPane(onDeleteDemo);
+  // Shared by all three Clear actions below: swaps the scanned-demo list,
+  // resets checkboxes, and re-renders both the queue and the detail view.
+  //
+  // Selection is preserved by object identity, not just reset to row 0:
+  // Clear Untracked/Selected/All can all leave the previously-selected demo
+  // still in the queue (it just wasn't the one removed), and jumping the
+  // selection to whatever's now first is jarring — you were looking at one
+  // demo's highlights and suddenly a different one's are shown. Only falls
+  // back to row 0 (or nothing) when the selected demo was actually the one
+  // that got removed.
+  function replaceScannedDemos(newDemos) {
+    const previouslySelectedDemo = selectedDemoIdx !== null ? currentScannedDemos[selectedDemoIdx] : null;
+    currentScannedDemos = newDemos;
+    const preservedIdx = previouslySelectedDemo ? currentScannedDemos.indexOf(previouslySelectedDemo) : -1;
+    selectedDemoIdx = preservedIdx !== -1 ? preservedIdx : (currentScannedDemos.length > 0 ? 0 : null);
+    clearCheckedPaths();
+    updateDemoFooter(currentScannedDemos);
+    renderMasterList(currentScannedDemos, selectedDemoIdx);
+    renderDetailView(selectedDemoIdx !== null ? currentScannedDemos[selectedDemoIdx] : null, selectedDemoIdx);
+  }
+
+  // One-line callout appended to Clear actions' toasts/summaries whenever an
+  // active search filter narrowed what got acted on, so "Clear All" (etc.)
+  // doesn't silently do less than its name implies without the user noticing.
+  function filterScopeNote(visibleCount, totalCount) {
+    return visibleCount < totalCount
+      ? ` (search filter active — only considered ${visibleCount} of ${totalCount} demo(s) in the queue)`
+      : '';
+  }
+
+  // Clear Untracked — removes only demos with no tracked work (isDemoTracked),
+  // same in both modes. Its own name already means "never touches tracked
+  // demos," so unlike Clear All there's nothing mode-dependent to decide
+  // here — Quick-Clip doesn't need a separate blunt-wipe branch. Scoped to
+  // the currently search-filtered demos, matching the select-all checkbox —
+  // a demo hidden by the search box is left untouched no matter its status.
+  const clearUntrackedBtn = document.querySelector('#clear-untracked-btn');
+  if (clearUntrackedBtn) {
+    clearUntrackedBtn.addEventListener('click', () => {
+      if (currentScannedDemos.length === 0) {
+        showToast('Queue is already empty.', 'info');
+        return;
+      }
+      const visible = getVisibleDemos();
+      if (visible.length === 0) {
+        showToast('No demos match the current search.', 'info');
+        return;
+      }
+      const trackedVisibleCount = visible.filter(isDemoTracked).length;
+      const untrackedVisible = new Set(visible.filter((d) => !isDemoTracked(d)).map((d) => d.path));
+      if (untrackedVisible.size === 0) {
+        showToast('Nothing to clear — every visible demo has tracked work on it.', 'info');
+        return;
+      }
+      const totalCount = currentScannedDemos.length;
+      const removedNames = currentScannedDemos.filter((d) => untrackedVisible.has(d.path)).map((d) => d.name || d.path);
+      replaceScannedDemos(currentScannedDemos.filter((d) => !untrackedVisible.has(d.path)));
+      // "Kept N with tracked work" only ever refers to visible demos that
+      // were actually evaluated and found tracked — never demos hidden by
+      // the search filter, which weren't touched for a completely different
+      // reason and would otherwise get mislabeled as "kept ... tracked".
+      const keptNote = trackedVisibleCount > 0 ? `, kept ${trackedVisibleCount} with tracked work` : '';
+      const scopeNote = filterScopeNote(visible.length, totalCount);
+      showToast(
+        `Removed ${untrackedVisible.size} untracked demo(s)${keptNote}.${scopeNote}`,
+        'success'
+      );
+      logFrontendEvent(`[queue] Clear Untracked: removed ${untrackedVisible.size} demo(s)${keptNote}.${scopeNote} — ${removedNames.join(', ')}`);
+    });
+  }
+
+  // Shared "tracked work at risk" confirmation modal — a pure yes/no
+  // primitive (with an optional Save-First detour), awaited by every caller
+  // that needs to warn before removing tracked demos: Clear Selected, Clear
+  // All, and the row-level delete button (master_pane.js, via
+  // requestTrackedDeleteConfirm below). It does NOT perform the removal
+  // itself — Clear All/Selected replace the whole scanned-demo list, while
+  // the row delete button needs to preserve its own selection-shift logic
+  // instead, so "how to remove" stays with each caller; the modal only
+  // answers "should we." Resolves `false` on Cancel, `'confirm'` on Confirm,
+  // `'save-first'` once a save actually succeeded — the last two are both
+  // truthy but let callers word their success toast accordingly.
+  let pendingConfirmResolve = null;
+  const clearAllModal = document.querySelector('#clear-all-modal');
+
+  function requestTrackedClearConfirmation(targets, { title, verb, filterNote, confirmLabel }) {
+    const trackedCount = targets.filter(isDemoTracked).length;
+    const plural = targets.length === 1 ? 'demo' : 'demos';
+    const titleEl = document.querySelector('#clear-all-title');
+    if (titleEl) titleEl.textContent = title;
+    const confirmBtnEl = document.querySelector('#clear-all-confirm-btn');
+    if (confirmBtnEl) confirmBtnEl.textContent = confirmLabel || 'Clear Anyway';
+    const summaryEl = document.querySelector('#clear-all-summary');
+    if (summaryEl) {
+      summaryEl.textContent = (trackedCount > 0
+        ? `This ${verb} ${targets.length} ${plural} — ${trackedCount} of them have tracked work (Captured/Rendered status, a note, or an edited kill range) that will be lost. This cannot be undone.`
+        : `This ${verb} ${targets.length} ${plural}. None currently have tracked work on them. This cannot be undone.`
+      ) + (filterNote || '');
+    }
+    if (clearAllModal) clearAllModal.style.display = 'flex';
+    return new Promise(resolve => { pendingConfirmResolve = resolve; });
+  }
+
+  if (clearAllModal) {
+    document.querySelector('#clear-all-cancel-btn')?.addEventListener('click', () => {
+      clearAllModal.style.display = 'none';
+      pendingConfirmResolve?.(false);
+      pendingConfirmResolve = null;
+    });
+    document.querySelector('#clear-all-confirm-btn')?.addEventListener('click', () => {
+      clearAllModal.style.display = 'none';
+      pendingConfirmResolve?.('confirm');
+      pendingConfirmResolve = null;
+    });
+    document.querySelector('#clear-all-save-first-btn')?.addEventListener('click', async () => {
+      // Saves the whole current queue (not just whatever's about to be
+      // removed) — the point is that everything at risk is still
+      // recoverable from the saved file afterward, whether this is a
+      // single tracked delete, Clear Selected, or Clear All.
+      const saved = await saveProjectSession();
+      if (!saved) return; // leave the modal open — nothing was lost yet
+      clearAllModal.style.display = 'none';
+      pendingConfirmResolve?.('save-first');
+      pendingConfirmResolve = null;
+    });
+  }
+
+  // Clear Selected — removes checked rows regardless of status, same in
+  // both modes (the user explicitly checked them). Whenever any checked
+  // demo is tracked, escalate from a plain confirm() to the shared modal.
+  // Scoped to visible rows too: a row checked, then hidden by a later
+  // search, is left in the queue AND stays checked — the action never saw
+  // it, so it shouldn't lose that selection just because clearCheckedPaths()
+  // (inside replaceScannedDemos) resets everything by default.
+  const clearSelectedBtn = document.querySelector('#clear-selected-btn');
+  if (clearSelectedBtn) {
+    clearSelectedBtn.addEventListener('click', async () => {
+      const checkedPaths = new Set(getCheckedDemoPaths());
+      if (checkedPaths.size === 0) {
+        showToast('No demos selected — check rows in the queue first.', 'info');
+        return;
+      }
+      const visiblePaths = new Set(getVisibleDemos().map((d) => d.path));
+      const targets = currentScannedDemos.filter(d => checkedPaths.has(d.path) && visiblePaths.has(d.path));
+      if (targets.length === 0) {
+        showToast(`All ${checkedPaths.size} selected demo(s) are hidden by the current search — nothing visible to remove.`, 'info');
+        return;
+      }
+      const hiddenCheckedCount = checkedPaths.size - targets.length;
+      const hiddenNote = hiddenCheckedCount > 0
+        ? ` (${hiddenCheckedCount} other selected demo(s) hidden by the search filter were left untouched)`
+        : '';
+      let savedFirst = false;
+      if (targets.some(isDemoTracked)) {
+        const outcome = await requestTrackedClearConfirmation(targets, { title: 'Clear Selected Demos', verb: 'removes', filterNote: hiddenNote, confirmLabel: 'Clear Selected Anyway' });
+        if (!outcome) return;
+        savedFirst = outcome === 'save-first';
+      } else if (!(await confirm(`Remove ${targets.length} selected demo(s) from the queue?${hiddenNote}`))) {
+        return;
+      }
+      const removePaths = new Set(targets.map((d) => d.path));
+      const removedNames = targets.map((d) => d.name || d.path);
+      // Preserve checkboxes on rows the action never touched (checked, but
+      // hidden by the search filter) — captured before replaceScannedDemos
+      // wipes the whole checked set via clearCheckedPaths().
+      const survivingHiddenChecked = Array.from(checkedPaths).filter((p) => !removePaths.has(p));
+      replaceScannedDemos(currentScannedDemos.filter(d => !removePaths.has(d.path)));
+      if (survivingHiddenChecked.length > 0) setCheckedDemoPaths(survivingHiddenChecked);
+      showToast(`${savedFirst ? 'Saved, then removed' : 'Removed'} ${targets.length} demo(s) from the queue.${hiddenNote}`, 'success');
+      logFrontendEvent(`[queue] Clear Selected: removed ${targets.length} demo(s)${savedFirst ? ' (saved session first)' : ''}.${hiddenNote} — ${removedNames.join(', ')}`);
+    });
+  }
+
+  // Clear All — escalates to the shared modal (enumerating what would be
+  // lost, offering to save first) whenever something tracked is actually at
+  // risk, same threshold as Clear Selected/row delete — in *either* mode.
+  // Quick-Clip only ever meant "nothing persists to disk automatically," not
+  // "no warning before losing work you set five seconds ago," so this no
+  // longer branches on studioMode at all. Also scoped to the search filter,
+  // same as the other two Clear actions — "All" means "all visible," with
+  // an explicit callout whenever that's fewer than the full queue, so it
+  // never silently does less than its name implies.
+  const clearAllBtn = document.querySelector('#clear-all-btn');
+  if (clearAllBtn) {
+    clearAllBtn.addEventListener('click', async () => {
+      if (currentScannedDemos.length === 0) {
+        showToast('Queue is already empty.', 'info');
+        return;
+      }
+      const targets = getVisibleDemos();
+      if (targets.length === 0) {
+        showToast('No demos match the current search.', 'info');
+        return;
+      }
+      const note = filterScopeNote(targets.length, currentScannedDemos.length);
+      let savedFirst = false;
+      if (targets.some(isDemoTracked)) {
+        const outcome = await requestTrackedClearConfirmation(targets, { title: 'Clear All Demos', verb: 'removes', filterNote: note, confirmLabel: 'Clear All Anyway' });
+        if (!outcome) return;
+        savedFirst = outcome === 'save-first';
+      } else if (!(await confirm(`Remove ${targets.length} demo(s) from the queue? None have tracked work on them.${note}`))) {
+        return;
+      }
+      const removePaths = new Set(targets.map((d) => d.path));
+      const removedNames = targets.map((d) => d.name || d.path);
+      replaceScannedDemos(currentScannedDemos.filter((d) => !removePaths.has(d.path)));
+      showToast(`${savedFirst ? 'Saved, then cleared' : 'Cleared'} ${targets.length} demo(s) from the queue.${note}`, 'success');
+      logFrontendEvent(`[queue] Clear All: removed ${targets.length} demo(s)${savedFirst ? ' (saved session first)' : ''}.${note} — ${removedNames.join(', ')}`);
+    });
+  }
+
+  // Single-row tracked delete (master_pane.js's 🗑 button) reuses the same
+  // modal via this thin wrapper, so a tracked demo gets the exact same
+  // Save-First affordance as Clear Selected/All instead of a lesser plain
+  // confirm() just because it's one row. Returns whether the caller should
+  // proceed — master_pane.js still owns the actual splice + selection-shift
+  // logic, since that's specific to a single-row delete.
+  async function requestTrackedDeleteConfirm(demo) {
+    const outcome = await requestTrackedClearConfirmation([demo], { title: 'Remove Tracked Demo', verb: 'removes', confirmLabel: 'Remove Anyway' });
+    return !!outcome;
+  }
+
+  initMasterPane(onDeleteDemo, requestTrackedDeleteConfirm);
   initDetailPane(() => currentScannedDemos, () => {
     // Fired on both streak selection and status edits — selection moves
     // required capture bytes (refreshLaunchGuard) and both move the Master
