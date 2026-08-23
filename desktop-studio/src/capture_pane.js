@@ -322,7 +322,7 @@ export function hydrateCommandsState(persistedInitCommands, persistedCustomComma
 let currentPreviewScanResults = [];
 
 function formatPreviewSize(bytes) {
-  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+  return STRINGS.CAPTURE.megabytesLabel((bytes / (1024 * 1024)).toFixed(2));
 }
 
 function updateClearPreviewsDeleteButtonState() {
