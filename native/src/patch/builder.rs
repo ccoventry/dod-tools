@@ -5,7 +5,7 @@
 use std::sync::{Arc, atomic::AtomicBool};
 use crate::patch::types::{
     CaptureStreak, PatchJob, PatcherConfig, CommandRelation,
-    CaptureWorker, PatchEvent, DriveAllocationStrategy,
+    CaptureWorker, PatchEvent,
 };
 use crate::patch::engine::StreamPatcher;
 
@@ -138,6 +138,65 @@ fn build_safe_echos(tick: i32, message: &str) -> Vec<(i32, String)> {
 }
 
 
+// ── Drive allocation ──────────────────────────────────────────────────────────
+
+/// First-Fit-Decreasing: assigns each block (identified by its index into
+/// `block_estimates`) to the earliest drive — starting from `*active_drive_idx`
+/// and wrapping around — with at least `estimate + threshold` bytes free,
+/// largest blocks first. Placing the biggest clips while every drive still has
+/// maximum headroom means a later, smaller clip can backfill whatever's left,
+/// instead of naive arrival-order first-fit where an earlier small clip can
+/// strand a later large one on a drive that would otherwise have fit it.
+///
+/// Mutates `drive_free` in place (bytes consumed per drive) and advances
+/// `*active_drive_idx` to the last drive used, biasing the next call (e.g. the
+/// next demo's blocks) to keep filling it. Returns `(block_index, drive_index)`
+/// pairs in allocation order, or `Err(block_index)` for the first block that
+/// couldn't fit anywhere.
+fn allocate_blocks_first_fit_decreasing(
+    block_estimates: &[u64],
+    drive_free: &mut [u64],
+    active_drive_idx: &mut usize,
+    threshold: u64,
+) -> Result<Vec<(usize, usize)>, usize> {
+    let num_drives = drive_free.len();
+
+    let mut allocation_order: Vec<usize> = (0..block_estimates.len()).collect();
+    allocation_order.sort_by_key(|&i| std::cmp::Reverse(block_estimates[i]));
+
+    let mut result = Vec::with_capacity(block_estimates.len());
+
+    for block_index in allocation_order {
+        let clip_byte_estimate = block_estimates[block_index];
+
+        let mut allocated = false;
+        let mut drives_checked = 0;
+        let mut current_drive_idx = *active_drive_idx;
+        loop {
+            if drives_checked >= num_drives {
+                break;
+            }
+
+            if drive_free[current_drive_idx] >= clip_byte_estimate + threshold {
+                drive_free[current_drive_idx] -= clip_byte_estimate;
+                result.push((block_index, current_drive_idx));
+                *active_drive_idx = current_drive_idx;
+                allocated = true;
+                break;
+            } else {
+                current_drive_idx = (current_drive_idx + 1) % num_drives;
+                drives_checked += 1;
+            }
+        }
+
+        if !allocated {
+            return Err(block_index);
+        }
+    }
+
+    Ok(result)
+}
+
 // ── Batch queue builder ───────────────────────────────────────────────────────
 
 pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig, global_arrays: &std::collections::HashMap<std::path::PathBuf, std::sync::Arc<Vec<f32>>>) -> Result<Vec<PatchJob>, std::io::Error> {
@@ -266,7 +325,6 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
 
     // 2. Chained Jobs
     let mut utilized_drives = std::collections::HashSet::new();
-    let mut chronological_drive_idx = 0;
     for (job_idx, ((source_demo, target_player), mut streak_refs)) in sorted_groups.into_iter().enumerate() {
         // Sort by start_tick in ascending order
         streak_refs.sort_by_key(|s| s.start_tick);
@@ -319,83 +377,40 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
         }
 
         let mut block_routes = Vec::new();
-        let num_drives = drive_free.len();
 
-        for (block_index, streak) in merged_streaks.iter().enumerate() {
+        // Byte estimate per block, index-aligned with merged_streaks.
+        let block_estimates: Vec<u64> = merged_streaks.iter().map(|streak| {
             let anchor_duration = ((streak.end_tick - streak.start_tick) as f32) / demo_fps.max(1.0);
             let clip_duration_secs = config.calculate_total_capture_duration(anchor_duration);
-            let clip_byte_estimate = crate::sys::disk::calculate_raw_sequence_bytes(
+            crate::sys::disk::calculate_raw_sequence_bytes(
                 config.resolution_width,
                 config.resolution_height,
                 config.capture_fps,
                 clip_duration_secs,
-            );
+            )
+        }).collect();
 
-            let mut allocated = false;
-            
-            match config.allocation_strategy {
-                DriveAllocationStrategy::MaximizeSpace => {
-                    let mut drives_checked = 0;
-                    let mut current_drive_idx = active_drive_idx;
-                    loop {
-                        if drives_checked >= num_drives {
-                            break;
-                        }
+        let assignments = allocate_blocks_first_fit_decreasing(
+            &block_estimates,
+            &mut drive_free,
+            &mut active_drive_idx,
+            FAILOVER_THRESHOLD,
+        ).map_err(|_| std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "Insufficient space across all mapped drives to allocate a block"
+        ))?;
 
-                        if drive_free[current_drive_idx] >= clip_byte_estimate + FAILOVER_THRESHOLD {
-                            drive_free[current_drive_idx] -= clip_byte_estimate;
-                            
-                            block_routes.push((streak.start_tick, streak.end_tick, current_drive_idx));
-                            utilized_drives.insert(current_drive_idx);
-                            allocated = true;
-                            active_drive_idx = current_drive_idx; // Bias next allocation to this drive
-                            
-                            // Route alias for this specific block.
-                            helper_cfg_content.push_str(&format!(
-                                "alias {}_route_{} \"mirv_movie_filename _route_{}/{}_b{}\"\n",
-                                demo_name, block_index, current_drive_idx, demo_name, block_index
-                            ));
-                            
-                            break;
-                        } else {
-                            current_drive_idx = (current_drive_idx + 1) % num_drives;
-                            drives_checked += 1;
-                        }
-                    }
-                }
-                DriveAllocationStrategy::Chronological => {
-                    loop {
-                        if chronological_drive_idx >= num_drives {
-                            break;
-                        }
-
-                        if drive_free[chronological_drive_idx] >= clip_byte_estimate + FAILOVER_THRESHOLD {
-                            drive_free[chronological_drive_idx] -= clip_byte_estimate;
-                            
-                            block_routes.push((streak.start_tick, streak.end_tick, chronological_drive_idx));
-                            utilized_drives.insert(chronological_drive_idx);
-                            allocated = true;
-                            
-                            // Route alias for this specific block.
-                            helper_cfg_content.push_str(&format!(
-                                "alias {}_route_{} \"mirv_movie_filename _route_{}/{}_b{}\"\n",
-                                demo_name, block_index, chronological_drive_idx, demo_name, block_index
-                            ));
-                            
-                            break;
-                        } else {
-                            chronological_drive_idx += 1;
-                        }
-                    }
-                }
-            }
-
-            if !allocated {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "Insufficient space across all mapped drives to allocate a block"
-                ));
-            }
+        // Route aliases key off each block's original index in merged_streaks,
+        // not allocation order, so the scheduled-command lookup below (which
+        // still walks merged_streaks in its original order) is unaffected.
+        for (block_index, drive_idx) in assignments {
+            let streak = &merged_streaks[block_index];
+            block_routes.push((streak.start_tick, streak.end_tick, drive_idx));
+            utilized_drives.insert(drive_idx);
+            helper_cfg_content.push_str(&format!(
+                "alias {}_route_{} \"mirv_movie_filename _route_{}/{}_b{}\"\n",
+                demo_name, block_index, drive_idx, demo_name, block_index
+            ));
         }
 
         // Resolve physical output path for the demo file itself (always use primary/first drive).
@@ -1048,6 +1063,51 @@ mod tests {
         assert_eq!(job.streaks[0].end_tick, 1500); // Merged 1000-1200 and 1300-1500
         assert_eq!(job.streaks[1].start_tick, 2000);
         assert_eq!(job.streaks[1].end_tick, 2200);
+    }
+
+    #[test]
+    fn test_ffd_allocation_succeeds_where_arrival_order_would_strand_a_block() {
+        // Two drives: only drive 0 (capacity 7) is big enough for the size-7
+        // block; drive 1 tops out at 6. In arrival order (7 is block 1, not
+        // first), naive first-fit would let the size-3 block (block 0) land on
+        // drive 0 first, leaving only 4 free there — too little for the size-7
+        // block, which drive 1 could never fit either. FFD places the size-7
+        // block first (while drive 0 is still empty), so both other blocks can
+        // still find room afterward.
+        let block_estimates = vec![3u64, 7u64, 2u64];
+        let mut drive_free = vec![7u64, 6u64];
+        let mut active_drive_idx = 0usize;
+
+        let assignments = allocate_blocks_first_fit_decreasing(
+            &block_estimates,
+            &mut drive_free,
+            &mut active_drive_idx,
+            0,
+        ).expect("FFD should find a placement that naive arrival-order first-fit would miss");
+
+        assert_eq!(assignments.len(), 3);
+        let drive_of = |block: usize| assignments.iter().find(|(b, _)| *b == block).unwrap().1;
+
+        // The size-7 block must land on drive 0 — it's the only drive with room for it.
+        assert_eq!(drive_of(1), 0);
+        assert_eq!(drive_free[0], 0); // 7 - 7 exactly consumed
+        assert_eq!(drive_free[1], 6 - 3 - 2); // blocks 0 and 2 backfilled drive 1
+    }
+
+    #[test]
+    fn test_ffd_allocation_fails_when_no_drive_has_room() {
+        let block_estimates = vec![10u64];
+        let mut drive_free = vec![5u64, 5u64];
+        let mut active_drive_idx = 0usize;
+
+        let result = allocate_blocks_first_fit_decreasing(
+            &block_estimates,
+            &mut drive_free,
+            &mut active_drive_idx,
+            0,
+        );
+
+        assert_eq!(result, Err(0));
     }
 }
 

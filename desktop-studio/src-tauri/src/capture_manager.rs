@@ -14,7 +14,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use native::patch::{PatcherConfig, CaptureStreak, PatchJob, StreamPatcher, build_batch_queue, build_preview_patch_jobs, DriveAllocationStrategy, CustomCommand, CommandRelation};
+use native::patch::{PatcherConfig, CaptureStreak, PatchJob, StreamPatcher, build_batch_queue, build_preview_patch_jobs, CustomCommand, CommandRelation};
 use native::capture_engine::{spawn_capture_engine, CaptureJob, EngineEvent};
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager};
@@ -52,8 +52,6 @@ pub struct CapturePayload {
     pub capture_fps: i32,
     /// Output drives for AOT capacity simulation and media routing.
     pub drives: Vec<String>,
-    /// Matches native `DriveAllocationStrategy`: "MaximizeSpace" | "Chronological".
-    pub allocation_strategy: String,
     #[serde(default)]
     pub record_start_lead: f32,
     #[serde(default)]
@@ -219,10 +217,6 @@ fn config_from_payload(payload: &CapturePayload) -> PatcherConfig {
     // Capture Output is the sole (required) source of output directories —
     // the frontend already blocks the batch if `drives` is empty.
     cfg.primary_media_dir = payload.drives.first().map(std::path::PathBuf::from);
-    cfg.allocation_strategy = match payload.allocation_strategy.as_str() {
-        "Chronological" => DriveAllocationStrategy::Chronological,
-        _ => DriveAllocationStrategy::MaximizeSpace,
-    };
     cfg
 }
 
@@ -1077,4 +1071,89 @@ pub async fn delete_orphaned_previews(file_paths: Vec<String>) -> Result<u32, St
     })
     .await
     .map_err(|e| format!("Task join error: {}", e))?
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_payload() -> CapturePayload {
+        CapturePayload {
+            hlae_path: "C:/hlae/hlae.exe".to_string(),
+            game_path: "C:/dod/hl.exe".to_string(),
+            ffmpeg_override_path: None,
+            resolution_width: 1920,
+            resolution_height: 1080,
+            separate_hud: true,
+            save_local_patched_copy: false,
+            add_condebug: true,
+            streaks: Vec::new(),
+            pre_roll_seconds: 2.0,
+            post_roll_seconds: 0.6,
+            capture_directories: vec!["D:/capture".to_string()],
+            capture_fps: 300,
+            drives: vec!["D:/capture".to_string(), "E:/capture".to_string()],
+            record_start_lead: 0.0,
+            record_stop_trail: 0.0,
+            initial_delay: 3.0,
+            fast_forward_speed: 0.05,
+            auto_clear_logs: false,
+            auto_clear_previews: false,
+            auto_clear_temp_demos: false,
+            session_id: "session_test".to_string(),
+            init_commands: vec!["exec autoexec".to_string()],
+            custom_commands: vec![
+                CustomCommandPayload { command: "say after".to_string(), relation: "After".to_string(), offset_seconds: 1.0 },
+                CustomCommandPayload { command: "say unrecognized".to_string(), relation: "Sideways".to_string(), offset_seconds: 1.0 },
+            ],
+        }
+    }
+
+    #[test]
+    fn test_config_from_payload_maps_scalar_fields() {
+        let payload = sample_payload();
+        let cfg = config_from_payload(&payload);
+
+        assert_eq!(cfg.hlae_path, payload.hlae_path);
+        assert_eq!(cfg.game_path, payload.game_path);
+        assert_eq!(cfg.resolution_width, 1920);
+        assert_eq!(cfg.resolution_height, 1080);
+        assert_eq!(cfg.separate_hud, true);
+        assert_eq!(cfg.capture_fps, 300);
+        assert_eq!(cfg.session_id, "session_test");
+        assert_eq!(cfg.init_commands, vec!["exec autoexec".to_string()]);
+        assert_eq!(cfg.capture_directories, vec![PathBuf::from("D:/capture")]);
+    }
+
+    #[test]
+    fn test_config_from_payload_primary_media_dir_is_first_drive() {
+        let payload = sample_payload();
+        let cfg = config_from_payload(&payload);
+        // Capture Output's first entry is the sole source of primary_media_dir —
+        // there's no separate "Primary Media Dir" field anymore (removed 2026-08-17).
+        assert_eq!(cfg.primary_media_dir, Some(PathBuf::from("D:/capture")));
+    }
+
+    #[test]
+    fn test_config_from_payload_no_drives_leaves_primary_media_dir_none() {
+        let mut payload = sample_payload();
+        payload.drives = Vec::new();
+        let cfg = config_from_payload(&payload);
+        assert_eq!(cfg.primary_media_dir, None);
+    }
+
+    #[test]
+    fn test_config_from_payload_custom_command_relation_falls_back_to_before() {
+        let payload = sample_payload();
+        let cfg = config_from_payload(&payload);
+
+        assert_eq!(cfg.custom_commands.len(), 2);
+        assert_eq!(cfg.custom_commands[0].command, "say after");
+        assert_eq!(cfg.custom_commands[0].relation, CommandRelation::After);
+        // An unrecognised relation string must fail safe to Before rather than
+        // rejecting the whole batch payload (see CustomCommandPayload's doc comment).
+        assert_eq!(cfg.custom_commands[1].relation, CommandRelation::Before);
+    }
 }

@@ -60,9 +60,6 @@ pub struct AppSettings {
     pub custom_commands: Vec<CustomCommandPayload>,
     #[serde(default)]
     pub save_local_patched_copy: bool,
-    /// Matches native `DriveAllocationStrategy`: "MaximizeSpace" | "Chronological".
-    #[serde(default = "default_allocation_strategy")]
-    pub allocation_strategy: String,
     #[serde(default)]
     pub render_folders: Vec<String>,
     #[serde(default = "default_render_codec")]
@@ -81,7 +78,6 @@ fn default_resolution_height() -> i32 { 720 }
 fn default_add_condebug() -> bool { true }
 fn default_initial_delay() -> f32 { 3.0 }
 fn default_fast_forward_speed() -> f32 { 0.05 }
-fn default_allocation_strategy() -> String { "MaximizeSpace".to_string() }
 fn default_render_codec() -> String { "prores".to_string() }
 fn default_render_fps() -> i32 { 300 }
 fn default_render_max_concurrent() -> i32 { 2 }
@@ -116,7 +112,6 @@ impl Default for AppSettings {
             init_commands: Vec::new(),
             custom_commands: Vec::new(),
             save_local_patched_copy: false,
-            allocation_strategy: default_allocation_strategy(),
             render_folders: Vec::new(),
             render_codec: default_render_codec(),
             render_fps: default_render_fps(),
@@ -170,5 +165,53 @@ impl SettingsManager {
         Self {
             inner: Arc::new(Mutex::new(AppSettings::load_or_default())),
         }
+    }
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A settings.json saved by a pre-2026-08-18 build still has an
+    /// `allocation_strategy` key on disk (the field was removed from
+    /// `AppSettings` when the Chronological drive-allocation strategy was
+    /// deleted). Since `AppSettings` doesn't set `#[serde(deny_unknown_fields)]`,
+    /// serde must silently ignore the stale key rather than fail deserialization
+    /// — otherwise every existing user's settings would revert to defaults on
+    /// their next launch after upgrading.
+    #[test]
+    fn test_deserialize_ignores_legacy_allocation_strategy_field() {
+        let legacy_json = r#"{
+            "hlae_path": "C:/hlae/hlae.exe",
+            "hl_path": "C:/dod/hl.exe",
+            "ffmpeg_path": null,
+            "pinned_folders": [],
+            "language": "en",
+            "capture_fps": 300,
+            "pre_roll_seconds": 2.0,
+            "post_roll_seconds": 0.6,
+            "allocation_strategy": "Chronological"
+        }"#;
+
+        let settings: AppSettings = serde_json::from_str(legacy_json)
+            .expect("legacy allocation_strategy field must not break deserialization");
+
+        assert_eq!(settings.hlae_path, "C:/hlae/hlae.exe");
+        assert_eq!(settings.capture_fps, 300);
+    }
+
+    #[test]
+    fn test_default_settings_serialize_and_deserialize_roundtrip() {
+        let original = AppSettings::default();
+        let json = serde_json::to_string(&original).expect("default settings must serialize");
+        let restored: AppSettings =
+            serde_json::from_str(&json).expect("serialized default settings must deserialize");
+
+        assert_eq!(restored.language, original.language);
+        assert_eq!(restored.capture_fps, original.capture_fps);
+        assert_eq!(restored.fast_forward_speed, original.fast_forward_speed);
+        assert_eq!(restored.render_codec, original.render_codec);
     }
 }

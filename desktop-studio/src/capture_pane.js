@@ -99,24 +99,6 @@ function computeRequiredCaptureBytes(currentScannedDemos, opts) {
   return requiredBytes;
 }
 
-const ALLOCATION_STRATEGY_LABELS = {
-  MaximizeSpace: 'Maximize Space',
-  Chronological: 'Chronological',
-};
-
-/** Mirrors the Drive Overrides tab's Allocation Strategy <select> into the
- *  pinned footer, in plain English rather than the raw enum value. Doesn't
- *  affect the "Capture Output Free" total shown alongside it — that's a
- *  straight sum across every configured directory regardless of strategy;
- *  the strategy only governs which specific drive each job's output lands
- *  on once a capture is actually running. */
-function updateAllocationStrategyFooter() {
-  const el = document.querySelector('#footer-allocation-strategy');
-  if (!el) return;
-  const raw = document.querySelector('#allocation-strategy')?.value || 'MaximizeSpace';
-  el.textContent = `Allocation: ${ALLOCATION_STRATEGY_LABELS[raw] || raw}`;
-}
-
 /**
  * Recomputes required-vs-available disk space and hard-locks the Launch
  * button (rather than just toasting at click time) whenever the capture
@@ -495,14 +477,6 @@ export function initCaptureUI(getState, onSettingsChange) {
   // Only read at capture time (buildCapturePayload), same as the checkboxes
   // above, but previously not part of AppSettings at all — reset to default
   // every restart.
-  const allocationStrategyEl = document.querySelector('#allocation-strategy');
-  if (allocationStrategyEl) {
-    allocationStrategyEl.addEventListener('change', () => {
-      notifySettingsChange();
-      updateAllocationStrategyFooter();
-    });
-  }
-  updateAllocationStrategyFooter();
   refreshLaunchGuard();
 
   if (!unlistenCaptureStatus) {
@@ -581,7 +555,6 @@ export function initCaptureUI(getState, onSettingsChange) {
     const recordStopTrailVal = parseFloat(document.querySelector("#config-record-stop-trail")?.value) || 0.0;
     const initialDelayVal = parseFloat(document.querySelector("#config-initial-delay")?.value) || 3.0;
     const fastForwardSpeedVal = parseFloat(document.querySelector("#config-fast-forward-speed")?.value) || 0.05;
-    const allocationStrategyVal = document.getElementById('allocation-strategy')?.value || "MaximizeSpace";
 
     const hlaePathVal = document.querySelector("#hlae-path-input")?.value?.trim() || "";
     const hlPathVal = document.querySelector("#hl-path-input")?.value?.trim() || "";
@@ -643,7 +616,6 @@ export function initCaptureUI(getState, onSettingsChange) {
       capture_directories: outputDrivePool,
       capture_fps: captureFpsVal,
       drives: state.targetDrives || [],
-      allocation_strategy: allocationStrategyVal,
       record_start_lead: recordStartLeadVal,
       record_stop_trail: recordStopTrailVal,
       initial_delay: initialDelayVal,
