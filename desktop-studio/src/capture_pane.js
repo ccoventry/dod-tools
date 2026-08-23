@@ -371,7 +371,7 @@ function renderClearPreviewsResults() {
     const tdModified = document.createElement('td');
     tdModified.textContent = entry.modified_unix_secs
       ? new Date(entry.modified_unix_secs * 1000).toLocaleString()
-      : '—';
+      : STRINGS.CAPTURE.EMPTY_DASH;
 
     tr.appendChild(tdCb);
     tr.appendChild(tdFile);
@@ -524,7 +524,7 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
     getItems: () => customCommands,
     fields: [
       { key: 'command', type: 'text', placeholder: STRINGS.CAPTURE_CONFIG.CUSTOM_COMMAND_PLACEHOLDER },
-      { key: 'relation', type: 'select', options: ['Before', 'After'] },
+      { key: 'relation', type: 'select', options: STRINGS.CAPTURE_CONFIG.CUSTOM_COMMAND_RELATION_OPTIONS },
       { key: 'offsetSeconds', type: 'number', step: 0.1, min: 0, width: '70px' },
     ],
     onChange: notifySettingsChange,
