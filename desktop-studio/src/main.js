@@ -7,7 +7,8 @@ import {
   cancelScan,
   getSettings,
   saveSettings,
-  logFrontendEvent
+  logFrontendEvent,
+  openActivityLog
 } from './ipc_bridge.js';
 import { renderMasterList, initMasterPane } from './master_pane.js';
 import { renderDetailView, initDetailPane } from './detail_pane.js';
@@ -418,6 +419,11 @@ window.addEventListener("DOMContentLoaded", async () => {
       showToast("Error saving project session.", 'error');
       return false;
     }
+  }
+
+  const viewLogsBtn = document.querySelector('#view-logs-btn');
+  if (viewLogsBtn) {
+    viewLogsBtn.addEventListener('click', () => openActivityLog());
   }
 
   const saveProjectBtn = document.querySelector('#save-project-btn');

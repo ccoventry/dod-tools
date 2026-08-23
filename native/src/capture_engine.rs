@@ -149,16 +149,10 @@ pub fn spawn_capture_engine(
                 ($tx:expr, $msg:expr) => {
                     {
                         log::error!("{}", $msg);
-                        use std::io::Write;
-                        let _ = (|| -> Result<(), Box<dyn std::error::Error>> {
-                            let log_dir = crate::shared::paths::get_appdata_dir().join("logs");
-                            std::fs::create_dir_all(&log_dir)?;
-                            let log_path = log_dir.join("crash_log.md");
-                            let mut file = std::fs::OpenOptions::new().create(true).append(true).open(&log_path)?;
-                            writeln!(file, "{}", $msg)?;
-                            Ok(())
-                        })();
-                        let _ = $tx.send(EngineEvent::Error("Capture Engine Aborted - Check AppData/logs/crash_log.md".to_string()));
+                        crate::log_markdown(&$msg);
+                        let _ = $tx.send(EngineEvent::Error(
+                            format!("Capture Engine Aborted — {} (see View Logs for details)", $msg)
+                        ));
                     }
                 };
             }
@@ -460,7 +454,7 @@ pub fn spawn_capture_engine(
             let start_time = std::time::Instant::now();
             let mut launcher_exit_logged = false;
             let mut hl_seen_alive = false;
-            let mut real_failure = false;
+            let mut failure_reason: Option<&'static str> = None;
             let mut sys = {
                 use sysinfo::SystemExt;
                 sysinfo::System::new_all()
@@ -522,7 +516,7 @@ pub fn spawn_capture_engine(
                         "[HLAE] hl.exe never came up after the launcher exited ({:.1}s elapsed) — treating as failure",
                         start_time.elapsed().as_secs_f32()
                     ));
-                    real_failure = true;
+                    failure_reason = Some("hl.exe never started after the HLAE launcher exited");
                     break;
                 }
                 // hl.exe was running and has now disappeared without ever writing
@@ -534,14 +528,14 @@ pub fn spawn_capture_engine(
                         "[HLAE] hl.exe was running and is now gone with no exit trigger after {:.1}s — treating as a mid-capture crash",
                         start_time.elapsed().as_secs_f32()
                     ));
-                    real_failure = true;
+                    failure_reason = Some("hl.exe started but crashed mid-capture (no exit trigger was ever written)");
                     break;
                 }
                 std::thread::sleep(std::time::Duration::from_millis(500));
             }
 
-            if real_failure && !cancel_token.load(Ordering::Relaxed) {
-                log_crash_abort!(tx, "hl.exe never started (or crashed immediately) after the HLAE launcher exited — see [HLAE] lines above in this log for timing.".to_string());
+            if let Some(reason) = failure_reason.filter(|_| !cancel_token.load(Ordering::Relaxed)) {
+                log_crash_abort!(tx, format!("{} — see [HLAE] lines above in this log for timing.", reason));
                 for path in &active_dest_paths {
                     let _ = std::fs::remove_file(path);
                 }

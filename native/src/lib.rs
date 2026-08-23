@@ -223,28 +223,102 @@ pub fn warm_analyzer_cache(demo_path: &PathBuf, analysis: &Analysis) {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-static SESSION_INITIALIZED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static SESSION_HEADER_WRITTEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Date string (`YYYYMMDD`) `log_markdown` last wrote to, so a session
+/// running past midnight can be detected and cross-referenced between the
+/// two days' files instead of just silently stopping mid-file.
+#[cfg(not(target_arch = "wasm32"))]
+static LAST_LOG_DATE: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// How many days' worth of activity logs to keep on disk — older files are
+/// pruned the first time a given app launch logs anything.
+#[cfg(not(target_arch = "wasm32"))]
+const MAX_RETAINED_ACTIVITY_LOG_DAYS: usize = 30;
+
+/// Directory `log_markdown` writes into.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn activity_log_dir() -> std::path::PathBuf {
+    crate::shared::paths::get_appdata_dir().join("logs")
+}
+
+/// Path `log_markdown` is currently writing to — one file per calendar day
+/// (shared across every app launch that day), so this is recomputed from
+/// the current date on every call rather than cached, and just starts
+/// pointing at tomorrow's file on its own if a session runs past midnight.
+/// Exposed so the frontend can offer a "View Logs" affordance without
+/// duplicating the path logic.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn activity_log_path() -> std::path::PathBuf {
+    use chrono::Local;
+    activity_log_dir().join(format!("activity_{}.md", Local::now().format("%Y%m%d")))
+}
+
+/// Deletes `activity_*.md` files beyond `MAX_RETAINED_ACTIVITY_LOG_DAYS` —
+/// filenames are zero-padded `YYYYMMDD` dates, so lexical sort order is
+/// chronological order.
+#[cfg(not(target_arch = "wasm32"))]
+fn prune_old_activity_logs(dir: &std::path::Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let mut files: Vec<std::path::PathBuf> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.starts_with("activity_") && n.ends_with(".md"))
+                .unwrap_or(false)
+        })
+        .collect();
+    files.sort();
+    if files.len() > MAX_RETAINED_ACTIVITY_LOG_DAYS {
+        for old in &files[..files.len() - MAX_RETAINED_ACTIVITY_LOG_DAYS] {
+            let _ = std::fs::remove_file(old);
+        }
+    }
+}
 
 pub fn log_markdown(msg: &str) {
     #[cfg(not(target_arch = "wasm32"))]
     {
         use chrono::Local;
         use std::io::Write;
-        let log_dir = crate::shared::paths::get_appdata_dir().join("logs");
-        let _ = std::fs::create_dir_all(&log_dir);
-        let log_path_md = log_dir.join("crash_log.md");
 
         static LOG_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
         let _guard = LOG_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
 
-        // Write to md
+        let dir = activity_log_dir();
+        let _ = std::fs::create_dir_all(&dir);
+        let today = Local::now().format("%Y%m%d").to_string();
+        let log_path_md = dir.join(format!("activity_{}.md", today));
+        let is_first_write = !SESSION_HEADER_WRITTEN.swap(true, std::sync::atomic::Ordering::SeqCst);
+
+        let mut last_date = LAST_LOG_DATE.lock().unwrap_or_else(|e| e.into_inner());
+        if is_first_write {
+            prune_old_activity_logs(&dir);
+        } else if last_date.as_deref().is_some_and(|prev| prev != today) {
+            // Same session, but the date rolled over since the last log line —
+            // leave a pointer in both files so this doesn't just look like the
+            // session stopped mid-file to someone reading yesterday's log.
+            let prev_path = dir.join(format!("activity_{}.md", last_date.as_deref().unwrap()));
+            if let Ok(mut f) = std::fs::OpenOptions::new().append(true).create(true).open(&prev_path) {
+                let _ = writeln!(f, "\n(session continues past midnight — see activity_{}.md)\n", today);
+                let _ = f.sync_all();
+            }
+            if let Ok(mut f) = std::fs::OpenOptions::new().append(true).create(true).open(&log_path_md) {
+                let _ = writeln!(f, "(continued from activity_{}.md — same session, crossed midnight)\n", last_date.as_deref().unwrap());
+                let _ = f.sync_all();
+            }
+        }
+        *last_date = Some(today);
+        drop(last_date);
+
         if let Ok(mut f) = std::fs::OpenOptions::new()
             .append(true)
             .create(true)
             .open(&log_path_md)
         {
-            if !SESSION_INITIALIZED.load(std::sync::atomic::Ordering::SeqCst) {
-                SESSION_INITIALIZED.store(true, std::sync::atomic::Ordering::SeqCst);
+            if is_first_write {
                 let time_str = Local::now().format("%Y-%m-%d @ %H:%M %Z").to_string();
                 let _ = writeln!(f, "\n\n========== New Session: {} ====================\n", time_str);
             }
