@@ -138,7 +138,7 @@ export async function checkRenderRecoveryOnStartup(onRecovered) {
 
   const modal = document.querySelector('#render-recovery-modal');
   if (!modal) return;
-  document.querySelector('#render-recovery-source').textContent = summary.source_folder || '(unknown)';
+  document.querySelector('#render-recovery-source').textContent = summary.source_folder || STRINGS.RENDER.UNKNOWN_SOURCE_FOLDER;
   document.querySelector('#render-recovery-completed').textContent = String(summary.completed_count);
   document.querySelector('#render-recovery-pending').textContent = String(summary.pending_count);
   modal.style.display = 'flex';
@@ -302,7 +302,7 @@ export function initRenderUI(getRenderFolders, getExportDirs, onSettingsChange, 
                         // base_name is the canonical display field on SerializedRenderJob
                         `<div style="padding: 6px; border-bottom: 1px solid #444; font-family: monospace;">` +
                         `<span style="color:#aaa;">[${t.clip_type}]</span> ` +
-                        `${t.base_name} &mdash; ${t.frame_count} frames` +
+                        `${t.base_name} &mdash; ${STRINGS.RENDER.frameCountLabel(t.frame_count)}` +
                         `</div>`,
                     )
                     .join('')
