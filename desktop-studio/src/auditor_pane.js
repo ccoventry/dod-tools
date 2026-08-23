@@ -182,7 +182,7 @@ export function initAuditorPane() {
         tdStatus.textContent = STRINGS.AUDITOR.FILE_ROW_LABEL;
 
         const tdSize = document.createElement('td');
-        tdSize.textContent = `${sizeMb} MB`;
+        tdSize.textContent = STRINGS.AUDITOR.megabytesLabel(sizeMb);
 
         let displayPath = file;
         if (displayPath.startsWith('\\\\?\\')) {
