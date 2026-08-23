@@ -1,16 +1,28 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { showToast } from './toast.js';
 
-/** Writes one line to crash_log.md — for frontend-only events (the Master
- *  Queue's Clear Untracked/Selected/All and row-delete actions) that have
- *  no other IPC call to log from. Best-effort: logs to the console on
+/** Writes one line to today's activity log — for frontend-only events (the
+ *  Master Queue's Clear Untracked/Selected/All and row-delete actions) that
+ *  have no other IPC call to log from. Best-effort: logs to the console on
  *  failure rather than toasting, since a lost log line isn't worth
  *  interrupting the user over. */
 export function logFrontendEvent(message) {
   invoke('log_frontend_event', { message }).catch((err) => {
     console.error("IPC Execution Error (log_frontend_event):", err);
   });
+}
+
+/** Opens Explorer with today's activity log pre-selected — AppData/logs
+ *  isn't somewhere most users would think to go looking on their own. */
+export async function openActivityLog() {
+  return invoke('get_activity_log_path')
+    .then((path) => revealItemInDir(path))
+    .catch((err) => {
+      console.error("IPC Execution Error (get_activity_log_path):", err);
+      showToast(`Could not open the log file: ${err}`, 'error');
+    });
 }
 
 export async function scanDirectory(scanPaths) {
@@ -27,15 +39,6 @@ export async function validatePaths(hlaePath, hlPath) {
     .catch((err) => {
       console.error("IPC Execution Error (validate_paths):", err);
       showToast(`Validation error: ${err}`, 'error');
-      throw err;
-    });
-}
-
-export async function analyzeDemo(demoPath) {
-  return await invoke('analyze_demo', { demoPath })
-    .catch((err) => {
-      console.error("IPC Execution Error (analyze_demo):", err);
-      showToast(`Analysis error: ${err}`, 'error');
       throw err;
     });
 }
@@ -134,6 +137,18 @@ export async function calculateExportPoolSpace(paths) {
   return invoke("calculate_export_pool_space", { paths: paths })
     .catch((err) => {
       console.error("IPC Execution Error (calculate_export_pool_space):", err);
+      throw err;
+    });
+}
+
+/** Per-path reason a Capture Output entry isn't usable — "ok" | "not_absolute"
+ *  | "malformed" | "not_found" | "not_a_directory". Only worth calling once
+ *  the aggregate space check has already found a problem; a per-path OS stat
+ *  isn't cheap enough to run on every keystroke. */
+export async function diagnoseCaptureOutputPaths(paths) {
+  return invoke("diagnose_capture_output_paths", { paths: paths })
+    .catch((err) => {
+      console.error("IPC Execution Error (diagnose_capture_output_paths):", err);
       throw err;
     });
 }

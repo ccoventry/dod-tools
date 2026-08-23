@@ -85,7 +85,7 @@ body {
   background: #181818;
   border-bottom: 1px solid var(--border-color);
   padding: 4px 12px;
-  height: 38px;
+  height: 52px;
   flex-shrink: 0;
 }
 
@@ -94,17 +94,27 @@ body {
   align-items: center;
   gap: 8px;
   font-weight: bold;
+  flex-shrink: 0;
+}
+
+.brand-logo {
+  width: 44px;
+  height: 44px;
+  border-radius: 5px;
+  flex-shrink: 0;
 }
 
 .brand-title {
   color: #ffffff;
-  font-size: 14px;
+  font-size: 17px;
+  white-space: nowrap;
 }
 
 .brand-sub {
   color: var(--text-muted);
   font-size: 11px;
 }
+
 
 .nav-tabs {
   display: flex;
@@ -133,6 +143,11 @@ body {
   gap: 6px;
 }
 
+.nav-actions button {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
 .session-file-indicator {
   color: var(--text-muted);
   font-size: 11px;
@@ -153,6 +168,7 @@ body {
   color: var(--text-muted);
   cursor: pointer;
   user-select: none;
+  white-space: nowrap;
 }
 
 .studio-mode-label.active {
@@ -203,14 +219,6 @@ body {
   transform: translateX(15px);
 }
 
-.studio-mode-caption {
-  color: var(--text-muted);
-  font-size: 11px;
-  max-width: 260px;
-  white-space: normal;
-  line-height: 1.3;
-}
-
 /* Fixed width sized to the longer of its two labels ("Save as Workspace…"
    vs "Save Session") so toggling studio mode doesn't change this button's
    footprint — #top-navbar's space-between layout would otherwise visibly
@@ -221,6 +229,41 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Narrow windows: the explanatory caption is already gone (moved to the
+   mode-label/switch title tooltips), so this mostly protects the session
+   filename and nav tab padding from crowding the mode toggle out. */
+@media (max-width: 900px) {
+  #top-navbar {
+    padding: 4px 8px;
+    gap: 6px;
+  }
+
+  .nav-tab-btn {
+    padding: 4px 7px;
+    font-size: 11px;
+  }
+
+  .nav-actions {
+    gap: 4px;
+  }
+
+  .nav-actions button {
+    padding: 4px 6px;
+    font-size: 11px;
+  }
+
+  #save-project-btn {
+    width: 108px;
+  }
+
+  /* The session filename is the first thing to go — it's already echoed by
+     save-project-btn's label ("Save as Workspace…" vs "Save Session") and
+     the window's min-width (800px) doesn't leave room for both. */
+  .session-file-indicator {
+    display: none;
+  }
 }
 
 /* Main Split Content Area */
@@ -272,6 +315,34 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  /* Let the two sides drop to their own row when they don't both fit,
+   * rather than fighting over one row and squeezing/overlapping — a
+   * squeeze-to-fit approach here previously collapsed the Highlight
+   * Details title to zero width instead of actually wrapping. */
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+
+/* Highlight Details' title can carry a full demo filename. On the rare
+   width where it's alone on its row and still too long, truncate rather
+   than wrap into a ragged multi-line stack. min-width: 0 overrides flex's
+   default min-width: auto, which otherwise refuses to shrink below the
+   untruncated text's width and silently defeats the ellipsis (same fix
+   master_pane.js's row names use). */
+.header-title-group {
+  min-width: 0;
+}
+
+#detail-demo-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.header-controls {
+  flex-wrap: wrap;
+  row-gap: 6px;
 }
 
 .row-inputs, .input-row {
@@ -299,6 +370,22 @@ input[type="text"], input[type="number"], select {
 
 input[type="text"]:focus, input[type="number"]:focus, select:focus {
   border-color: var(--primary-accent);
+}
+
+/* The bare `appearance: none` reset above doesn't reliably suppress the
+   native up/down spin buttons on number inputs across Chromium/WebView2
+   versions — they can still appear on hover, overlapping the value itself
+   in narrow inputs like the Kill Range columns. The spin-button
+   pseudo-elements need to be targeted directly. */
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+input[type="number"] {
+  appearance: textfield;
+  -moz-appearance: textfield;
 }
 
 /* Custom dropdown chevron — the global `appearance: none` reset (top of this
@@ -467,6 +554,18 @@ button.primary-btn:hover:not(:disabled) {
   display: flex;
   align-items: center;
   gap: 16px;
+}
+
+/* Sits outside the four .pinned-footer-content tabs above (index.html), so
+   it stays put regardless of which one switchNavTab() has toggled visible —
+   margin-left: auto pushes it to the far right of #pinned-action-bar's flex
+   row without needing a copy in each per-tab footer. */
+.view-logs-btn {
+  margin-left: auto;
+  font-size: 11px;
+  padding: 3px 8px;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 #export-pool-free-indicator,

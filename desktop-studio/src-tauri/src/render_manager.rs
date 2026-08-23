@@ -48,15 +48,28 @@ impl From<ClipData> for SerializedRenderJob {
 }
 
 #[tauri::command]
-pub async fn scan_render_directories(paths: Vec<String>) -> Result<Vec<SerializedRenderJob>, String> {
+pub async fn scan_render_directories(app: AppHandle, paths: Vec<String>) -> Result<Vec<SerializedRenderJob>, String> {
     tokio::task::spawn_blocking(move || {
         let source_folders: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
         let (clip_tx, clip_rx) = std::sync::mpsc::channel();
-        let (status_tx, _status_rx) = std::sync::mpsc::channel();
+        let (status_tx, status_rx) = std::sync::mpsc::channel::<String>();
+
+        // scan_folder_background sends one status line per take it finds
+        // (blocking, on this thread); drain it concurrently on its own
+        // thread so the frontend gets live progress instead of the whole
+        // batch arriving at once when the scan finishes. Exits on its own
+        // once status_tx drops (scan_folder_background returns below).
+        let status_app = app.clone();
+        let status_thread = std::thread::spawn(move || {
+            while let Ok(msg) = status_rx.recv() {
+                let _ = status_app.emit("render_scan_status", msg);
+            }
+        });
 
         // scan_folder_background is blocking and exhausts sends before returning.
         // try_recv is therefore race-free here.
         scan_folder_background(source_folders, clip_tx, status_tx);
+        let _ = status_thread.join();
 
         let mut results = Vec::new();
         while let Ok(clip) = clip_rx.try_recv() {
@@ -125,6 +138,10 @@ struct RenderJobRuntime {
     speed: String,
     progress: u32,
     error_log: Option<String>,
+    /// Absolute path to the encoded file, populated once the job finishes
+    /// successfully (empty until then, and for recovered jobs — the autosave
+    /// snapshot doesn't persist it).
+    output_path: String,
     cancel_flag: Arc<AtomicBool>,
     // Snapshotted onto the job itself (VirtualDub-style job queue, not one
     // shared live config) so Reset to Queued always re-renders with exactly
@@ -151,6 +168,12 @@ pub struct RenderJobView {
     /// codec/fps columns so a future new setting doesn't need its own
     /// column too.
     pub settings_summary: String,
+    /// Encoded output file, once finished. Empty until then.
+    pub output_path: String,
+    /// Source take folder (captured BMPs/WAV) — always known, even before
+    /// this job has rendered, so "reveal in Explorer" works pre- and
+    /// post-render.
+    pub take_folder: String,
 }
 
 impl RenderJobRuntime {
@@ -166,6 +189,8 @@ impl RenderJobRuntime {
             progress: self.progress,
             error_log: self.error_log.clone(),
             settings_summary: format!("{} @ {}fps", self.codec.label(), self.fps),
+            output_path: self.output_path.clone(),
+            take_folder: self.clip.take_folder.clone(),
         }
     }
 }
@@ -222,7 +247,7 @@ fn write_autosave(render_session: &Arc<Mutex<Option<RenderSessionData>>>, jobs: 
         target_codec: config.target_codec.to_str_id().to_string(),
         jobs: jobs.iter().map(|j| AutosaveJob {
             take_folder: j.clip.take_folder.clone(),
-            output_path: String::new(), // never populated by dev's own run_render_job either
+            output_path: j.output_path.clone(),
             status: AutosaveJobStatus::Pending,
             name: j.clip.base_name.clone(),
         }).collect(),
@@ -262,6 +287,11 @@ fn apply_render_update(
                 job.status = status;
             }
         }
+        RenderUpdate::OutputPath(id, path) => {
+            if let Some(job) = jobs.lock().unwrap().iter_mut().find(|j| j.id == id) {
+                job.output_path = path;
+            }
+        }
         RenderUpdate::Finished(id, success, err_log) => {
             // `just_finished` is keyed on `success` alone, deliberately not
             // on the `job.status == "Rendering"` guard below: on the real
@@ -278,6 +308,7 @@ fn apply_render_update(
             // it repopulates already-Finished jobs by constructing them
             // directly rather than replaying this update.
             let mut just_finished = None;
+            let mut just_failed = None;
             {
                 let mut guard = jobs.lock().unwrap();
                 if let Some(job) = guard.iter_mut().find(|j| j.id == id) {
@@ -292,13 +323,16 @@ fn apply_render_update(
                             job.clip.take_folder.clone(),
                             job.clip.base_name.clone(),
                             job.clip.clip_type.clone(),
+                            job.output_path.clone(),
                         ));
+                    } else {
+                        just_failed = Some((job.clip.base_name.clone(), err_log.clone()));
                     }
                     job.error_log = err_log;
                 }
             }
-            if let Some((take_folder, base_name, clip_type)) = just_finished {
-                let key = take_key(std::path::Path::new(&take_folder));
+            if let Some((take_folder, base_name, clip_type, _)) = &just_finished {
+                let key = take_key(std::path::Path::new(take_folder));
                 log_markdown(&format!(
                     "[render-take-finished] job {} take_key={:?} take_folder={} base_name={} clip_type={}",
                     id, key, take_folder, base_name, clip_type
@@ -311,12 +345,21 @@ fn apply_render_update(
                     "clip_type": clip_type,
                 }));
             }
+            if let Some((base_name, err_log)) = &just_failed {
+                log_markdown(&format!(
+                    "[render-take-failed] job {} base_name={} error={}",
+                    id, base_name, err_log.as_deref().unwrap_or("(no error log)")
+                ));
+            }
             // Autosave only tracks success — matches dev's ui.rs exactly.
             if success {
                 if let Some(session) = render_session.lock().unwrap().as_mut() {
                     if let Ok(idx) = id.parse::<usize>() {
                         if let Some(rj) = session.jobs.get_mut(idx) {
                             rj.status = AutosaveJobStatus::Completed;
+                            if let Some((_, _, _, output_path)) = &just_finished {
+                                rj.output_path = output_path.clone();
+                            }
                         }
                     }
                     if let Ok(json) = serde_json::to_string_pretty(session) {
@@ -487,6 +530,7 @@ pub async fn execute_render_batch(
         speed: String::new(),
         progress: 0,
         error_log: None,
+        output_path: String::new(),
         cancel_flag: Arc::new(AtomicBool::new(false)),
         codec: config.target_codec,
         fps: config.fps,
@@ -604,7 +648,16 @@ pub struct RenderAutosaveSummary {
 }
 
 #[tauri::command]
-pub fn check_render_autosave() -> Option<RenderAutosaveSummary> {
+pub fn check_render_autosave(state: tauri::State<'_, RenderManager>) -> Option<RenderAutosaveSummary> {
+    // A render can legitimately still be running when this fires: pressing
+    // F5 reloads the frontend only, not this Rust process, so the autosave
+    // file (written continuously as jobs finish, not just at batch end)
+    // genuinely exists on disk even though nothing was actually interrupted
+    // — the "recovery" prompt was firing on every reload of an active batch.
+    // Only treat it as a real interruption when nothing is actively running.
+    if state.is_rendering.load(Ordering::SeqCst) {
+        return None;
+    }
     let json = std::fs::read_to_string(autosave_path()).ok()?;
     let session: RenderSessionData = serde_json::from_str(&json).ok()?;
     let pending_count = session.jobs.iter().filter(|j| j.status == AutosaveJobStatus::Pending).count();
@@ -662,6 +715,7 @@ pub fn recover_render_batch(state: tauri::State<'_, RenderManager>) -> Result<Ve
             speed: String::new(),
             progress,
             error_log: None,
+            output_path: rj.output_path.clone(),
             cancel_flag: Arc::new(AtomicBool::new(false)),
             codec: recovered_codec,
             fps: recovered_fps,

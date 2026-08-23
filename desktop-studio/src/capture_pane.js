@@ -1,4 +1,4 @@
-import { startCaptureBatch, cancelCaptureBatch, validatePaths, calculateExportPoolSpace, scanOrphanedPreviews, deleteOrphanedPreviews, checkEngineProcesses, launchStandaloneGame } from './ipc_bridge.js';
+import { startCaptureBatch, cancelCaptureBatch, validatePaths, calculateExportPoolSpace, diagnoseCaptureOutputPaths, scanOrphanedPreviews, deleteOrphanedPreviews, checkEngineProcesses, launchStandaloneGame } from './ipc_bridge.js';
 import { listen } from '@tauri-apps/api/event';
 import { confirm } from '@tauri-apps/plugin-dialog';
 import { showToast } from './toast.js';
@@ -120,6 +120,27 @@ function computeRequiredCaptureBytes(currentScannedDemos, opts) {
   return requiredBytes;
 }
 
+const PATH_PROBLEM_REASONS = {
+  not_absolute: (p) => `"${p}" isn't a full path (it needs a drive letter, e.g. C:\\...)`,
+  malformed: (p) => `"${p}" isn't a valid path (invalid characters or formatting)`,
+  not_found: (p) => `"${p}" doesn't exist on this computer (check the spelling, or that the drive is connected)`,
+  not_a_directory: (p) => `"${p}" points to a file, not a folder`,
+};
+
+const MAX_PROBLEM_PATHS_SHOWN = 3;
+
+/** Turns a list of non-"ok" diagnostics into a point-form list of reasons
+ *  (one bullet per line, `warningEl`'s `white-space: pre-line` renders the
+ *  `\n`s), capped so a long invalid list doesn't turn into a wall of text.
+ *  Falls back to a single plain sentence when there's just one problem. */
+function describeProblemPaths(problems) {
+  const shown = problems.slice(0, MAX_PROBLEM_PATHS_SHOWN)
+    .map((d) => PATH_PROBLEM_REASONS[d.status]?.(d.path) || `"${d.path}" is unusable`);
+  const remaining = problems.length - MAX_PROBLEM_PATHS_SHOWN;
+  if (remaining > 0) shown.push(`...and ${remaining} more`);
+  return shown.length === 1 ? shown[0] : shown.map((s) => `• ${s}`).join('\n');
+}
+
 /**
  * Recomputes required-vs-available disk space and hard-locks the Launch
  * button (rather than just toasting at click time) whenever the capture
@@ -163,19 +184,45 @@ export async function refreshLaunchGuard(state) {
   const effectiveDrivePool = (resolvedState.targetDrives || []).filter(Boolean);
 
   let availableBytes = 0;
+  let problemPaths = [];
+  let willBeCreatedPaths = [];
   if (effectiveDrivePool.length > 0) {
     try {
       availableBytes = await calculateExportPoolSpace(effectiveDrivePool);
     } catch (err) {
       console.error("Error calculating export pool space for launch guard:", err);
     }
+    // Fetched unconditionally (not just when the pool is fully unusable) so a
+    // *partially* bad pool — some valid drives, some typo'd/missing ones —
+    // can still be called out below instead of going silently ignored just
+    // because the aggregate sum happens to clear.
+    try {
+      const diagnostics = await diagnoseCaptureOutputPaths(effectiveDrivePool);
+      problemPaths = diagnostics.filter((d) => !d.usable);
+      // Usable but not found yet: real drive, folder just hasn't been
+      // created — worth a quiet FYI (mainly to catch a typo of an intended
+      // *existing* folder) but not a "problem," since it's the same case
+      // get_available_bytes already counts as fine.
+      willBeCreatedPaths = diagnostics.filter((d) => d.usable && d.status === 'not_found');
+    } catch (err) {
+      console.error("Error diagnosing Capture Output paths:", err);
+    }
   }
 
   // Zero configured (or zero-space) drives must lock the button on its own —
   // `requiredBytes > availableBytes` alone would pass with requiredBytes 0.
-  const noDrivesConfigured = effectiveDrivePool.length === 0 || availableBytes === 0;
-  const insufficientSpace = !noDrivesConfigured && requiredBytes > availableBytes;
-  const blocked = noDrivesConfigured || insufficientSpace;
+  // Kept as two distinct booleans (not one merged "noDrivesConfigured") so
+  // the warning message can tell "you haven't added anything" apart from
+  // "you added something, but it doesn't resolve to a usable directory" —
+  // those used to share one message, which told the user to do something
+  // they'd already done.
+  const noDrivesConfigured = effectiveDrivePool.length === 0;
+  const noUsableSpace = !noDrivesConfigured && availableBytes === 0;
+  const insufficientSpace = !noDrivesConfigured && !noUsableSpace && requiredBytes > availableBytes;
+  // Pool is usable overall (at least one real drive with room) but not every
+  // configured entry is — worth a heads-up, not worth blocking the batch.
+  const hasPartialProblems = !noDrivesConfigured && !noUsableSpace && !insufficientSpace && problemPaths.length > 0;
+  const blocked = noDrivesConfigured || noUsableSpace || insufficientSpace;
 
   if (!capturingInFlight) {
     startBtn.disabled = blocked;
@@ -183,10 +230,33 @@ export async function refreshLaunchGuard(state) {
 
   if (warningEl) {
     if (noDrivesConfigured) {
+      warningEl.style.color = '#f44336';
       warningEl.textContent = "No Capture Output directories configured — add at least one with free space before starting a capture.";
       warningEl.style.display = 'block';
+    } else if (noUsableSpace) {
+      warningEl.style.color = '#f44336';
+      warningEl.textContent = problemPaths.length > 0
+        ? `Capture Output problem:\n${describeProblemPaths(problemPaths)}`
+        : "None of the configured Capture Output directories have any free space.";
+      warningEl.style.display = 'block';
     } else if (insufficientSpace) {
+      warningEl.style.color = '#f44336';
       warningEl.textContent = `Insufficient disk space: capture needs ~${(requiredBytes / 1e9).toFixed(2)} GB, only ${(availableBytes / 1e9).toFixed(2)} GB available across the export pool.`;
+      warningEl.style.display = 'block';
+    } else if (hasPartialProblems) {
+      warningEl.style.color = '#ffa726';
+      const wontBeUsed = problemPaths.length === 1 ? "entry won't be used" : "entries won't be used";
+      warningEl.textContent = `Some Capture Output ${wontBeUsed}:\n${describeProblemPaths(problemPaths)}\nCapture will proceed using the other configured directory/directories.`;
+      warningEl.style.display = 'block';
+    } else if (willBeCreatedPaths.length > 0) {
+      warningEl.style.color = '#64b5f6';
+      const shown = willBeCreatedPaths.slice(0, MAX_PROBLEM_PATHS_SHOWN).map((d) => `"${d.path}"`);
+      const remaining = willBeCreatedPaths.length - MAX_PROBLEM_PATHS_SHOWN;
+      if (remaining > 0) shown.push(`...and ${remaining} more`);
+      const doesnt = willBeCreatedPaths.length === 1 ? "doesn't" : "don't";
+      warningEl.textContent = shown.length === 1
+        ? `${shown[0]} ${doesnt} exist yet — it'll be created when the capture starts.`
+        : `These Capture Output entries ${doesnt} exist yet — they'll be created when the capture starts:\n${shown.map((s) => `• ${s}`).join('\n')}`;
       warningEl.style.display = 'block';
     } else {
       warningEl.style.display = 'none';
