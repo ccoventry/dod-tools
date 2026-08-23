@@ -115,6 +115,7 @@ body {
   font-size: 11px;
 }
 
+
 .nav-tabs {
   display: flex;
   gap: 4px;
@@ -553,6 +554,18 @@ button.primary-btn:hover:not(:disabled) {
   display: flex;
   align-items: center;
   gap: 16px;
+}
+
+/* Sits outside the four .pinned-footer-content tabs above (index.html), so
+   it stays put regardless of which one switchNavTab() has toggled visible —
+   margin-left: auto pushes it to the far right of #pinned-action-bar's flex
+   row without needing a copy in each per-tab footer. */
+.view-logs-btn {
+  margin-left: auto;
+  font-size: 11px;
+  padding: 3px 8px;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 #export-pool-free-indicator,
