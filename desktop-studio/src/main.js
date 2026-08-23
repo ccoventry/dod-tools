@@ -1,6 +1,7 @@
 import { open, save, confirm } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import {
   scanDirectory,
   calculateExportPoolSpace,
@@ -872,6 +873,20 @@ window.addEventListener("DOMContentLoaded", async () => {
   // Render-batch crash-recovery prompt — checked once on startup, same
   // pattern as dev's StartupState::PendingRenderRecovery.
   checkRenderRecoveryOnStartup(() => switchNavTab('render-studio'));
+
+  // Flush any not-yet-persisted settings edit before the window actually
+  // closes. list_editor.js (Init/Custom Commands, numeric fields) only
+  // writes to disk on 'change' (blur/Enter), not every keystroke — closing
+  // the app while a field still has focus (never blurred) would otherwise
+  // silently drop that edit even though it's already reflected in the
+  // in-memory state persistAppSettings() reads from. Confirmed as a real,
+  // reproducible data-loss case 2026-08-23 (see engineering_backlog.md).
+  const appWindow = getCurrentWindow();
+  appWindow.onCloseRequested(async (event) => {
+    event.preventDefault();
+    await persistAppSettings();
+    await appWindow.destroy();
+  });
 
   // Delete callback: remove a demo from the active scan list and re-render.
   // Called by master_pane.js when the 🗑 button is clicked on a row. Returns

@@ -308,6 +308,7 @@ fn apply_render_update(
             // it repopulates already-Finished jobs by constructing them
             // directly rather than replaying this update.
             let mut just_finished = None;
+            let mut just_failed = None;
             {
                 let mut guard = jobs.lock().unwrap();
                 if let Some(job) = guard.iter_mut().find(|j| j.id == id) {
@@ -324,6 +325,8 @@ fn apply_render_update(
                             job.clip.clip_type.clone(),
                             job.output_path.clone(),
                         ));
+                    } else {
+                        just_failed = Some((job.clip.base_name.clone(), err_log.clone()));
                     }
                     job.error_log = err_log;
                 }
@@ -341,6 +344,12 @@ fn apply_render_update(
                     "base_name": base_name,
                     "clip_type": clip_type,
                 }));
+            }
+            if let Some((base_name, err_log)) = &just_failed {
+                log_markdown(&format!(
+                    "[render-take-failed] job {} base_name={} error={}",
+                    id, base_name, err_log.as_deref().unwrap_or("(no error log)")
+                ));
             }
             // Autosave only tracks success — matches dev's ui.rs exactly.
             if success {
@@ -639,7 +648,16 @@ pub struct RenderAutosaveSummary {
 }
 
 #[tauri::command]
-pub fn check_render_autosave() -> Option<RenderAutosaveSummary> {
+pub fn check_render_autosave(state: tauri::State<'_, RenderManager>) -> Option<RenderAutosaveSummary> {
+    // A render can legitimately still be running when this fires: pressing
+    // F5 reloads the frontend only, not this Rust process, so the autosave
+    // file (written continuously as jobs finish, not just at batch end)
+    // genuinely exists on disk even though nothing was actually interrupted
+    // — the "recovery" prompt was firing on every reload of an active batch.
+    // Only treat it as a real interruption when nothing is actively running.
+    if state.is_rendering.load(Ordering::SeqCst) {
+        return None;
+    }
     let json = std::fs::read_to_string(autosave_path()).ok()?;
     let session: RenderSessionData = serde_json::from_str(&json).ok()?;
     let pending_count = session.jobs.iter().filter(|j| j.status == AutosaveJobStatus::Pending).count();
