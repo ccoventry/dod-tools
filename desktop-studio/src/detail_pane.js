@@ -3,6 +3,7 @@ import { openAnalyzerDemo } from './analyzer_pane.js';
 import { launchDemoPreview, generateAllPreviews, checkEngineProcesses, killEngineProcesses } from './ipc_bridge.js';
 import { showToast } from './toast.js';
 import { isRangeModified as isKillRangeModified } from './take_index.js';
+import { STRINGS } from './strings.js';
 
 let currentDemo = null;
 let currentDemoIdx = null;
@@ -114,7 +115,7 @@ function updateStreakVisuals(streak) {
     // unresolved weapon name (e.g. a missing localization key) can never
     // leave a blank array element — `Array.prototype.join` would otherwise
     // render that as an orphaned leading/embedded separator with no name.
-    const weaponClean = String(weapon || '').replace(/^Weapon::/, '').trim() || 'Unknown';
+    const weaponClean = String(weapon || '').replace(/^Weapon::/, '').trim() || STRINGS.ANALYZER.WEAPON_UNKNOWN;
     if (i === 0) return weaponClean;
     const gapSec = Math.round(Math.max(absTime - slice[i - 1][1], 0));
     return `(+${Math.floor(gapSec / 60)}:${String(gapSec % 60).padStart(2, '0')}) ${weaponClean}`;
@@ -161,10 +162,10 @@ window.addEventListener("DOMContentLoaded", () => {
   async function performLaunchPreview(hlaePath, hlPath, selected) {
     btnLaunchPreview.disabled = true;
     const originalLabel = btnLaunchPreview.textContent;
-    btnLaunchPreview.textContent = 'Launching…';
+    btnLaunchPreview.textContent = STRINGS.HIGHLIGHTS.LAUNCHING;
     try {
       await launchDemoPreview(hlaePath, hlPath, selected);
-      showToast('Preview launching in HLAE...', 'info');
+      showToast(STRINGS.HIGHLIGHTS.PREVIEW_LAUNCHING_TOAST, 'info');
     } catch (err) {
       // Already toasted by ipc_bridge.js.
     } finally {
@@ -178,7 +179,7 @@ window.addEventListener("DOMContentLoaded", () => {
       const hlaePath = document.querySelector('#hlae-path-input')?.value?.trim();
       const hlPath = document.querySelector('#hl-path-input')?.value?.trim();
       if (!hlaePath || !hlPath) {
-        showToast('Configure the HLAE and Half-Life executable paths in Batch Capture Config before previewing.', 'error');
+        showToast(STRINGS.HIGHLIGHTS.HLAE_PATH_REQUIRED, 'error');
         return;
       }
       if (!currentDemo || !currentDemo.streaks) return;
@@ -231,10 +232,10 @@ window.addEventListener("DOMContentLoaded", () => {
       const viewCommand = `viewdemo ${stem}_preview`;
       try {
         await navigator.clipboard.writeText(viewCommand);
-        showToast(`Copied "${viewCommand}" to clipboard.`, 'success');
+        showToast(STRINGS.HIGHLIGHTS.copiedViewCommand(viewCommand), 'success');
       } catch (err) {
         console.error("Failed to copy view command to clipboard:", err);
-        showToast('Failed to copy the view command to clipboard.', 'error');
+        showToast(STRINGS.HIGHLIGHTS.COPY_VIEW_COMMAND_FAILED, 'error');
       }
       hideProcessDetectorModal();
     });
@@ -253,7 +254,7 @@ window.addEventListener("DOMContentLoaded", () => {
       const hlaePath = document.querySelector('#hlae-path-input')?.value?.trim();
       const hlPath = document.querySelector('#hl-path-input')?.value?.trim();
       if (!hlaePath || !hlPath) {
-        showToast('Configure the HLAE and Half-Life executable paths in Batch Capture Config before previewing.', 'error');
+        showToast(STRINGS.HIGHLIGHTS.HLAE_PATH_REQUIRED, 'error');
         return;
       }
       const allDemos = currentGetAllDemos ? currentGetAllDemos() : [];
@@ -262,10 +263,10 @@ window.addEventListener("DOMContentLoaded", () => {
 
       btnGenerateAllPreviews.disabled = true;
       const originalLabel = btnGenerateAllPreviews.textContent;
-      btnGenerateAllPreviews.textContent = 'Generating…';
+      btnGenerateAllPreviews.textContent = STRINGS.HIGHLIGHTS.GENERATING;
       try {
         const count = await generateAllPreviews(hlaePath, hlPath, allSelected);
-        showToast(`Generated ${count} preview demo(s). Load them manually via HLAE.`, 'success');
+        showToast(STRINGS.HIGHLIGHTS.generatedPreviews(count), 'success');
       } catch (err) {
         // Already toasted by ipc_bridge.js.
       } finally {
@@ -303,22 +304,22 @@ export function renderDetailView(demo, selectedDemoIdx) {
   if (!demo) {
     // No "(Select a Demo)" here — the empty-state message below already
     // says exactly that; repeating it in the title was pure redundancy.
-    titleEl.textContent = 'Highlight Details';
+    titleEl.textContent = STRINGS.HIGHLIGHTS.DEFAULT_TITLE;
     titleEl.title = '';
-    container.innerHTML = '<p style="color: #888;">Select a demo in the Master List to view its killstreak details.</p>';
+    container.innerHTML = `<p style="color: #888;">${STRINGS.HIGHLIGHTS.EMPTY_SELECT_DEMO}</p>`;
     return;
   }
 
   const minKills = parseInt(document.querySelector('#input-min-kills')?.value || "1", 10);
-  titleEl.textContent = `Highlight Details: ${demo.name}`;
+  titleEl.textContent = STRINGS.HIGHLIGHTS.detailTitle(demo.name);
   // CSS truncates this with an ellipsis at narrow widths (same treatment as
   // the Master Queue's demo-name column) — the title attribute keeps the
   // full name reachable on hover once it's cut off.
-  titleEl.title = `Highlight Details: ${demo.name}`;
+  titleEl.title = STRINGS.HIGHLIGHTS.detailTitle(demo.name);
   container.innerHTML = '';
 
   if (!demo.streaks || demo.streaks.length === 0) {
-    container.innerHTML = '<p style="color: #888;">No killstreak highlights detected in this demo.</p>';
+    container.innerHTML = `<p style="color: #888;">${STRINGS.HIGHLIGHTS.EMPTY_NO_STREAKS}</p>`;
     return;
   }
 
@@ -329,15 +330,15 @@ export function renderDetailView(demo, selectedDemoIdx) {
   table.innerHTML = `
     <thead>
       <tr>
-        <th>Row #</th>
-        <th>Sel</th>
-        <th>Kill Range</th>
-        <th>Kills</th>
-        <th>Time</th>
-        <th>Dur.</th>
-        <th>Status</th>
-        <th>Notes</th>
-        <th>Details</th>
+        <th>${STRINGS.HIGHLIGHTS.COL_ROW_NUM}</th>
+        <th>${STRINGS.HIGHLIGHTS.COL_SEL}</th>
+        <th>${STRINGS.HIGHLIGHTS.COL_KILL_RANGE}</th>
+        <th>${STRINGS.HIGHLIGHTS.COL_KILLS}</th>
+        <th>${STRINGS.HIGHLIGHTS.COL_TIME}</th>
+        <th>${STRINGS.HIGHLIGHTS.COL_DUR}</th>
+        <th>${STRINGS.HIGHLIGHTS.COL_STATUS}</th>
+        <th>${STRINGS.HIGHLIGHTS.COL_NOTES}</th>
+        <th>${STRINGS.HIGHLIGHTS.COL_DETAILS}</th>
       </tr>
     </thead>
     <tbody></tbody>
@@ -417,7 +418,7 @@ export function renderDetailView(demo, selectedDemoIdx) {
     // (builder.rs's merge loop) — surfaced so it's obvious at a glance why
     // two rows flipped to Captured together instead of independently.
     const mergedBadge = streak.mergedTakeKey
-      ? `<span title="Merged with ${streak.mergedCount - 1} other highlight(s) into one take — they were recorded together and share this take folder." style="margin-left:6px;font-size:0.75em;color:#ff9800;border:1px solid #ff9800;border-radius:2px;padding:1px 4px;cursor:help;">merged → ${streak.mergedTakeKey.split('/').pop()}</span>`
+      ? `<span title="${STRINGS.HIGHLIGHTS.mergedBadgeTitle(streak.mergedCount)}" style="margin-left:6px;font-size:0.75em;color:#ff9800;border:1px solid #ff9800;border-radius:2px;padding:1px 4px;cursor:help;">merged → ${streak.mergedTakeKey.split('/').pop()}</span>`
       : '';
 
     tr.innerHTML = `
@@ -432,7 +433,7 @@ export function renderDetailView(demo, selectedDemoIdx) {
           <span>-</span>
           <input type="number" class="kr-end-input" min="1" max="${maxKillIdx + 1}"
                  value="${streak.end_index + 1}" style="width:38px;background:#1a1a1a;color:inherit;border:1px solid #444;border-radius:2px;" />
-          ${isRangeModified ? '<button type="button" class="kr-reset-btn" title="Reset to full range" style="background:transparent;border:1px solid #555;border-radius:2px;color:#aaa;cursor:pointer;">↺</button>' : ''}
+          ${isRangeModified ? `<button type="button" class="kr-reset-btn" title="${STRINGS.HIGHLIGHTS.KR_RESET_TITLE}" style="background:transparent;border:1px solid #555;border-radius:2px;color:#aaa;cursor:pointer;">↺</button>` : ''}
         </div>
       </td>
       <td style="padding: 8px; font-weight: bold;">${streak.kill_count}</td>
@@ -446,7 +447,7 @@ export function renderDetailView(demo, selectedDemoIdx) {
         </select>${mergedBadge}
       </td>
       <td style="padding: 8px;">
-        <input type="text" class="streak-notes-input" placeholder="Add note..." value="${(streak.notes || '').replace(/"/g, '&quot;')}" style="background: #1a1a1a; color: #fff; border: 1px solid #444; border-radius: 3px; padding: 2px; width: 100%;" />
+        <input type="text" class="streak-notes-input" placeholder="${STRINGS.HIGHLIGHTS.NOTES_PLACEHOLDER}" value="${(streak.notes || '').replace(/"/g, '&quot;')}" style="background: #1a1a1a; color: #fff; border: 1px solid #444; border-radius: 3px; padding: 2px; width: 100%;" />
       </td>
       <td class="details-cell" title="${timelineText}">${timelineText}</td>
     `;
@@ -532,7 +533,7 @@ export function renderTimeline(demo) {
     ctx.fillStyle = '#666666';
     ctx.font = '12px sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('No streak timeline available', width / 2, height / 2);
+    ctx.fillText(STRINGS.HIGHLIGHTS.TIMELINE_NO_DATA, width / 2, height / 2);
     return;
   }
 
