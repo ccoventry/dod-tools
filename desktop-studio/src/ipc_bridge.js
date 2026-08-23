@@ -141,6 +141,18 @@ export async function calculateExportPoolSpace(paths) {
     });
 }
 
+/** Per-path reason a Capture Output entry isn't usable — "ok" | "not_absolute"
+ *  | "malformed" | "not_found" | "not_a_directory". Only worth calling once
+ *  the aggregate space check has already found a problem; a per-path OS stat
+ *  isn't cheap enough to run on every keystroke. */
+export async function diagnoseCaptureOutputPaths(paths) {
+  return invoke("diagnose_capture_output_paths", { paths: paths })
+    .catch((err) => {
+      console.error("IPC Execution Error (diagnose_capture_output_paths):", err);
+      throw err;
+    });
+}
+
 export async function simulateAotCapacity(streaks, fps, bytesPerFrame, availableBytes) {
   return invoke("simulate_aot_capacity", { 
     streaks, 

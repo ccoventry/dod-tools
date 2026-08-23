@@ -235,6 +235,39 @@ fn calculate_export_pool_space(paths: Vec<String>) -> Result<u64, String> {
     Ok(total)
 }
 
+#[derive(serde::Serialize)]
+struct CaptureOutputDiagnostic {
+    path: String,
+    status: &'static str, // "ok" | "not_absolute" | "malformed" | "not_found" | "not_a_directory"
+    // Whether get_available_bytes (the same function backing the aggregate
+    // sum/footer) would actually count this path — a "not_found" path whose
+    // drive is real and mounted still passes (many output folders are
+    // auto-created at write time), while one on an unmounted/nonexistent
+    // drive doesn't. Reusing that exact check here, rather than deriving a
+    // second opinion from `status` alone, is what keeps this list and the
+    // footer's byte total from disagreeing about the same path.
+    usable: bool,
+}
+
+#[tauri::command]
+fn diagnose_capture_output_paths(paths: Vec<String>) -> Vec<CaptureOutputDiagnostic> {
+    paths
+        .into_iter()
+        .map(|path_str| {
+            let p = std::path::PathBuf::from(&path_str);
+            let status = match native::sys::disk::diagnose_path(&p) {
+                native::sys::disk::PathStatus::Ok => "ok",
+                native::sys::disk::PathStatus::NotAbsolute => "not_absolute",
+                native::sys::disk::PathStatus::Malformed => "malformed",
+                native::sys::disk::PathStatus::NotFound => "not_found",
+                native::sys::disk::PathStatus::NotADirectory => "not_a_directory",
+            };
+            let usable = native::sys::disk::get_available_bytes(&p) != u64::MAX;
+            CaptureOutputDiagnostic { path: path_str, status, usable }
+        })
+        .collect()
+}
+
 #[tauri::command]
 async fn validate_paths(hlae_path: String, hl_path: String) -> Result<bool, String> {
     let hlae_p = std::path::Path::new(&hlae_path);
@@ -360,6 +393,7 @@ pub fn run() {
             scan_demos,
             cancel_scan,
             calculate_export_pool_space,
+            diagnose_capture_output_paths,
             simulate_aot_capacity,
             scan_render_directories,
             execute_render_batch,
