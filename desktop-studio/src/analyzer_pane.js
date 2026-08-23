@@ -110,9 +110,7 @@ function formatDuration(totalSecs) {
   const h = Math.floor(totalSecs / 3600);
   const m = Math.floor((totalSecs % 3600) / 60);
   const s = totalSecs % 60;
-  if (h > 0) return `${h}h ${m}m ${s}s`;
-  if (m > 0) return `${m}m ${s}s`;
-  return `${s}s`;
+  return STRINGS.ANALYZER.durationLong(h, m, s);
 }
 
 function formatMMSS(totalSecs) {
@@ -922,7 +920,7 @@ function renderSummaryTab(container) {
       ${section(STRINGS.ANALYZER.FILE_INFO_SECTION, [
         [STRINGS.ANALYZER.FILE_NAME_LABEL, esc(r.file_name)],
         [STRINGS.ANALYZER.FILE_PATH_LABEL, esc(r.file_dir)],
-        [STRINGS.ANALYZER.FILE_SIZE_LABEL, `${r.file_size_mb.toFixed(2)} MB`],
+        [STRINGS.ANALYZER.FILE_SIZE_LABEL, STRINGS.ANALYZER.megabytesLabel(r.file_size_mb.toFixed(2))],
         [STRINGS.ANALYZER.FILE_CREATED_LABEL, esc(createdStr)],
       ])}
       ${section(STRINGS.ANALYZER.GAME_DETAILS_SECTION, [
@@ -984,7 +982,7 @@ function renderScoreboardTab(container) {
 
   const alliesScore = getTeamScore((t) => t === 'Allies' || t === 'British');
   const axisScore = getTeamScore((t) => t === 'Axis');
-  const cmp = alliesScore > axisScore ? '>' : (alliesScore === axisScore ? '=' : '<');
+  const cmp = STRINGS.ANALYZER.compareGlyph(alliesScore, axisScore);
 
   let banner = '';
   if (st.started_late || st.ended_early) {
@@ -1129,8 +1127,8 @@ function renderPlayerDetailsBody(tabContainer, p) {
     <div class="analyzer-stat-cards">
       <div class="analyzer-stat-card"><div class="stat-title">${STRINGS.ANALYZER.MATCH_SCORE_TITLE}</div><div class="stat-value">${p.stats[0]}</div></div>
       <div class="analyzer-stat-card"><div class="stat-title">${STRINGS.ANALYZER.KILLS_TITLE}</div><div class="stat-value">${p.stats[1]}</div></div>
-      <div class="analyzer-stat-card"><div class="stat-title">${STRINGS.ANALYZER.DEATHS_TITLE}</div><div class="stat-value">${p.stats[2]}</div><div class="stat-badge" style="color:${kd >= 1 ? '#22c55e' : '#ef4444'};">${kd.toFixed(2)} K/D</div></div>
-      <div class="analyzer-stat-card"><div class="stat-title">${STRINGS.ANALYZER.AVG_LIFESPAN_TITLE}</div><div class="stat-value">${avgLife.toFixed(1)}s</div><div class="stat-badge text-muted">${STRINGS.ANALYZER.minMaxBadge(minLife.toFixed(0), maxLife.toFixed(0))}</div></div>
+      <div class="analyzer-stat-card"><div class="stat-title">${STRINGS.ANALYZER.DEATHS_TITLE}</div><div class="stat-value">${p.stats[2]}</div><div class="stat-badge" style="color:${kd >= 1 ? '#22c55e' : '#ef4444'};">${kd.toFixed(2)} ${STRINGS.ANALYZER.KD_BADGE_LABEL}</div></div>
+      <div class="analyzer-stat-card"><div class="stat-title">${STRINGS.ANALYZER.AVG_LIFESPAN_TITLE}</div><div class="stat-value">${STRINGS.ANALYZER.secondsSuffix(avgLife.toFixed(1))}</div><div class="stat-badge text-muted">${STRINGS.ANALYZER.minMaxBadge(minLife.toFixed(0), maxLife.toFixed(0))}</div></div>
     </div>
 
     <div class="analyzer-two-col">
@@ -1237,7 +1235,7 @@ function renderKillStreaksTable(container, p) {
         <td>${idx + 1}</td>
         <td>${kills.length}</td>
         <td>${formatGameTime(startSecs)}</td>
-        <td>${durationSecs.toFixed(1)}s</td>
+        <td>${STRINGS.ANALYZER.secondsSuffix(durationSecs.toFixed(1))}</td>
       </tr>
       <tr><td></td><td colspan="3" style="font-size:0.85em;color:#aaa;">${esc(weaponSummary)}</td></tr>
       ${sub}`;
