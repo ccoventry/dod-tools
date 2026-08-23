@@ -72,6 +72,7 @@ export const STRINGS = {
     REASON_STATUS: 'a Captured/Rendered status',
     REASON_NOTE: 'a note',
     REASON_RANGE: 'an edited kill range',
+    EMPTY_DASH: '—',
   },
 
   // ── Highlight Details (detail_pane.js) + Advanced Diagnostics ───────────
@@ -107,7 +108,12 @@ export const STRINGS = {
     COL_DETAILS: 'Details',
     NOTES_PLACEHOLDER: 'Add note...',
     KR_RESET_TITLE: 'Reset to full range',
+    fallbackKillCount: (count) => `${count} kills`,
+    STATUS_OPTIONS: ['None', 'Pending', 'Captured', 'Rendered'],
+    STATUS_PENDING_DEFAULT: 'Pending',
+    mergedTakeBadge: (takeName) => `merged → ${takeName}`,
     mergedBadgeTitle: (mergedCount) => `Merged with ${mergedCount - 1} other highlight(s) into one take — they were recorded together and share this take folder.`,
+    tickLabel: (tick) => `Tick ${tick}`,
     HLAE_PATH_REQUIRED: 'Configure the HLAE and Half-Life executable paths in Batch Capture Config before previewing.',
     PREVIEW_LAUNCHING_TOAST: 'Preview launching in HLAE...',
     generatedPreviews: (count) => `Generated ${count} preview demo(s). Load them manually via HLAE.`,
@@ -167,6 +173,7 @@ export const STRINGS = {
     STATUS_WAITING: 'Status: Waiting...',
     INIT_COMMAND_PLACEHOLDER: 'e.g. mirv_streams add all',
     CUSTOM_COMMAND_PLACEHOLDER: 'Command',
+    CUSTOM_COMMAND_RELATION_OPTIONS: ['Before', 'After'],
     footerRequiredSpace: (gb) => `Required: ${gb} GB`,
     REQUIRED_SPACE_DEFAULT: 'Required: 0.00 GB',
   },
@@ -226,6 +233,7 @@ export const STRINGS = {
     BATCH_QUEUED_TOAST: 'Batch capture queued successfully!',
     startBatchError: (err) => `Error starting batch: ${err}`,
     CANCELLING_BATCH_TOAST: 'Cancelling batch...',
+    EMPTY_DASH: '—',
   },
 
   // ── Render Studio panel + render_pane.js ─────────────────────────────────
@@ -302,6 +310,8 @@ export const STRINGS = {
     CANCELLING_RENDER_BATCH: 'Cancelling render batch...',
     nvencWarning: (n) => `${n} concurrent NVENC renders may exceed your GPU's encoder session limit (often 3-5 on consumer GeForce cards). If renders start failing, lower Max Concurrent Renders.`,
     highlightsMarkedRendered: (n) => `${n} highlight(s) marked Rendered.`,
+    UNKNOWN_SOURCE_FOLDER: '(unknown)',
+    frameCountLabel: (n) => `${n} frames`,
   },
 
   // ── FFmpeg Error Log modal ───────────────────────────────────────────────
@@ -479,6 +489,9 @@ export const STRINGS = {
     LEGIT_PROOF_TEXT: 'Legit-Proof',
     STEAM_PROFILE_TEXT: 'Steam Profile',
     NO_STEAM_ID: 'No Steam ID',
+    STEAM_ID_LABEL: 'Steam ID: ',
+    CLOCK_UNKNOWN: '??:??',
+    TIMELINE_START_LABEL: '0:00',
     connectedSlot: (id) => `Connected (Slot ${id})`,
     DISCONNECTED: 'Disconnected',
     RECONNECTED_MID_DEMO: '🔄 Reconnected mid-demo',
@@ -496,6 +509,10 @@ export const STRINGS = {
     COL_WAVE: 'Wave',
     COL_TIME: 'Time',
     COL_DURATION: 'Duration',
+    WEAPON_CATEGORY_GRENADES: 'Grenades',
+    WEAPON_CATEGORY_MELEE: 'Melee',
+    WEAPON_CATEGORY_ALLIED: 'Allied',
+    WEAPON_CATEGORY_OTHER: 'Other',
 
     TEAM_DETAILS_HEADING: 'Team Details',
     MATCH_OVERVIEW_TITLE: 'Match Overview',
