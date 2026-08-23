@@ -114,6 +114,7 @@ export const STRINGS = {
     mergedTakeBadge: (takeName) => `merged → ${takeName}`,
     mergedBadgeTitle: (mergedCount) => `Merged with ${mergedCount - 1} other highlight(s) into one take — they were recorded together and share this take folder.`,
     tickLabel: (tick) => `Tick ${tick}`,
+    secondsSuffix: (n) => `${n}s`,
     HLAE_PATH_REQUIRED: 'Configure the HLAE and Half-Life executable paths in Batch Capture Config before previewing.',
     PREVIEW_LAUNCHING_TOAST: 'Preview launching in HLAE...',
     generatedPreviews: (count) => `Generated ${count} preview demo(s). Load them manually via HLAE.`,
@@ -234,6 +235,7 @@ export const STRINGS = {
     startBatchError: (err) => `Error starting batch: ${err}`,
     CANCELLING_BATCH_TOAST: 'Cancelling batch...',
     EMPTY_DASH: '—',
+    megabytesLabel: (mb) => `${mb} MB`,
   },
 
   // ── Render Studio panel + render_pane.js ─────────────────────────────────
@@ -371,6 +373,7 @@ export const STRINGS = {
     deleteConfirm: (n) => `Are you sure you want to permanently delete ${n} files?`,
     deletedFilesToast: (n) => `Successfully deleted ${n} duplicate files.`,
     deletionFailedToast: (e) => `Deletion failed: ${e}`,
+    megabytesLabel: (mb) => `${mb} MB`,
   },
 
   // ── Clear Previews modal ─────────────────────────────────────────────────
@@ -468,6 +471,15 @@ export const STRINGS = {
     OTHER_SYSTEM_LABEL: 'Other System',
 
     scoreboardHeading: (alliesLabel, alliesScore, cmp, axisScore) => `Scoreboard: ${alliesLabel} (${alliesScore}) ${cmp} Axis (${axisScore})`,
+    compareGlyph: (a, b) => (a > b ? '>' : (a === b ? '=' : '<')),
+    durationLong: (h, m, s) => {
+      if (h > 0) return `${h}h ${m}m ${s}s`;
+      if (m > 0) return `${m}m ${s}s`;
+      return `${s}s`;
+    },
+    secondsSuffix: (n) => `${n}s`,
+    megabytesLabel: (mb) => `${mb} MB`,
+    KD_BADGE_LABEL: 'K/D',
     partialRecordingBoth: (fmt) => `Partial recording — demo started with ${fmt} remaining and ended before the match concluded.`,
     partialRecordingStartedLate: (fmt) => `Partial recording — demo started with ${fmt} remaining on the clock.`,
     partialRecordingEndedEarly: (fmt) => `Partial recording — demo ended before the match concluded (${fmt} remaining at cutoff).`,
