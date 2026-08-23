@@ -131,6 +131,20 @@ pub async fn run_render_job(
         }
     };
 
+    // MP4 has never had solid cross-player support for raw PCM audio — ffmpeg's
+    // MP4 muxer boxes it as `ipcm`, which FFmpeg/VLC read fine but which Vegas
+    // Pro (and likely other strict NLEs) can't decode, producing garbled/static
+    // audio despite the samples themselves being intact (confirmed: the exact
+    // same PCM bytes remuxed into a .mov container instead, where ffmpeg uses
+    // the older/broadly-supported `sowt` tag, play back correctly everywhere).
+    // AAC sidesteps the whole box-tag mess and is the standard choice for MP4
+    // audio; ProRes/DNxHD stay lossless PCM since those already output .mov.
+    let audio_codec_args: &[&str] = if file_ext == ".mp4" {
+        &["-c:a", "aac", "-b:a", "192k"]
+    } else {
+        &["-c:a", "pcm_s16le"]
+    };
+
     let stream_type = if is_hud { "hud" } else { "all" };
     let wav_stem = std::path::Path::new(&clip.wav_file).file_stem().unwrap_or_default().to_string_lossy();
     let wav_part = if wav_stem.to_lowercase() == "sound" {
@@ -187,11 +201,12 @@ pub async fn run_render_job(
     let threads_str = threads_per_process.to_string();
     let out_file_str = out_file.to_string_lossy().into_owned();
 
+    cmd_args.extend(vec!["-threads", &threads_str]);
+    cmd_args.extend_from_slice(audio_codec_args);
     cmd_args.extend(vec![
-        "-threads", &threads_str,
+        "-shortest",
         // +faststart is only needed for HTTP streaming; omitting it avoids the
         // post-render moov-atom rewrite pass on what can be multi-GB files.
-        "-c:a", "pcm_s16le", "-shortest",
         "-progress", "pipe:1", "-loglevel", "error",
         &out_file_str,
     ]);
