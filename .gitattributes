@@ -1,0 +1,6 @@
+# Pins line-ending policy explicitly instead of leaving git to re-guess it
+# every status check under core.autocrlf — the guess can false-positive a
+# byte-identical file as "modified" (seen repeatedly on
+# desktop-studio/src-tauri/Cargo.toml). All TOML in this repo is already
+# consistently LF-stored; this just makes that official.
+*.toml text eol=lf
