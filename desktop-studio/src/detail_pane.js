@@ -398,7 +398,7 @@ export function renderDetailView(demo, selectedDemoIdx) {
 
     // Details: precomputed weapon/timing chain from the backend
     // (e.g. "Rifle (+0:03) Rifle" — first kill weapon + gap + weapon chain).
-    const timelineText = streak.timeline_string || `${streak.kill_count} kills`;
+    const timelineText = streak.timeline_string || STRINGS.HIGHLIGHTS.fallbackKillCount(streak.kill_count);
 
     // Status badge colours matching HighlightStatus enum
     const statusColors = {
@@ -407,7 +407,7 @@ export function renderDetailView(demo, selectedDemoIdx) {
       Rendered: '#2196f3',
       None: '#555',
     };
-    const statusLabel = streak.status || 'Pending';
+    const statusLabel = streak.status || STRINGS.HIGHLIGHTS.STATUS_PENDING_DEFAULT;
     const statusColor = statusColors[statusLabel] || '#888';
 
     const maxKillIdx = Math.max((streak.kills || []).length - 1, 0);
@@ -418,7 +418,7 @@ export function renderDetailView(demo, selectedDemoIdx) {
     // (builder.rs's merge loop) — surfaced so it's obvious at a glance why
     // two rows flipped to Captured together instead of independently.
     const mergedBadge = streak.mergedTakeKey
-      ? `<span title="${STRINGS.HIGHLIGHTS.mergedBadgeTitle(streak.mergedCount)}" style="margin-left:6px;font-size:0.75em;color:#ff9800;border:1px solid #ff9800;border-radius:2px;padding:1px 4px;cursor:help;">merged → ${streak.mergedTakeKey.split('/').pop()}</span>`
+      ? `<span title="${STRINGS.HIGHLIGHTS.mergedBadgeTitle(streak.mergedCount)}" style="margin-left:6px;font-size:0.75em;color:#ff9800;border:1px solid #ff9800;border-radius:2px;padding:1px 4px;cursor:help;">${STRINGS.HIGHLIGHTS.mergedTakeBadge(streak.mergedTakeKey.split('/').pop())}</span>`
       : '';
 
     tr.innerHTML = `
@@ -441,7 +441,7 @@ export function renderDetailView(demo, selectedDemoIdx) {
       <td style="padding: 8px;">${durSecs}s</td>
       <td style="padding: 8px;">
         <select class="streak-status-select" style="color: ${statusColor}; font-size: 0.85em;">
-          ${['None', 'Pending', 'Captured', 'Rendered'].map(s =>
+          ${STRINGS.HIGHLIGHTS.STATUS_OPTIONS.map(s =>
             `<option value="${s}" ${s === statusLabel ? 'selected' : ''}>${s}</option>`
           ).join('')}
         </select>${mergedBadge}
@@ -570,9 +570,9 @@ export function renderTimeline(demo) {
   ctx.fillStyle = '#888888';
   ctx.font = '10px monospace';
   ctx.textAlign = 'left';
-  ctx.fillText(`Tick ${minTick}`, padding, height - 5);
+  ctx.fillText(STRINGS.HIGHLIGHTS.tickLabel(minTick), padding, height - 5);
   ctx.textAlign = 'right';
-  ctx.fillText(`Tick ${maxTick}`, width - padding, height - 5);
+  ctx.fillText(STRINGS.HIGHLIGHTS.tickLabel(maxTick), width - padding, height - 5);
 
   demo.streaks.forEach((streak) => {
     // Opt-in model, matching the checkbox default and the row-build loop
