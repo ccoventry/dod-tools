@@ -6,6 +6,8 @@
 // Items are either plain values (`fields[0].primitive: true`, e.g. a path
 // string) or objects keyed by each field's `key`.
 
+import { STRINGS } from './strings.js';
+
 function primaryValue(item, fields) {
   return fields[0].primitive ? item : item[fields[0].key];
 }
@@ -92,7 +94,7 @@ export function createListEditor({ container, getItems, fields, unique = false, 
       browseBtn.type = 'button';
       browseBtn.className = 'list-editor-browse-btn';
       browseBtn.textContent = '📁';
-      browseBtn.title = 'Browse…';
+      browseBtn.title = STRINGS.LIST_EDITOR.BROWSE_TITLE;
       browseBtn.addEventListener('click', async () => {
         const selected = await browse();
         if (!selected) return;
@@ -108,7 +110,7 @@ export function createListEditor({ container, getItems, fields, unique = false, 
     upBtn.type = 'button';
     upBtn.className = 'list-editor-move-btn';
     upBtn.textContent = '▲';
-    upBtn.title = 'Move up';
+    upBtn.title = STRINGS.LIST_EDITOR.MOVE_UP_TITLE;
     upBtn.disabled = idx === 0;
     upBtn.addEventListener('click', () => {
       if (idx === 0) return;
@@ -122,7 +124,7 @@ export function createListEditor({ container, getItems, fields, unique = false, 
     downBtn.type = 'button';
     downBtn.className = 'list-editor-move-btn';
     downBtn.textContent = '▼';
-    downBtn.title = 'Move down';
+    downBtn.title = STRINGS.LIST_EDITOR.MOVE_DOWN_TITLE;
     downBtn.disabled = idx === items.length - 1;
     downBtn.addEventListener('click', () => {
       if (idx === items.length - 1) return;
@@ -136,8 +138,8 @@ export function createListEditor({ container, getItems, fields, unique = false, 
     removeBtn.type = 'button';
     removeBtn.className = 'list-editor-remove-btn';
     removeBtn.innerHTML = TRASH_ICON_SVG;
-    removeBtn.title = 'Remove';
-    removeBtn.setAttribute('aria-label', 'Remove');
+    removeBtn.title = STRINGS.LIST_EDITOR.REMOVE_TITLE;
+    removeBtn.setAttribute('aria-label', STRINGS.LIST_EDITOR.REMOVE_ARIA_LABEL);
     removeBtn.addEventListener('click', () => {
       items.splice(idx, 1);
       notify();
