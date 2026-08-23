@@ -330,7 +330,7 @@ export function renderMasterList(demos, selectedDemoIdx, onSelectDemo) {
     nameSpan.style.textOverflow = 'ellipsis';
     nameSpan.style.whiteSpace = 'nowrap';
     nameSpan.title = demo.name || '';
-    nameSpan.textContent = demo.name || '—';
+    nameSpan.textContent = demo.name || STRINGS.WORKSPACE.EMPTY_DASH;
     tdName.appendChild(nameSpan);
 
     const demoIsTracked = isDemoTracked(demo);
