@@ -1,3 +1,16 @@
+# dem (vendored, patched fork)
+
+> **This is `dod-tools`' vendored fork of the upstream `dem` crate** (pulled in via
+> `[patch.crates-io]` in the workspace root `Cargo.toml`, not published to crates.io
+> as this fork). The badges/links below describe the *upstream* project this was
+> forked from — see the root [`README.md`](../README.md)'s "Why the fork of `dem`"
+> section for what's actually changed here and why (the published crate `.unwrap()`s
+> delta-decoder table lookups at 29 call sites across 7 files, so a malformed or
+> unexpected demo panics the whole process instead of returning a parse error;
+> this fork converts those to proper `nom` parse errors instead).
+
+---
+
 # dem
 
 [![crates.io](https://img.shields.io/crates/v/dem)](https://crates.io/crates/dem) [![docs.rs](https://img.shields.io/docsrs/dem/latest?logo=brightgreen&link=https%3A%2F%2Fdocs.rs%2Fdem%2Flatest)](https://docs.rs/dem)
