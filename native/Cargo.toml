@@ -64,6 +64,10 @@ path = "src/bin/check_ticks.rs"
 name = "strip_decals"
 path = "src/bin/strip_decals.rs"
 
+[[bin]]
+name = "probe_decals"
+path = "src/bin/probe_decals.rs"
+
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2.100"

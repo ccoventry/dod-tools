@@ -46,6 +46,8 @@ pub mod highlevel;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod decal_strip;
 #[cfg(not(target_arch = "wasm32"))]
+pub mod decal_probe;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod engine;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod builder;
@@ -79,6 +81,11 @@ pub use highlevel::patch_demo_highlights;
 pub use decal_strip::{
     clean_demo_decals, strip_decals_outside_windows, DecalCleanOptions, DecalCleanStats,
     FlushSource, DECALS_PER_POSITION, MAX_OVERLAP_DECALS,
+};
+
+#[cfg(not(target_arch = "wasm32"))]
+pub use decal_probe::{
+    probe_decal_offsets, Probe, ProbeOptions, ProbeRow, ProbeStats,
 };
 
 #[cfg(not(target_arch = "wasm32"))]

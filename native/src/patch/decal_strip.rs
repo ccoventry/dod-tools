@@ -235,12 +235,12 @@ fn decal_position(payload: &[u8]) -> Option<[f32; 3]> {
     ])
 }
 
-fn distance(a: &[f32; 3], b: &[f32; 3]) -> f32 {
+pub(super) fn distance(a: &[f32; 3], b: &[f32; 3]) -> f32 {
     let (dx, dy, dz) = (a[0] - b[0], a[1] - b[1], a[2] - b[2]);
     (dx * dx + dy * dy + dz * dz).sqrt()
 }
 
-fn build_world_decal(pos: &[f32; 3], texture_index: u8) -> NetMessage {
+pub(super) fn build_world_decal(pos: &[f32; 3], texture_index: u8) -> NetMessage {
     let mut payload = Vec::with_capacity(7);
     payload.extend_from_slice(&encode_coord(pos[0]));
     payload.extend_from_slice(&encode_coord(pos[1]));
@@ -254,26 +254,26 @@ fn build_world_decal(pos: &[f32; 3], texture_index: u8) -> NetMessage {
 }
 
 /// Everything the survey pass needs to pick a flush coordinate and place bursts.
-struct Survey {
+pub(super) struct Survey {
     /// Positions of decals the engine actually accepted during playback.
-    harvested: Vec<[f32; 3]>,
-    texture_index: Option<u8>,
+    pub(super) harvested: Vec<[f32; 3]>,
+    pub(super) texture_index: Option<u8>,
     /// Earliest camera eye position seen in playback.
-    spawn_eye: Option<[f32; 3]>,
+    pub(super) spawn_eye: Option<[f32; 3]>,
     /// Player origin once the spawn has settled onto solid ground — see the
     /// grounded-run detection below. This, not `spawn_eye`, is the spawn
     /// reference worth trusting.
-    grounded_origin: Option<[f32; 3]>,
+    pub(super) grounded_origin: Option<[f32; 3]>,
     /// Floor points sampled beneath the player wherever they stood on solid
     /// ground. A sweep needs far more distinct positions than a demo has
     /// decals, and every one of these is a surface the demo proves exists —
     /// the player was standing on it. Walking naturally spreads them out, so
     /// they satisfy the no-overlap requirement for free.
-    floor_candidates: Vec<[f32; 3]>,
+    pub(super) floor_candidates: Vec<[f32; 3]>,
     /// Camera (eye position, forward vector) pairs sampled inside the capture
     /// windows. The forward vector is what makes a real "is it on screen?"
     /// test possible, rather than distance alone.
-    window_cameras: Vec<([f32; 3], [f32; 3])>,
+    pub(super) window_cameras: Vec<([f32; 3], [f32; 3])>,
 }
 
 /// Running frame ordinal, matching `engine.rs`'s `frame_counter`: every frame
@@ -284,7 +284,7 @@ struct Survey {
 /// share one of those (a DemoBuffer, a ClientData and a NetworkMessage per
 /// tick), so the two spaces differ by roughly 2.6x on a real demo. Mixing them
 /// silently targets the wrong frames.
-fn frame_ordinals(demo: &dem::types::Demo) -> Vec<(usize, usize, i32)> {
+pub(super) fn frame_ordinals(demo: &dem::types::Demo) -> Vec<(usize, usize, i32)> {
     let mut out = Vec::new();
     let mut ordinal = 0i32;
     for (entry_idx, entry) in demo.directory.entries.iter().enumerate() {
@@ -296,11 +296,15 @@ fn frame_ordinals(demo: &dem::types::Demo) -> Vec<(usize, usize, i32)> {
     out
 }
 
-fn in_window(ordinal: i32, keep_windows: &[(i32, i32)]) -> bool {
+pub(super) fn in_window(ordinal: i32, keep_windows: &[(i32, i32)]) -> bool {
     keep_windows.iter().any(|&(s, e)| ordinal >= s && ordinal <= e)
 }
 
-fn survey(demo: &dem::types::Demo, keep_windows: &[(i32, i32)], opts: &DecalCleanOptions) -> Survey {
+pub(super) fn survey(
+    demo: &dem::types::Demo,
+    keep_windows: &[(i32, i32)],
+    opts: &DecalCleanOptions,
+) -> Survey {
     let mut out = Survey {
         harvested: Vec::new(),
         texture_index: None,
@@ -690,6 +694,61 @@ fn legacy_single_position(
     )
 }
 
+/// Blanks every decal-placing message outside `keep_windows`, reporting
+/// `(wall decals, player sprays)` removed.
+///
+/// An empty `keep_windows` strips the entire demo, which is what the offset
+/// probe wants: a blank canvas so the only decals on a wall are the ones it
+/// injected.
+///
+/// Only messages that PLACE a decal are stripped. SvcDecalName (36)
+/// deliberately is not: it registers a decal name against an index (how a
+/// custom player spray is announced) and places nothing. Blanking it does not
+/// remove a decal — it destroys the texture lookup that decals referencing
+/// that index still need, including any index this pass harvests for its own
+/// flush burst.
+pub(super) fn strip_decal_messages(
+    demo: &mut dem::types::Demo,
+    keep_windows: &[(i32, i32)],
+) -> (usize, usize) {
+    let (mut wall, mut spray) = (0usize, 0usize);
+    let mut ordinal = 0i32;
+    for entry in &mut demo.directory.entries {
+        for frame in &mut entry.frames {
+            ordinal += 1;
+            if in_window(ordinal, keep_windows) {
+                continue;
+            }
+            let FrameData::NetworkMessage(net_msg_box) = &mut frame.frame_data else {
+                continue;
+            };
+            let MessageData::Parsed(messages) = &mut net_msg_box.1.messages else {
+                continue;
+            };
+            for msg in messages.iter_mut() {
+                let NetMessage::EngineMessage(eng) = msg else {
+                    continue;
+                };
+                let strip_type = match eng.as_ref() {
+                    EngineMessage::SvcTempEntity(te)
+                        if WALL_DECAL_ENTITY_TYPES.contains(&te.entity_type) =>
+                    {
+                        te.entity_type
+                    }
+                    _ => continue,
+                };
+                if strip_type == TE_PLAYERDECAL {
+                    spray += 1;
+                } else {
+                    wall += 1;
+                }
+                *eng = Box::new(EngineMessage::SvcNop);
+            }
+        }
+    }
+    (wall, spray)
+}
+
 /// Strips decal messages outside `keep_windows` and injects ring-sweeping decal
 /// bursts ahead of each window.
 ///
@@ -768,48 +827,9 @@ pub fn clean_demo_decals(
 
     // ── Pass 1: strip decal messages outside the capture windows ─────────────
     if opts.strip_outside_windows {
-        let mut ordinal = 0i32;
-        for entry in &mut demo.directory.entries {
-            for frame in &mut entry.frames {
-                ordinal += 1;
-                if in_window(ordinal, keep_windows) {
-                    continue;
-                }
-                let FrameData::NetworkMessage(net_msg_box) = &mut frame.frame_data else {
-                    continue;
-                };
-                let MessageData::Parsed(messages) = &mut net_msg_box.1.messages else {
-                    continue;
-                };
-                for msg in messages.iter_mut() {
-                    let NetMessage::EngineMessage(eng) = msg else {
-                        continue;
-                    };
-                    // Only messages that PLACE a decal are stripped.
-                    //
-                    // SvcDecalName (36) deliberately is not: it registers a
-                    // decal name against an index (how a custom player spray is
-                    // announced) and places nothing. Blanking it does not
-                    // remove a decal — it destroys the texture lookup that
-                    // decals referencing that index still need, including any
-                    // index this pass harvests for its own flush burst.
-                    let strip_type = match eng.as_ref() {
-                        EngineMessage::SvcTempEntity(te)
-                            if WALL_DECAL_ENTITY_TYPES.contains(&te.entity_type) =>
-                        {
-                            te.entity_type
-                        }
-                        _ => continue,
-                    };
-                    if strip_type == TE_PLAYERDECAL {
-                        stats.player_spray_stripped += 1;
-                    } else {
-                        stats.temp_entity_stripped += 1;
-                    }
-                    *eng = Box::new(EngineMessage::SvcNop);
-                }
-            }
-        }
+        let (wall, spray) = strip_decal_messages(&mut demo, keep_windows);
+        stats.temp_entity_stripped += wall;
+        stats.player_spray_stripped += spray;
     }
 
     // ── Pass 2: flush bursts ahead of each capture window ────────────────────
