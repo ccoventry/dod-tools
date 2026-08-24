@@ -360,6 +360,21 @@ fn survey(demo: &dem::types::Demo, keep_windows: &[(i32, i32)], opts: &DecalClea
                     continue;
                 }
 
+                // A spray marks a proven surface just as well as a bullet hole,
+                // so its position is worth harvesting — but its texture index
+                // never is: that index is somebody's logo, and a stack of those
+                // is the most conspicuous thing that could be left on a wall.
+                // Its layout also differs (a leading player index before the
+                // coordinates), hence the separate arm.
+                if let TempEntity::TePlayerDecal(p) = &te.entity {
+                    if p.len() >= 7 {
+                        if let Some(pos) = decal_position(&p[1..7]) {
+                            out.harvested.push(pos);
+                        }
+                    }
+                    continue;
+                }
+
                 let payload: &[u8] = match &te.entity {
                     TempEntity::TeWorldDecal(p)
                     | TempEntity::TeWorldDecalHigh(p)
