@@ -5,7 +5,7 @@
 //! into the real capture batch pipeline.
 
 use clap::Parser;
-use native::patch::{clean_demo_decals, DecalCleanOptions, FlushSource};
+use native::patch::{clean_demo_decals, DecalCleanOptions, FlushSource, MAX_OVERLAP_DECALS};
 use std::fs;
 use std::path::PathBuf;
 
@@ -146,7 +146,24 @@ fn main() {
                 Some(FlushSource::ComputedSpawnFloor) => println!(
                     "Flush source:          computed spawn floor (GEOMETRIC GUESS — verify in game)"
                 ),
+                Some(FlushSource::PlayerFloorPath) => println!(
+                    "Flush source:          floor under the player's own path (surfaces they stood on)"
+                ),
                 None => println!("Flush source:          <none>"),
+            }
+            println!(
+                "Spread across:         {} of {} positions needed{}",
+                stats.flush_positions,
+                stats.flush_positions_wanted,
+                if stats.flush_positions >= stats.flush_positions_wanted { "  (full sweep)" } else { "" }
+            );
+            if stats.flush_positions < stats.flush_positions_wanted {
+                println!(
+                    "  WARNING: too few distinct spots. The engine recycles a decal instead of\n  \
+                     allocating once {} overlap at one spot, and a recycled decal does not\n  \
+                     advance the ring — so the sweep will fall short of a full revolution.",
+                    MAX_OVERLAP_DECALS
+                );
             }
             match stats.spawn_to_flush_distance {
                 Some(d) => println!("Distance from spawn:   {:.0} units", d),

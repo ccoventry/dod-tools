@@ -68,6 +68,29 @@ const TE_WORLDDECAL: u8 = 116;
 /// at the centre of a 72-unit hull, so the feet are 36 below it.
 const ORIGIN_TO_FLOOR: f32 = 36.0;
 
+/// The engine's own `MAX_OVERLAP_DECALS`. `R_DecalCreate` counts how many
+/// existing decals a new one would overlap, and once that reaches this many it
+/// recycles one of them instead of allocating:
+///
+/// ```c
+/// pold = R_DecalIntersect( decalinfo, surf, &count );
+/// if( count < MAX_OVERLAP_DECALS ) pold = NULL;
+/// ```
+///
+/// `R_DecalAlloc` only walks the ring when handed NULL, so a recycled decal
+/// does NOT advance `gDecalCount`. This is why a flush burst must be spread
+/// across distinct positions: piling every decal on one spot stops advancing
+/// the ring after the sixth, and the sweep silently accomplishes nothing.
+pub const MAX_OVERLAP_DECALS: usize = 6;
+
+/// Flush decals to place at each distinct position. Kept below
+/// `MAX_OVERLAP_DECALS` so every one of them allocates a fresh ring slot.
+pub const DECALS_PER_POSITION: usize = MAX_OVERLAP_DECALS - 2;
+
+/// Minimum spacing between two flush positions, so the engine cannot see them
+/// as overlapping. Comfortably wider than a decal's own footprint.
+const MIN_POSITION_SPACING: f32 = 28.0;
+
 #[derive(Debug, Clone)]
 pub struct DecalCleanOptions {
     /// Blank decal messages outside the capture windows.
@@ -161,6 +184,12 @@ pub struct DecalCleanStats {
     pub flush_on_camera_frames: usize,
     /// Total in-window camera samples the two figures above were measured over.
     pub camera_samples: usize,
+    /// Distinct positions the burst was spread across.
+    pub flush_positions: usize,
+    /// Positions needed to place the whole burst without any spot exceeding
+    /// the engine's overlap limit. If `flush_positions` is below this, some
+    /// injected decals get recycled instead of turning the ring.
+    pub flush_positions_wanted: usize,
 }
 
 fn decode_coord(b: &[u8]) -> f32 {
@@ -223,6 +252,12 @@ struct Survey {
     /// grounded-run detection below. This, not `spawn_eye`, is the spawn
     /// reference worth trusting.
     grounded_origin: Option<[f32; 3]>,
+    /// Floor points sampled beneath the player wherever they stood on solid
+    /// ground. A sweep needs far more distinct positions than a demo has
+    /// decals, and every one of these is a surface the demo proves exists —
+    /// the player was standing on it. Walking naturally spreads them out, so
+    /// they satisfy the no-overlap requirement for free.
+    floor_candidates: Vec<[f32; 3]>,
     /// Camera (eye position, forward vector) pairs sampled inside the capture
     /// windows. The forward vector is what makes a real "is it on screen?"
     /// test possible, rather than distance alone.
@@ -259,6 +294,7 @@ fn survey(demo: &dem::types::Demo, keep_windows: &[(i32, i32)], opts: &DecalClea
         texture_index: None,
         spawn_eye: None,
         grounded_origin: None,
+        floor_candidates: Vec::new(),
         window_cameras: Vec::new(),
     };
     // A world decal's index is read straight from the byte after the coords,
@@ -289,6 +325,28 @@ fn survey(demo: &dem::types::Demo, keep_windows: &[(i32, i32)], opts: &DecalClea
                 if pos != [0.0, 0.0, 0.0] {
                     if out.spawn_eye.is_none() {
                         out.spawn_eye = Some(pos);
+                    }
+
+                    // Floor beneath the player wherever they are actually
+                    // standing. Sampled sparsely and only when far enough from
+                    // the last sample to be a genuinely separate spot.
+                    if rp.on_ground != 0 {
+                        let sim = &rp.sim_org;
+                        let origin = if sim.len() >= 3 && sim[2] != 0.0 {
+                            [sim[0], sim[1], sim[2]]
+                        } else {
+                            let vh = rp.view_height.get(2).copied().unwrap_or(28.0);
+                            [pos[0], pos[1], pos[2] - vh]
+                        };
+                        let floor = [origin[0], origin[1], origin[2] - opts.floor_drop];
+                        let far_enough = out
+                            .floor_candidates
+                            .last()
+                            .map(|last| distance(&floor, last) >= MIN_POSITION_SPACING)
+                            .unwrap_or(true);
+                        if far_enough {
+                            out.floor_candidates.push(floor);
+                        }
                     }
 
                     if out.grounded_origin.is_none() {
@@ -414,6 +472,9 @@ pub enum FlushSource {
     /// Computed floor point beneath the settled spawn position. Geometrically
     /// derived rather than proven, so only used when nothing was harvested.
     ComputedSpawnFloor,
+    /// Floor points under the player's own walked path. Proven surfaces (they
+    /// stood on them) and naturally spread apart, which is what a sweep needs.
+    PlayerFloorPath,
 }
 
 /// Picks where the synthetic flush decals go.
@@ -430,15 +491,93 @@ pub enum FlushSource {
 ///  3. The computed floor beneath the settled spawn position. Used only when
 ///     the demo yielded no decals at all; a spawn can sit above the floor on
 ///     some maps, so this is a geometric guess and is reported as such.
-fn resolve_flush_position(
+/// Picks the set of positions the flush burst is spread across.
+///
+/// `wanted` is how many distinct spots are needed to place the whole burst at
+/// `DECALS_PER_POSITION` each. Returning fewer means the sweep will fall short,
+/// which the caller reports rather than hiding.
+fn resolve_flush_positions(
     survey: &Survey,
     opts: &DecalCleanOptions,
-) -> Option<([f32; 3], FlushSource)> {
+    wanted: usize,
+) -> (Vec<[f32; 3]>, Option<FlushSource>) {
     if let Some(coord) = opts.flush_coord {
-        return Some((coord, FlushSource::Override));
+        return (vec![coord], Some(FlushSource::Override));
     }
 
-    let reference = survey.grounded_origin.or(survey.spawn_eye)?;
+    let Some(reference) = survey.grounded_origin.or(survey.spawn_eye) else {
+        return (Vec::new(), None);
+    };
+
+    let cos_cone = opts.visibility_cone_degrees.to_radians().cos();
+    let safe = |pos: &[f32; 3]| -> bool {
+        let mut nearest = f32::INFINITY;
+        for (eye, fwd) in &survey.window_cameras {
+            let v = [pos[0] - eye[0], pos[1] - eye[1], pos[2] - eye[2]];
+            let dist = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+            nearest = nearest.min(dist);
+            if nearest < opts.min_camera_clearance {
+                return false;
+            }
+            if dist < 1.0 || dist > opts.visibility_max_distance {
+                continue;
+            }
+            let fl = (fwd[0] * fwd[0] + fwd[1] * fwd[1] + fwd[2] * fwd[2]).sqrt();
+            if fl < 0.5 {
+                continue;
+            }
+            if (v[0] * fwd[0] + v[1] * fwd[1] + v[2] * fwd[2]) / (dist * fl) >= cos_cone {
+                return false;
+            }
+        }
+        true
+    };
+
+    // Real decal positions first — those surfaces are proven by the demo
+    // having rendered a decal there — then floor points under the player's
+    // own path, which are proven by the player having stood on them.
+    let mut pool: Vec<[f32; 3]> = Vec::new();
+    let mut source = None;
+    for (candidates, src) in [
+        (&survey.harvested, FlushSource::HarvestedNearSpawn),
+        (&survey.floor_candidates, FlushSource::PlayerFloorPath),
+    ] {
+        let mut ok: Vec<[f32; 3]> = candidates.iter().copied().filter(|p| safe(p)).collect();
+        ok.sort_by(|a, b| {
+            distance(a, &reference)
+                .partial_cmp(&distance(b, &reference))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        for p in ok {
+            if pool.len() >= wanted {
+                break;
+            }
+            // Enforce spacing across the whole pool, not just within a source,
+            // so two sources cannot contribute overlapping spots.
+            if pool.iter().all(|q| distance(&p, q) >= MIN_POSITION_SPACING) {
+                pool.push(p);
+                source.get_or_insert(src);
+            }
+        }
+        if pool.len() >= wanted {
+            break;
+        }
+    }
+
+    if !pool.is_empty() {
+        return (pool, source);
+    }
+
+    legacy_single_position(survey, opts, reference)
+}
+
+/// Original single-position selection, retained as the last resort for demos
+/// that yield no safe spread at all.
+fn legacy_single_position(
+    survey: &Survey,
+    opts: &DecalCleanOptions,
+    reference: [f32; 3],
+) -> (Vec<[f32; 3]>, Option<FlushSource>) {
 
     // Two independent disqualifiers, because neither alone is sufficient:
     //
@@ -498,7 +637,7 @@ fn resolve_flush_position(
                     .partial_cmp(&distance(&b.0, &reference))
                     .unwrap_or(std::cmp::Ordering::Equal)
             });
-            return Some((clear[0].0, FlushSource::HarvestedNearSpawn));
+            return (vec![clear[0].0], Some(FlushSource::HarvestedNearSpawn));
         }
 
         // Nothing was fully clear. Prefer the least-seen candidate, breaking
@@ -508,13 +647,13 @@ fn resolve_flush_position(
             a.2.cmp(&b.2)
                 .then(b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal))
         });
-        return Some((scored[0].0, FlushSource::HarvestedNearSpawn));
+        return (vec![scored[0].0], Some(FlushSource::HarvestedNearSpawn));
     }
 
-    Some((
-        [reference[0], reference[1], reference[2] - opts.floor_drop],
-        FlushSource::ComputedSpawnFloor,
-    ))
+    (
+        vec![[reference[0], reference[1], reference[2] - opts.floor_drop]],
+        Some(FlushSource::ComputedSpawnFloor),
+    )
 }
 
 /// Strips decal messages outside `keep_windows` and injects ring-sweeping decal
@@ -545,41 +684,49 @@ pub fn clean_demo_decals(
     stats.spawn_reference = survey.grounded_origin;
     stats.flush_texture_index = survey.texture_index;
 
-    let resolved = resolve_flush_position(&survey, opts);
-    let flush_pos = resolved.map(|(pos, _)| pos);
-    stats.flush_coord = flush_pos;
-    stats.flush_source = resolved.map(|(_, src)| src);
+    // Distinct spots needed so every injected decal allocates a fresh ring slot
+    // instead of being recycled as an overlap of one already placed.
+    let burst_count = opts.ring_limit as usize + opts.burst_margin;
+    let positions_wanted = burst_count.div_ceil(DECALS_PER_POSITION);
 
-    if let (Some(pos), Some(reference)) = (flush_pos, survey.grounded_origin) {
-        stats.spawn_to_flush_distance = Some(distance(&pos, &reference));
+    let (flush_positions, flush_source) = resolve_flush_positions(&survey, opts, positions_wanted);
+    stats.flush_coord = flush_positions.first().copied();
+    stats.flush_source = flush_source;
+    stats.flush_positions = flush_positions.len();
+    stats.flush_positions_wanted = positions_wanted;
+
+    if let (Some(pos), Some(reference)) = (flush_positions.first(), survey.grounded_origin) {
+        stats.spawn_to_flush_distance = Some(distance(pos, &reference));
     }
 
-    if let Some(pos) = flush_pos {
+    if !flush_positions.is_empty() {
         stats.min_camera_distance = survey
             .window_cameras
             .iter()
-            .map(|(eye, _)| distance(&pos, eye))
+            .flat_map(|(eye, _)| flush_positions.iter().map(move |p| distance(p, eye)))
             .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
-        // Sampled in-window frames where the flush point would fall inside the
-        // camera's cone. Non-zero means the stack is on screen during a
-        // recorded clip — the failure this whole heuristic exists to avoid.
+        // Sampled in-window frames where ANY flush position falls inside the
+        // camera's cone. Non-zero means part of the spread is on screen during
+        // a recorded clip — the failure this heuristic exists to avoid.
         let cos_cone = opts.visibility_cone_degrees.to_radians().cos();
         stats.camera_samples = survey.window_cameras.len();
         stats.flush_on_camera_frames = survey
             .window_cameras
             .iter()
             .filter(|(eye, fwd)| {
-                let v = [pos[0] - eye[0], pos[1] - eye[1], pos[2] - eye[2]];
-                let dist = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
-                if dist < 1.0 || dist > opts.visibility_max_distance {
-                    return false;
-                }
-                let fl = (fwd[0] * fwd[0] + fwd[1] * fwd[1] + fwd[2] * fwd[2]).sqrt();
-                if fl < 0.5 {
-                    return false;
-                }
-                (v[0] * fwd[0] + v[1] * fwd[1] + v[2] * fwd[2]) / (dist * fl) >= cos_cone
+                flush_positions.iter().any(|pos| {
+                    let v = [pos[0] - eye[0], pos[1] - eye[1], pos[2] - eye[2]];
+                    let dist = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+                    if dist < 1.0 || dist > opts.visibility_max_distance {
+                        return false;
+                    }
+                    let fl = (fwd[0] * fwd[0] + fwd[1] * fwd[1] + fwd[2] * fwd[2]).sqrt();
+                    if fl < 0.5 {
+                        return false;
+                    }
+                    (v[0] * fwd[0] + v[1] * fwd[1] + v[2] * fwd[2]) / (dist * fl) >= cos_cone
+                })
             })
             .count();
     }
@@ -632,9 +779,7 @@ pub fn clean_demo_decals(
 
     // ── Pass 2: flush bursts ahead of each capture window ────────────────────
     if opts.flush_burst {
-        if let (Some(pos), Some(texture_index)) = (flush_pos, survey.texture_index) {
-            let burst_count = opts.ring_limit as usize + opts.burst_margin;
-
+        if let (false, Some(texture_index)) = (flush_positions.is_empty(), survey.texture_index) {
             // Eligible carriers, in global frame order: parsed network frames
             // small enough that a handful of extra 9-byte messages cannot push
             // the packet near the engine's buffer ceiling. Built across every
@@ -697,6 +842,13 @@ pub fn clean_demo_decals(
                 }
             }
 
+            // Walk the position list so no spot receives more than
+            // DECALS_PER_POSITION consecutive decals. Exceeding
+            // MAX_OVERLAP_DECALS at one spot makes the engine recycle instead
+            // of allocate, which stops the ring advancing and voids the sweep.
+            let mut placed_here = 0usize;
+            let mut pos_idx = 0usize;
+
             for (entry_idx, frame_idx, count) in plan {
                 let Some(frame) = demo
                     .directory
@@ -713,8 +865,14 @@ pub fn clean_demo_decals(
                     continue;
                 };
                 for _ in 0..count {
+                    let pos = flush_positions[pos_idx % flush_positions.len()];
                     messages.push(build_world_decal(&pos, texture_index));
                     stats.flush_decals_injected += 1;
+                    placed_here += 1;
+                    if placed_here >= DECALS_PER_POSITION {
+                        placed_here = 0;
+                        pos_idx += 1;
+                    }
                 }
             }
         }

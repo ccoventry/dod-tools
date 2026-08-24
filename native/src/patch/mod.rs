@@ -78,7 +78,7 @@ pub use highlevel::patch_demo_highlights;
 #[cfg(not(target_arch = "wasm32"))]
 pub use decal_strip::{
     clean_demo_decals, strip_decals_outside_windows, DecalCleanOptions, DecalCleanStats,
-    FlushSource,
+    FlushSource, DECALS_PER_POSITION, MAX_OVERLAP_DECALS,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
