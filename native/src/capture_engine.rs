@@ -386,9 +386,10 @@ pub fn spawn_capture_engine(
 
             for (drive_path, free_bytes) in &drive_headroom {
                 if *free_bytes < crate::sys::disk::MIN_DRIVE_HEADROOM_BYTES {
+                    let required_gb = crate::sys::disk::MIN_DRIVE_HEADROOM_BYTES as f64 / (1024.0 * 1024.0 * 1024.0);
                     log_crash_abort!(tx, format!(
-                        "Capture aborted: {:?} has less than 15GB free space.",
-                        drive_path
+                        "Capture aborted: {:?} has less than {:.1}GB free space.",
+                        drive_path, required_gb
                     ));
                     return;
                 }
