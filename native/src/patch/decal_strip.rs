@@ -60,9 +60,15 @@ const WALL_DECAL_ENTITY_TYPES: &[u8] = &[13, 104, 109, 112, 116, 117, 118];
 const TE_PLAYERDECAL: u8 = 112;
 
 /// TE_WORLDDECAL. 7 bytes: 3 × WRITE_COORD + 1 × WRITE_BYTE texture index.
-/// Chosen for the flush burst because it takes no entity index and — unlike
-/// TE_GUNSHOTDECAL — plays no ricochet sound.
+/// Chosen as the flush burst's carrier message because it takes no entity index
+/// and — unlike TE_GUNSHOTDECAL — plays no ricochet sound. Note this is the
+/// message type, independent of which texture index it is asked to draw.
 const TE_WORLDDECAL: u8 = 116;
+
+/// TE_GUNSHOTDECAL — the bullet-hole message. Not emitted (it plays a ricochet
+/// sound), but its texture index is the one worth borrowing: a small hole
+/// rather than the large scorch a TE_WORLDDECAL index usually denotes.
+const TE_GUNSHOTDECAL: u8 = 109;
 
 /// Distance from a standing player's origin down to the floor: the origin sits
 /// at the centre of a 72-unit hull, so the feet are 36 below it.
@@ -116,6 +122,11 @@ pub struct DecalCleanOptions {
     pub inject_r_decals_command: bool,
     /// Hand-picked flush coordinate, overriding spawn detection.
     pub flush_coord: Option<[f32; 3]>,
+    /// Hand-picked decal texture index for the flush burst, overriding the
+    /// harvested one. Useful when a demo contains no bullet-hole decal to
+    /// borrow a small texture from and would otherwise fall back to a large
+    /// grenade scorch.
+    pub flush_texture_index: Option<u8>,
     /// Vertical drop applied to the settled spawn origin to reach the floor.
     /// Only used when the demo yielded no real decal to anchor to.
     pub floor_drop: f32,
@@ -148,6 +159,7 @@ impl Default for DecalCleanOptions {
             lead_ticks: 300,
             inject_r_decals_command: true,
             flush_coord: None,
+            flush_texture_index: None,
             floor_drop: ORIGIN_TO_FLOOR,
             grounded_settle_frames: 10,
             min_camera_clearance: 900.0,
@@ -445,7 +457,12 @@ fn survey(demo: &dem::types::Demo, keep_windows: &[(i32, i32)], opts: &DecalClea
                     out.harvested.push(pos);
                 }
                 if let Some(idx) = decal_texture_index(te.entity_type, payload) {
-                    if matches!(te.entity_type, 116 | 117) {
+                    // Prefer a bullet-hole texture. TE_GUNSHOTDECAL indices are
+                    // small and unremarkable; TE_WORLDDECAL ones are typically
+                    // grenade scorches — large, dark and immediately obvious.
+                    // Flush decals exist to be unnoticed, so the small mark
+                    // wins and the scorch is only a fallback.
+                    if te.entity_type == TE_GUNSHOTDECAL {
                         out.texture_index.get_or_insert(idx);
                     } else {
                         fallback_index.get_or_insert(idx);
@@ -505,6 +522,7 @@ fn resolve_flush_positions(
         return (vec![coord], Some(FlushSource::Override));
     }
 
+    // Only the single-position fallback still needs a spawn reference.
     let Some(reference) = survey.grounded_origin.or(survey.spawn_eye) else {
         return (Vec::new(), None);
     };
@@ -533,9 +551,24 @@ fn resolve_flush_positions(
         true
     };
 
-    // Real decal positions first — those surfaces are proven by the demo
-    // having rendered a decal there — then floor points under the player's
-    // own path, which are proven by the player having stood on them.
+    // Furthest approach any in-window camera makes to a position. Ranking by
+    // this — rather than by nearness to spawn — matches what these spots are
+    // actually for. Spawn proximity was a holdover from "hide it near spawn";
+    // a flush spot has no reason to be anywhere in particular except far from
+    // the lens.
+    let clearance = |pos: &[f32; 3]| -> f32 {
+        survey
+            .window_cameras
+            .iter()
+            .map(|(eye, _)| distance(pos, eye))
+            .fold(f32::INFINITY, f32::min)
+    };
+
+    // Harvested decal positions first: they sit on walls the demo has already
+    // drawn decals on. Floor points under the player's own path come last —
+    // they are plentiful and their surfaces are proven, but they are by
+    // construction where the player walks, which is the worst place to hide
+    // something. Used only to make up a shortfall in count.
     let mut pool: Vec<[f32; 3]> = Vec::new();
     let mut source = None;
     for (candidates, src) in [
@@ -543,9 +576,10 @@ fn resolve_flush_positions(
         (&survey.floor_candidates, FlushSource::PlayerFloorPath),
     ] {
         let mut ok: Vec<[f32; 3]> = candidates.iter().copied().filter(|p| safe(p)).collect();
+        // Furthest from the camera first.
         ok.sort_by(|a, b| {
-            distance(a, &reference)
-                .partial_cmp(&distance(b, &reference))
+            clearance(b)
+                .partial_cmp(&clearance(a))
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
         for p in ok {
@@ -682,7 +716,8 @@ pub fn clean_demo_decals(
     let survey = survey(&demo, keep_windows, opts);
     stats.harvested_decals = survey.harvested.len();
     stats.spawn_reference = survey.grounded_origin;
-    stats.flush_texture_index = survey.texture_index;
+    let texture_index = opts.flush_texture_index.or(survey.texture_index);
+    stats.flush_texture_index = texture_index;
 
     // Distinct spots needed so every injected decal allocates a fresh ring slot
     // instead of being recycled as an overlap of one already placed.
@@ -779,7 +814,7 @@ pub fn clean_demo_decals(
 
     // ── Pass 2: flush bursts ahead of each capture window ────────────────────
     if opts.flush_burst {
-        if let (false, Some(texture_index)) = (flush_positions.is_empty(), survey.texture_index) {
+        if let (false, Some(texture_index)) = (flush_positions.is_empty(), texture_index) {
             // Eligible carriers, in global frame order: parsed network frames
             // small enough that a handful of extra 9-byte messages cannot push
             // the packet near the engine's buffer ceiling. Built across every

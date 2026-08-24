@@ -44,6 +44,11 @@ struct Args {
     #[arg(long, value_parser = parse_coord)]
     flush_coord: Option<[f32; 3]>,
 
+    /// Decal texture index for the flush burst, overriding the harvested one.
+    /// Use when a demo has no bullet-hole decal to borrow a small texture from.
+    #[arg(long)]
+    flush_texture_index: Option<u8>,
+
     /// Vertical drop from the settled spawn origin to the floor.
     #[arg(long, default_value_t = 36.0)]
     floor_drop: f32,
@@ -106,6 +111,7 @@ fn main() {
         flush_burst: !args.no_burst,
         ring_limit: args.ring_limit,
         flush_coord: args.flush_coord,
+        flush_texture_index: args.flush_texture_index,
         floor_drop: args.floor_drop,
         min_camera_clearance: args.min_camera_clearance,
         lead_ticks: args.lead_ticks,
