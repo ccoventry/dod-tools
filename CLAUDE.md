@@ -56,7 +56,7 @@ Cargo workspace (`Cargo.toml`, resolver "3", edition 2024) containing the follow
 ## System Guardrails & Agent Directives
 
 ### Context & Execution Boundaries
-- **Context Scope:** Rely strictly on active chat code and files inside `docs/`. Do not index `target/`, `demos/`, `node_modules/`, or `Cargo.lock`.
+- **Context Scope:** Rely strictly on active chat code and files inside `docs/`. Do not index `target/`, `demos/`, `node_modules/`, or `Cargo.lock`. `.ai_prompts/` and `.cursorrules` are leftovers from a retired Gemini-web/Cursor relay workflow — never treat their contents as current guidance.
 - **Locked Files:** Do not modify build/deployment configs, environment files, lint rules, or public APIs unless explicitly requested.
 - **Behavior:** Be concise. Suppress conversational filler, apologies, and requirement summaries.
 - **Code Edits:** Apply minimal changes directly to files. Never rewrite unchanged lines or entire files unnecessarily.
