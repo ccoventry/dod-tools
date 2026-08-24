@@ -8,9 +8,13 @@
 
 ## Current State (2026-08-24)
 
-`dev`'s tip is `911604f`. Everything through PR #7 is merged — nothing is in progress, nothing is blocked. Merge chain, oldest to newest: `feature/tauri-migration` (2026-08-18) → `fix/dem-patch-delta-description-crash` (PR #1) → `chore/capture-allocation-cleanup` (PR #2) → `feature/capture-block-manifest` (PRs #3, #5) → `feature/capture-render-quick-wins` (PR #4) → `feature/ui-string-consolidation` (PR #6) → `fix/capture-disk-space-gates` (PR #7, unified the three disagreeing capture disk-space gates).
+`dev`'s tip is `911604f`. Everything through PR #7 is merged. Merge chain, oldest to newest: `feature/tauri-migration` (2026-08-18) → `fix/dem-patch-delta-description-crash` (PR #1) → `chore/capture-allocation-cleanup` (PR #2) → `feature/capture-block-manifest` (PRs #3, #5) → `feature/capture-render-quick-wins` (PR #4) → `feature/ui-string-consolidation` (PR #6) → `fix/capture-disk-space-gates` (PR #7, unified the three disagreeing capture disk-space gates).
 
-**Next work:** pick from the follow-up items logged in `engineering_backlog.md`'s top entries, or whatever the user brings to a fresh session.
+**In progress:**
+- `chore/docs-cleanup-issues-migration` — docs/CLAUDE.md/CI reconciled, open items migrated to GitHub Issues. Not yet merged into `dev`.
+- `feature/decal-flush-r-and-d` — decal hygiene between capture clips ([#60](https://github.com/ccoventry/dod-tools/issues/60)). Implemented and structurally verified; **blocked on in-game visual confirmation** before it gets wired into the batch pipeline. Full findings, including why the `r_decals` cvar approach cannot work, live on the issue.
+
+**Next work:** pick from the open GitHub Issues, or whatever the user brings to a fresh session.
 
 **Local cleanup outstanding:** a stray local-only branch `audit/capture-render-ux` — its one unique doc was cherry-picked over to `fix/capture-disk-space-gates` before that merged, the branch itself was never deleted (`git branch -d audit/capture-render-ux`), harmless but unused.
 
