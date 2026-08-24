@@ -3,7 +3,7 @@
 ## 📋 Immediate Tasks & Critical Bugs (Current Sprint)
 
 ### ✅ Unify the three independent, disagreeing capture disk-space gates (branch `fix/capture-disk-space-gates`, scoped 2026-08-23, fixed 2026-08-23)
-**Start here in a fresh session**: full writeup is Section 1, Item 2 of `docs/capture-render-ux-audit.md` (now on this branch, brought over from the now-deleted `audit/capture-render-ux` branch — every other commit on that branch was confirmed already merged into `dev` via the independent `feature/capture-block-manifest`/`feature/capture-render-quick-wins` PR chain, byte-identical via `git patch-id`; this audit doc was the one piece of unique content, since it's docs-only and was never itself ported over). Re-confirmed still fully live against `dev`'s current code on 2026-08-23 (unaffected by this session's separate disk-space fix, which addressed a different bug — a mount-point prefix match trusting a malformed suffix — not this one).
+Full writeup was Section 1, Item 2 of `docs/capture-render-ux-audit.md` — now fixed, see that doc's status header for which of its other findings are still open.
 
 **The problem**: three separate, non-shared implementations of "is there enough disk space for this capture batch," which can disagree with each other:
 1. **JS pre-flight** — `computeRequiredCaptureBytes` (`desktop-studio/src/capture_pane.js:63-121`), decides whether the Start button is enabled.
