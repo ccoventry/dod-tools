@@ -97,6 +97,13 @@ pub struct DecalCleanOptions {
     /// visibility — a long sightline can still expose a distant spot — but it
     /// reliably rules out the camera walking straight over the flush point.
     pub min_camera_clearance: f32,
+    /// Half-angle of the cone treated as "on screen" for the line-of-sight
+    /// test. DoD's default FOV is ~90 degrees horizontal, so 40 is a slightly
+    /// generous half-angle.
+    pub visibility_cone_degrees: f32,
+    /// Beyond this range a single decal is not readable on screen, so the
+    /// line-of-sight test stops caring.
+    pub visibility_max_distance: f32,
 }
 
 impl Default for DecalCleanOptions {
@@ -113,6 +120,8 @@ impl Default for DecalCleanOptions {
             floor_drop: ORIGIN_TO_FLOOR,
             grounded_settle_frames: 10,
             min_camera_clearance: 900.0,
+            visibility_cone_degrees: 40.0,
+            visibility_max_distance: 1800.0,
         }
     }
 }
@@ -136,8 +145,14 @@ pub struct DecalCleanStats {
     pub spawn_to_flush_distance: Option<f32>,
     pub harvested_decals: usize,
     /// Closest approach between the flush coordinate and any camera position
-    /// inside a capture window — how confident we can be it stays off-screen.
+    /// inside a capture window.
     pub min_camera_distance: Option<f32>,
+    /// Sampled in-window camera frames where the flush point falls inside the
+    /// camera's cone. Must be 0 — anything else means the flush stack is on
+    /// screen during a recorded clip.
+    pub flush_on_camera_frames: usize,
+    /// Total in-window camera samples the two figures above were measured over.
+    pub camera_samples: usize,
 }
 
 fn decode_coord(b: &[u8]) -> f32 {
@@ -200,8 +215,10 @@ struct Survey {
     /// grounded-run detection below. This, not `spawn_eye`, is the spawn
     /// reference worth trusting.
     grounded_origin: Option<[f32; 3]>,
-    /// Camera positions sampled inside the capture windows.
-    window_cameras: Vec<[f32; 3]>,
+    /// Camera (eye position, forward vector) pairs sampled inside the capture
+    /// windows. The forward vector is what makes a real "is it on screen?"
+    /// test possible, rather than distance alone.
+    window_cameras: Vec<([f32; 3], [f32; 3])>,
 }
 
 /// Running frame ordinal, matching `engine.rs`'s `frame_counter`: every frame
@@ -295,7 +312,10 @@ fn survey(demo: &dem::types::Demo, keep_windows: &[(i32, i32)], opts: &DecalClea
                     if in_window(ordinal, keep_windows) {
                         camera_stride += 1;
                         if camera_stride % 4 == 0 {
-                            out.window_cameras.push(pos);
+                            let fwd = &rp.forward;
+                            if fwd.len() >= 3 {
+                                out.window_cameras.push((pos, [fwd[0], fwd[1], fwd[2]]));
+                            }
                         }
                     }
                 }
@@ -376,28 +396,56 @@ fn resolve_flush_position(
 
     let reference = survey.grounded_origin.or(survey.spawn_eye)?;
 
-    // Proximity to spawn alone is not enough: spawn is also where players walk
-    // out through, so the decal nearest it can sit right on a capture camera's
-    // path. Keep only candidates the camera never comes near during a recorded
-    // window, then take whichever of those is closest to spawn.
+    // Two independent disqualifiers, because neither alone is sufficient:
+    //
+    //  - Distance: the camera physically walking over the spot. Spawn is also
+    //    the corridor players leave through, so the decal nearest spawn is a
+    //    prime offender.
+    //  - Line of sight: a spot 1200 units away, dead centre of frame down a
+    //    long sightline, is plainly visible despite comfortable "clearance".
+    //    Distance-only selection picks these, so the forward vector recorded
+    //    with each in-window camera sample is used for a real frustum test.
+    let cos_cone = opts.visibility_cone_degrees.to_radians().cos();
+
+    let on_camera_frames = |pos: &[f32; 3]| -> usize {
+        survey
+            .window_cameras
+            .iter()
+            .filter(|(eye, fwd)| {
+                let v = [pos[0] - eye[0], pos[1] - eye[1], pos[2] - eye[2]];
+                let dist = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+                if dist < 1.0 || dist > opts.visibility_max_distance {
+                    return false;
+                }
+                let fl = (fwd[0] * fwd[0] + fwd[1] * fwd[1] + fwd[2] * fwd[2]).sqrt();
+                if fl < 0.5 {
+                    return false;
+                }
+                let dot = (v[0] * fwd[0] + v[1] * fwd[1] + v[2] * fwd[2]) / (dist * fl);
+                dot >= cos_cone
+            })
+            .count()
+    };
+
     let clearance = |pos: &[f32; 3]| -> f32 {
         survey
             .window_cameras
             .iter()
-            .map(|cam| distance(pos, cam))
+            .map(|(eye, _)| distance(pos, eye))
             .fold(f32::INFINITY, f32::min)
     };
 
-    let mut scored: Vec<([f32; 3], f32)> = survey
-        .harvested
-        .iter()
-        .map(|pos| (*pos, clearance(pos)))
-        .collect();
-
-    if !scored.is_empty() {
-        let mut clear: Vec<&([f32; 3], f32)> = scored
+    if !survey.harvested.is_empty() {
+        let mut scored: Vec<([f32; 3], f32, usize)> = survey
+            .harvested
             .iter()
-            .filter(|(_, c)| *c >= opts.min_camera_clearance)
+            .map(|pos| (*pos, clearance(pos), on_camera_frames(pos)))
+            .collect();
+
+        // Never on screen during a recorded clip AND never walked over.
+        let mut clear: Vec<&([f32; 3], f32, usize)> = scored
+            .iter()
+            .filter(|(_, c, seen)| *seen == 0 && *c >= opts.min_camera_clearance)
             .collect();
 
         if !clear.is_empty() {
@@ -409,10 +457,13 @@ fn resolve_flush_position(
             return Some((clear[0].0, FlushSource::HarvestedNearSpawn));
         }
 
-        // Nothing cleared the bar — fall back to the single most remote decal
-        // available. The caller reports the resulting clearance so a marginal
-        // pick is visible rather than silent.
-        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        // Nothing was fully clear. Prefer the least-seen candidate, breaking
+        // ties on distance; the caller reports both so a marginal pick is
+        // visible rather than silent.
+        scored.sort_by(|a, b| {
+            a.2.cmp(&b.2)
+                .then(b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal))
+        });
         return Some((scored[0].0, FlushSource::HarvestedNearSpawn));
     }
 
@@ -463,8 +514,30 @@ pub fn clean_demo_decals(
         stats.min_camera_distance = survey
             .window_cameras
             .iter()
-            .map(|cam| distance(&pos, cam))
+            .map(|(eye, _)| distance(&pos, eye))
             .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+        // Sampled in-window frames where the flush point would fall inside the
+        // camera's cone. Non-zero means the stack is on screen during a
+        // recorded clip — the failure this whole heuristic exists to avoid.
+        let cos_cone = opts.visibility_cone_degrees.to_radians().cos();
+        stats.camera_samples = survey.window_cameras.len();
+        stats.flush_on_camera_frames = survey
+            .window_cameras
+            .iter()
+            .filter(|(eye, fwd)| {
+                let v = [pos[0] - eye[0], pos[1] - eye[1], pos[2] - eye[2]];
+                let dist = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+                if dist < 1.0 || dist > opts.visibility_max_distance {
+                    return false;
+                }
+                let fl = (fwd[0] * fwd[0] + fwd[1] * fwd[1] + fwd[2] * fwd[2]).sqrt();
+                if fl < 0.5 {
+                    return false;
+                }
+                (v[0] * fwd[0] + v[1] * fwd[1] + v[2] * fwd[2]) / (dist * fl) >= cos_cone
+            })
+            .count();
     }
 
     // ── Pass 1: strip decal messages outside the capture windows ─────────────

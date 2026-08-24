@@ -150,18 +150,22 @@ fn main() {
                 None => println!("Flush texture index:   <none — burst skipped>"),
             }
             match stats.min_camera_distance {
-                Some(d) => {
-                    println!("Closest camera approach: {:.0} units", d);
-                    if d < args.min_camera_clearance {
-                        println!(
-                            "  WARNING: below the {:.0}-unit clearance bar — no decal in this demo\n  \
-                             was far enough from every capture camera. The flush decals may be\n  \
-                             visible; re-run with --flush-coord x,y,z to hand-pick a spot.",
-                            args.min_camera_clearance
-                        );
-                    }
-                }
+                Some(d) => println!("Closest camera approach: {:.0} units", d),
                 None => println!("Closest camera approach: <no in-window camera samples>"),
+            }
+            println!(
+                "On camera during a clip: {} of {} sampled frames{}",
+                stats.flush_on_camera_frames,
+                stats.camera_samples,
+                if stats.flush_on_camera_frames == 0 { "  (clear)" } else { "" }
+            );
+            if stats.flush_on_camera_frames > 0 {
+                println!(
+                    "  WARNING: the flush stack falls inside the camera's view during a\n  \
+                     recorded clip. No decal in this demo was both far enough from every\n  \
+                     capture camera and out of its line of sight. Re-run with\n  \
+                     --flush-coord x,y,z to hand-pick a spot."
+                );
             }
 
             if !stats.bursts_short.is_empty() {
