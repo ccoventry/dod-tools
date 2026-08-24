@@ -397,8 +397,8 @@ pub async fn start_capture_batch_impl(
 
     // ── Offload blocking I/O to a dedicated thread ────────────────────────────
     tokio::task::spawn_blocking(move || {
-        let patch_jobs = match build_batch_queue(raw_streaks, &patcher_config, &std::collections::HashMap::new()) {
-            Ok(jobs) => jobs,
+        let (patch_jobs, drive_headroom) = match build_batch_queue(raw_streaks, &patcher_config, &std::collections::HashMap::new()) {
+            Ok(v) => v,
             Err(e) => {
                 log::error!("build_batch_queue failed: {}", e);
                 let mut running = is_running_arc.lock().unwrap_or_else(|p| p.into_inner());
@@ -592,6 +592,7 @@ pub async fn start_capture_batch_impl(
             engine_tx,
             cancel_token_arc,
             patcher_config,
+            drive_headroom,
         );
     });
 

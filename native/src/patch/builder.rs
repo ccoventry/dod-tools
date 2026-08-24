@@ -255,7 +255,7 @@ fn allocate_blocks_first_fit_decreasing(
 
 // ── Batch queue builder ───────────────────────────────────────────────────────
 
-pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig, global_arrays: &std::collections::HashMap<std::path::PathBuf, std::sync::Arc<Vec<f32>>>) -> Result<Vec<PatchJob>, std::io::Error> {
+pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig, global_arrays: &std::collections::HashMap<std::path::PathBuf, std::sync::Arc<Vec<f32>>>) -> Result<(Vec<PatchJob>, Vec<(std::path::PathBuf, u64)>), std::io::Error> {
     // tickrate is extracted dynamically from streaks per-demo.
     // Each streak is carried alongside its index in `raw_streaks` so the blocks
     // built below can point back at the exact highlights the caller dispatched,
@@ -300,7 +300,7 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
     // ── AOT disk-space simulation ─────────────────────────────────────────────
     // Snapshot current free bytes for every configured capture directory so we
     // can route each clip to the drive with sufficient headroom at build time.
-    const FAILOVER_THRESHOLD: u64 = 15 * 1024 * 1024 * 1024; // 15 GiB
+    const FAILOVER_THRESHOLD: u64 = crate::sys::disk::MIN_DRIVE_HEADROOM_BYTES;
     let mut drive_free: Vec<u64> = config
         .capture_directories
         .iter()
@@ -384,7 +384,14 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
     }
 
     // 2. Chained Jobs
+    // Drive 0 always receives the primer + each job's output demo file
+    // (see the "always use primary/first drive" resolution below), regardless
+    // of whether any capture block gets routed there — so it must always be
+    // headroom-checked even on a batch where every block lands elsewhere.
     let mut utilized_drives = std::collections::HashSet::new();
+    if !config.capture_directories.is_empty() {
+        utilized_drives.insert(0);
+    }
     for (job_idx, ((source_demo, target_player), mut streak_refs)) in sorted_groups.into_iter().enumerate() {
         // Sort by start_tick in ascending order
         streak_refs.sort_by_key(|(_, s)| s.start_tick);
@@ -777,7 +784,7 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
     // Create directory junctions for utilized drives
     let game_path_buf = std::path::PathBuf::from(&config.game_path);
     let hl_exe_parent = game_path_buf.parent().unwrap_or(std::path::Path::new(""));
-    for drive_idx in utilized_drives {
+    for &drive_idx in &utilized_drives {
         if let Some(out_dir) = config.capture_directories.get(drive_idx) {
             let absolute_drive = std::path::absolute(out_dir)?;
             let session_dir = if !config.session_id.is_empty() {
@@ -811,7 +818,16 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
     let cfg_path = dod_dir.join("dodtools_helper.cfg");
     std::fs::write(&cfg_path, helper_cfg_content)?;
 
-    Ok(jobs)
+    // Final per-drive headroom for every drive this batch actually touches,
+    // handed back so the pre-launch abort in `capture_engine.rs` re-validates
+    // the exact numbers this allocation pass already computed instead of
+    // recomputing a third, narrower (primary-drive-only) answer.
+    let drive_headroom: Vec<(std::path::PathBuf, u64)> = utilized_drives
+        .into_iter()
+        .filter_map(|idx| config.capture_directories.get(idx).map(|p| (p.clone(), drive_free[idx])))
+        .collect();
+
+    Ok((jobs, drive_headroom))
 }
 
 pub struct WorkspaceGuard {
@@ -1213,9 +1229,9 @@ mod tests {
             },
         ];
 
-        let jobs = build_batch_queue(raw_streaks, &config, &std::collections::HashMap::new()).unwrap();
+        let (jobs, _) = build_batch_queue(raw_streaks, &config, &std::collections::HashMap::new()).unwrap();
         assert_eq!(jobs.len(), 2);
-        
+
         let primer = &jobs[0];
         assert_eq!(primer.output_demo, std::path::PathBuf::from("primer.dem"));
         assert_eq!(primer.streaks.len(), 0);
@@ -1303,7 +1319,7 @@ mod tests {
             streak_with_kills(1300, 1500, &[1300, 1500]),
         ];
 
-        let jobs = build_batch_queue(raw_streaks, &config, &std::collections::HashMap::new()).unwrap();
+        let (jobs, _) = build_batch_queue(raw_streaks, &config, &std::collections::HashMap::new()).unwrap();
         let job = &jobs[1];
 
         assert_eq!(job.streaks.len(), 1, "the two highlights should merge into one block");
@@ -1343,7 +1359,8 @@ mod tests {
             streak_with_kills(5000, 5200, &[5000, 5200]),
         ];
 
-        let job = &build_batch_queue(raw_streaks, &config, &std::collections::HashMap::new()).unwrap()[1];
+        let (jobs, _) = build_batch_queue(raw_streaks, &config, &std::collections::HashMap::new()).unwrap();
+        let job = &jobs[1];
 
         assert_eq!(job.streaks.len(), 2, "should not merge");
         assert_eq!(job.blocks.len(), 2);
@@ -1370,7 +1387,8 @@ mod tests {
             streak_with_kills(1400, 1600, &[1400, 1600]),
         ];
 
-        let job = &build_batch_queue(raw_streaks, &config, &std::collections::HashMap::new()).unwrap()[1];
+        let (jobs, _) = build_batch_queue(raw_streaks, &config, &std::collections::HashMap::new()).unwrap();
+        let job = &jobs[1];
 
         assert_eq!(job.streaks.len(), 2, "recordings don't overlap, so don't merge");
         assert_eq!(job.blocks.len(), 2);
@@ -1411,7 +1429,8 @@ mod tests {
             streak_with_kills(1250, 1400, &[1250, 1400]),
         ];
 
-        let job = &build_batch_queue(raw_streaks, &config, &std::collections::HashMap::new()).unwrap()[1];
+        let (jobs, _) = build_batch_queue(raw_streaks, &config, &std::collections::HashMap::new()).unwrap();
+        let job = &jobs[1];
 
         assert_eq!(job.streaks.len(), 1, "too close to be separate takes");
         assert_eq!(job.blocks[0].source_streak_indices, vec![0, 1]);
@@ -1563,8 +1582,8 @@ mod builder_grouping_tests {
         let raw_streaks = vec![streak1, streak2, streak3];
         let global_arrays = HashMap::new();
 
-        let jobs = build_batch_queue(raw_streaks, &config, &global_arrays).unwrap();
-        
+        let (jobs, _) = build_batch_queue(raw_streaks, &config, &global_arrays).unwrap();
+
         assert_eq!(jobs.len(), 3, "Expected exactly 3 patch jobs (1 primer + 2 grouped chains) after grouping by source demo and player");
     }
 }

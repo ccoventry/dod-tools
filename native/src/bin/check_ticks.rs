@@ -36,7 +36,7 @@ fn run_scenario(
     }
 
     match build_batch_queue(streaks, config, &global_arrays) {
-        Ok(jobs) => {
+        Ok((jobs, _)) => {
             let mut any_bug = false;
             for job in &jobs {
                 if job.output_demo.to_string_lossy().contains("primer") { continue; }

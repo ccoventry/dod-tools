@@ -2,6 +2,13 @@ pub fn calculate_raw_sequence_bytes(w: i32, h: i32, fps: i32, duration_secs: f32
     (w * h * 3) as u64 * (fps as u64) * (duration_secs as f64).ceil() as u64
 }
 
+/// Minimum free space a capture drive must retain, shared by
+/// `patch::builder::build_batch_queue`'s AOT allocation (the only place that
+/// decides whether a drive has room) and `capture_engine`'s pre-launch
+/// re-validation of that same decision — previously two independent 15 GiB
+/// literals that could silently drift apart.
+pub const MIN_DRIVE_HEADROOM_BYTES: u64 = 15 * 1024 * 1024 * 1024;
+
 // Disk query results are cached for TTL_MS milliseconds to avoid
 // issuing blocking kernel disk-enumeration syscalls on every frame.
 const TTL_MS: u128 = 2_000;
