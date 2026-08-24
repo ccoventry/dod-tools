@@ -85,7 +85,7 @@ pub use decal_strip::{
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use decal_probe::{
-    probe_decal_offsets, Probe, ProbeOptions, ProbeRow, ProbeStats,
+    probe_decal_offsets, GridStats, Probe, ProbeOptions, ProbeRow, ProbeStats, Sighting,
 };
 
 #[cfg(not(target_arch = "wasm32"))]

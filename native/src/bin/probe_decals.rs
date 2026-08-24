@@ -1,11 +1,18 @@
 //! Measures GoldSrc's decal placement tolerance — how far from a solid surface
 //! a decal message's position may sit and still create a decal.
 //!
-//! Strips every decal out of a demo, stamps a three-row grid of decals onto one
-//! wall the demo proves exists, and pins r_decals high. Each column of the grid
+//! Strips every decal out of a demo, stamps three-row grids of decals onto
+//! walls the demo proves exist, and pins r_decals high. Each column of a grid
 //! uses a larger offset than the last, so a row simply runs out of holes where
 //! the engine stopped accepting the position. Play the output back, count the
 //! holes in each row, and the threshold falls out.
+//!
+//! Several grids get stamped rather than one, and by default only in the spawn
+//! area. A POV demo cannot be steered — the viewer sees exactly what the
+//! recorded player saw — so the binding constraint is not "can this wall be
+//! seen from somewhere" but "how often is it in front of you". That is spawn:
+//! the demo opens there, and a dead player spectates teammates who are
+//! themselves in spawn.
 //!
 //! This is the measurement the flush burst in `strip_decals` currently guesses
 //! at: if positions can be synthesised near one known-good surface point rather
@@ -13,14 +20,14 @@
 //! constraint on the ring sweep.
 
 use clap::Parser;
-use native::patch::{probe_decal_offsets, ProbeOptions, ProbeRow};
+use native::patch::{probe_decal_offsets, GridStats, ProbeOptions, ProbeRow};
 use std::fs;
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
 #[command(
     version,
-    about = "Stamps an offset-measurement decal grid onto a wall in a DoD demo."
+    about = "Stamps offset-measurement decal grids onto walls in a DoD demo."
 )]
 struct Args {
     /// Path to the source .dem file
@@ -34,6 +41,10 @@ struct Args {
     #[arg(long, value_parser = parse_offsets)]
     offsets: Option<Vec<f32>>,
 
+    /// How many separate walls to stamp a grid onto.
+    #[arg(long)]
+    grids: Option<usize>,
+
     /// Gap between adjacent columns, along the wall.
     #[arg(long)]
     column_spacing: Option<f32>,
@@ -46,20 +57,37 @@ struct Args {
     #[arg(long)]
     texture_index: Option<u8>,
 
-    /// Force the plane's normal axis: 0=x, 1=y, 2=z.
+    /// Force the surface's normal axis: 0=x, 1=y, 2=z.
     #[arg(long)]
     axis: Option<usize>,
 
-    /// Hand-picked anchor "x,y,z" on a known surface, skipping plane
-    /// detection. Requires --axis.
+    /// Hand-picked anchor "x,y,z" on a known surface, skipping detection.
+    /// Requires --axis.
     #[arg(long, value_parser = parse_coord)]
     anchor: Option<[f32; 3]>,
 
-    /// Decals that must share a plane before it counts as a wall.
+    /// Restrict grids to within --near-radius of "x,y,z" instead of spawn.
+    #[arg(long, value_parser = parse_coord)]
+    near: Option<[f32; 3]>,
+
+    /// Radius of the spawn (or --near) restriction.
+    #[arg(long)]
+    near_radius: Option<f32>,
+
+    /// Consider walls anywhere on the map, not just around spawn.
+    #[arg(long)]
+    whole_map: bool,
+
+    /// How close the camera must physically come to a wall for it to be worth
+    /// stamping. Stands in for an occlusion test.
+    #[arg(long)]
+    require_approach: Option<f32>,
+
+    /// Decals that must share a patch before it counts as a wall.
     #[arg(long)]
     min_plane_decals: Option<usize>,
 
-    /// Extent a plane's decals must span to count as a wall rather than a
+    /// Extent a patch's decals must span to count as a wall rather than a
     /// cluster on some small prop.
     #[arg(long)]
     min_plane_spread: Option<f32>,
@@ -71,11 +99,6 @@ struct Args {
     /// Leave the demo's own decals in place instead of stripping them.
     #[arg(long)]
     no_strip: bool,
-
-    /// Frame ordinals of lead time between the grid being stamped and the
-    /// first moment the camera looks at it.
-    #[arg(long)]
-    lead_ticks: Option<i32>,
 }
 
 fn parse_offsets(s: &str) -> Result<Vec<f32>, String> {
@@ -112,6 +135,87 @@ fn clock(seconds: f32) -> String {
     format!("{}:{:02}", total / 60, total % 60)
 }
 
+/// Prints one grid: where it is, how well the demo backs it, and when it is on
+/// screen.
+fn print_grid(index: usize, g: &GridStats) {
+    let normal = axis_name(g.axis);
+    let col = axis_name(g.column_axis);
+    let row = axis_name(g.row_axis);
+    let sign = if g.outward > 0.0 { "+" } else { "-" };
+    let offsets: Vec<f32> = g
+        .probes
+        .iter()
+        .filter(|p| p.row == ProbeRow::Control)
+        .map(|p| p.offset)
+        .collect();
+
+    println!(
+        "── GRID {}{}  at [{:.0}, {:.0}, {:.0}] ─────────────────────────",
+        index + 1,
+        if g.in_region { "  (spawn)" } else { "" },
+        g.anchor[0],
+        g.anchor[1],
+        g.anchor[2]
+    );
+    println!(
+        "   {} wall at {} = {:.1}, open space {}{}. {} decals prove it, spanning {:.0} x {:.0}.",
+        if g.axis == 2 { "Floor/ceiling" } else { "Upright" },
+        normal,
+        g.plane_value,
+        sign,
+        normal,
+        g.plane_members,
+        g.plane_spread.0,
+        g.plane_spread.1
+    );
+    println!(
+        "   Columns along {} at {:.0}-unit pitch, rows step along {}.",
+        col, g.column_pitch, row
+    );
+
+    print!("   Offset:        ");
+    for o in &offsets {
+        print!("{:>6.0}", o);
+    }
+    println!();
+    print!("   Nearest decal: ");
+    for e in &g.column_evidence {
+        if e.is_finite() {
+            print!("{:>6.0}", e);
+        } else {
+            print!("{:>6}", "-");
+        }
+    }
+    println!();
+
+    if g.columns_backed < offsets.len() {
+        println!(
+            "   NOTE: {} of {} columns backed by a real decal; the rest are arithmetic.",
+            g.columns_backed,
+            offsets.len()
+        );
+    }
+
+    println!(
+        "   Camera gets within {:.0} units, and spends {} sampled frames nearby.",
+        g.closest_approach, g.dwell_samples
+    );
+    if g.sightings.is_empty() {
+        println!("   Never squarely on camera — you would have to find it yourself.");
+    } else {
+        println!("   On screen (best first):");
+        for s in g.sightings.iter().take(5) {
+            println!(
+                "     {:>6}   {:>4.0} units away, {:>2.0} deg off centre",
+                clock(s.svc_time),
+                s.distance,
+                s.off_axis_degrees
+            );
+        }
+    }
+    println!();
+}
+
 fn main() {
     let args = Args::parse();
 
@@ -126,16 +230,20 @@ fn main() {
     let defaults = ProbeOptions::default();
     let opts = ProbeOptions {
         offsets: args.offsets.unwrap_or(defaults.offsets),
+        grids: args.grids.unwrap_or(defaults.grids),
         column_spacing: args.column_spacing.unwrap_or(defaults.column_spacing),
         row_gap: args.row_gap.unwrap_or(defaults.row_gap),
         texture_index: args.texture_index,
         axis: args.axis,
         anchor: args.anchor,
+        near: args.near,
+        near_radius: args.near_radius.unwrap_or(defaults.near_radius),
+        spawn_only: !args.whole_map,
+        require_approach: args.require_approach.unwrap_or(defaults.require_approach),
         min_plane_decals: args.min_plane_decals.unwrap_or(defaults.min_plane_decals),
         min_plane_spread: args.min_plane_spread.unwrap_or(defaults.min_plane_spread),
         ring_limit: args.ring_limit.unwrap_or(defaults.ring_limit),
         strip_all: !args.no_strip,
-        lead_ticks: args.lead_ticks.unwrap_or(defaults.lead_ticks),
         ..defaults
     };
 
@@ -152,163 +260,85 @@ fn main() {
         std::process::exit(1);
     }
 
-    let normal = axis_name(stats.axis);
-    let col = axis_name(stats.column_axis);
-    let row = axis_name(stats.row_axis);
-    let sign = if stats.outward > 0.0 { "+" } else { "-" };
-
     println!("Wrote probe demo to: {}", args.out.display());
-    println!();
-    println!("SURFACE");
     println!(
-        "  Normal axis:        {}  ({})",
-        normal,
-        if stats.axis == 2 { "floor/ceiling" } else { "upright wall" }
-    );
-    println!("  Plane coordinate:   {} = {:.1}", normal, stats.plane_value);
-    println!(
-        "  Decals proving it:  {} of {} harvested, spanning {:.0} x {:.0} units",
-        stats.plane_members, stats.harvested_decals, stats.plane_spread.0, stats.plane_spread.1
-    );
-    println!(
-        "  Anchor:             [{:.1}, {:.1}, {:.1}]",
-        stats.anchor[0], stats.anchor[1], stats.anchor[2]
-    );
-    println!("  Open space lies:    {}{}", sign, normal);
-    println!("  Columns run along:  {},  rows step along {}", col, row);
-    println!("  Column pitch:       {:.0} units (each column sits on a real decal)", stats.column_pitch);
-    println!();
-
-    println!(
-        "GRID  {} decals, texture index {}, stamped at frame ordinal {}",
-        stats.probes.len(),
+        "{} grids, {} decals, texture index {}, stamped at frame ordinal {}.",
+        stats.grids.len(),
+        stats.decals_injected,
         stats.texture_index,
         stats.injected_at_ordinal
     );
-    let offsets: Vec<f32> = stats
+    println!(
+        "Stripped {} decals and {} sprays; r_decals pinned to {}.",
+        stats.decals_stripped, stats.sprays_stripped, opts.ring_limit
+    );
+    match stats.region {
+        Some(c) if !stats.region_abandoned => println!(
+            "Restricted to within {:.0} units of [{:.0}, {:.0}, {:.0}]{}.",
+            stats.region_radius,
+            c[0],
+            c[1],
+            c[2],
+            if args.near.is_some() { "" } else { " (spawn)" }
+        ),
+        Some(_) => println!(
+            "WARNING: no wall met the spawn restriction, so it was dropped and these \
+             grids are anywhere on the map."
+        ),
+        None => println!("Walls considered across the whole map."),
+    }
+    println!();
+
+    for (i, g) in stats.grids.iter().enumerate() {
+        print_grid(i, g);
+    }
+
+    let offsets: Vec<f32> = stats.grids[0]
         .probes
         .iter()
         .filter(|p| p.row == ProbeRow::Control)
         .map(|p| p.offset)
         .collect();
-    let columns: Vec<f32> = stats
-        .probes
-        .iter()
-        .filter(|p| p.row == ProbeRow::Control)
-        .map(|p| p.position[stats.column_axis])
-        .collect();
-    print!("  Offset (units):  ");
-    for o in &offsets {
-        print!("{:>7.0}", o);
-    }
-    println!();
-    print!("  Column {}:       ", col);
-    for c in &columns {
-        print!("{:>7.0}", c);
-    }
-    println!();
-    print!("  Nearest decal:   ");
-    for e in &stats.column_evidence {
-        if e.is_finite() {
-            print!("{:>7.0}", e);
-        } else {
-            print!("{:>7}", "-");
-        }
-    }
-    println!();
-    for r in [ProbeRow::Out, ProbeRow::Control, ProbeRow::In] {
-        let sample = stats.probes.iter().find(|p| p.row == r).unwrap();
-        let toward = match r {
-            ProbeRow::Out => format!("{} = plane {} offset  (into open space)", normal, sign),
-            ProbeRow::Control => format!("{} = plane exactly    (control)", normal),
-            ProbeRow::In => format!(
-                "{} = plane {} offset  (into the solid)",
-                normal,
-                if stats.outward > 0.0 { "-" } else { "+" }
-            ),
-        };
-        println!(
-            "  {} row:  {} = {:>6.1},  {}",
-            r.label(),
-            row,
-            sample.position[stats.row_axis],
-            toward
-        );
-    }
-    println!();
-
-    if stats.columns_backed < offsets.len() {
-        println!(
-            "  WARNING: only {} of {} columns have a real decal within half a pitch.\n  \
-             The rest are placed by arithmetic and may hang over a doorway or an edge.\n  \
-             The CTL row will show it if so — a short CTL row voids the run.",
-            stats.columns_backed,
-            offsets.len()
-        );
-    }
-    println!();
-
-    println!(
-        "Stripped from the demo: {} decals, {} sprays",
-        stats.decals_stripped, stats.sprays_stripped
-    );
-    println!("r_decals pinned to:     {}", opts.ring_limit);
-    println!();
 
     println!("HOW TO READ IT");
-    if stats.sightings.is_empty() {
-        println!("  No moment found where the camera looks at this wall from close range.");
-        println!("  The grid is stamped near the start of the demo and nothing can evict it,");
-        println!("  so it is on the wall for the whole playback — but you will have to find");
-        println!("  the wall yourself. Re-run with --anchor x,y,z --axis N to aim it at a");
-        println!("  surface you know the POV player looks at.");
-    } else {
-        let times: Vec<String> = stats.sightings.iter().take(6).map(|t| clock(*t)).collect();
-        println!(
-            "  Play (don't seek) to {} on the viewdemo clock and look at the wall.",
-            times.join(", then ")
-        );
-        if let Some(d) = stats.best_sighting_distance {
-            println!("  Closest the camera gets to it: {:.0} units.", d);
-        }
-    }
-    let (top, bottom) = if stats.row_axis == 2 {
-        ("top", "bottom")
-    } else {
-        ("+{axis} side", "-{axis} side")
-    };
+    println!(
+        "  Every grid is the same measurement — whichever one you spot first is a"
+    );
+    println!("  complete result, and two that agree are worth more than one you cannot find.");
+    println!("  Play, don't seek.");
     println!();
     println!(
-        "  Expect up to three parallel rows of {} holes each.",
+        "  Each is three parallel rows of {} holes. Where the rows step along Z, the",
         offsets.len()
     );
-    println!(
-        "  The {} row is OUT, the middle row is CTL, the {} row is IN.",
-        top.replace("{axis}", row),
-        bottom.replace("{axis}", row)
-    );
+    println!("  top row is OUT (pushed off the wall into the room), the middle is CTL");
+    println!("  (dead on the wall), the bottom is IN (pushed into the solid).");
     println!();
     println!("  Count the holes in each row and report three numbers.");
     println!(
-        "    CTL must be {}/{}. Anything less means the grid overran an edge or a",
+        "    CTL must be {}/{}. Anything less means that grid overran an edge or a",
         offsets.len(),
         offsets.len()
     );
-    println!("    doorway and the run is void — re-run with a smaller --column-spacing.");
-    println!("    Every row's first hole sits ON the surface, so a row with no holes at");
-    println!("    all missed the wall vertically and is void rather than a zero result.");
+    println!("    doorway — say so and use another grid.");
+    println!("    Every row's first hole sits ON the wall, so a row with no holes at all");
+    println!("    missed the wall vertically and is void rather than a zero result.");
     println!("    The rest ascend by offset, so a row that stops after N holes accepted");
     println!("    up to that column's offset and rejected the next:");
     for (i, o) in offsets.iter().enumerate() {
         if *o == 0.0 {
-            println!("      {} hole  -> on the surface only; no offset worked", i + 1);
+            println!("      {} hole  -> on the wall only; no offset worked", i + 1);
         } else {
             println!("      {} holes -> accepted up to {:.0} units", i + 1, o);
         }
     }
-    println!("      0 holes -> that row missed the wall; run void for it");
+    println!("      0 holes -> that row missed the wall; void for it");
     println!();
     println!("  If a hole shows up displaced from its row rather than missing, that still");
     println!("  counts as created — the engine projected it onto whichever surface it");
     println!("  found first. Say so and count it.");
+    println!();
+    println!("  mirv_fx_wh_enable 1 is worth a try for finding them: if HLAE's wallhack");
+    println!("  draws decals through geometry it makes every grid findable at once. Count");
+    println!("  one grid at a time if so — with several stamped, two can overlap on screen.");
 }

@@ -27,8 +27,8 @@
 // been estimated at 8-16 units from texture dimensions and never measured.
 //
 // ── How this measures it ─────────────────────────────────────────────────────
-// Strip every decal out of the demo, then stamp a three-row grid onto one patch
-// of surface the demo proves exists, and pin r_decals high enough that nothing
+// Strip every decal out of the demo, then stamp a three-row grid onto patches
+// of surface the demo proves exist, and pin r_decals high enough that nothing
 // can evict anything:
 //
 //     OUT row   offsets pushed away from the surface, into the room
@@ -46,6 +46,15 @@
 // as a position floating in air does — and an inward offset is the more useful
 // half for production, since a synthesised spot nudged INTO a wall cannot stick
 // out of it visually.
+//
+// ── Why several grids, not one ───────────────────────────────────────────────
+// A POV demo cannot be steered. The viewer sees exactly what the recorded
+// player saw, so "play to 7:29 and look at the wall" only works if the player
+// happened to face it and the viewer recognises which of the walls in frame is
+// the one. Stamping the same grid onto several separate patches makes that a
+// non-problem: whichever one the viewer spots first is a complete, independent
+// measurement of the same engine constant, and two that agree are worth more
+// than one that cannot be found.
 
 use dem::open_demo_from_bytes;
 use dem::types::{
@@ -72,6 +81,14 @@ const MIN_COLUMN_SPACING: f32 = 28.0;
 /// Gap between the three rows, across the surface.
 const DEFAULT_ROW_GAP: f32 = 40.0;
 
+/// Grids stamped by default. Each is a full independent measurement; more of
+/// them means more chances the POV camera turns toward one.
+const DEFAULT_GRIDS: usize = 4;
+
+/// How far apart two grids must be to count as different walls worth having
+/// both of.
+const GRID_SEPARATION: f32 = 600.0;
+
 /// Cap on synthetic decals added to any single network packet, matching the
 /// flush burst's own limit.
 const MAX_PER_FRAME: usize = 4;
@@ -82,6 +99,8 @@ pub struct ProbeOptions {
     pub offsets: Vec<f32>,
     pub column_spacing: f32,
     pub row_gap: f32,
+    /// How many separate patches of surface to stamp the grid onto.
+    pub grids: usize,
     /// Decal texture index, overriding the one harvested from the demo. A
     /// small bullet hole reads far better in a grid than a grenade scorch.
     pub texture_index: Option<u8>,
@@ -102,21 +121,40 @@ pub struct ProbeOptions {
     /// Extent a patch must span to be worth measuring on, rather than a tight
     /// cluster on some small prop.
     pub min_plane_spread: f32,
-    /// Pinned r_decals. Wants to be large: the probe grid must survive every
+    /// Pinned r_decals. Wants to be large: the grids must survive every
     /// client-side decal the POV player's own gunfire creates, and those are
     /// predicted locally so stripping cannot touch them.
     pub ring_limit: u32,
-    /// Blank every decal message in the demo, so the grid is the only thing on
-    /// the surface that arrived over the wire.
+    /// Blank every decal message in the demo, so the grids are the only thing
+    /// on a wall that arrived over the wire.
     pub strip_all: bool,
-    /// Frame ordinals of lead time between the grid being stamped and the
-    /// first moment the camera looks at it.
-    pub lead_ticks: i32,
-    /// Half-angle of the cone counted as "looking at it" when hunting for a
-    /// timestamp to hand the user.
+    /// Half-angle of the cone counted as "looking at it" when hunting for
+    /// timestamps to hand the user.
     pub sighting_cone_degrees: f32,
-    /// Range past which the grid is too small on screen to be counted.
+    /// Range past which a grid is too small on screen to be counted.
     pub sighting_max_distance: f32,
+    /// The camera must physically come within this of a patch at some point
+    /// for it to be worth stamping.
+    ///
+    /// Standing in for an occlusion test, which is not available here: the
+    /// sighting cone knows the camera was pointed at a patch but not whether
+    /// anything was in between, so it happily reports a wall two rooms away as
+    /// visible. Having walked within a couple of hundred units of a surface is
+    /// weak evidence of facing it but strong evidence of having been in the
+    /// same space as it, which is the half the cone test cannot supply.
+    pub require_approach: f32,
+    /// Restrict patches to within `near_radius` of this point.
+    pub near: Option<[f32; 3]>,
+    pub near_radius: f32,
+    /// Restrict patches to the spawn area — the demo's own settled spawn
+    /// origin, within `near_radius`.
+    ///
+    /// Worth having as a default in practice: a POV demo opens in spawn, and a
+    /// dead player spectates teammates who are themselves in spawn, so spawn
+    /// walls get more camera time from closer range than anywhere else on the
+    /// map. A grid there is seen many times over; a grid on a wall the player
+    /// passes twice may never be looked at squarely.
+    pub spawn_only: bool,
 }
 
 impl Default for ProbeOptions {
@@ -125,6 +163,7 @@ impl Default for ProbeOptions {
             offsets: DEFAULT_OFFSETS.to_vec(),
             column_spacing: DEFAULT_COLUMN_SPACING,
             row_gap: DEFAULT_ROW_GAP,
+            grids: DEFAULT_GRIDS,
             texture_index: None,
             axis: None,
             anchor: None,
@@ -134,9 +173,12 @@ impl Default for ProbeOptions {
             min_plane_spread: 96.0,
             ring_limit: 4096,
             strip_all: true,
-            lead_ticks: 400,
             sighting_cone_degrees: 25.0,
             sighting_max_distance: 900.0,
+            require_approach: 250.0,
+            near: None,
+            near_radius: 1200.0,
+            spawn_only: true,
         }
     }
 }
@@ -171,10 +213,22 @@ impl ProbeRow {
     }
 }
 
+/// A moment the POV camera is pointed at a grid.
+#[derive(Debug, Clone, Copy)]
+pub struct Sighting {
+    /// Viewdemo clock, in seconds — the number the scrub bar shows.
+    pub svc_time: f32,
+    pub distance: f32,
+    /// How far off the centre of frame the grid sits. A POV demo cannot be
+    /// steered, so this is the difference between "it fills your view" and
+    /// "it is somewhere off to the side".
+    pub off_axis_degrees: f32,
+}
+
+/// One stamped grid and everything needed to find and read it.
 #[derive(Debug, Clone)]
-pub struct ProbeStats {
-    pub harvested_decals: usize,
-    /// Normal axis of the chosen surface: 0=x, 1=y, 2=z.
+pub struct GridStats {
+    /// Normal axis of the surface: 0=x, 1=y, 2=z.
     pub axis: usize,
     /// Coordinate of the surface along that axis.
     pub plane_value: f32,
@@ -189,27 +243,42 @@ pub struct ProbeStats {
     /// In-plane axis the columns run along, and the one the rows step across.
     pub column_axis: usize,
     pub row_axis: usize,
-    /// Pitch the columns ended up at, after any relaxation needed to fit them
-    /// into a stretch of surface the demo can vouch for.
     pub column_pitch: f32,
     /// Distance from each column to the nearest real decal on the same patch.
     pub column_evidence: Vec<f32>,
     /// Columns with a real decal within half a pitch of them. Anything less
     /// than every column means part of the grid is placed by arithmetic.
     pub columns_backed: usize,
-    pub texture_index: u8,
     pub probes: Vec<Probe>,
+    /// Distinct moments the camera is pointed at this grid, best first.
+    pub sightings: Vec<Sighting>,
+    /// Closest the camera ever physically gets to this grid, whether or not it
+    /// is facing it.
+    pub closest_approach: f32,
+    /// Camera samples spent within `require_approach` of it. The best proxy
+    /// available for "how often will this be in front of you".
+    pub dwell_samples: usize,
+    /// Whether this grid fell inside the spawn (or --near) restriction.
+    pub in_region: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct ProbeStats {
+    pub harvested_decals: usize,
+    pub texture_index: u8,
+    /// Region grids were restricted to, when one applied.
+    pub region: Option<[f32; 3]>,
+    pub region_radius: f32,
+    /// True when no patch met the region restriction and it had to be dropped.
+    pub region_abandoned: bool,
+    pub grids: Vec<GridStats>,
+    pub decals_injected: usize,
     pub decals_stripped: usize,
     pub sprays_stripped: usize,
     pub injected_at_ordinal: i32,
-    /// Viewdemo timestamps (SvcTime seconds) where the camera is pointed at
-    /// the grid from close enough to count it.
-    pub sightings: Vec<f32>,
-    /// Closest the camera ever gets to the grid while looking at it.
-    pub best_sighting_distance: Option<f32>,
 }
 
-/// A camera sample with enough context to both aim the grid and time it.
+/// A camera sample with enough context to both aim a grid and time it.
 struct CameraSample {
     ordinal: i32,
     eye: [f32; 3],
@@ -221,9 +290,9 @@ fn norm(v: &[f32; 3]) -> f32 {
     (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt()
 }
 
-/// Distance from `cam` to `point` if the camera is pointed at it from close
-/// enough to count holes, `None` otherwise.
-fn look_distance(cam: &CameraSample, point: &[f32; 3], opts: &ProbeOptions) -> Option<f32> {
+/// Distance and off-centre angle from `cam` to `point`, if the camera is
+/// pointed at it from close enough to count holes.
+fn look_at(cam: &CameraSample, point: &[f32; 3], opts: &ProbeOptions) -> Option<(f32, f32)> {
     let v = [
         point[0] - cam.eye[0],
         point[1] - cam.eye[1],
@@ -237,12 +306,83 @@ fn look_distance(cam: &CameraSample, point: &[f32; 3], opts: &ProbeOptions) -> O
     if fl < 0.5 {
         return None;
     }
-    let dot = (v[0] * cam.forward[0] + v[1] * cam.forward[1] + v[2] * cam.forward[2]) / (d * fl);
+    let dot =
+        ((v[0] * cam.forward[0] + v[1] * cam.forward[1] + v[2] * cam.forward[2]) / (d * fl))
+            .clamp(-1.0, 1.0);
     if dot >= opts.sighting_cone_degrees.to_radians().cos() {
-        Some(d)
+        Some((d, dot.acos().to_degrees()))
     } else {
         None
     }
+}
+
+/// Moments the camera is pointed at `anchor`, best first.
+///
+/// Ranked by how much of the frame the grid would occupy — near and centred
+/// beats far and peripheral — because the viewer cannot steer toward it and
+/// only gets whatever the recorded player happened to look at. Consecutive
+/// samples during one long look are collapsed into a single sighting.
+fn sightings_for(anchor: &[f32; 3], cameras: &[CameraSample], opts: &ProbeOptions) -> Vec<Sighting> {
+    let mut chronological: Vec<Sighting> = Vec::new();
+    let mut last = f32::NEG_INFINITY;
+    let mut best_of_run: Option<Sighting> = None;
+
+    for cam in cameras {
+        let Some((distance, off_axis_degrees)) = look_at(cam, anchor, opts) else {
+            continue;
+        };
+        let s = Sighting {
+            svc_time: cam.svc_time,
+            distance,
+            off_axis_degrees,
+        };
+
+        if cam.svc_time - last > 3.0 {
+            if let Some(prev) = best_of_run.take() {
+                chronological.push(prev);
+            }
+            best_of_run = Some(s);
+        } else if best_of_run
+            .map(|b| quality(&s) > quality(&b))
+            .unwrap_or(true)
+        {
+            // Keep the best frame of the look, not its first — the player
+            // usually swings past a wall before settling on it.
+            best_of_run = Some(s);
+        }
+        last = cam.svc_time;
+    }
+    if let Some(prev) = best_of_run {
+        chronological.push(prev);
+    }
+
+    chronological.sort_by(|a, b| {
+        quality(b)
+            .partial_cmp(&quality(a))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    chronological
+}
+
+/// Rough "how big and how centred", used only to rank sightings against each
+/// other.
+fn quality(s: &Sighting) -> f32 {
+    (1.0 - s.off_axis_degrees / 90.0).max(0.0) * 1000.0 / s.distance.max(1.0)
+}
+
+/// Closest the camera ever gets to `point`, and how many samples it spends
+/// within `radius` of it — regardless of where it is facing.
+fn approach(point: &[f32; 3], cameras: &[CameraSample], radius: f32) -> (f32, usize) {
+    let mut closest = f32::INFINITY;
+    let mut dwell = 0usize;
+    for cam in cameras {
+        let d = distance(&cam.eye, point);
+        closest = closest.min(d);
+        if d <= radius {
+            dwell += 1;
+        }
+    }
+    (closest, dwell)
 }
 
 /// Groups values into runs no wider than `tolerance`, returning each run's mean
@@ -284,8 +424,7 @@ fn cluster(values: &[f32], tolerance: f32) -> Vec<(f32, Vec<usize>)> {
     out
 }
 
-/// The patch of surface the grid gets stamped onto, and the layout chosen for
-/// it.
+/// The patch of surface a grid gets stamped onto, and the layout chosen for it.
 struct Target {
     /// Normal axis: 0=x, 1=y, 2=z.
     axis: usize,
@@ -308,6 +447,17 @@ struct Target {
     members: Vec<[f32; 3]>,
     /// Extent those decals span along the two in-plane axes.
     spread: (f32, f32),
+}
+
+impl Target {
+    /// Centre of the grid this target will carry.
+    fn anchor(&self) -> [f32; 3] {
+        let mut a = [0.0f32; 3];
+        a[self.axis] = self.value;
+        a[self.col_axis] = self.columns.iter().sum::<f32>() / self.columns.len() as f32;
+        a[self.row_axis] = self.row_center;
+        a
+    }
 }
 
 /// The two axes that lie in a plane whose normal runs along `axis`.
@@ -457,7 +607,62 @@ fn lay_columns(band: &[[f32; 3]], col_axis: usize, wanted: usize, spacing: f32) 
     best.map(|(_, _, l)| l)
 }
 
-/// Picks the patch of surface to measure on.
+/// Builds one candidate target from a connected patch, or nothing if the patch
+/// cannot carry a grid.
+fn target_from_patch(
+    patch: Vec<[f32; 3]>,
+    axis: usize,
+    value: f32,
+    opts: &ProbeOptions,
+) -> Option<Target> {
+    let (t1, t2) = tangent_axes(axis);
+    if patch.len() < opts.min_plane_decals {
+        return None;
+    }
+    let spread = (extent(&patch, t1), extent(&patch, t2));
+    if spread.0.max(spread.1) < opts.min_plane_spread {
+        return None;
+    }
+
+    // Columns run along whichever in-plane axis the patch is widest in; for an
+    // upright wall that is the horizontal one, which puts the rows above one
+    // another where they read as rows.
+    let (col_axis, row_axis) = if spread.0 >= spread.1 {
+        (t1, t2)
+    } else {
+        (t2, t1)
+    };
+
+    // Band the rows will occupy: the stretch of `row_axis` holding the most
+    // decals, so there is evidence of surface above and below the middle row as
+    // well as along it.
+    let row_values: Vec<f32> = patch.iter().map(|m| m[row_axis]).collect();
+    let band_half = opts.row_gap * 1.5;
+    let row_center = densest_band(&row_values, band_half)?;
+    let band: Vec<[f32; 3]> = patch
+        .iter()
+        .copied()
+        .filter(|m| (m[row_axis] - row_center).abs() <= band_half)
+        .collect();
+
+    let layout = lay_columns(&band, col_axis, opts.offsets.len(), opts.column_spacing)?;
+
+    Some(Target {
+        axis,
+        value,
+        col_axis,
+        row_axis,
+        columns: layout.columns,
+        evidence: layout.evidence,
+        backed: layout.backed,
+        pitch: layout.pitch,
+        row_center,
+        members: patch,
+        spread,
+    })
+}
+
+/// Picks the patches of surface to measure on, best first.
 ///
 /// Only harvested decal positions are eligible. They are the one input that
 /// involves no derivation at all — the engine created a decal there, so the
@@ -467,15 +672,16 @@ fn lay_columns(band: &[[f32; 3]], col_axis: usize, wanted: usize, spacing: f32) 
 /// bias every measurement here by that amount. A measuring instrument does not
 /// get to guess at its own zero.
 ///
-/// Among the patches that qualify, the one the camera spends the most time
-/// looking at wins. A grid nobody can find measures nothing.
-fn choose_target(
+/// Among the patches that qualify, the ones the camera actually looks at win. A
+/// grid nobody can find measures nothing.
+fn choose_targets(
     harvested: &[[f32; 3]],
     cameras: &[CameraSample],
     opts: &ProbeOptions,
-) -> Option<Target> {
-    let wanted = opts.offsets.len();
-    let mut best: Option<(f32, Target)> = None;
+    region: Option<[f32; 3]>,
+    already: &[[f32; 3]],
+) -> Vec<Target> {
+    let mut scored: Vec<(f32, Target)> = Vec::new();
 
     for axis in 0..3 {
         if let Some(forced) = opts.axis {
@@ -483,7 +689,6 @@ fn choose_target(
                 continue;
             }
         }
-        let (t1, t2) = tangent_axes(axis);
         let values: Vec<f32> = harvested.iter().map(|p| p[axis]).collect();
 
         for (value, idxs) in cluster(&values, opts.plane_tolerance) {
@@ -493,98 +698,81 @@ fn choose_target(
             let coplanar: Vec<[f32; 3]> = idxs.iter().map(|&i| harvested[i]).collect();
 
             for patch in connected_patches(&coplanar, opts.link_radius) {
-                if patch.len() < opts.min_plane_decals {
-                    continue;
-                }
-                let spread = (extent(&patch, t1), extent(&patch, t2));
-                if spread.0.max(spread.1) < opts.min_plane_spread {
-                    continue;
-                }
-
-                // Columns run along whichever in-plane axis the patch is
-                // widest in; for an upright wall that is the horizontal one,
-                // which puts the rows above one another where they read as
-                // rows.
-                let (col_axis, row_axis) = if spread.0 >= spread.1 {
-                    (t1, t2)
-                } else {
-                    (t2, t1)
-                };
-
-                // Band the rows will occupy: the stretch of `row_axis` holding
-                // the most decals, so there is evidence of surface above and
-                // below the middle row as well as along it.
-                let row_values: Vec<f32> = patch.iter().map(|m| m[row_axis]).collect();
-                let band_half = opts.row_gap * 1.5;
-                let Some(row_center) = densest_band(&row_values, band_half) else {
-                    continue;
-                };
-                let band: Vec<[f32; 3]> = patch
-                    .iter()
-                    .copied()
-                    .filter(|m| (m[row_axis] - row_center).abs() <= band_half)
-                    .collect();
-
-                let Some(layout) = lay_columns(&band, col_axis, wanted, opts.column_spacing)
-                else {
+                let Some(target) = target_from_patch(patch, axis, value, opts) else {
                     continue;
                 };
 
-                let centroid = {
-                    let n = patch.len() as f32;
-                    let mut c = [0.0f32; 3];
-                    for m in &patch {
-                        for k in 0..3 {
-                            c[k] += m[k] / n;
-                        }
+                let anchor = target.anchor();
+
+                if let Some(centre) = region {
+                    if distance(&anchor, &centre) > opts.near_radius {
+                        continue;
                     }
-                    c
-                };
-                let sightings = cameras
-                    .iter()
-                    .filter(|cam| look_distance(cam, &centroid, opts).is_some())
-                    .count();
+                }
 
-                // Being visible at all comes first — a grid nobody can find
-                // measures nothing. Then how much of the row the demo can vouch
-                // for, then whether the patch is tall enough to hold all three
-                // rows inside the stretch its decals evidence, then dwell time,
-                // then patch size. An upright wall is preferred over a floor of
-                // equal standing: three rows stacked up a wall sit in front of
-                // the player, where a grid on the ground has to be looked down
-                // at and foreshortens.
-                let tall_enough = extent(&patch, row_axis) >= opts.row_gap * 2.0;
+                let (closest, dwell) = approach(&anchor, cameras, opts.require_approach);
+                // No occlusion test exists here, so "the camera pointed this
+                // way" is not the same as "the camera could see it" — a wall
+                // two rooms away passes the cone test happily. Requiring the
+                // player to have physically walked near the patch is the part
+                // the cone cannot supply.
+                if closest > opts.require_approach {
+                    continue;
+                }
+
+                let best = sightings_for(&anchor, cameras, opts)
+                    .first()
+                    .copied()
+                    .map(|s| quality(&s))
+                    .unwrap_or(0.0);
+
+                // Dwell decides it. A POV demo cannot be steered, so the
+                // question is not "can this be seen from somewhere" but "how
+                // often will it be in front of you" — and the answer is
+                // wherever the player spends time, which is why spawn wins.
+                // Then how much of the row the demo can vouch for, then whether
+                // the patch is tall enough to hold all three rows inside the
+                // stretch its decals evidence, then the best single view of it.
+                // An upright wall is preferred over a floor of equal standing:
+                // three rows stacked up a wall sit in front of the player,
+                // where a grid on the ground has to be looked down at and
+                // foreshortens.
+                let tall_enough = extent(&target.members, target.row_axis) >= opts.row_gap * 2.0;
                 let orientation = if axis == 2 { 0.85 } else { 1.0 };
-                let score = (usize::from(sightings > 0) as f32 * 1.0e7
-                    + layout.backed as f32 * 1.0e5
-                    + usize::from(tall_enough) as f32 * 1.0e4
-                    + sightings.min(500) as f32 * 10.0
-                    + patch.len() as f32)
+                let score = (usize::from(best > 0.0) as f32 * 1.0e8
+                    + target.backed as f32 * 1.0e6
+                    + usize::from(tall_enough) as f32 * 1.0e5
+                    + (dwell as f32).min(2000.0) * 20.0
+                    + best.min(500.0) * 10.0
+                    + target.members.len() as f32)
                     * orientation;
 
-                if best.as_ref().map(|(b, _)| score > *b).unwrap_or(true) {
-                    best = Some((
-                        score,
-                        Target {
-                            axis,
-                            value,
-                            col_axis,
-                            row_axis,
-                            columns: layout.columns,
-                            evidence: layout.evidence,
-                            backed: layout.backed,
-                            pitch: layout.pitch,
-                            row_center,
-                            members: patch,
-                            spread,
-                        },
-                    ));
-                }
+                scored.push((score, target));
             }
         }
     }
 
-    best.map(|(_, t)| t)
+    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+
+    // Spread the grids around rather than stacking them on neighbouring
+    // stretches of the same wall. Four grids in one room is barely better than
+    // one; four in four rooms is four chances the camera turns toward one.
+    let mut taken: Vec<[f32; 3]> = already.to_vec();
+    let mut chosen: Vec<Target> = Vec::new();
+    for (_, target) in scored {
+        if chosen.len() >= opts.grids {
+            break;
+        }
+        let anchor = target.anchor();
+        if taken
+            .iter()
+            .all(|a| distance(a, &anchor) >= GRID_SEPARATION)
+        {
+            taken.push(anchor);
+            chosen.push(target);
+        }
+    }
+    chosen
 }
 
 /// Which side of the surface the room is on.
@@ -684,7 +872,7 @@ fn last_level_load_ordinal(demo: &dem::types::Demo) -> i32 {
     last
 }
 
-/// Builds the three-row grid.
+/// Builds the three-row grid for one target.
 fn build_probes(target: &Target, outward: f32, opts: &ProbeOptions) -> Vec<Probe> {
     let mut out = Vec::new();
 
@@ -717,8 +905,8 @@ fn build_probes(target: &Target, outward: f32, opts: &ProbeOptions) -> Vec<Probe
     out
 }
 
-/// Strips the demo, stamps a measurement grid onto one proven surface, and pins
-/// r_decals high enough that nothing can evict it.
+/// Strips the demo, stamps measurement grids onto proven surfaces, and pins
+/// r_decals high enough that nothing can evict them.
 pub fn probe_decal_offsets(
     demo_bytes: &[u8],
     opts: &ProbeOptions,
@@ -733,6 +921,9 @@ pub fn probe_decal_offsets(
     }
     if opts.offsets[0] < 0.0 {
         return Err("offsets are magnitudes; the OUT and IN rows apply the sign".into());
+    }
+    if opts.grids == 0 {
+        return Err("no grids to stamp".into());
     }
 
     // Every row gets a zero-offset column of its own, ahead of the offsets
@@ -750,7 +941,9 @@ pub fn probe_decal_offsets(
         offsets: if opts.offsets[0] == 0.0 {
             opts.offsets.clone()
         } else {
-            std::iter::once(0.0).chain(opts.offsets.iter().copied()).collect()
+            std::iter::once(0.0)
+                .chain(opts.offsets.iter().copied())
+                .collect()
         },
         ..opts.clone()
     };
@@ -765,17 +958,19 @@ pub fn probe_decal_offsets(
     let survey = survey(&demo, &whole_demo, &DecalCleanOptions::default());
     let cameras = collect_cameras(&demo);
 
-    let target = match (opts.anchor, opts.axis) {
+    let mut region: Option<[f32; 3]> = None;
+    let mut region_abandoned = false;
+
+    let targets: Vec<Target> = match (opts.anchor, opts.axis) {
         (Some(a), Some(axis)) => {
             let (t1, t2) = tangent_axes(axis);
             let columns: Vec<f32> = (0..opts.offsets.len())
                 .map(|j| {
-                    a[t1]
-                        + (j as f32 - (opts.offsets.len() as f32 - 1.0) / 2.0)
-                            * opts.column_spacing
+                    a[t1] + (j as f32 - (opts.offsets.len() as f32 - 1.0) / 2.0)
+                        * opts.column_spacing
                 })
                 .collect();
-            Target {
+            vec![Target {
                 axis,
                 value: a[axis],
                 col_axis: t1,
@@ -787,40 +982,60 @@ pub fn probe_decal_offsets(
                 row_center: a[t2],
                 members: vec![a],
                 spread: (0.0, 0.0),
-            }
+            }]
         }
         (Some(_), None) => {
             return Err("--anchor needs --axis: without a normal there is no \
                         direction to offset along"
                 .into())
         }
-        (None, _) => choose_target(&survey.harvested, &cameras, opts).ok_or_else(|| {
-            format!(
-                "no usable surface: {} harvested decals, none forming a connected patch \
-                 of {}+ decals coplanar within {:.1} units, spanning {:.0}+ units, and \
-                 wide enough to seat {} columns. Try a demo with more decal traffic, \
-                 lower --min-plane-decals, a smaller --column-spacing, or pass \
-                 --anchor x,y,z with --axis.",
-                survey.harvested.len(),
-                opts.min_plane_decals,
-                opts.plane_tolerance,
-                opts.min_plane_spread,
-                opts.offsets.len()
-            )
-        })?,
+        (None, _) => {
+            // Spawn is where a POV camera spends by far the most time: the demo
+            // opens there, and a dead player spectates teammates who are
+            // themselves in spawn. Restricting to it trades map coverage for
+            // the one thing that matters — being looked at.
+            region = opts.near.or_else(|| {
+                opts.spawn_only
+                    .then_some(())
+                    .and(survey.grounded_origin.or(survey.spawn_eye))
+            });
+
+            // Grids near spawn get looked at; grids chosen from the whole map
+            // sit on the best-evidenced walls, which are usually the contested
+            // ones nobody lingers in. Both, rather than a choice between them:
+            // each grid is an independent measurement of the same constant, and
+            // a hundred decals is nothing against a 4096-slot ring.
+            let mut found = choose_targets(&survey.harvested, &cameras, opts, region, &[]);
+            region_abandoned = region.is_some() && found.is_empty();
+
+            let taken: Vec<[f32; 3]> = found.iter().map(|t| t.anchor()).collect();
+            found.extend(choose_targets(
+                &survey.harvested,
+                &cameras,
+                opts,
+                None,
+                &taken,
+            ));
+            found
+        }
     };
 
-    let anchor = {
-        let mut a = [0.0f32; 3];
-        a[target.axis] = target.value;
-        a[target.col_axis] =
-            target.columns.iter().sum::<f32>() / target.columns.len() as f32;
-        a[target.row_axis] = target.row_center;
-        a
-    };
-
-    let outward = outward_sign(&target, &anchor, &cameras);
-    let probes = build_probes(&target, outward, opts);
+    if targets.is_empty() {
+        return Err(format!(
+            "no usable surface: {} harvested decals, none forming a connected patch of \
+             {}+ decals coplanar within {:.1} units, spanning {:.0}+ units, wide enough \
+             to seat {} columns, and within {:.0} units of somewhere the camera actually \
+             went. Try a demo with more decal traffic, lower --min-plane-decals, a \
+             smaller --column-spacing, a larger --require-approach, or pass --anchor \
+             x,y,z with --axis.",
+            survey.harvested.len(),
+            opts.min_plane_decals,
+            opts.plane_tolerance,
+            opts.min_plane_spread,
+            opts.offsets.len(),
+            opts.require_approach
+        ));
+    }
 
     let texture_index = opts.texture_index.or(survey.texture_index).ok_or_else(|| {
         "no decal texture index available: the demo registered none and none was \
@@ -828,46 +1043,60 @@ pub fn probe_decal_offsets(
             .to_string()
     })?;
 
-    // ── When the camera is pointed at the grid ───────────────────────────────
-    let sighted: Vec<&CameraSample> = cameras
-        .iter()
-        .filter(|c| look_distance(c, &anchor, opts).is_some())
-        .collect();
-    let best_sighting_distance = sighted
-        .iter()
-        .filter_map(|c| look_distance(c, &anchor, opts))
-        .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let mut grids: Vec<GridStats> = Vec::new();
+    let mut all_positions: Vec<[f32; 3]> = Vec::new();
 
-    // Distinct viewing moments rather than every sampled frame: consecutive
-    // samples during one long look are the same sighting.
-    let mut sightings: Vec<f32> = Vec::new();
-    let mut last = f32::NEG_INFINITY;
-    for cam in &sighted {
-        if cam.svc_time - last > 3.0 {
-            sightings.push(cam.svc_time);
-            last = cam.svc_time;
-        }
+    for target in &targets {
+        let anchor = target.anchor();
+        let outward = outward_sign(target, &anchor, &cameras);
+        let probes = build_probes(target, outward, opts);
+        let (closest, dwell) = approach(&anchor, &cameras, opts.require_approach);
+        all_positions.extend(probes.iter().map(|p| p.position));
+
+        grids.push(GridStats {
+            axis: target.axis,
+            plane_value: target.value,
+            plane_members: target.members.len(),
+            plane_spread: target.spread,
+            outward,
+            anchor,
+            column_axis: target.col_axis,
+            row_axis: target.row_axis,
+            column_pitch: target.pitch,
+            column_evidence: target.evidence.clone(),
+            columns_backed: target.backed,
+            probes,
+            sightings: sightings_for(&anchor, &cameras, opts),
+            closest_approach: closest,
+            dwell_samples: dwell,
+            in_region: region
+                .map(|c| distance(&anchor, &c) <= opts.near_radius)
+                .unwrap_or(false),
+        });
     }
 
-    // ── Strip, so the grid is the only thing on the surface ──────────────────
+    // ── Strip, so the grids are the only thing on a wall ─────────────────────
     let (decals_stripped, sprays_stripped) = if opts.strip_all {
         strip_decal_messages(&mut demo, &[])
     } else {
         (0, 0)
     };
 
-    // ── Stamp the grid, after the last level load and ahead of the first look ─
+    // ── Stamp them as early as is safe ───────────────────────────────────────
     // Not before the last level load, and not before the client is actually in
     // the map. A frame only carries a usable camera once the player is in game,
     // so the first camera sample is a cheap stand-in for "finished connecting"
     // — injecting during the connect handshake would reference a decal texture
     // index the client has not resolved yet.
-    let load_ordinal = last_level_load_ordinal(&demo)
-        .max(cameras.first().map(|c| c.ordinal).unwrap_or(0));
+    //
+    // Earliest-safe rather than just-in-time: nothing in a stripped demo can
+    // evict them, so a grid placed at the start is on its wall for the whole
+    // playback and every later sighting works.
+    let floor = last_level_load_ordinal(&demo).max(cameras.first().map(|c| c.ordinal).unwrap_or(0));
     let eligible: Vec<(usize, usize, i32)> = frame_ordinals(&demo)
         .into_iter()
         .filter(|&(entry_idx, frame_idx, ordinal)| {
-            ordinal > load_ordinal
+            ordinal > floor
                 && demo.directory.entries[entry_idx]
                     .frames
                     .get(frame_idx)
@@ -882,7 +1111,7 @@ pub fn probe_decal_offsets(
         })
         .collect();
 
-    let needed = probes.len().div_ceil(MAX_PER_FRAME);
+    let needed = all_positions.len().div_ceil(MAX_PER_FRAME);
     if eligible.len() < needed {
         return Err(format!(
             "only {} parsed network frames after the last level load, need {}",
@@ -891,28 +1120,14 @@ pub fn probe_decal_offsets(
         ));
     }
 
-    // Walk back from the first sighting so the grid lands as late as it can
-    // while still preceding the look, then fill forwards so column order on the
-    // surface matches the order the offsets are reported in.
-    let deadline = sighted
-        .first()
-        .map(|c| c.ordinal - opts.lead_ticks)
-        .unwrap_or(i32::MIN);
-    let last_slot = eligible
-        .iter()
-        .rposition(|&(_, _, ord)| ord <= deadline)
-        .unwrap_or(needed - 1)
-        .max(needed - 1);
-    let first_slot = last_slot + 1 - needed;
-    let injected_at_ordinal = eligible[first_slot].2;
-
-    let mut probe_iter = probes.iter();
+    let injected_at_ordinal = eligible[0].2;
+    let mut position_iter = all_positions.iter();
     let mut placed = 0usize;
-    for slot in first_slot..eligible.len() {
-        if placed >= probes.len() {
+
+    for &(entry_idx, frame_idx, _) in &eligible {
+        if placed >= all_positions.len() {
             break;
         }
-        let (entry_idx, frame_idx, _) = eligible[slot];
         let Some(frame) = demo
             .directory
             .entries
@@ -928,26 +1143,26 @@ pub fn probe_decal_offsets(
             continue;
         };
         for _ in 0..MAX_PER_FRAME {
-            let Some(probe) = probe_iter.next() else {
+            let Some(pos) = position_iter.next() else {
                 break;
             };
-            messages.push(build_world_decal(&probe.position, texture_index));
+            messages.push(build_world_decal(pos, texture_index));
             placed += 1;
         }
     }
 
-    if placed < probes.len() {
+    if placed < all_positions.len() {
         return Err(format!(
             "only {} of {} probes could be placed — too few eligible frames",
             placed,
-            probes.len()
+            all_positions.len()
         ));
     }
 
-    // ── Pin r_decals well above the grid size ────────────────────────────────
+    // ── Pin r_decals well above the grid count ───────────────────────────────
     // The POV player's own gunfire is predicted client-side and never reaches
     // the wire, so stripping cannot remove it. A generous ring keeps those from
-    // rotating the grid off the surface before it can be counted.
+    // rotating a grid off its wall before it can be counted.
     let playback_idx = demo
         .directory
         .entries
@@ -986,24 +1201,15 @@ pub fn probe_decal_offsets(
 
     let stats = ProbeStats {
         harvested_decals: survey.harvested.len(),
-        axis: target.axis,
-        plane_value: target.value,
-        plane_members: target.members.len(),
-        plane_spread: target.spread,
-        outward,
-        anchor,
-        column_axis: target.col_axis,
-        row_axis: target.row_axis,
-        column_pitch: target.pitch,
-        column_evidence: target.evidence.clone(),
-        columns_backed: target.backed,
         texture_index,
-        probes,
+        region,
+        region_radius: opts.near_radius,
+        region_abandoned,
+        grids,
+        decals_injected: placed,
         decals_stripped,
         sprays_stripped,
         injected_at_ordinal,
-        sightings,
-        best_sighting_distance,
     };
 
     Ok((demo.write_to_bytes(), stats))
@@ -1173,6 +1379,30 @@ mod tests {
         assert_eq!(z_of(ProbeRow::Control), target.row_center);
         assert!((z_of(ProbeRow::Out) - z_of(ProbeRow::Control) - opts.row_gap).abs() < 0.01);
         assert!((z_of(ProbeRow::Control) - z_of(ProbeRow::In) - opts.row_gap).abs() < 0.01);
+    }
+
+    #[test]
+    fn target_anchor_sits_on_the_surface_at_the_middle_of_the_grid() {
+        let target = test_target();
+        let anchor = target.anchor();
+        assert_eq!(anchor[target.axis], target.value);
+        assert_eq!(anchor[target.col_axis], 140.0);
+        assert_eq!(anchor[target.row_axis], target.row_center);
+    }
+
+    #[test]
+    fn sightings_rank_near_and_centred_ahead_of_far_and_peripheral() {
+        let close_centred = Sighting {
+            svc_time: 0.0,
+            distance: 80.0,
+            off_axis_degrees: 3.0,
+        };
+        let far_peripheral = Sighting {
+            svc_time: 0.0,
+            distance: 700.0,
+            off_axis_degrees: 22.0,
+        };
+        assert!(quality(&close_centred) > quality(&far_peripheral));
     }
 
     #[test]
