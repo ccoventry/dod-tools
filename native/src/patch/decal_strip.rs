@@ -331,6 +331,27 @@ fn survey(demo: &dem::types::Demo, keep_windows: &[(i32, i32)], opts: &DecalClea
                 let EngineMessage::SvcTempEntity(te) = eng.as_ref() else {
                     continue;
                 };
+                // TE_BSPDECAL carries its fields in a different shape to the
+                // rest (a 16-bit texture index rather than 8-bit, ahead of the
+                // entity index), so it is unpacked separately instead of being
+                // forced through the shared byte-offset table. It was already
+                // in the strip set; leaving it out of the harvest set meant a
+                // demo whose only decals were BSP decals offered no anchor.
+                if let TempEntity::TeBspDecal(d) = &te.entity {
+                    if let Some(pos) = decal_position(&d.unknown1) {
+                        out.harvested.push(pos);
+                    }
+                    if d.unknown1.len() >= 8 {
+                        let raw = i16::from_le_bytes([d.unknown1[6], d.unknown1[7]]);
+                        // The emitted TE_WORLDDECAL writes this index as one
+                        // byte, so an index that doesn't fit is unusable.
+                        if (0..=255).contains(&raw) {
+                            fallback_index.get_or_insert(raw as u8);
+                        }
+                    }
+                    continue;
+                }
+
                 let payload: &[u8] = match &te.entity {
                     TempEntity::TeWorldDecal(p)
                     | TempEntity::TeWorldDecalHigh(p)

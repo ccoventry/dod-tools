@@ -52,6 +52,12 @@ struct Args {
     /// position recorded inside a capture window.
     #[arg(long, default_value_t = 900.0)]
     min_camera_clearance: f32,
+
+    /// How many frames ahead of a capture window the flush burst finishes.
+    /// Larger values leave a longer visibly-clean stretch before the clip,
+    /// which is useful when watching the sweep happen.
+    #[arg(long, default_value_t = 300)]
+    lead_ticks: i32,
 }
 
 fn parse_range(s: &str) -> Result<(i32, i32), String> {
@@ -102,6 +108,7 @@ fn main() {
         flush_coord: args.flush_coord,
         floor_drop: args.floor_drop,
         min_camera_clearance: args.min_camera_clearance,
+        lead_ticks: args.lead_ticks,
         ..Default::default()
     };
 
