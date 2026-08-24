@@ -19,6 +19,7 @@
 
 import { logFrontendEvent } from './ipc_bridge.js';
 import { showToast } from './toast.js';
+import { STRINGS } from './strings.js';
 
 const MAX_TOASTS_PER_SESSION = 3;
 let toastCount = 0;
@@ -42,7 +43,7 @@ function reportUncaught(source, err) {
 
   toastCount += 1;
   if (toastCount <= MAX_TOASTS_PER_SESSION) {
-    showToast(`Something went wrong (${message}). Details logged to crash_log.md.`, 'error', 6000);
+    showToast(STRINGS.ERROR_REPORTER.somethingWentWrong(message), 'error', 6000);
   }
 }
 

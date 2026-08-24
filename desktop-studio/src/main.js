@@ -23,6 +23,8 @@ import { createListEditor } from './list_editor.js';
 import { preserveHighlightState, streakUid, pruneTakeIndex, isDemoTracked } from './take_index.js';
 import { getCheckedDemoPaths, clearCheckedPaths, setCheckedDemoPaths, getVisibleDemos, recordingPlayerStreaks } from './master_pane.js';
 import { initErrorReporter } from './error_reporter.js';
+import { STRINGS } from './strings.js';
+import { applyStaticStrings } from './apply_strings.js';
 
 // Registered at module load, before DOMContentLoaded — so it's catching
 // from the earliest possible moment, not just once the app's own init
@@ -30,6 +32,11 @@ import { initErrorReporter } from './error_reporter.js';
 initErrorReporter();
 
 window.addEventListener("DOMContentLoaded", async () => {
+  // Applies every [data-str]/[data-str-title]/[data-str-placeholder]/
+  // [data-str-aria-label] element's text/attribute from STRINGS before any
+  // other DOM-dependent init runs below.
+  applyStaticStrings();
+
   let scanPaths = [];
   // Analyzer Explorer sidebar's "Recent" quick-links tier — most-recent-first,
   // capped at 10, pushed via recordDemoFolderVisit() below whenever browsing
@@ -63,8 +70,8 @@ window.addEventListener("DOMContentLoaded", async () => {
   let studioMode = 'quick-clip';
 
   const STUDIO_MODE_CAPTIONS = {
-    'quick-clip': "Nothing is saved to disk automatically — for grabbing a one-off clip. A re-scan replaces demos wholesale instead of preserving your edits.",
-    'workspace': "Saves a project file and preserves your progress across restarts and re-scans.",
+    'quick-clip': STRINGS.NAV.QUICK_CLIP_CAPTION,
+    'workspace': STRINGS.NAV.WORKSPACE_CAPTION,
   };
 
   function applyStudioModeUI() {
@@ -77,10 +84,10 @@ window.addEventListener("DOMContentLoaded", async () => {
     if (captionEl) captionEl.textContent = STUDIO_MODE_CAPTIONS[studioMode] || '';
     const saveBtnEl = document.querySelector('#save-project-btn');
     if (saveBtnEl) {
-      saveBtnEl.textContent = studioMode === 'quick-clip' ? 'Save as Workspace…' : 'Save Session';
+      saveBtnEl.textContent = studioMode === 'quick-clip' ? STRINGS.NAV.SAVE_AS_WORKSPACE_BUTTON : STRINGS.NAV.SAVE_SESSION_BUTTON;
       saveBtnEl.title = studioMode === 'quick-clip'
-        ? 'Saves a project file and switches this window to Workspace mode.'
-        : 'Save Project Session';
+        ? STRINGS.NAV.SAVE_AS_WORKSPACE_TITLE
+        : STRINGS.NAV.SAVE_SESSION_TITLE;
     }
   }
 
@@ -110,7 +117,7 @@ window.addEventListener("DOMContentLoaded", async () => {
       el.textContent = filename;
       el.title = currentSessionPath;
     } else {
-      el.textContent = 'No session loaded';
+      el.textContent = STRINGS.NAV.NO_SESSION_LOADED;
       el.title = '';
     }
   }
@@ -120,7 +127,7 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   async function pickTargetDrive() {
     try {
-      return await open({ directory: true, multiple: false, title: 'Select Capture Output Directory' });
+      return await open({ directory: true, multiple: false, title: STRINGS.MAIN.SELECT_CAPTURE_OUTPUT_DIR_TITLE });
     } catch (err) {
       console.error("Error opening capture output directory dialog:", err);
       return null;
@@ -129,7 +136,7 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   async function pickRenderFolder() {
     try {
-      return await open({ directory: true, multiple: false, title: 'Select Render Directory' });
+      return await open({ directory: true, multiple: false, title: STRINGS.MAIN.SELECT_RENDER_DIR_TITLE });
     } catch (err) {
       console.error("Error opening render directory dialog:", err);
       return null;
@@ -138,7 +145,7 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   async function pickRenderExportDir() {
     try {
-      return await open({ directory: true, multiple: false, title: 'Select Render Export Directory' });
+      return await open({ directory: true, multiple: false, title: STRINGS.MAIN.SELECT_RENDER_EXPORT_DIR_TITLE });
     } catch (err) {
       console.error("Error opening render export directory dialog:", err);
       return null;
@@ -151,7 +158,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   const driveOverridesEditor = createListEditor({
     container: document.querySelector('#target-drive-list'),
     getItems: () => targetDrives,
-    fields: [{ key: 'value', type: 'text', primitive: true, placeholder: 'Capture output directory path...' }],
+    fields: [{ key: 'value', type: 'text', primitive: true, placeholder: STRINGS.CAPTURE_CONFIG.OUTPUT_DIR_PLACEHOLDER }],
     unique: true,
     browse: pickTargetDrive,
     onChange: () => {
@@ -164,7 +171,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   const renderFoldersEditor = createListEditor({
     container: document.querySelector('#render-folder-list'),
     getItems: () => renderFolders,
-    fields: [{ key: 'value', type: 'text', primitive: true, placeholder: 'Render directory path...' }],
+    fields: [{ key: 'value', type: 'text', primitive: true, placeholder: STRINGS.RENDER.RENDER_FOLDER_ROW_PLACEHOLDER }],
     unique: true,
     browse: pickRenderFolder,
     onChange: () => persistAppSettings(),
@@ -173,7 +180,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   const renderExportDirsEditor = createListEditor({
     container: document.querySelector('#render-export-dir-list'),
     getItems: () => renderExportDirs,
-    fields: [{ key: 'value', type: 'text', primitive: true, placeholder: 'Export drive/folder path...' }],
+    fields: [{ key: 'value', type: 'text', primitive: true, placeholder: STRINGS.RENDER.EXPORT_DIR_ROW_PLACEHOLDER }],
     unique: true,
     browse: pickRenderExportDir,
     onChange: () => persistAppSettings(),
@@ -378,16 +385,16 @@ window.addEventListener("DOMContentLoaded", async () => {
   // wrote a file (false on "nothing to save" or a cancelled Save-As dialog).
   async function saveProjectSession() {
     if (currentScannedDemos.length === 0) {
-      showToast("Nothing to save yet — add demo files or load a session first.", 'info');
+      showToast(STRINGS.MAIN.NOTHING_TO_SAVE, 'info');
       return false;
     }
     try {
       // Once a session's been loaded or saved once in this window, keep
       // writing back to that same file instead of asking Save-As again.
       const filePath = currentSessionPath || await save({
-        title: 'Save Studio Project Session',
+        title: STRINGS.MAIN.SAVE_PROJECT_SESSION_TITLE,
         defaultPath: 'dod_project.json',
-        filters: [{ name: 'JSON Project File', extensions: ['json'] }]
+        filters: [{ name: STRINGS.MAIN.JSON_PROJECT_FILTER_NAME, extensions: ['json'] }]
       });
       if (!filePath) return false;
 
@@ -410,14 +417,14 @@ window.addEventListener("DOMContentLoaded", async () => {
       await invoke('save_project_session', { path: filePath, contents: projectData });
       currentSessionPath = filePath;
       updateSessionFileIndicator();
-      showToast(`Project session saved successfully to ${filePath}`, 'success');
+      showToast(STRINGS.MAIN.projectSavedToast(filePath), 'success');
       // Saving a project file is what makes a window a Workspace — a save
       // from Quick-Clip mode is exactly the "Save as Workspace..." action.
       setStudioMode('workspace');
       return true;
     } catch (err) {
       console.error("Save project error:", err);
-      showToast("Error saving project session.", 'error');
+      showToast(STRINGS.MAIN.SAVE_PROJECT_ERROR, 'error');
       return false;
     }
   }
@@ -439,7 +446,7 @@ window.addEventListener("DOMContentLoaded", async () => {
       try {
         const selected = await open({
           multiple: false,
-          filters: [{ name: 'JSON Project File', extensions: ['json'] }]
+          filters: [{ name: STRINGS.MAIN.JSON_PROJECT_FILTER_NAME, extensions: ['json'] }]
         });
         if (selected) {
           const content = await invoke('load_project_session', { path: selected });
@@ -478,13 +485,13 @@ window.addEventListener("DOMContentLoaded", async () => {
                 selectDemoAndRenderDetail(currentScannedDemos[0], selectedDemoIdx);
               }
               updateDemoFooter(currentScannedDemos);
-              showToast(`Loaded ${currentScannedDemos.length} demos from project file`, 'success');
+              showToast(STRINGS.MAIN.loadedDemosToast(currentScannedDemos.length), 'success');
             }
           }
         }
       } catch (err) {
         console.error("Load project error:", err);
-        showToast("Error loading project session.", 'error');
+        showToast(STRINGS.MAIN.LOAD_PROJECT_ERROR, 'error');
       }
     });
   }
@@ -496,8 +503,8 @@ window.addEventListener("DOMContentLoaded", async () => {
       try {
         const selected = await open({
           multiple: false,
-          filters: [{ name: 'Executable', extensions: ['exe'] }],
-          title: 'Select HLAE Executable (hlae.exe)'
+          filters: [{ name: STRINGS.MAIN.EXECUTABLE_FILTER_NAME, extensions: ['exe'] }],
+          title: STRINGS.MAIN.SELECT_HLAE_EXE_TITLE
         });
         if (selected) {
           const path = Array.isArray(selected) ? selected[0] : selected;
@@ -517,8 +524,8 @@ window.addEventListener("DOMContentLoaded", async () => {
       try {
         const selected = await open({
           multiple: false,
-          filters: [{ name: 'Executable', extensions: ['exe'] }],
-          title: 'Select Half-Life Executable (hl.exe)'
+          filters: [{ name: STRINGS.MAIN.EXECUTABLE_FILTER_NAME, extensions: ['exe'] }],
+          title: STRINGS.MAIN.SELECT_HL_EXE_TITLE
         });
         if (selected) {
           const path = Array.isArray(selected) ? selected[0] : selected;
@@ -538,8 +545,8 @@ window.addEventListener("DOMContentLoaded", async () => {
       try {
         const selected = await open({
           multiple: false,
-          filters: [{ name: 'Executable', extensions: ['exe'] }],
-          title: 'Select FFmpeg Executable (ffmpeg.exe)'
+          filters: [{ name: STRINGS.MAIN.EXECUTABLE_FILTER_NAME, extensions: ['exe'] }],
+          title: STRINGS.MAIN.SELECT_FFMPEG_EXE_TITLE
         });
         if (selected) {
           const path = Array.isArray(selected) ? selected[0] : selected;
@@ -573,7 +580,7 @@ window.addEventListener("DOMContentLoaded", async () => {
       // recording player's, and could read in the hundreds where the
       // visible Highlights column summed to a fraction of that.
       const totalHighlights = (demos || []).reduce((sum, d) => sum + recordingPlayerStreaks(d).length, 0);
-      footerEl.textContent = `Loaded Demos: ${(demos || []).length} | Total Highlights: ${totalHighlights}`;
+      footerEl.textContent = STRINGS.WORKSPACE.demoListFooter((demos || []).length, totalHighlights);
     }
     // Clear Untracked/Clear All only make sense with something in the
     // queue — Clear Selected already gates on its own checkbox state
@@ -594,13 +601,13 @@ window.addEventListener("DOMContentLoaded", async () => {
     const masterTableBody = document.querySelector('#master-demo-table-body');
 
     if (p.cancelled) {
-      if (scanStatusEl) scanStatusEl.textContent = `Status: Cancelled — ${p.found} demo(s) found before cancel`;
+      if (scanStatusEl) scanStatusEl.textContent = STRINGS.MAIN.cancelledStatus(p.found);
       if (cancelScanBtn) cancelScanBtn.disabled = true;
     } else if (p.status === 'Complete') {
-      if (scanStatusEl) scanStatusEl.textContent = `Status: Ready — ${p.found} demo(s) found`;
+      if (scanStatusEl) scanStatusEl.textContent = STRINGS.MAIN.readyFoundStatus(p.found);
       if (cancelScanBtn) cancelScanBtn.disabled = true;
     } else {
-      if (scanStatusEl) scanStatusEl.textContent = `Status: ${p.status}`;
+      if (scanStatusEl) scanStatusEl.textContent = STRINGS.MAIN.statusGeneric(p.status);
       if (cancelScanBtn) cancelScanBtn.disabled = false;
     }
   }).then(fn => { unlistenScanProgress = fn; });
@@ -613,7 +620,7 @@ window.addEventListener("DOMContentLoaded", async () => {
       cancelScanBtn.disabled = true;
       try {
         await cancelScan();
-        showToast('Scan cancellation requested.', 'info');
+        showToast(STRINGS.MAIN.SCAN_CANCEL_REQUESTED_TOAST, 'info');
       } catch (_) { /* already toasted in ipc_bridge */ }
     });
   }
@@ -636,11 +643,11 @@ window.addEventListener("DOMContentLoaded", async () => {
     if (addFilesBtn) addFilesBtn.disabled = true;
     if (addFolderBtn) addFolderBtn.disabled = true;
     if (cancelScanBtnInner) cancelScanBtnInner.disabled = false;
-    if (scanStatusEl) scanStatusEl.textContent = 'Status: Scanning...';
-    showToast("Scanning directories...", 'info');
+    if (scanStatusEl) scanStatusEl.textContent = STRINGS.MAIN.SCANNING_STATUS;
+    showToast(STRINGS.MAIN.SCANNING_TOAST, 'info');
 
     const masterTableBody = document.querySelector('#master-demo-table-body');
-    if (masterTableBody) masterTableBody.innerHTML = '<tr style="text-align:center"><td colspan="7">Scanning... please wait.</td></tr>';
+    if (masterTableBody) masterTableBody.innerHTML = `<tr style="text-align:center"><td colspan="7">${STRINGS.MAIN.SCANNING_PLEASE_WAIT_ROW}</td></tr>`;
 
     try {
       const newlyScanned = await scanDirectory(pathsToScan);
@@ -671,7 +678,7 @@ window.addEventListener("DOMContentLoaded", async () => {
       // footer is also updated on the Complete scan_progress event, but set
       // it here in case the event arrives before renderMasterList finishes.
       updateDemoFooter(currentScannedDemos);
-      showToast(`Scan complete (${newlyScanned.length} demo(s) found)`, 'success');
+      showToast(STRINGS.MAIN.scanCompleteToast(newlyScanned.length), 'success');
       selectedDemoIdx = newlyScanned.length > 0
         ? currentScannedDemos.indexOf(newlyScanned[0])
         : (currentScannedDemos.length > 0 ? 0 : null);
@@ -684,8 +691,8 @@ window.addEventListener("DOMContentLoaded", async () => {
       }
     } catch (err) {
       console.error("Error scanning directories:", err);
-      showToast("Error: " + err, 'error');
-      if (scanStatusEl) scanStatusEl.textContent = `Status: Error — ${err}`;
+      showToast(STRINGS.MAIN.scanErrorToast(err), 'error');
+      if (scanStatusEl) scanStatusEl.textContent = STRINGS.MAIN.scanErrorStatus(err);
     } finally {
       if (addFilesBtn) addFilesBtn.disabled = false;
       if (addFolderBtn) addFolderBtn.disabled = false;
@@ -700,8 +707,8 @@ window.addEventListener("DOMContentLoaded", async () => {
       try {
         const selected = await open({
           multiple: true,
-          filters: [{ name: 'Demo Files', extensions: ['dem'] }],
-          title: 'Select Demo Files (.dem)'
+          filters: [{ name: STRINGS.MAIN.DEMO_FILES_FILTER_NAME, extensions: ['dem'] }],
+          title: STRINGS.MAIN.SELECT_DEMO_FILES_TITLE
         });
         if (selected) {
           const files = Array.isArray(selected) ? selected : [selected];
@@ -729,7 +736,7 @@ window.addEventListener("DOMContentLoaded", async () => {
         const selected = await open({
           directory: true,
           multiple: false,
-          title: 'Select Demo Folder'
+          title: STRINGS.MAIN.SELECT_DEMO_FOLDER_TITLE
         });
         if (selected) {
           const folder = Array.isArray(selected) ? selected[0] : selected;
@@ -749,16 +756,16 @@ window.addEventListener("DOMContentLoaded", async () => {
     const indicator = document.querySelector('#export-pool-free-indicator');
     if (!indicator) return;
     if (targetDrives.length === 0) {
-      indicator.textContent = "Capture Output Free: 0.0 GB";
+      indicator.textContent = STRINGS.MAIN.EXPORT_POOL_FREE_DEFAULT;
       return;
     }
     try {
       const bytes = await calculateExportPoolSpace(targetDrives);
       const gb = bytes / (1024 * 1024 * 1024);
-      indicator.textContent = `Capture Output Free: ${gb.toFixed(1)} GB`;
+      indicator.textContent = STRINGS.MAIN.exportPoolFree(gb.toFixed(1));
     } catch (err) {
       console.error("Error calculating export pool space:", err);
-      indicator.textContent = "Capture Output Free: Error calculating space";
+      indicator.textContent = STRINGS.MAIN.EXPORT_POOL_ERROR;
     }
   }
 
@@ -939,7 +946,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   // doesn't silently do less than its name implies without the user noticing.
   function filterScopeNote(visibleCount, totalCount) {
     return visibleCount < totalCount
-      ? ` (search filter active — only considered ${visibleCount} of ${totalCount} demo(s) in the queue)`
+      ? STRINGS.MAIN.filterScopeNote(visibleCount, totalCount)
       : '';
   }
 
@@ -953,18 +960,18 @@ window.addEventListener("DOMContentLoaded", async () => {
   if (clearUntrackedBtn) {
     clearUntrackedBtn.addEventListener('click', () => {
       if (currentScannedDemos.length === 0) {
-        showToast('Queue is already empty.', 'info');
+        showToast(STRINGS.MAIN.QUEUE_ALREADY_EMPTY, 'info');
         return;
       }
       const visible = getVisibleDemos();
       if (visible.length === 0) {
-        showToast('No demos match the current search.', 'info');
+        showToast(STRINGS.MAIN.NO_DEMOS_MATCH_SEARCH, 'info');
         return;
       }
       const trackedVisibleCount = visible.filter(isDemoTracked).length;
       const untrackedVisible = new Set(visible.filter((d) => !isDemoTracked(d)).map((d) => d.path));
       if (untrackedVisible.size === 0) {
-        showToast('Nothing to clear — every visible demo has tracked work on it.', 'info');
+        showToast(STRINGS.MAIN.NOTHING_TRACKED_TO_CLEAR, 'info');
         return;
       }
       const totalCount = currentScannedDemos.length;
@@ -974,13 +981,13 @@ window.addEventListener("DOMContentLoaded", async () => {
       // were actually evaluated and found tracked — never demos hidden by
       // the search filter, which weren't touched for a completely different
       // reason and would otherwise get mislabeled as "kept ... tracked".
-      const keptNote = trackedVisibleCount > 0 ? `, kept ${trackedVisibleCount} with tracked work` : '';
+      const keptNote = trackedVisibleCount > 0 ? STRINGS.MAIN.keptWithTrackedWork(trackedVisibleCount) : '';
       const scopeNote = filterScopeNote(visible.length, totalCount);
       showToast(
-        `Removed ${untrackedVisible.size} untracked demo(s)${keptNote}.${scopeNote}`,
+        STRINGS.MAIN.removedUntrackedToast(untrackedVisible.size, keptNote, scopeNote),
         'success'
       );
-      logFrontendEvent(`[queue] Clear Untracked: removed ${untrackedVisible.size} demo(s)${keptNote}.${scopeNote} — ${removedNames.join(', ')}`);
+      logFrontendEvent(STRINGS.MAIN.clearUntrackedLog(untrackedVisible.size, keptNote, scopeNote, removedNames.join(', ')));
     });
   }
 
@@ -1000,16 +1007,16 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   function requestTrackedClearConfirmation(targets, { title, verb, filterNote, confirmLabel }) {
     const trackedCount = targets.filter(isDemoTracked).length;
-    const plural = targets.length === 1 ? 'demo' : 'demos';
+    const plural = targets.length === 1 ? STRINGS.MAIN.DEMO_SINGULAR : STRINGS.MAIN.DEMO_PLURAL;
     const titleEl = document.querySelector('#clear-all-title');
     if (titleEl) titleEl.textContent = title;
     const confirmBtnEl = document.querySelector('#clear-all-confirm-btn');
-    if (confirmBtnEl) confirmBtnEl.textContent = confirmLabel || 'Clear Anyway';
+    if (confirmBtnEl) confirmBtnEl.textContent = confirmLabel || STRINGS.MAIN.CLEAR_ANYWAY_DEFAULT;
     const summaryEl = document.querySelector('#clear-all-summary');
     if (summaryEl) {
       summaryEl.textContent = (trackedCount > 0
-        ? `This ${verb} ${targets.length} ${plural} — ${trackedCount} of them have tracked work (Captured/Rendered status, a note, or an edited kill range) that will be lost. This cannot be undone.`
-        : `This ${verb} ${targets.length} ${plural}. None currently have tracked work on them. This cannot be undone.`
+        ? STRINGS.MAIN.clearSummaryTracked(verb, targets.length, plural, trackedCount)
+        : STRINGS.MAIN.clearSummaryUntracked(verb, targets.length, plural)
       ) + (filterNote || '');
     }
     if (clearAllModal) clearAllModal.style.display = 'flex';
@@ -1052,25 +1059,25 @@ window.addEventListener("DOMContentLoaded", async () => {
     clearSelectedBtn.addEventListener('click', async () => {
       const checkedPaths = new Set(getCheckedDemoPaths());
       if (checkedPaths.size === 0) {
-        showToast('No demos selected — check rows in the queue first.', 'info');
+        showToast(STRINGS.MAIN.NO_DEMOS_SELECTED, 'info');
         return;
       }
       const visiblePaths = new Set(getVisibleDemos().map((d) => d.path));
       const targets = currentScannedDemos.filter(d => checkedPaths.has(d.path) && visiblePaths.has(d.path));
       if (targets.length === 0) {
-        showToast(`All ${checkedPaths.size} selected demo(s) are hidden by the current search — nothing visible to remove.`, 'info');
+        showToast(STRINGS.MAIN.allSelectedHiddenToast(checkedPaths.size), 'info');
         return;
       }
       const hiddenCheckedCount = checkedPaths.size - targets.length;
       const hiddenNote = hiddenCheckedCount > 0
-        ? ` (${hiddenCheckedCount} other selected demo(s) hidden by the search filter were left untouched)`
+        ? STRINGS.MAIN.hiddenCheckedNote(hiddenCheckedCount)
         : '';
       let savedFirst = false;
       if (targets.some(isDemoTracked)) {
-        const outcome = await requestTrackedClearConfirmation(targets, { title: 'Clear Selected Demos', verb: 'removes', filterNote: hiddenNote, confirmLabel: 'Clear Selected Anyway' });
+        const outcome = await requestTrackedClearConfirmation(targets, { title: STRINGS.MAIN.CLEAR_SELECTED_TITLE, verb: STRINGS.MAIN.VERB_REMOVES, filterNote: hiddenNote, confirmLabel: STRINGS.MAIN.CLEAR_SELECTED_ANYWAY });
         if (!outcome) return;
         savedFirst = outcome === 'save-first';
-      } else if (!(await confirm(`Remove ${targets.length} selected demo(s) from the queue?${hiddenNote}`))) {
+      } else if (!(await confirm(STRINGS.MAIN.removeSelectedConfirm(targets.length, hiddenNote)))) {
         return;
       }
       const removePaths = new Set(targets.map((d) => d.path));
@@ -1081,8 +1088,8 @@ window.addEventListener("DOMContentLoaded", async () => {
       const survivingHiddenChecked = Array.from(checkedPaths).filter((p) => !removePaths.has(p));
       replaceScannedDemos(currentScannedDemos.filter(d => !removePaths.has(d.path)));
       if (survivingHiddenChecked.length > 0) setCheckedDemoPaths(survivingHiddenChecked);
-      showToast(`${savedFirst ? 'Saved, then removed' : 'Removed'} ${targets.length} demo(s) from the queue.${hiddenNote}`, 'success');
-      logFrontendEvent(`[queue] Clear Selected: removed ${targets.length} demo(s)${savedFirst ? ' (saved session first)' : ''}.${hiddenNote} — ${removedNames.join(', ')}`);
+      showToast(STRINGS.MAIN.removedSelectedToast(savedFirst, targets.length, hiddenNote), 'success');
+      logFrontendEvent(STRINGS.MAIN.clearSelectedLog(targets.length, savedFirst ? STRINGS.MAIN.SAVED_SESSION_FIRST_NOTE : '', hiddenNote, removedNames.join(', ')));
     });
   }
 
@@ -1099,28 +1106,28 @@ window.addEventListener("DOMContentLoaded", async () => {
   if (clearAllBtn) {
     clearAllBtn.addEventListener('click', async () => {
       if (currentScannedDemos.length === 0) {
-        showToast('Queue is already empty.', 'info');
+        showToast(STRINGS.MAIN.QUEUE_ALREADY_EMPTY, 'info');
         return;
       }
       const targets = getVisibleDemos();
       if (targets.length === 0) {
-        showToast('No demos match the current search.', 'info');
+        showToast(STRINGS.MAIN.NO_DEMOS_MATCH_SEARCH, 'info');
         return;
       }
       const note = filterScopeNote(targets.length, currentScannedDemos.length);
       let savedFirst = false;
       if (targets.some(isDemoTracked)) {
-        const outcome = await requestTrackedClearConfirmation(targets, { title: 'Clear All Demos', verb: 'removes', filterNote: note, confirmLabel: 'Clear All Anyway' });
+        const outcome = await requestTrackedClearConfirmation(targets, { title: STRINGS.MAIN.CLEAR_ALL_TITLE, verb: STRINGS.MAIN.VERB_REMOVES, filterNote: note, confirmLabel: STRINGS.MAIN.CLEAR_ALL_ANYWAY });
         if (!outcome) return;
         savedFirst = outcome === 'save-first';
-      } else if (!(await confirm(`Remove ${targets.length} demo(s) from the queue? None have tracked work on them.${note}`))) {
+      } else if (!(await confirm(STRINGS.MAIN.removeAllConfirm(targets.length, note)))) {
         return;
       }
       const removePaths = new Set(targets.map((d) => d.path));
       const removedNames = targets.map((d) => d.name || d.path);
       replaceScannedDemos(currentScannedDemos.filter((d) => !removePaths.has(d.path)));
-      showToast(`${savedFirst ? 'Saved, then cleared' : 'Cleared'} ${targets.length} demo(s) from the queue.${note}`, 'success');
-      logFrontendEvent(`[queue] Clear All: removed ${targets.length} demo(s)${savedFirst ? ' (saved session first)' : ''}.${note} — ${removedNames.join(', ')}`);
+      showToast(STRINGS.MAIN.clearedAllToast(savedFirst, targets.length, note), 'success');
+      logFrontendEvent(STRINGS.MAIN.clearAllLog(targets.length, savedFirst ? STRINGS.MAIN.SAVED_SESSION_FIRST_NOTE : '', note, removedNames.join(', ')));
     });
   }
 
@@ -1131,7 +1138,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   // proceed — master_pane.js still owns the actual splice + selection-shift
   // logic, since that's specific to a single-row delete.
   async function requestTrackedDeleteConfirm(demo) {
-    const outcome = await requestTrackedClearConfirmation([demo], { title: 'Remove Tracked Demo', verb: 'removes', confirmLabel: 'Remove Anyway' });
+    const outcome = await requestTrackedClearConfirmation([demo], { title: STRINGS.MAIN.REMOVE_TRACKED_DEMO_TITLE, verb: STRINGS.MAIN.VERB_REMOVES, confirmLabel: STRINGS.MAIN.REMOVE_ANYWAY });
     return !!outcome;
   }
 

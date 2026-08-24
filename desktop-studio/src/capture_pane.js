@@ -5,6 +5,7 @@ import { showToast } from './toast.js';
 import { requestProcessGuardedLaunch } from './detail_pane.js';
 import { createListEditor } from './list_editor.js';
 import { streakUid, recordTake } from './take_index.js';
+import { STRINGS } from './strings.js';
 
 let unlistenCaptureStatus = null;
 // Tracks whether a batch is actively running so refreshLaunchGuard() never
@@ -121,10 +122,10 @@ function computeRequiredCaptureBytes(currentScannedDemos, opts) {
 }
 
 const PATH_PROBLEM_REASONS = {
-  not_absolute: (p) => `"${p}" isn't a full path (it needs a drive letter, e.g. C:\\...)`,
-  malformed: (p) => `"${p}" isn't a valid path (invalid characters or formatting)`,
-  not_found: (p) => `"${p}" doesn't exist on this computer (check the spelling, or that the drive is connected)`,
-  not_a_directory: (p) => `"${p}" points to a file, not a folder`,
+  not_absolute: STRINGS.CAPTURE.pathProblem.notAbsolute,
+  malformed: STRINGS.CAPTURE.pathProblem.malformed,
+  not_found: STRINGS.CAPTURE.pathProblem.notFound,
+  not_a_directory: STRINGS.CAPTURE.pathProblem.notADirectory,
 };
 
 const MAX_PROBLEM_PATHS_SHOWN = 3;
@@ -135,9 +136,9 @@ const MAX_PROBLEM_PATHS_SHOWN = 3;
  *  Falls back to a single plain sentence when there's just one problem. */
 function describeProblemPaths(problems) {
   const shown = problems.slice(0, MAX_PROBLEM_PATHS_SHOWN)
-    .map((d) => PATH_PROBLEM_REASONS[d.status]?.(d.path) || `"${d.path}" is unusable`);
+    .map((d) => PATH_PROBLEM_REASONS[d.status]?.(d.path) || STRINGS.CAPTURE.pathProblem.unusable(d.path));
   const remaining = problems.length - MAX_PROBLEM_PATHS_SHOWN;
-  if (remaining > 0) shown.push(`...and ${remaining} more`);
+  if (remaining > 0) shown.push(STRINGS.CAPTURE.andNMore(remaining));
   return shown.length === 1 ? shown[0] : shown.map((s) => `• ${s}`).join('\n');
 }
 
@@ -231,32 +232,32 @@ export async function refreshLaunchGuard(state) {
   if (warningEl) {
     if (noDrivesConfigured) {
       warningEl.style.color = '#f44336';
-      warningEl.textContent = "No Capture Output directories configured — add at least one with free space before starting a capture.";
+      warningEl.textContent = STRINGS.CAPTURE.NO_DRIVES_CONFIGURED_WARNING;
       warningEl.style.display = 'block';
     } else if (noUsableSpace) {
       warningEl.style.color = '#f44336';
       warningEl.textContent = problemPaths.length > 0
-        ? `Capture Output problem:\n${describeProblemPaths(problemPaths)}`
-        : "None of the configured Capture Output directories have any free space.";
+        ? STRINGS.CAPTURE.noUsableSpaceProblem(describeProblemPaths(problemPaths))
+        : STRINGS.CAPTURE.NO_USABLE_SPACE_WARNING;
       warningEl.style.display = 'block';
     } else if (insufficientSpace) {
       warningEl.style.color = '#f44336';
-      warningEl.textContent = `Insufficient disk space: capture needs ~${(requiredBytes / 1e9).toFixed(2)} GB, only ${(availableBytes / 1e9).toFixed(2)} GB available across the export pool.`;
+      warningEl.textContent = STRINGS.CAPTURE.insufficientSpaceWarning((requiredBytes / 1e9).toFixed(2), (availableBytes / 1e9).toFixed(2));
       warningEl.style.display = 'block';
     } else if (hasPartialProblems) {
       warningEl.style.color = '#ffa726';
-      const wontBeUsed = problemPaths.length === 1 ? "entry won't be used" : "entries won't be used";
-      warningEl.textContent = `Some Capture Output ${wontBeUsed}:\n${describeProblemPaths(problemPaths)}\nCapture will proceed using the other configured directory/directories.`;
+      const wontBeUsed = problemPaths.length === 1 ? STRINGS.CAPTURE.ENTRY_WONT_BE_USED_SINGULAR : STRINGS.CAPTURE.ENTRY_WONT_BE_USED_PLURAL;
+      warningEl.textContent = STRINGS.CAPTURE.partialProblemsWarning(wontBeUsed, describeProblemPaths(problemPaths));
       warningEl.style.display = 'block';
     } else if (willBeCreatedPaths.length > 0) {
       warningEl.style.color = '#64b5f6';
       const shown = willBeCreatedPaths.slice(0, MAX_PROBLEM_PATHS_SHOWN).map((d) => `"${d.path}"`);
       const remaining = willBeCreatedPaths.length - MAX_PROBLEM_PATHS_SHOWN;
-      if (remaining > 0) shown.push(`...and ${remaining} more`);
-      const doesnt = willBeCreatedPaths.length === 1 ? "doesn't" : "don't";
+      if (remaining > 0) shown.push(STRINGS.CAPTURE.andNMore(remaining));
+      const doesnt = willBeCreatedPaths.length === 1 ? STRINGS.CAPTURE.DOESNT_SINGULAR : STRINGS.CAPTURE.DOESNT_PLURAL;
       warningEl.textContent = shown.length === 1
-        ? `${shown[0]} ${doesnt} exist yet — it'll be created when the capture starts.`
-        : `These Capture Output entries ${doesnt} exist yet — they'll be created when the capture starts:\n${shown.map((s) => `• ${s}`).join('\n')}`;
+        ? STRINGS.CAPTURE.willBeCreatedSingle(shown[0], doesnt)
+        : STRINGS.CAPTURE.willBeCreatedMultiple(doesnt, shown.map((s) => `• ${s}`).join('\n'));
       warningEl.style.display = 'block';
     } else {
       warningEl.style.display = 'none';
@@ -267,7 +268,7 @@ export async function refreshLaunchGuard(state) {
   const footerRequiredEl = document.querySelector('#footer-required-space');
   if (footerRequiredEl) {
     const requiredGb = (requiredBytes / (1024 * 1024 * 1024)).toFixed(2);
-    footerRequiredEl.textContent = `Required: ${requiredGb} GB`;
+    footerRequiredEl.textContent = STRINGS.CAPTURE_CONFIG.footerRequiredSpace(requiredGb);
     footerRequiredEl.style.color = insufficientSpace ? '#f44336' : '#4caf50';
   }
 
@@ -321,7 +322,7 @@ export function hydrateCommandsState(persistedInitCommands, persistedCustomComma
 let currentPreviewScanResults = [];
 
 function formatPreviewSize(bytes) {
-  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+  return STRINGS.CAPTURE.megabytesLabel((bytes / (1024 * 1024)).toFixed(2));
 }
 
 function updateClearPreviewsDeleteButtonState() {
@@ -329,7 +330,7 @@ function updateClearPreviewsDeleteButtonState() {
   if (!deleteBtn) return;
   const checked = document.querySelectorAll('.clear-previews-row-cb:checked');
   deleteBtn.disabled = checked.length === 0;
-  deleteBtn.textContent = checked.length > 0 ? `Delete ${checked.length} Selected` : 'Delete Selected';
+  deleteBtn.textContent = checked.length > 0 ? STRINGS.CAPTURE.deleteNSelected(checked.length) : STRINGS.CAPTURE.DELETE_SELECTED_DEFAULT;
 }
 
 function renderClearPreviewsResults() {
@@ -338,8 +339,8 @@ function renderClearPreviewsResults() {
   if (!tbody) return;
 
   if (currentPreviewScanResults.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="4" class="table-empty">No orphaned preview demos found.</td></tr>';
-    if (footerEl) footerEl.textContent = 'Found: 0 | Reclaimable: 0.00 GB';
+    tbody.innerHTML = `<tr><td colspan="4" class="table-empty">${STRINGS.CAPTURE.NO_ORPHANED_PREVIEWS}</td></tr>`;
+    if (footerEl) footerEl.textContent = STRINGS.CLEAR_PREVIEWS_MODAL.FOOTER_DEFAULT;
     updateClearPreviewsDeleteButtonState();
     return;
   }
@@ -370,7 +371,7 @@ function renderClearPreviewsResults() {
     const tdModified = document.createElement('td');
     tdModified.textContent = entry.modified_unix_secs
       ? new Date(entry.modified_unix_secs * 1000).toLocaleString()
-      : '—';
+      : STRINGS.CAPTURE.EMPTY_DASH;
 
     tr.appendChild(tdCb);
     tr.appendChild(tdFile);
@@ -380,7 +381,7 @@ function renderClearPreviewsResults() {
   });
 
   const totalGb = (totalBytes / (1024 * 1024 * 1024)).toFixed(2);
-  if (footerEl) footerEl.textContent = `Found: ${currentPreviewScanResults.length} | Reclaimable: ${totalGb} GB`;
+  if (footerEl) footerEl.textContent = STRINGS.CLEAR_PREVIEWS_MODAL.foundReclaimable(currentPreviewScanResults.length, totalGb);
   updateClearPreviewsDeleteButtonState();
 }
 
@@ -399,10 +400,10 @@ function initStandaloneLaunchButton() {
   async function performLaunch() {
     btn.disabled = true;
     const originalLabel = btn.textContent;
-    btn.textContent = 'Launching…';
+    btn.textContent = STRINGS.HIGHLIGHTS.LAUNCHING;
     try {
       await launchStandaloneGame();
-      showToast('Launching HLAE...', 'info');
+      showToast(STRINGS.HIGHLIGHTS.LAUNCHING_HLAE_TOAST, 'info');
     } catch (err) {
       // Already toasted by ipc_bridge.js.
     } finally {
@@ -443,23 +444,23 @@ function initClearPreviewsModal() {
   openBtn.addEventListener('click', async () => {
     const gameDir = document.querySelector('#hl-path-input')?.value?.trim() || '';
     if (!gameDir) {
-      showToast("Configure the Half-Life Executable (hl.exe) path before auditing previews.", 'error');
+      showToast(STRINGS.CAPTURE.CONFIGURE_HL_PATH_FIRST, 'error');
       return;
     }
 
     modal.style.display = 'flex';
     currentPreviewScanResults = [];
-    if (statusEl) statusEl.textContent = 'Scanning for orphaned preview demos...';
-    if (tbody) tbody.innerHTML = '<tr><td colspan="4" class="table-empty">Scanning...</td></tr>';
+    if (statusEl) statusEl.textContent = STRINGS.CAPTURE.SCANNING_ORPHANED_PREVIEWS;
+    if (tbody) tbody.innerHTML = `<tr><td colspan="4" class="table-empty">${STRINGS.CLEAR_PREVIEWS_MODAL.SCANNING_ROW}</td></tr>`;
     updateClearPreviewsDeleteButtonState();
 
     try {
       currentPreviewScanResults = await scanOrphanedPreviews(gameDir);
-      if (statusEl) statusEl.textContent = 'Scan complete.';
+      if (statusEl) statusEl.textContent = STRINGS.CAPTURE.SCAN_COMPLETE;
       renderClearPreviewsResults();
     } catch (e) {
-      if (statusEl) statusEl.textContent = 'Scan failed.';
-      if (tbody) tbody.innerHTML = `<tr><td colspan="4" class="table-empty">Scan failed: ${e}</td></tr>`;
+      if (statusEl) statusEl.textContent = STRINGS.CAPTURE.SCAN_FAILED;
+      if (tbody) tbody.innerHTML = `<tr><td colspan="4" class="table-empty">${STRINGS.CAPTURE.scanFailedRow(e)}</td></tr>`;
     }
   });
 
@@ -483,16 +484,16 @@ function initClearPreviewsModal() {
       const checked = document.querySelectorAll('.clear-previews-row-cb:checked');
       const pathsToDelete = Array.from(checked).map(cb => cb.dataset.path);
       if (pathsToDelete.length === 0) return;
-      if (!(await confirm(`Permanently delete ${pathsToDelete.length} orphaned preview demo(s)?`))) return;
+      if (!(await confirm(STRINGS.CAPTURE.deletePreviewsConfirm(pathsToDelete.length)))) return;
 
       deleteBtn.disabled = true;
       try {
         const deletedCount = await deleteOrphanedPreviews(pathsToDelete);
-        showToast(`Deleted ${deletedCount} orphaned preview demo(s).`, 'success');
+        showToast(STRINGS.CAPTURE.deletedPreviews(deletedCount), 'success');
         currentPreviewScanResults = currentPreviewScanResults.filter(entry => !pathsToDelete.includes(entry.demo_path));
         renderClearPreviewsResults();
       } catch (e) {
-        showToast(`Deletion failed: ${e}`, 'error');
+        showToast(STRINGS.CAPTURE.deletionFailed(e), 'error');
         updateClearPreviewsDeleteButtonState();
       }
     });
@@ -514,7 +515,7 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
   initCommandsEditor = createListEditor({
     container: document.querySelector('#init-commands-list'),
     getItems: () => initCommands,
-    fields: [{ key: 'value', type: 'text', primitive: true, placeholder: 'e.g. mirv_streams add all' }],
+    fields: [{ key: 'value', type: 'text', primitive: true, placeholder: STRINGS.CAPTURE_CONFIG.INIT_COMMAND_PLACEHOLDER }],
     onChange: notifySettingsChange,
   });
 
@@ -522,8 +523,8 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
     container: document.querySelector('#custom-commands-list'),
     getItems: () => customCommands,
     fields: [
-      { key: 'command', type: 'text', placeholder: 'Command' },
-      { key: 'relation', type: 'select', options: ['Before', 'After'] },
+      { key: 'command', type: 'text', placeholder: STRINGS.CAPTURE_CONFIG.CUSTOM_COMMAND_PLACEHOLDER },
+      { key: 'relation', type: 'select', options: STRINGS.CAPTURE_CONFIG.CUSTOM_COMMAND_RELATION_OPTIONS },
       { key: 'offsetSeconds', type: 'number', step: 0.1, min: 0, width: '70px' },
     ],
     onChange: notifySettingsChange,
@@ -592,7 +593,7 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
             progressBar.style.width = '50%';
           }
         }
-        const statusText = payload.name ? `${payload.status || "Capturing"}: ${payload.name}` : (payload.status || "Capturing...");
+        const statusText = payload.name ? STRINGS.CAPTURE.capturingWithName(payload.status || STRINGS.CAPTURE.CAPTURING_DEFAULT, payload.name) : (payload.status || STRINGS.CAPTURE.CAPTURING_ELLIPSIS_DEFAULT);
         if (statusEl) statusEl.textContent = statusText;
         if (startBtn) startBtn.disabled = true;
         if (cancelBtn) cancelBtn.disabled = false;
@@ -602,16 +603,16 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
         refreshLaunchGuard();
 
         if (payload.error) {
-          showToast(`Capture error: ${payload.status || "Unknown error"}`, "error");
-          if (statusEl) statusEl.textContent = `Error: ${payload.status || "Capture failed"}`;
+          showToast(STRINGS.CAPTURE.captureErrorToast(payload.status || STRINGS.CAPTURE.CAPTURE_ERROR_STATUS_DEFAULT), "error");
+          if (statusEl) statusEl.textContent = STRINGS.CAPTURE.captureErrorStatusText(payload.status || STRINGS.CAPTURE.CAPTURE_ERROR_TEXT_DEFAULT);
         } else if (payload.status === "Cancelled") {
-          showToast("Batch capture cancelled.", "info");
+          showToast(STRINGS.CAPTURE.BATCH_CANCELLED_TOAST, "info");
           if (progressBar) progressBar.style.width = '0%';
-          if (statusEl) statusEl.textContent = "Cancelled";
+          if (statusEl) statusEl.textContent = STRINGS.CAPTURE.CANCELLED;
         } else {
-          showToast("Batch capture completed successfully!", "success");
+          showToast(STRINGS.CAPTURE.BATCH_COMPLETED_TOAST, "success");
           if (progressBar) progressBar.style.width = '100%';
-          if (statusEl) statusEl.textContent = "Completed";
+          if (statusEl) statusEl.textContent = STRINGS.CAPTURE.COMPLETED;
         }
       }
     }).then(unlistenFn => {
@@ -674,13 +675,13 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
         if (currentOnStatusChange) currentOnStatusChange();
       }
 
-      const marked = advanced > 0 ? ` ${advanced} highlight(s) marked Captured.` : '';
+      const marked = advanced > 0 ? STRINGS.CAPTURE.highlightsMarkedCaptured(advanced) : '';
       if (captured < total) {
-        showToast(`${captured}/${total} takes found on disk — ${total - captured} missing.${marked}`, 'error');
+        showToast(`${STRINGS.CAPTURE.takesFoundMissing(captured, total)}${marked}`, 'error');
       } else if (renderable < total) {
-        showToast(`${captured}/${total} takes captured, but ${total - renderable} won't be seen by Render Studio.${marked}`, 'info');
+        showToast(`${STRINGS.CAPTURE.takesRenderStudioMiss(captured, total, total - renderable)}${marked}`, 'info');
       } else {
-        showToast(`All ${total} takes verified on disk.${marked}`, 'success');
+        showToast(`${STRINGS.CAPTURE.allTakesVerified(total)}${marked}`, 'success');
       }
     }).then(unlistenFn => {
       unlistenTakesVerified = unlistenFn;
@@ -745,8 +746,7 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
     const autoClearTempDemosVal = document.querySelector("#config-auto-clear-temp-demos")?.checked || false;
 
     if (!hlaePathVal || !hlPathVal) {
-      const errorMsg = "Please specify valid file paths for both HLAE Executable (hlae.exe) and Half-Life Executable (hl.exe).";
-      showToast(errorMsg, 'error');
+      showToast(STRINGS.CAPTURE.BOTH_PATHS_REQUIRED, 'error');
       return null;
     }
 
@@ -760,7 +760,7 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
     const outputDrivePool = (state.targetDrives || []).filter(Boolean);
 
     if (outputDrivePool.length === 0) {
-      showToast("Configure at least one Capture Output directory before starting a capture.", 'error');
+      showToast(STRINGS.CAPTURE.NO_CAPTURE_OUTPUT_DIR, 'error');
       return null;
     }
 
@@ -815,9 +815,9 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
       const guard = await refreshLaunchGuard(state);
       if (guard && guard.blocked) {
         if (guard.availableBytes === 0) {
-          showToast("Configure at least one Capture Output directory with free space before starting a capture.", 'error');
+          showToast(STRINGS.CAPTURE.NO_CAPTURE_OUTPUT_DIR_WITH_SPACE, 'error');
         } else {
-          showToast(`Insufficient disk space. Required: ${(guard.requiredBytes / 1e9).toFixed(2)} GB, Available: ${(guard.availableBytes / 1e9).toFixed(2)} GB`, 'error');
+          showToast(STRINGS.CAPTURE.insufficientDiskSpaceToast((guard.requiredBytes / 1e9).toFixed(2), (guard.availableBytes / 1e9).toFixed(2)), 'error');
         }
         return;
       }
@@ -833,19 +833,19 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
         return;
       }
 
-      showToast("Initializing capture batch...", "info");
+      showToast(STRINGS.CAPTURE.INITIALIZING_CAPTURE_BATCH, "info");
       startBtn.disabled = true;
       if (cancelBtn) cancelBtn.disabled = false;
 
       startCaptureBatch(activePayload)
         .then(() => {
-          showToast("Batch capture queued successfully!", "success");
+          showToast(STRINGS.CAPTURE.BATCH_QUEUED_TOAST, "success");
           if (progressContainer) progressContainer.style.display = 'block';
           if (progressBar) progressBar.style.width = '10%';
         })
         .catch((err) => {
           console.error("IPC Execution Error (start_capture_batch):", err);
-          showToast("Error starting batch: " + err, "error");
+          showToast(STRINGS.CAPTURE.startBatchError(err), "error");
           if (cancelBtn) cancelBtn.disabled = true;
           capturingInFlight = false;
           refreshLaunchGuard(state);
@@ -855,7 +855,7 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
 
   if (cancelBtn) {
     cancelBtn.addEventListener('click', () => {
-      showToast("Cancelling batch...", "info");
+      showToast(STRINGS.CAPTURE.CANCELLING_BATCH_TOAST, "info");
       cancelBtn.disabled = true;
       cancelCaptureBatch()
         .then(() => {

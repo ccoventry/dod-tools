@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { showToast } from './toast.js';
+import { STRINGS } from './strings.js';
 
 /** Writes one line to today's activity log — for frontend-only events (the
  *  Master Queue's Clear Untracked/Selected/All and row-delete actions) that
@@ -21,7 +22,7 @@ export async function openActivityLog() {
     .then((path) => revealItemInDir(path))
     .catch((err) => {
       console.error("IPC Execution Error (get_activity_log_path):", err);
-      showToast(`Could not open the log file: ${err}`, 'error');
+      showToast(STRINGS.IPC.logFileOpenFailed(err), 'error');
     });
 }
 
@@ -29,7 +30,7 @@ export async function scanDirectory(scanPaths) {
   return invoke("scan_directory", { paths: scanPaths })
     .catch((err) => {
       console.error("IPC Execution Error (scan_directory):", err);
-      showToast(`Scan error: ${err}`, 'error');
+      showToast(STRINGS.IPC.scanError(err), 'error');
       throw err;
     });
 }
@@ -38,7 +39,7 @@ export async function validatePaths(hlaePath, hlPath) {
   return await invoke('validate_paths', { hlaePath, hlPath })
     .catch((err) => {
       console.error("IPC Execution Error (validate_paths):", err);
-      showToast(`Validation error: ${err}`, 'error');
+      showToast(STRINGS.IPC.validationError(err), 'error');
       throw err;
     });
 }
@@ -47,7 +48,7 @@ export async function analyzeDemoFull(demoPath) {
   return await invoke('analyze_demo_full', { demoPath })
     .catch((err) => {
       console.error("IPC Execution Error (analyze_demo_full):", err);
-      showToast(`Analysis error: ${err}`, 'error');
+      showToast(STRINGS.IPC.analysisError(err), 'error');
       throw err;
     });
 }
@@ -67,7 +68,7 @@ export async function launchDemoPreview(hlaePath, gamePath, streaks) {
   return invoke("launch_demo_preview", { hlaePath, gamePath, streaks })
     .catch((err) => {
       console.error("IPC Execution Error (launch_demo_preview):", err);
-      showToast(`Preview failed: ${err}`, 'error');
+      showToast(STRINGS.IPC.previewFailed(err), 'error');
       throw err;
     });
 }
@@ -79,7 +80,7 @@ export async function checkEngineProcesses() {
   return invoke("check_engine_processes")
     .catch((err) => {
       console.error("IPC Execution Error (check_engine_processes):", err);
-      showToast(`Process check failed: ${err}`, 'error');
+      showToast(STRINGS.IPC.processCheckFailed(err), 'error');
       throw err;
     });
 }
@@ -90,7 +91,7 @@ export async function launchStandaloneGame() {
   return invoke("launch_standalone_game")
     .catch((err) => {
       console.error("IPC Execution Error (launch_standalone_game):", err);
-      showToast(`Launch failed: ${err}`, 'error');
+      showToast(STRINGS.IPC.launchFailed(err), 'error');
       throw err;
     });
 }
@@ -100,7 +101,7 @@ export async function killEngineProcesses() {
   return invoke("kill_engine_processes")
     .catch((err) => {
       console.error("IPC Execution Error (kill_engine_processes):", err);
-      showToast(`Failed to close running engine processes: ${err}`, 'error');
+      showToast(STRINGS.IPC.killEngineFailed(err), 'error');
       throw err;
     });
 }
@@ -112,7 +113,7 @@ export async function generateAllPreviews(hlaePath, gamePath, streaks) {
   return invoke("generate_all_previews", { hlaePath, gamePath, streaks })
     .catch((err) => {
       console.error("IPC Execution Error (generate_all_previews):", err);
-      showToast(`Batch preview generation failed: ${err}`, 'error');
+      showToast(STRINGS.IPC.batchPreviewFailed(err), 'error');
       throw err;
     });
 }
@@ -161,7 +162,7 @@ export async function simulateAotCapacity(streaks, fps, bytesPerFrame, available
     availableBytes 
   }).catch((err) => {
     console.error("IPC Execution Error (simulate_aot_capacity):", err);
-    showToast(`Simulation error: ${err}`, 'error');
+    showToast(STRINGS.IPC.simulationError(err), 'error');
     throw err;
   });
 }
@@ -244,7 +245,7 @@ export async function cancelScan() {
   return invoke("cancel_scan")
     .catch((err) => {
       console.error("IPC Execution Error (cancel_scan):", err);
-      showToast(`Cancel scan error: ${err}`, 'error');
+      showToast(STRINGS.IPC.cancelScanError(err), 'error');
       throw err;
     });
 }
@@ -253,7 +254,7 @@ export async function getSettings() {
   return invoke("get_settings")
     .catch((err) => {
       console.error("IPC Execution Error (get_settings):", err);
-      showToast(`Failed to load settings: ${err}`, 'error');
+      showToast(STRINGS.IPC.settingsLoadFailed(err), 'error');
       throw err;
     });
 }
@@ -262,7 +263,7 @@ export async function saveSettings(settings) {
   return invoke("save_settings", { settings })
     .catch((err) => {
       console.error("IPC Execution Error (save_settings):", err);
-      showToast(`Failed to save settings: ${err}`, 'error');
+      showToast(STRINGS.IPC.settingsSaveFailed(err), 'error');
       throw err;
     });
 }
@@ -271,7 +272,7 @@ export async function runDemoAudit(paths) {
   return invoke("run_demo_audit", { paths })
     .catch((err) => {
       console.error("IPC Execution Error (run_demo_audit):", err);
-      showToast(`Audit failed: ${err}`, 'error');
+      showToast(STRINGS.IPC.auditFailed(err), 'error');
       throw err;
     });
 }
@@ -280,7 +281,7 @@ export async function deleteAuditFiles(paths) {
   return invoke("delete_audit_files", { paths })
     .catch((err) => {
       console.error("IPC Execution Error (delete_audit_files):", err);
-      showToast(`Deletion failed: ${err}`, 'error');
+      showToast(STRINGS.IPC.deletionFailed(err), 'error');
       throw err;
     });
 }
@@ -289,7 +290,7 @@ export async function cancelAudit() {
   return invoke("cancel_audit")
     .catch((err) => {
       console.error("IPC Execution Error (cancel_audit):", err);
-      showToast(`Cancel audit error: ${err}`, 'error');
+      showToast(STRINGS.IPC.cancelAuditError(err), 'error');
       throw err;
     });
 }
@@ -298,7 +299,7 @@ export async function revealInExplorer(path) {
   return invoke("reveal_in_explorer", { path })
     .catch((err) => {
       console.error("IPC Execution Error (reveal_in_explorer):", err);
-      showToast(`Could not open folder: ${err}`, 'error');
+      showToast(STRINGS.IPC.folderOpenFailed(err), 'error');
       throw err;
     });
 }
@@ -310,7 +311,7 @@ export async function scanOrphanedPreviews(gameDir) {
   return invoke("scan_orphaned_previews", { gameDir })
     .catch((err) => {
       console.error("IPC Execution Error (scan_orphaned_previews):", err);
-      showToast(`Preview scan failed: ${err}`, 'error');
+      showToast(STRINGS.IPC.previewScanFailed(err), 'error');
       throw err;
     });
 }
@@ -321,7 +322,7 @@ export async function deleteOrphanedPreviews(filePaths) {
   return invoke("delete_orphaned_previews", { filePaths })
     .catch((err) => {
       console.error("IPC Execution Error (delete_orphaned_previews):", err);
-      showToast(`Preview deletion failed: ${err}`, 'error');
+      showToast(STRINGS.IPC.previewDeletionFailed(err), 'error');
       throw err;
     });
 }

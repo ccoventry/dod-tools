@@ -2,6 +2,7 @@ import { open, confirm } from '@tauri-apps/plugin-dialog';
 import { listen } from '@tauri-apps/api/event';
 import { runDemoAudit, deleteAuditFiles, cancelAudit, revealInExplorer } from './ipc_bridge.js';
 import { showToast } from './toast.js';
+import { STRINGS } from './strings.js';
 
 export function initAuditorPane() {
   let currentAuditResults = [];
@@ -42,7 +43,7 @@ export function initAuditorPane() {
         const selected = await open({
           directory: true,
           multiple: false,
-          title: 'Select Folder to Audit',
+          title: STRINGS.AUDITOR.SELECT_FOLDER_DIALOG_TITLE,
         });
         if (selected) {
           const path = Array.isArray(selected) ? selected[0] : selected;
@@ -62,8 +63,8 @@ export function initAuditorPane() {
     filesCheckedSoFar = p.files_checked || 0;
     if (statusTextEl) {
       statusTextEl.innerHTML =
-        `<strong>Found ${filesCheckedSoFar} demo file(s) so far&hellip;</strong>` +
-        `<br><span class="text-muted">${p.status}</span>`;
+        STRINGS.AUDITOR.foundSoFarHtml(filesCheckedSoFar) +
+        STRINGS.AUDITOR.statusLineHtml(p.status);
     }
   });
 
@@ -71,7 +72,7 @@ export function initAuditorPane() {
     runAuditBtn.addEventListener('click', async () => {
       const targetFolder = targetFolderInput?.value?.trim();
       if (!targetFolder) {
-        showToast('Choose a target folder before starting an audit.', 'error');
+        showToast(STRINGS.AUDITOR.CHOOSE_FOLDER_FIRST, 'error');
         return;
       }
 
@@ -81,14 +82,14 @@ export function initAuditorPane() {
       if (cancelAuditBtn) cancelAuditBtn.disabled = false;
       if (deleteBtn) deleteBtn.disabled = true;
       if (spinnerEl) spinnerEl.style.display = 'inline-block';
-      if (statusTextEl) statusTextEl.innerHTML = '<strong>Initializing&hellip;</strong>';
-      if (tbody) tbody.innerHTML = '<tr><td colspan="5" class="table-empty">Auditing in progress...</td></tr>';
+      if (statusTextEl) statusTextEl.innerHTML = STRINGS.AUDITOR.INITIALIZING_HTML;
+      if (tbody) tbody.innerHTML = `<tr><td colspan="5" class="table-empty">${STRINGS.AUDITOR.AUDITING_IN_PROGRESS_ROW}</td></tr>`;
 
       try {
         currentAuditResults = await runDemoAudit([targetFolder]);
         renderAuditResults();
       } catch (e) {
-        if (tbody) tbody.innerHTML = `<tr><td colspan="5" class="table-empty">Audit failed: ${e}</td></tr>`;
+        if (tbody) tbody.innerHTML = `<tr><td colspan="5" class="table-empty">${STRINGS.AUDITOR.auditFailedRow(e)}</td></tr>`;
       } finally {
         if (spinnerEl) spinnerEl.style.display = 'none';
         if (cancelAuditBtn) cancelAuditBtn.disabled = true;
@@ -100,7 +101,7 @@ export function initAuditorPane() {
   if (cancelAuditBtn) {
     cancelAuditBtn.addEventListener('click', async () => {
       cancelAuditBtn.disabled = true;
-      if (statusTextEl) statusTextEl.innerHTML = '<strong>Cancelling&hellip;</strong>';
+      if (statusTextEl) statusTextEl.innerHTML = STRINGS.AUDITOR.CANCELLING_HTML;
       try {
         await cancelAudit();
       } catch (e) {
@@ -124,9 +125,9 @@ export function initAuditorPane() {
     if (!tbody) return;
 
     if (currentAuditResults.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="5" class="table-empty">No duplicates found! Your demos are clean.</td></tr>';
+      tbody.innerHTML = `<tr><td colspan="5" class="table-empty">${STRINGS.AUDITOR.NO_DUPLICATES_ROW}</td></tr>`;
       if (deleteBtn) deleteBtn.disabled = true;
-      setAuditFooterSummary('Duplicates Found: 0 | Wasted Space: 0.00 GB');
+      setAuditFooterSummary(STRINGS.AUDITOR.FOOTER_DEFAULT);
       return;
     }
 
@@ -147,9 +148,9 @@ export function initAuditorPane() {
       const groupRow = document.createElement('tr');
       groupRow.innerHTML = `
         <td></td>
-        <td><button class="group-toggle-btn" type="button">${isExpanded ? '▼' : '▶'} Group (${group.files.length} files)</button></td>
+        <td><button class="group-toggle-btn" type="button">${STRINGS.AUDITOR.groupToggleLabel(isExpanded, group.files.length)}</button></td>
         <td>-</td>
-        <td class="text-muted">Identical Hash: ${hashStr}</td>
+        <td class="text-muted">${STRINGS.AUDITOR.identicalHash(hashStr)}</td>
         <td></td>
       `;
       groupRow.querySelector('.group-toggle-btn').addEventListener('click', () => toggleGroup(groupIdx));
@@ -171,17 +172,17 @@ export function initAuditorPane() {
           cb.checked = true;
         } else {
           cb.disabled = true; // Prevent deleting the original
-          cb.title = "Original file (kept)";
+          cb.title = STRINGS.AUDITOR.ORIGINAL_FILE_TITLE;
         }
 
         cb.addEventListener('change', updateDeleteButtonState);
         tdCb.appendChild(cb);
 
         const tdStatus = document.createElement('td');
-        tdStatus.textContent = '   ↳ File';
+        tdStatus.textContent = STRINGS.AUDITOR.FILE_ROW_LABEL;
 
         const tdSize = document.createElement('td');
-        tdSize.textContent = `${sizeMb} MB`;
+        tdSize.textContent = STRINGS.AUDITOR.megabytesLabel(sizeMb);
 
         let displayPath = file;
         if (displayPath.startsWith('\\\\?\\')) {
@@ -196,19 +197,19 @@ export function initAuditorPane() {
         const tdAction = document.createElement('td');
         const copyBtn = document.createElement('button');
         copyBtn.type = 'button';
-        copyBtn.textContent = '📋 Copy Path';
+        copyBtn.textContent = STRINGS.AUDITOR.COPY_PATH_BUTTON;
         copyBtn.addEventListener('click', async () => {
           try {
             await navigator.clipboard.writeText(displayPath);
-            showToast('Path copied to clipboard.', 'info');
+            showToast(STRINGS.AUDITOR.PATH_COPIED_TOAST, 'info');
           } catch (err) {
             console.error('Clipboard write failed:', err);
-            showToast('Failed to copy path.', 'error');
+            showToast(STRINGS.AUDITOR.COPY_PATH_FAILED_TOAST, 'error');
           }
         });
         const openBtn = document.createElement('button');
         openBtn.type = 'button';
-        openBtn.textContent = '📁 Open Folder';
+        openBtn.textContent = STRINGS.AUDITOR.OPEN_FOLDER_BUTTON;
         openBtn.addEventListener('click', () => {
           revealInExplorer(displayPath).catch(() => {});
         });
@@ -225,7 +226,7 @@ export function initAuditorPane() {
     });
 
     const wastedGb = (totalWastedBytes / (1024 * 1024 * 1024)).toFixed(2);
-    setAuditFooterSummary(`Duplicates Found: ${duplicateCount} | Wasted Space: ${wastedGb} GB`);
+    setAuditFooterSummary(STRINGS.AUDITOR.footerSummary(duplicateCount, wastedGb));
 
     updateDeleteButtonState();
   }
@@ -234,7 +235,7 @@ export function initAuditorPane() {
     if (!deleteBtn) return;
     const checked = document.querySelectorAll('.audit-row-cb:checked');
     deleteBtn.disabled = checked.length === 0;
-    deleteBtn.textContent = `Delete ${checked.length} Selected File(s)`;
+    deleteBtn.textContent = STRINGS.AUDITOR.deleteNSelectedFiles(checked.length);
   }
 
   if (selectAllCb) {
@@ -253,12 +254,12 @@ export function initAuditorPane() {
       const filesToDelete = Array.from(checked).map(cb => cb.dataset.file);
 
       if (filesToDelete.length === 0) return;
-      if (!(await confirm(`Are you sure you want to permanently delete ${filesToDelete.length} files?`))) return;
+      if (!(await confirm(STRINGS.AUDITOR.deleteConfirm(filesToDelete.length)))) return;
 
       deleteBtn.disabled = true;
       try {
         await deleteAuditFiles(filesToDelete);
-        showToast(`Successfully deleted ${filesToDelete.length} duplicate files.`, 'success');
+        showToast(STRINGS.AUDITOR.deletedFilesToast(filesToDelete.length), 'success');
 
         // Remove deleted files from current state to avoid re-auditing immediately
         currentAuditResults = currentAuditResults.map(g => {
@@ -271,7 +272,7 @@ export function initAuditorPane() {
         renderAuditResults();
         if (selectAllCb) selectAllCb.checked = false;
       } catch (e) {
-        showToast(`Deletion failed: ${e}`, 'error');
+        showToast(STRINGS.AUDITOR.deletionFailedToast(e), 'error');
         updateDeleteButtonState();
       }
     });

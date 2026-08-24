@@ -6,6 +6,7 @@ import { isDemoTracked, isRangeModified } from './take_index.js';
 import { logFrontendEvent } from './ipc_bridge.js';
 import { confirm } from '@tauri-apps/plugin-dialog';
 import { TRASH_ICON_SVG } from './list_editor.js';
+import { STRINGS } from './strings.js';
 
 // Feather "bookmark" icon, same stroke="currentColor" pattern as
 // list_editor.js's trash icon — WebView2 renders emoji as a flat monochrome
@@ -24,9 +25,9 @@ function describeTrackedReasons(demo) {
     if (isRangeModified(s)) hasRange = true;
   });
   const reasons = [];
-  if (hasStatus) reasons.push('a Captured/Rendered status');
-  if (hasNotes) reasons.push('a note');
-  if (hasRange) reasons.push('an edited kill range');
+  if (hasStatus) reasons.push(STRINGS.WORKSPACE.REASON_STATUS);
+  if (hasNotes) reasons.push(STRINGS.WORKSPACE.REASON_NOTE);
+  if (hasRange) reasons.push(STRINGS.WORKSPACE.REASON_RANGE);
   return reasons;
 }
 
@@ -230,7 +231,7 @@ export function renderMasterList(demos, selectedDemoIdx, onSelectDemo) {
 
   if (!currentDemos || currentDemos.length === 0) {
     tableBody.innerHTML =
-      '<tr><td colspan="7" class="table-empty">No demos found in specified directories.</td></tr>';
+      `<tr><td colspan="7" class="table-empty">${STRINGS.WORKSPACE.TABLE_EMPTY_NO_DEMOS_IN_DIRS}</td></tr>`;
     // Notify only on the transition INTO empty, not on every re-render of an
     // already-empty queue. Without this guard, a currentOnSelectDemo(null,
     // null) implementation that calls renderDetailView (Load Session's does)
@@ -256,7 +257,7 @@ export function renderMasterList(demos, selectedDemoIdx, onSelectDemo) {
 
   if (filteredDemos.length === 0) {
     tableBody.innerHTML =
-      '<tr><td colspan="7" class="table-empty">No demos match your search.</td></tr>';
+      `<tr><td colspan="7" class="table-empty">${STRINGS.WORKSPACE.TABLE_EMPTY_NO_MATCH_SEARCH}</td></tr>`;
     syncClearSelectedButtonState();
     return;
   }
@@ -329,7 +330,7 @@ export function renderMasterList(demos, selectedDemoIdx, onSelectDemo) {
     nameSpan.style.textOverflow = 'ellipsis';
     nameSpan.style.whiteSpace = 'nowrap';
     nameSpan.title = demo.name || '';
-    nameSpan.textContent = demo.name || '—';
+    nameSpan.textContent = demo.name || STRINGS.WORKSPACE.EMPTY_DASH;
     tdName.appendChild(nameSpan);
 
     const demoIsTracked = isDemoTracked(demo);
@@ -340,7 +341,7 @@ export function renderMasterList(demos, selectedDemoIdx, onSelectDemo) {
       badge.style.flexShrink = '0';
       badge.style.display = 'inline-flex';
       const reasons = describeTrackedReasons(demo);
-      badge.title = `Tracked — has ${reasons.join(', ')}. Protected from Clear Untracked in Workspace mode.`;
+      badge.title = STRINGS.WORKSPACE.trackedBadgeTooltip(reasons);
       tdName.appendChild(badge);
     }
 
@@ -384,8 +385,8 @@ export function renderMasterList(demos, selectedDemoIdx, onSelectDemo) {
     deleteBtn.type = 'button';
     deleteBtn.className = 'list-editor-remove-btn';
     deleteBtn.innerHTML = TRASH_ICON_SVG;
-    deleteBtn.title = 'Remove demo from queue';
-    deleteBtn.setAttribute('aria-label', 'Remove demo from queue');
+    deleteBtn.title = STRINGS.WORKSPACE.REMOVE_DEMO_TITLE;
+    deleteBtn.setAttribute('aria-label', STRINGS.WORKSPACE.REMOVE_DEMO_TITLE);
     deleteBtn.addEventListener('click', async (e) => {
       e.stopPropagation(); // do not select the row when deleting
       // Untracked deletes stay frictionless (matches Clear Untracked/Clear
@@ -396,7 +397,7 @@ export function renderMasterList(demos, selectedDemoIdx, onSelectDemo) {
       if (demoIsTracked) {
         const proceed = currentOnRequestTrackedDeleteConfirm
           ? await currentOnRequestTrackedDeleteConfirm(demo)
-          : await confirm(`Remove "${demo.name || demo.path}" from the queue? It has tracked work (Captured/Rendered status, a note, or an edited kill range) that will be lost.`);
+          : await confirm(STRINGS.WORKSPACE.removeDemoConfirm(demo.name || demo.path));
         if (!proceed) return;
       }
       // Re-resolve the index by identity rather than trusting the closured
@@ -412,7 +413,7 @@ export function renderMasterList(demos, selectedDemoIdx, onSelectDemo) {
       // row highlight matches Highlight Details instead of always dropping
       // it, even when the deleted row wasn't the one selected.
       const newSelectedIdx = currentOnDeleteDemo ? currentOnDeleteDemo(currentIdx, currentDemos) : null;
-      logFrontendEvent(`[queue] Row delete: removed "${demo.name || demo.path}"${demoIsTracked ? ' (had tracked work; user confirmed)' : ''}`);
+      logFrontendEvent(STRINGS.WORKSPACE.rowDeleteLog(demo.name || demo.path, demoIsTracked ? STRINGS.WORKSPACE.TRACKED_NOTE_SUFFIX : ''));
       renderMasterList(currentDemos, newSelectedIdx, currentOnSelectDemo);
     });
     tdActions.appendChild(deleteBtn);
