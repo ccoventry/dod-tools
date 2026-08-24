@@ -141,6 +141,11 @@ pub fn spawn_capture_engine(
     tx: Sender<EngineEvent>,
     cancel_token: Arc<AtomicBool>,
     config: crate::patch::PatcherConfig,
+    // Final per-drive headroom `build_batch_queue` already computed for every
+    // drive this batch touches (see `native/src/patch/builder.rs`) — the
+    // pre-launch check below re-validates these same numbers instead of
+    // re-querying disk space itself for just the primary export dir.
+    drive_headroom: Vec<(PathBuf, u64)>,
 ) {
     std::thread::Builder::new()
         .name("capture_engine".into())
@@ -379,23 +384,13 @@ pub fn spawn_capture_engine(
                 return;
             }
 
-            {
-                use sysinfo::{System, SystemExt, DiskExt};
-                let mut sys = System::new_all();
-                sys.refresh_disks_list();
-                
-                let mut available_space = u64::MAX;
-                let mut disk_found = false;
-                for disk in sys.disks() {
-                    if active_export_dir.starts_with(disk.mount_point()) {
-                        available_space = disk.available_space();
-                        disk_found = true;
-                        break;
-                    }
-                }
-
-                if disk_found && available_space < 15_u64 * 1024 * 1024 * 1024 {
-                    log_crash_abort!(tx, "Capture aborted: Target drive has less than 15GB free space.");
+            for (drive_path, free_bytes) in &drive_headroom {
+                if *free_bytes < crate::sys::disk::MIN_DRIVE_HEADROOM_BYTES {
+                    let required_gb = crate::sys::disk::MIN_DRIVE_HEADROOM_BYTES as f64 / (1024.0 * 1024.0 * 1024.0);
+                    log_crash_abort!(tx, format!(
+                        "Capture aborted: {:?} has less than {:.1} GB free space.",
+                        drive_path, required_gb
+                    ));
                     return;
                 }
             }
