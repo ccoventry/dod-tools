@@ -47,9 +47,17 @@ use dem::types::{
 
 /// Temp-entity `entity_type` values that place a persistent decal onto a wall
 /// or world surface: bullet holes, grenade scorch marks, generic BSP/world
-/// decals. Deliberately excludes TePlayerDecal (112) — blood on a player model
-/// isn't wall clutter and clears itself when that player respawns.
-const WALL_DECAL_ENTITY_TYPES: &[u8] = &[13, 104, 109, 116, 117, 118];
+/// decals, and player spray logos.
+///
+/// Note TE_PLAYERDECAL (112) belongs here: it is the spray-paint logo message
+/// (`impulse 201`), writing a player index plus a position and decal index to
+/// stamp that player's logo onto a surface. It is wall clutter in exactly the
+/// sense this pass exists to remove.
+const WALL_DECAL_ENTITY_TYPES: &[u8] = &[13, 104, 109, 112, 116, 117, 118];
+
+/// TE_PLAYERDECAL — tracked separately in the stats so sprays are visible as
+/// their own number rather than lost among bullet holes.
+const TE_PLAYERDECAL: u8 = 112;
 
 /// TE_WORLDDECAL. 7 bytes: 3 × WRITE_COORD + 1 × WRITE_BYTE texture index.
 /// Chosen for the flush burst because it takes no entity index and — unlike
@@ -580,17 +588,23 @@ pub fn clean_demo_decals(
                     let NetMessage::EngineMessage(eng) = msg else {
                         continue;
                     };
-                    let strip = match eng.as_ref() {
-                        EngineMessage::SvcTempEntity(te) => {
-                            WALL_DECAL_ENTITY_TYPES.contains(&te.entity_type)
+                    // Only messages that PLACE a decal are stripped.
+                    //
+                    // SvcDecalName (36) deliberately is not: it registers a
+                    // decal name against an index (how a custom player spray is
+                    // announced) and places nothing. Blanking it does not
+                    // remove a decal — it destroys the texture lookup that
+                    // decals referencing that index still need, including any
+                    // index this pass harvests for its own flush burst.
+                    let strip_type = match eng.as_ref() {
+                        EngineMessage::SvcTempEntity(te)
+                            if WALL_DECAL_ENTITY_TYPES.contains(&te.entity_type) =>
+                        {
+                            te.entity_type
                         }
-                        EngineMessage::SvcDecalName(_) => true,
-                        _ => false,
+                        _ => continue,
                     };
-                    if !strip {
-                        continue;
-                    }
-                    if matches!(eng.as_ref(), EngineMessage::SvcDecalName(_)) {
+                    if strip_type == TE_PLAYERDECAL {
                         stats.player_spray_stripped += 1;
                     } else {
                         stats.temp_entity_stripped += 1;
