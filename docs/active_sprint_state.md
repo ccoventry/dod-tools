@@ -12,7 +12,7 @@
 
 **In progress:**
 - `chore/docs-cleanup-issues-migration` — docs/CLAUDE.md/CI reconciled, open items migrated to GitHub Issues. Not yet merged into `dev`.
-- `feature/decal-flush-r-and-d` — decal hygiene between capture clips ([#60](https://github.com/ccoventry/dod-tools/issues/60)). **Mechanism validated in game** (2026-08-24): the injected ring sweep clears bullet holes, grenade marks and sprays without reloading the demo. Remaining work is placement quality and position supply — a match demo yields 30 safe flush positions against the 68 a 256-slot ring needs — plus wiring into the batch pipeline. Full findings on the issue, including why the `r_decals` cvar approach cannot work and why structural verification cannot catch this feature's failure mode.
+- `feature/decal-flush-r-and-d` — decal hygiene between capture clips ([#60](https://github.com/ccoventry/dod-tools/issues/60)). **Mechanism validated in game** (2026-08-24): the injected ring sweep clears bullet holes, grenade marks and sprays without reloading the demo. Remaining work is placement quality and position supply — a match demo yields 30 safe flush positions against the 68 a 256-slot ring needs — plus wiring into the batch pipeline. The supply ceiling lifts only if positions can be synthesised near a proven surface point, which needs the engine's `m_Size` tolerance measured; `probe_decals` now measures it, and two probe demos are awaiting an in-game read. Full findings on the issue, including why the `r_decals` cvar approach cannot work and why structural verification cannot catch this feature's failure mode.
 
 **Next work:** pick from the open GitHub Issues, or whatever the user brings to a fresh session.
 
