@@ -204,6 +204,30 @@ struct Survey {
     window_cameras: Vec<[f32; 3]>,
 }
 
+/// Running frame ordinal, matching `engine.rs`'s `frame_counter`: every frame
+/// record in file order, across all directory entries, 1-based.
+///
+/// This — NOT `Frame::frame` — is the tick space the rest of the patch pipeline
+/// schedules in. `Frame::frame` is the engine's tick, and several frame records
+/// share one of those (a DemoBuffer, a ClientData and a NetworkMessage per
+/// tick), so the two spaces differ by roughly 2.6x on a real demo. Mixing them
+/// silently targets the wrong frames.
+fn frame_ordinals(demo: &dem::types::Demo) -> Vec<(usize, usize, i32)> {
+    let mut out = Vec::new();
+    let mut ordinal = 0i32;
+    for (entry_idx, entry) in demo.directory.entries.iter().enumerate() {
+        for frame_idx in 0..entry.frames.len() {
+            ordinal += 1;
+            out.push((entry_idx, frame_idx, ordinal));
+        }
+    }
+    out
+}
+
+fn in_window(ordinal: i32, keep_windows: &[(i32, i32)]) -> bool {
+    keep_windows.iter().any(|&(s, e)| ordinal >= s && ordinal <= e)
+}
+
 fn survey(demo: &dem::types::Demo, keep_windows: &[(i32, i32)], opts: &DecalCleanOptions) -> Survey {
     let mut out = Survey {
         harvested: Vec::new(),
@@ -225,8 +249,10 @@ fn survey(demo: &dem::types::Demo, keep_windows: &[(i32, i32)], opts: &DecalClea
     let mut last_z: Option<f32> = None;
     let mut camera_stride = 0usize;
 
+    let mut ordinal = 0i32;
     for entry in &demo.directory.entries {
         for frame in &entry.frames {
+            ordinal += 1;
             let FrameData::NetworkMessage(net_msg_box) = &frame.frame_data else {
                 continue;
             };
@@ -266,8 +292,7 @@ fn survey(demo: &dem::types::Demo, keep_windows: &[(i32, i32)], opts: &DecalClea
                     // Subsampled: every candidate decal is scored against this
                     // whole set, and consecutive frames sit a few units apart,
                     // so a stride costs no meaningful accuracy.
-                    let tick = frame.frame;
-                    if keep_windows.iter().any(|&(s, e)| tick >= s && tick <= e) {
+                    if in_window(ordinal, keep_windows) {
                         camera_stride += 1;
                         if camera_stride % 4 == 0 {
                             out.window_cameras.push(pos);
@@ -398,9 +423,18 @@ fn resolve_flush_position(
 }
 
 /// Strips decal messages outside `keep_windows` and injects ring-sweeping decal
-/// bursts ahead of each window. `keep_windows` are inclusive `[start, stop]`
-/// tick pairs and should be the real record-start/record-stop ticks used to
+/// bursts ahead of each window.
+///
+/// `keep_windows` are inclusive `[start, stop]` pairs in **frame-ordinal space**
+/// — the same tick space `PatchJob::scheduled_commands` uses and `engine.rs`
+/// compares against `frame_counter`, i.e. a 1-based count of every frame record
+/// in file order. They should be the real record-start/record-stop ticks used to
 /// schedule `mirv_recordmovie_start`/`stop`, not the wider highlight bounds.
+///
+/// These are NOT `Frame::frame` values. That field holds the engine tick, which
+/// several frame records share, so the two spaces differ by roughly 2.6x on a
+/// real demo — passing one where the other is expected silently targets the
+/// wrong part of the demo.
 pub fn clean_demo_decals(
     demo_bytes: &[u8],
     keep_windows: &[(i32, i32)],
@@ -435,10 +469,11 @@ pub fn clean_demo_decals(
 
     // ── Pass 1: strip decal messages outside the capture windows ─────────────
     if opts.strip_outside_windows {
+        let mut ordinal = 0i32;
         for entry in &mut demo.directory.entries {
             for frame in &mut entry.frames {
-                let tick = frame.frame;
-                if keep_windows.iter().any(|&(s, e)| tick >= s && tick <= e) {
+                ordinal += 1;
+                if in_window(ordinal, keep_windows) {
                     continue;
                 }
                 let FrameData::NetworkMessage(net_msg_box) = &mut frame.frame_data else {
@@ -477,79 +512,86 @@ pub fn clean_demo_decals(
         if let (Some(pos), Some(texture_index)) = (flush_pos, survey.texture_index) {
             let burst_count = opts.ring_limit as usize + opts.burst_margin;
 
-            for entry in &mut demo.directory.entries {
-                // Eligible carriers: parsed network frames that are small
-                // enough that a handful of extra 9-byte messages cannot push
-                // the packet anywhere near the engine's buffer ceiling.
-                let eligible: Vec<(usize, i32)> = entry
-                    .frames
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(idx, frame)| match &frame.frame_data {
-                        FrameData::NetworkMessage(b)
-                            if matches!(b.1.messages, MessageData::Parsed(_))
-                                && b.1.message_length < 1024 =>
-                        {
-                            Some((idx, frame.frame))
-                        }
-                        _ => None,
-                    })
-                    .collect();
-                if eligible.is_empty() {
+            // Eligible carriers, in global frame order: parsed network frames
+            // small enough that a handful of extra 9-byte messages cannot push
+            // the packet near the engine's buffer ceiling. Built across every
+            // entry at once so a window is never confined to one entry's frames.
+            let eligible: Vec<(usize, usize, i32)> = frame_ordinals(&demo)
+                .into_iter()
+                .filter(|&(entry_idx, frame_idx, _)| {
+                    demo.directory.entries[entry_idx]
+                        .frames
+                        .get(frame_idx)
+                        .map(|frame| match &frame.frame_data {
+                            FrameData::NetworkMessage(b) => {
+                                matches!(b.1.messages, MessageData::Parsed(_))
+                                    && b.1.message_length < 1024
+                            }
+                            _ => false,
+                        })
+                        .unwrap_or(false)
+                })
+                .collect();
+
+            let mut used: std::collections::HashSet<(usize, usize)> =
+                std::collections::HashSet::new();
+            let mut plan: Vec<(usize, usize, usize)> = Vec::new();
+
+            for &(window_start, _) in keep_windows {
+                let deadline = window_start - opts.lead_ticks;
+                let mut remaining = burst_count;
+
+                // Walk backwards from the deadline so the sweep finishes as
+                // late as possible — nothing after it can re-dirty a wall.
+                let start_at = match eligible.iter().rposition(|&(_, _, ord)| ord <= deadline) {
+                    Some(p) => p,
+                    None => {
+                        stats.bursts_short.push((window_start, 0, burst_count));
+                        continue;
+                    }
+                };
+
+                for slot in (0..=start_at).rev() {
+                    if remaining == 0 {
+                        break;
+                    }
+                    let (entry_idx, frame_idx, _) = eligible[slot];
+                    if !used.insert((entry_idx, frame_idx)) {
+                        continue;
+                    }
+                    let take = remaining.min(opts.max_per_frame);
+                    plan.push((entry_idx, frame_idx, take));
+                    remaining -= take;
+                }
+
+                if remaining > 0 {
+                    stats
+                        .bursts_short
+                        .push((window_start, burst_count - remaining, burst_count));
+                }
+                if remaining < burst_count {
+                    stats.bursts_placed += 1;
+                }
+            }
+
+            for (entry_idx, frame_idx, count) in plan {
+                let Some(frame) = demo
+                    .directory
+                    .entries
+                    .get_mut(entry_idx)
+                    .and_then(|e| e.frames.get_mut(frame_idx))
+                else {
                     continue;
-                }
-
-                let mut used: std::collections::HashSet<usize> = std::collections::HashSet::new();
-                let mut plan: Vec<(usize, usize)> = Vec::new();
-
-                for &(window_start, _) in keep_windows {
-                    let deadline = window_start - opts.lead_ticks;
-                    let mut remaining = burst_count;
-
-                    // Walk backwards from the deadline so the sweep finishes as
-                    // late as possible — nothing after it can re-dirty a wall.
-                    let start_at = match eligible.iter().rposition(|&(_, tick)| tick <= deadline) {
-                        Some(p) => p,
-                        None => continue,
-                    };
-
-                    for slot in (0..=start_at).rev() {
-                        if remaining == 0 {
-                            break;
-                        }
-                        let (frame_idx, _) = eligible[slot];
-                        if !used.insert(frame_idx) {
-                            continue;
-                        }
-                        let take = remaining.min(opts.max_per_frame);
-                        plan.push((frame_idx, take));
-                        remaining -= take;
-                    }
-
-                    if remaining > 0 {
-                        stats
-                            .bursts_short
-                            .push((window_start, burst_count - remaining, burst_count));
-                    }
-                    if remaining < burst_count {
-                        stats.bursts_placed += 1;
-                    }
-                }
-
-                for (frame_idx, count) in plan {
-                    let Some(frame) = entry.frames.get_mut(frame_idx) else {
-                        continue;
-                    };
-                    let FrameData::NetworkMessage(net_msg_box) = &mut frame.frame_data else {
-                        continue;
-                    };
-                    let MessageData::Parsed(messages) = &mut net_msg_box.1.messages else {
-                        continue;
-                    };
-                    for _ in 0..count {
-                        messages.push(build_world_decal(&pos, texture_index));
-                        stats.flush_decals_injected += 1;
-                    }
+                };
+                let FrameData::NetworkMessage(net_msg_box) = &mut frame.frame_data else {
+                    continue;
+                };
+                let MessageData::Parsed(messages) = &mut net_msg_box.1.messages else {
+                    continue;
+                };
+                for _ in 0..count {
+                    messages.push(build_world_decal(&pos, texture_index));
+                    stats.flush_decals_injected += 1;
                 }
             }
         }
