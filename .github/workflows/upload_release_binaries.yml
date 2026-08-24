@@ -1,6 +1,15 @@
+# DISABLED 2026-08-24: this workflow packages a `${BINARY_NAME}-gui` binary that
+# no longer exists post-Tauri-migration (merge 00e540d, 2026-08-18) — the
+# Compress/tar/zip steps below would fail or silently produce an incomplete
+# archive on the next GitHub Release. It also never packages the current
+# desktop-studio Tauri app, so the thing users actually want isn't in the
+# release pipeline as written. Switched to workflow_dispatch (manual-only) so
+# publishing a release can't trigger a broken run. Needs a real rework before
+# re-enabling on `release: published`: drop the `-gui` references (ship
+# `-cli` alone, or whatever binaries are meant to ship), and decide whether to
+# add a Tauri release build (e.g. tauri-apps/tauri-action) for desktop-studio.
 on:
-  release:
-    types: [ published ]
+  workflow_dispatch:
 
 permissions:
   contents: write

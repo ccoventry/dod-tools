@@ -1,10 +1,14 @@
+# DISABLED 2026-08-24: this workflow builds the retired egui/WASM GUI via Trunk,
+# targeting a `dod-tools-gui` binary that no longer exists post-Tauri-migration
+# (merge 00e540d, 2026-08-18) — it would fail at the `trunk build` step if it ran.
+# Switched to workflow_dispatch (manual-only) so it can't fire and fail silently.
+# Delete this workflow (and native/index.html, its Trunk entry point) once you're
+# sure GitHub Pages hosting isn't wanted for anything else; re-add the push
+# trigger below if you rebuild it for something real.
 name: Deploy Web App to GitHub Pages
 
 on:
-  push:
-    branches:
-      - main
-      - master
+  workflow_dispatch:
 
 permissions:
   contents: read
