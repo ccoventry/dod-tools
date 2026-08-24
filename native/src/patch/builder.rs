@@ -1274,6 +1274,53 @@ mod tests {
         assert!(primer.blocks.is_empty());
     }
 
+    #[test]
+    fn test_drive_headroom_always_includes_primary_drive_even_with_no_blocks_routed() {
+        // Zero streaks -> zero jobs -> the block-allocation loop that builds
+        // `utilized_drives` never runs at all. capture_engine.rs's pre-launch
+        // check still needs drive 0's headroom in this case (the primer +
+        // every job's demo file always land there regardless of block
+        // routing — see the "always use primary/first drive" resolution
+        // above), so it must come back even though no block ever touched it.
+        let mut config = mock_config();
+        let temp_drive = std::env::temp_dir().join("dod_test_headroom_drive0");
+        std::fs::create_dir_all(&temp_drive).expect("failed to create dummy capture drive");
+        config.capture_directories = vec![temp_drive.clone()];
+
+        let (jobs, drive_headroom) =
+            build_batch_queue(Vec::new(), &config, &std::collections::HashMap::new()).unwrap();
+
+        assert!(jobs.is_empty(), "no streaks should produce no jobs");
+        assert_eq!(drive_headroom.len(), 1, "drive 0 must be reported even though no block was ever routed to it");
+        assert_eq!(drive_headroom[0].0, temp_drive);
+        assert!(
+            drive_headroom[0].1 > 0 && drive_headroom[0].1 < u64::MAX,
+            "expected a real free-byte count for an existing directory, got {}",
+            drive_headroom[0].1
+        );
+    }
+
+    #[test]
+    fn test_drive_headroom_omits_unconfigured_drives_when_capture_directories_is_empty() {
+        // No capture directories configured at all -> allocate_blocks_first_fit_decreasing
+        // runs against the single u64::MAX sentinel drive (index 0), but
+        // there's no real path at config.capture_directories[0] to report a
+        // headroom entry for, so the returned vector must come back empty
+        // rather than panicking on the out-of-bounds lookup.
+        let config = mock_config(); // capture_directories left at its Vec::new() default
+        let raw_streaks = vec![streak_with_kills(1000, 1200, &[1000, 1200])];
+
+        let (jobs, drive_headroom) =
+            build_batch_queue(raw_streaks, &config, &std::collections::HashMap::new()).unwrap();
+
+        assert_eq!(jobs.len(), 2, "primer + one chained job");
+        assert!(
+            drive_headroom.is_empty(),
+            "no configured capture directories means nothing to report headroom for, got {:?}",
+            drive_headroom
+        );
+    }
+
     fn streak_with_kills(start_tick: i32, end_tick: i32, kill_frames: &[i32]) -> CaptureStreak {
         CaptureStreak {
             start_tick,
