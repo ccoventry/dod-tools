@@ -12,7 +12,7 @@
 
 **In progress:**
 - `chore/docs-cleanup-issues-migration` — docs/CLAUDE.md/CI reconciled, open items migrated to GitHub Issues. Not yet merged into `dev`.
-- `feature/decal-flush-r-and-d` — decal hygiene between capture clips ([#60](https://github.com/ccoventry/dod-tools/issues/60)). Implemented and structurally verified; **blocked on in-game visual confirmation** before it gets wired into the batch pipeline. Full findings, including why the `r_decals` cvar approach cannot work, live on the issue.
+- `feature/decal-flush-r-and-d` — decal hygiene between capture clips ([#60](https://github.com/ccoventry/dod-tools/issues/60)). **Blocked on in-game confirmation** before it gets wired into the batch pipeline; the first test failed (the burst stacked its decals on one spot, which the engine recycles rather than allocating, so the ring never turned — fixed in `18d7f2f`, awaiting re-test). Full findings live on the issue, including why the `r_decals` cvar approach cannot work and why structural verification cannot catch this class of bug.
 
 **Next work:** pick from the open GitHub Issues, or whatever the user brings to a fresh session.
 
