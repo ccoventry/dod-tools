@@ -157,13 +157,49 @@ fn axis_name(axis: usize) -> &'static str {
     ["X", "Y", "Z"][axis]
 }
 
-/// Viewdemo clock, to a tenth. The scrub bar reads in hundredths and a grid can
-/// pass through frame in well under a second, so whole seconds are not precise
-/// enough to land on.
+/// Viewdemo's own `mm:ss:ff` readout, hundredths in the last field — the exact
+/// string the demo player shows, so a timestamp can be matched against it
+/// rather than converted.
 fn clock(seconds: f32) -> String {
-    let s = seconds.max(0.0);
-    let minutes = (s / 60.0).floor();
-    format!("{}:{:04.1}", minutes as u32, s - minutes * 60.0)
+    let hundredths = (seconds.max(0.0) * 100.0).round() as u64;
+    format!(
+        "{}:{:02}:{:02}",
+        hundredths / 6000,
+        (hundredths / 100) % 60,
+        hundredths % 100
+    )
+}
+
+/// Where to look, in words. World coordinates are no use to someone watching a
+/// demo — there is no ruler on screen.
+fn where_to_look(yaw: f32, pitch: f32, distance: f32) -> String {
+    let side = if yaw.abs() < 7.0 {
+        "dead ahead".to_string()
+    } else {
+        let hand = if yaw < 0.0 { "left" } else { "right" };
+        match yaw.abs() {
+            a if a < 18.0 => format!("just {} of centre", hand),
+            a if a < 32.0 => format!("{} of centre", hand),
+            _ => format!("far {}, near the edge of frame", hand),
+        }
+    };
+
+    let height = match pitch {
+        p if p.abs() < 8.0 => "at eye level",
+        p if p < -30.0 => "well below you — look down",
+        p if p < 0.0 => "a little below eye level",
+        p if p > 30.0 => "well above you — look up",
+        _ => "a little above eye level",
+    };
+
+    let range = match distance {
+        d if d < 100.0 => "close enough to touch",
+        d if d < 250.0 => "a few steps away",
+        d if d < 500.0 => "across the room",
+        _ => "down the far end",
+    };
+
+    format!("{}, {} — {}", side, height, range)
 }
 
 /// Prints one grid: where it is, how well the demo backs it, and when it is on
@@ -181,23 +217,20 @@ fn print_grid(index: usize, g: &GridStats) {
         .collect();
 
     println!(
-        "── GRID {}{}  at [{:.0}, {:.0}, {:.0}] ─────────────────────────",
+        "── GRID {}{} ────────────────────────────────────────────",
         index + 1,
-        if g.in_region { "  (spawn)" } else { "" },
-        g.anchor[0],
-        g.anchor[1],
-        g.anchor[2]
+        if g.in_region { "  (in spawn)" } else { "" }
     );
     println!(
-        "   {} wall at {} = {:.1}, open space {}{}. {} decals prove it, spanning {:.0} x {:.0}.",
-        if g.axis == 2 { "Floor/ceiling" } else { "Upright" },
-        normal,
-        g.plane_value,
-        sign,
-        normal,
-        g.plane_members,
+        "   On a {}, roughly {:.0} x {:.0} units of it, proven by {} real decals.",
+        if g.axis == 2 { "floor" } else { "wall" },
         g.plane_spread.0,
-        g.plane_spread.1
+        g.plane_spread.1,
+        g.plane_members
+    );
+    println!(
+        "   (world: {} = {:.1}, open space {}{}, anchor [{:.0}, {:.0}, {:.0}])",
+        normal, g.plane_value, sign, normal, g.anchor[0], g.anchor[1], g.anchor[2]
     );
     println!(
         "   Columns along {} at {:.0}-unit pitch, rows step along {}.",
@@ -237,10 +270,9 @@ fn print_grid(index: usize, g: &GridStats) {
         println!("   On screen (best first):");
         for s in g.sightings.iter().take(5) {
             println!(
-                "     {:>6}   {:>4.0} units away, {:>2.0} deg off centre",
+                "     {:>9}   {}",
                 clock(s.svc_time),
-                s.distance,
-                s.off_axis_degrees
+                where_to_look(s.yaw_degrees, s.pitch_degrees, s.distance)
             );
         }
     }

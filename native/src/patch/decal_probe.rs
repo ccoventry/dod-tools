@@ -281,6 +281,14 @@ pub struct Sighting {
     /// steered, so this is the difference between "it fills your view" and
     /// "it is somewhere off to the side".
     pub off_axis_degrees: f32,
+    /// Signed bearing across the frame: negative is left of centre, positive
+    /// right. World coordinates are no use to someone watching a demo — "left
+    /// of centre, above eye level" is something you can act on, "Y = 931.9" is
+    /// not.
+    pub yaw_degrees: f32,
+    /// Signed bearing up the frame: negative is below eye level, positive
+    /// above.
+    pub pitch_degrees: f32,
 }
 
 /// One stamped grid and everything needed to find and read it.
@@ -348,9 +356,38 @@ fn norm(v: &[f32; 3]) -> f32 {
     (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt()
 }
 
-/// Distance and off-centre angle from `cam` to `point`, if the camera is
-/// pointed at it from close enough to count holes.
-fn look_at(cam: &CameraSample, point: &[f32; 3], opts: &ProbeOptions) -> Option<(f32, f32)> {
+fn dot(a: &[f32; 3], b: &[f32; 3]) -> f32 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+
+fn cross(a: &[f32; 3], b: &[f32; 3]) -> [f32; 3] {
+    [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]
+}
+
+fn normalized(v: &[f32; 3]) -> Option<[f32; 3]> {
+    let n = norm(v);
+    (n > 1.0e-4).then(|| [v[0] / n, v[1] / n, v[2] / n])
+}
+
+/// Where `point` sits in `cam`'s frame: distance, angle off centre, and signed
+/// left/right and up/down bearings.
+///
+/// The camera's own `right` vector is ignored in favour of deriving it from
+/// `forward`. GoldSrc's `AngleVectors` has a long history of handing back a
+/// "right" that different codebases negate, and getting left and right the
+/// wrong way round is worse than useless when the whole point is telling
+/// someone where to look. `forward x worldUp` is unambiguous: in GoldSrc's
+/// right-handed, Z-up world a player facing +X has +Y on their left, and that
+/// cross product yields -Y.
+fn look_at(
+    cam: &CameraSample,
+    point: &[f32; 3],
+    opts: &ProbeOptions,
+) -> Option<(f32, f32, f32, f32)> {
     let v = [
         point[0] - cam.eye[0],
         point[1] - cam.eye[1],
@@ -360,18 +397,28 @@ fn look_at(cam: &CameraSample, point: &[f32; 3], opts: &ProbeOptions) -> Option<
     if d < 24.0 || d > opts.sighting_max_distance {
         return None;
     }
-    let fl = norm(&cam.forward);
-    if fl < 0.5 {
+    let fwd = normalized(&cam.forward)?;
+    let cos_off = (dot(&v, &fwd) / d).clamp(-1.0, 1.0);
+    if cos_off < opts.sighting_cone_degrees.to_radians().cos() {
         return None;
     }
-    let dot =
-        ((v[0] * cam.forward[0] + v[1] * cam.forward[1] + v[2] * cam.forward[2]) / (d * fl))
-            .clamp(-1.0, 1.0);
-    if dot >= opts.sighting_cone_degrees.to_radians().cos() {
-        Some((d, dot.acos().to_degrees()))
-    } else {
-        None
-    }
+
+    // Straight up or down leaves no horizontal heading to measure against, so
+    // report the bearing as dead ahead rather than inventing a side.
+    let right = normalized(&cross(&fwd, &[0.0, 0.0, 1.0]));
+    let (yaw, pitch) = match right {
+        Some(right) => {
+            let up = cross(&right, &fwd);
+            let (f, r, u) = (dot(&v, &fwd), dot(&v, &right), dot(&v, &up));
+            (
+                r.atan2(f).to_degrees(),
+                u.atan2((f * f + r * r).sqrt()).to_degrees(),
+            )
+        }
+        None => (0.0, 0.0),
+    };
+
+    Some((d, cos_off.acos().to_degrees(), yaw, pitch))
 }
 
 /// Moments the camera is pointed at `anchor`, best first.
@@ -386,13 +433,17 @@ fn sightings_for(anchor: &[f32; 3], cameras: &[CameraSample], opts: &ProbeOption
     let mut best_of_run: Option<Sighting> = None;
 
     for cam in cameras {
-        let Some((distance, off_axis_degrees)) = look_at(cam, anchor, opts) else {
+        let Some((distance, off_axis_degrees, yaw_degrees, pitch_degrees)) =
+            look_at(cam, anchor, opts)
+        else {
             continue;
         };
         let s = Sighting {
             svc_time: cam.svc_time,
             distance,
             off_axis_degrees,
+            yaw_degrees,
+            pitch_degrees,
         };
 
         if cam.svc_time - last > 3.0 {
