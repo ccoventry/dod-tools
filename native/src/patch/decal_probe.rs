@@ -202,6 +202,10 @@ pub struct ProbeOptions {
     pub require_approach: f32,
     /// Restrict patches to within `near_radius` of this point.
     pub near: Option<[f32; 3]>,
+    /// Restrict grids to wherever the camera was at this viewdemo time, in
+    /// seconds. Easier to supply than a coordinate when the spot is something
+    /// you can see on screen but not measure.
+    pub near_at: Option<f32>,
     pub near_radius: f32,
     /// Restrict patches to the spawn area — the demo's own settled spawn
     /// origin, within `near_radius`.
@@ -235,6 +239,7 @@ impl Default for ProbeOptions {
             sighting_max_distance: 900.0,
             require_approach: 250.0,
             near: None,
+            near_at: None,
             near_radius: 700.0,
             spawn_only: true,
         }
@@ -324,6 +329,9 @@ pub struct GridStats {
     /// Camera samples spent within `require_approach` of it. The best proxy
     /// available for "how often will this be in front of you".
     pub dwell_samples: usize,
+    /// Viewdemo time at which the camera watched a bullet land on this exact
+    /// spot, if it ever did. The grid is centred there when so.
+    pub witness_time: Option<f32>,
     /// Whether this grid fell inside the spawn (or --near) restriction.
     pub in_region: bool,
 }
@@ -556,6 +564,41 @@ struct Target {
     members: Vec<[f32; 3]>,
     /// Extent those decals span along the two in-plane axes.
     spread: (f32, f32),
+    /// Viewdemo time at which the camera watched a bullet land on this patch,
+    /// if it ever did. The strongest evidence available that the wall is
+    /// visible: not "the camera pointed this way" but "the player saw a hit
+    /// here".
+    witness_time: Option<f32>,
+}
+
+/// Re-lays a target's columns centred on a point, keeping the pitch.
+///
+/// Used to sit the grid on the exact spot a bullet was seen landing, rather
+/// than wherever on the patch the densest stretch happened to be. A wall can be
+/// 400 units wide with only one end ever in view.
+fn centre_on(target: &mut Target, point: &[f32; 3], band: &[[f32; 3]], columns: usize) {
+    let first = -(columns as f32 - 1.0) / 2.0;
+    target.columns = (0..columns)
+        .map(|j| point[target.col_axis] + (first + j as f32) * target.pitch)
+        .collect();
+    target.row_center = point[target.row_axis];
+
+    let coords: Vec<f32> = band.iter().map(|m| m[target.col_axis]).collect();
+    target.evidence = target
+        .columns
+        .iter()
+        .map(|c| {
+            coords
+                .iter()
+                .map(|d| (d - c).abs())
+                .fold(f32::INFINITY, f32::min)
+        })
+        .collect();
+    target.backed = target
+        .evidence
+        .iter()
+        .filter(|e| **e <= target.pitch / 2.0)
+        .count();
 }
 
 impl Target {
@@ -768,6 +811,7 @@ fn target_from_patch(
         row_center,
         members: patch,
         spread,
+        witness_time: None,
     })
 }
 
@@ -786,6 +830,7 @@ fn target_from_patch(
 fn choose_targets(
     harvested: &[[f32; 3]],
     cameras: &[CameraSample],
+    witnessed: &[([f32; 3], f32)],
     opts: &ProbeOptions,
     region: Option<[f32; 3]>,
     already: &[[f32; 3]],
@@ -807,9 +852,35 @@ fn choose_targets(
             let coplanar: Vec<[f32; 3]> = idxs.iter().map(|&i| harvested[i]).collect();
 
             for patch in connected_patches(&coplanar, opts.link_radius) {
-                let Some(target) = target_from_patch(patch, axis, value, opts) else {
+                let Some(mut target) = target_from_patch(patch, axis, value, opts) else {
                     continue;
                 };
+
+                // If the camera ever watched a bullet land on this patch, sit
+                // the grid on that exact spot. Everything else here is inference
+                // about what can be seen; this is a spot the player provably
+                // saw, and a wall can be 400 units wide with only one end ever
+                // in view.
+                if let Some((point, time)) = witnessed
+                    .iter()
+                    .filter(|(p, _)| {
+                        (p[target.axis] - target.value).abs() <= opts.plane_tolerance
+                            && target
+                                .members
+                                .iter()
+                                .any(|m| distance(m, p) <= opts.link_radius)
+                    })
+                    .min_by(|a, b| {
+                        distance(&a.0, &target.anchor())
+                            .partial_cmp(&distance(&b.0, &target.anchor()))
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    })
+                    .copied()
+                {
+                    let band: Vec<[f32; 3]> = target.members.clone();
+                    centre_on(&mut target, &point, &band, opts.offsets.len());
+                    target.witness_time = Some(time);
+                }
 
                 let anchor = target.anchor();
 
@@ -848,7 +919,8 @@ fn choose_targets(
                 // foreshortens.
                 let tall_enough = extent(&target.members, target.row_axis) >= opts.row_gap * 2.0;
                 let orientation = if axis == 2 { 0.85 } else { 1.0 };
-                let score = (usize::from(best > 0.0) as f32 * 1.0e8
+                let score = (usize::from(target.witness_time.is_some()) as f32 * 1.0e9
+                    + usize::from(best > 0.0) as f32 * 1.0e8
                     + target.backed as f32 * 1.0e6
                     + usize::from(tall_enough) as f32 * 1.0e5
                     + (dwell as f32).min(2000.0) * 20.0
@@ -891,6 +963,23 @@ const TELEPORT_DISTANCE: f32 = 250.0;
 
 /// How close two teleport destinations must be to count as the same spawn.
 const SPAWN_CLUSTER: f32 = 300.0;
+
+/// Camera position at a given viewdemo time.
+///
+/// Lets a caller point the probe at a place they can see on screen but cannot
+/// measure — "spawn is what I am looking at 26:47:49" is a far easier thing to
+/// supply than a world coordinate.
+fn camera_at(cameras: &[CameraSample], svc_time: f32) -> Option<[f32; 3]> {
+    cameras
+        .iter()
+        .min_by(|a, b| {
+            (a.svc_time - svc_time)
+                .abs()
+                .partial_cmp(&(b.svc_time - svc_time).abs())
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .map(|c| c.eye)
+}
 
 /// Where the player spawns.
 ///
@@ -973,6 +1062,91 @@ fn outward_sign(target: &Target, anchor: &[f32; 3], cameras: &[CameraSample]) ->
         }
     }
     1.0
+}
+
+/// A decal the demo placed, with when it happened.
+struct HarvestedDecal {
+    position: [f32; 3],
+    ordinal: i32,
+}
+
+/// Decal positions with the frame they arrived on.
+///
+/// The timing is the point. A decal message is a bullet landing at a known
+/// instant, and if the camera was pointed at that spot at that instant, the
+/// player watched it happen — which is proof of an unobstructed line of sight,
+/// not a guess at one. That is the piece the cone test cannot supply on its
+/// own, and it comes free with data already in the file.
+fn collect_decals(demo: &dem::types::Demo) -> Vec<HarvestedDecal> {
+    let mut out = Vec::new();
+    let mut ordinal = 0i32;
+
+    for entry in &demo.directory.entries {
+        for frame in &entry.frames {
+            ordinal += 1;
+            let FrameData::NetworkMessage(net_msg_box) = &frame.frame_data else {
+                continue;
+            };
+            let MessageData::Parsed(messages) = &net_msg_box.1.messages else {
+                continue;
+            };
+            for msg in messages {
+                let NetMessage::EngineMessage(eng) = msg else {
+                    continue;
+                };
+                let EngineMessage::SvcTempEntity(te) = eng.as_ref() else {
+                    continue;
+                };
+                let payload: &[u8] = match &te.entity {
+                    TempEntity::TeWorldDecal(p)
+                    | TempEntity::TeWorldDecalHigh(p)
+                    | TempEntity::TeGunshotDecal(p)
+                    | TempEntity::TeDecal(p)
+                    | TempEntity::TeDecalHigh(p) => p,
+                    TempEntity::TePlayerDecal(p) if p.len() >= 7 => &p[1..7],
+                    _ => continue,
+                };
+                if payload.len() >= 6 {
+                    out.push(HarvestedDecal {
+                        position: [
+                            i16::from_le_bytes([payload[0], payload[1]]) as f32 / 8.0,
+                            i16::from_le_bytes([payload[2], payload[3]]) as f32 / 8.0,
+                            i16::from_le_bytes([payload[4], payload[5]]) as f32 / 8.0,
+                        ],
+                        ordinal,
+                    });
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Decals the camera was pointed at as they landed, with the moment it
+/// happened.
+///
+/// A hit seen as it lands proves the spot is visible from somewhere the camera
+/// actually was, with nothing in between — the one thing a cone test cannot
+/// establish. Anchoring a grid on such a decal means the wall it goes on is a
+/// wall the viewer has demonstrably seen, and the timestamp comes with it.
+fn witnessed_decals(
+    decals: &[HarvestedDecal],
+    cameras: &[CameraSample],
+    opts: &ProbeOptions,
+) -> Vec<([f32; 3], f32)> {
+    let mut out = Vec::new();
+    for decal in decals {
+        // Nearest camera sample in time; samples are strided, so this is within
+        // a few frames of the decal's own instant.
+        let idx = cameras.partition_point(|c| c.ordinal < decal.ordinal);
+        for cam in cameras.iter().skip(idx.saturating_sub(1)).take(2) {
+            if look_at(cam, &decal.position, opts).is_some() {
+                out.push((decal.position, cam.svc_time));
+                break;
+            }
+        }
+    }
+    out
 }
 
 /// Camera samples with ordinals and the viewdemo clock attached.
@@ -1133,6 +1307,7 @@ pub fn probe_decal_offsets(
     let whole_demo = [(1i32, i32::MAX)];
     let survey = survey(&demo, &whole_demo, &DecalCleanOptions::default());
     let cameras = collect_cameras(&demo);
+    let witnessed = witnessed_decals(&collect_decals(&demo), &cameras, opts);
 
     let mut region: Option<[f32; 3]> = None;
     let mut region_abandoned = false;
@@ -1158,6 +1333,7 @@ pub fn probe_decal_offsets(
                 row_center: a[t2],
                 members: vec![a],
                 spread: (0.0, 0.0),
+                witness_time: None,
             }]
         }
         (Some(_), None) => {
@@ -1170,7 +1346,10 @@ pub fn probe_decal_offsets(
             // opens there, and a dead player spectates teammates who are
             // themselves in spawn. Restricting to it trades map coverage for
             // the one thing that matters — being looked at.
-            region = opts.near.or_else(|| {
+            region = opts
+                .near
+                .or_else(|| opts.near_at.and_then(|t| camera_at(&cameras, t)))
+                .or_else(|| {
                 opts.spawn_only
                     .then_some(())
                     .and(spawn_position(&cameras, 200).or(survey.grounded_origin))
@@ -1181,13 +1360,15 @@ pub fn probe_decal_offsets(
             // ones nobody lingers in. Both, rather than a choice between them:
             // each grid is an independent measurement of the same constant, and
             // a hundred decals is nothing against a 4096-slot ring.
-            let mut found = choose_targets(&survey.harvested, &cameras, opts, region, &[]);
+            let mut found =
+                choose_targets(&survey.harvested, &cameras, &witnessed, opts, region, &[]);
             region_abandoned = region.is_some() && found.is_empty();
 
             let taken: Vec<[f32; 3]> = found.iter().map(|t| t.anchor()).collect();
             found.extend(choose_targets(
                 &survey.harvested,
                 &cameras,
+                &witnessed,
                 opts,
                 None,
                 &taken,
@@ -1254,6 +1435,7 @@ pub fn probe_decal_offsets(
             sightings: sightings_for(&anchor, &cameras, opts),
             closest_approach: closest,
             dwell_samples: dwell,
+            witness_time: target.witness_time,
             in_region: region
                 .map(|c| distance(&anchor, &c) <= opts.near_radius)
                 .unwrap_or(false),
@@ -1526,6 +1708,7 @@ mod tests {
             row_center: -200.0,
             members: vec![[100.0, 448.0, -200.0]],
             spread: (80.0, 0.0),
+            witness_time: None,
         }
     }
 

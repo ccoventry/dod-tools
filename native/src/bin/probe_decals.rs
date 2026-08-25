@@ -72,6 +72,12 @@ struct Args {
     #[arg(long, value_parser = parse_coord)]
     near: Option<[f32; 3]>,
 
+    /// Restrict grids to wherever the camera is at this viewdemo timestamp,
+    /// given as mm:ss:ff. Easier than a coordinate when you can see the spot
+    /// you mean on screen but not its position.
+    #[arg(long, value_parser = parse_clock)]
+    near_at: Option<f32>,
+
     /// Radius of the spawn (or --near) restriction.
     #[arg(long)]
     near_radius: Option<f32>,
@@ -126,6 +132,20 @@ fn parse_row_textures(s: &str) -> Result<[u8; 3], String> {
             .map_err(|_| format!("bad texture index '{}' in '{}'", p, s))?;
     }
     Ok(out)
+}
+
+/// Parses viewdemo's own mm:ss:ff readout into seconds.
+fn parse_clock(s: &str) -> Result<f32, String> {
+    let parts: Vec<&str> = s.split(':').collect();
+    if parts.len() != 3 {
+        return Err(format!("expected mm:ss:ff as the demo player shows it — got '{}'", s));
+    }
+    let num = |p: &str| -> Result<f32, String> {
+        p.trim()
+            .parse::<f32>()
+            .map_err(|_| format!("bad number '{}' in '{}'", p, s))
+    };
+    Ok(num(parts[0])? * 60.0 + num(parts[1])? + num(parts[2])? / 100.0)
 }
 
 fn parse_offsets(s: &str) -> Result<Vec<f32>, String> {
@@ -264,6 +284,14 @@ fn print_grid(index: usize, g: &GridStats) {
         "   Camera gets within {:.0} units, and spends {} sampled frames nearby.",
         g.closest_approach, g.dwell_samples
     );
+    if let Some(t) = g.witness_time {
+        println!(
+            "   At {} you watch a bullet land on this exact spot — the grid is centred there.",
+            clock(t)
+        );
+    } else {
+        println!("   No bullet was ever seen landing here, so visibility is inferred.");
+    }
     if g.sightings.is_empty() {
         println!("   Never squarely on camera — you would have to find it yourself.");
     } else {
@@ -318,6 +346,7 @@ fn main() {
         axis: args.axis,
         anchor: args.anchor,
         near: args.near,
+        near_at: args.near_at,
         near_radius: args.near_radius.unwrap_or(defaults.near_radius),
         spawn_only: !args.whole_map,
         require_approach: args.require_approach.unwrap_or(defaults.require_approach),
