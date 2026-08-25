@@ -114,6 +114,12 @@ struct Args {
     #[arg(long, value_parser = parse_row_textures)]
     row_textures: Option<[u8; 3]>,
 
+    /// Texture index for a beacon set clear of each grid: a short line of large
+    /// marks that makes a grid findable from across a room without merging into
+    /// the holes being counted. A grenade scorch works well. See --list-textures.
+    #[arg(long)]
+    beacon_texture: Option<u8>,
+
     /// List the decal texture indices this demo uses, and exit.
     #[arg(long)]
     list_textures: bool,
@@ -222,6 +228,33 @@ fn where_to_look(yaw: f32, pitch: f32, distance: f32) -> String {
     format!("{}, {} — {}", side, height, range)
 }
 
+/// Which of the three parallel lines is which, from where the viewer will be.
+///
+/// All three rows wear the same mark, so there is nothing on screen to tell
+/// them apart, and "the row displaced along +Y" is not something anyone can act
+/// on while watching a demo.
+fn which_row_is_which(v: &[f32; 3]) -> String {
+    let (f, r, u) = (v[0], v[1], v[2]);
+    let (out, inn) = if f.abs() >= r.abs() && f.abs() >= u.abs() {
+        if f > 0.0 {
+            ("far", "near")
+        } else {
+            ("near", "far")
+        }
+    } else if r.abs() >= u.abs() {
+        if r > 0.0 {
+            ("right-hand", "left-hand")
+        } else {
+            ("left-hand", "right-hand")
+        }
+    } else if u > 0.0 {
+        ("top", "bottom")
+    } else {
+        ("bottom", "top")
+    };
+    format!("the {} line is OUT, the middle is CTL, the {} line is IN", out, inn)
+}
+
 /// Prints one grid: where it is, how well the demo backs it, and when it is on
 /// screen.
 fn print_grid(index: usize, g: &GridStats) {
@@ -289,6 +322,9 @@ fn print_grid(index: usize, g: &GridStats) {
             "   At {} you watch a bullet land on this exact spot — the grid is centred there.",
             clock(t)
         );
+        if let Some(v) = g.out_row_in_view {
+            println!("   From the best view, {}.", which_row_is_which(&v));
+        }
     } else {
         println!("   No bullet was ever seen landing here, so visibility is inferred.");
     }
@@ -343,6 +379,7 @@ fn main() {
         row_gap: args.row_gap.unwrap_or(defaults.row_gap),
         texture_index: args.texture_index,
         row_textures: args.row_textures,
+        beacon_texture: args.beacon_texture,
         axis: args.axis,
         anchor: args.anchor,
         near: args.near,
@@ -392,6 +429,10 @@ fn main() {
     println!(
         "Stripped {} decals and {} sprays; r_decals pinned to {}.",
         stats.decals_stripped, stats.sprays_stripped, opts.ring_limit
+    );
+    println!(
+        "All of them appear at once at {}, and nothing evicts them after that.",
+        clock(stats.injected_at_time)
     );
     match stats.region {
         Some(c) if !stats.region_abandoned => println!(

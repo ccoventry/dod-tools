@@ -161,6 +161,17 @@ pub struct ProbeOptions {
     /// look like. Three different marks make the grid obviously deliberate and
     /// make the three counts impossible to conflate.
     pub row_textures: Option<[u8; 3]>,
+    /// Texture for a beacon placed clear of the grid: a short line of large,
+    /// dark marks that makes a grid findable from across a room.
+    ///
+    /// Kept separate from the measurement rows on purpose. A grenade scorch is
+    /// what makes a grid visible at distance, but scorches are wide, and nine
+    /// of them at a 28-unit pitch merge into one smear that cannot be counted
+    /// — and worse, may overlap more than MAX_OVERLAP_DECALS, at which point
+    /// the engine recycles instead of allocating and holes vanish for reasons
+    /// having nothing to do with the offset under test. Findability and
+    /// countability want different marks, so they get different marks.
+    pub beacon_texture: Option<u8>,
     /// Force the surface's normal axis (0=x, 1=y, 2=z) instead of detecting it.
     pub axis: Option<usize>,
     /// Hand-picked anchor point on a known surface, overriding detection
@@ -227,6 +238,7 @@ impl Default for ProbeOptions {
             grids: DEFAULT_GRIDS,
             texture_index: None,
             row_textures: None,
+            beacon_texture: None,
             axis: None,
             anchor: None,
             plane_tolerance: 2.0,
@@ -332,6 +344,14 @@ pub struct GridStats {
     /// Viewdemo time at which the camera watched a bullet land on this exact
     /// spot, if it ever did. The grid is centred there when so.
     pub witness_time: Option<f32>,
+    /// Where the OUT row sits relative to the CTL row as seen from the best
+    /// view, as (forward, right, up) components in that camera's own basis.
+    ///
+    /// With all three rows wearing the same mark there is nothing on screen to
+    /// say which line is which, and "the row displaced along +Y" is not
+    /// something a viewer can act on. This turns it into near/far or
+    /// left/right from where they will actually be standing.
+    pub out_row_in_view: Option<[f32; 3]>,
     /// Whether this grid fell inside the spawn (or --near) restriction.
     pub in_region: bool,
 }
@@ -350,6 +370,10 @@ pub struct ProbeStats {
     pub decals_stripped: usize,
     pub sprays_stripped: usize,
     pub injected_at_ordinal: i32,
+    /// Viewdemo time the grids appear at. They go in once, as early as is
+    /// safe, and nothing evicts them — so this is when they start existing,
+    /// not when any particular one first comes into view.
+    pub injected_at_time: f32,
 }
 
 /// A camera sample with enough context to both aim a grid and time it.
@@ -1255,6 +1279,29 @@ fn build_probes(target: &Target, outward: f32, opts: &ProbeOptions) -> Vec<Probe
     out
 }
 
+/// Gap between beacon marks, and their clearance from the grid.
+///
+/// Wide enough that big marks neither merge with each other nor reach the
+/// nearest measurement hole.
+const BEACON_SPACING: f32 = 96.0;
+
+/// A short line of large marks set clear of the grid, to catch the eye.
+fn build_beacon(target: &Target, opts: &ProbeOptions) -> Vec<[f32; 3]> {
+    let Some(last) = target.columns.last().copied() else {
+        return Vec::new();
+    };
+    let col = last + BEACON_SPACING;
+    (-1..=1)
+        .map(|k| {
+            let mut pos = [0.0f32; 3];
+            pos[target.axis] = target.value;
+            pos[target.col_axis] = col;
+            pos[target.row_axis] = target.row_center + k as f32 * opts.row_gap;
+            pos
+        })
+        .collect()
+}
+
 /// Strips the demo, stamps measurement grids onto proven surfaces, and pins
 /// r_decals high enough that nothing can evict them.
 pub fn probe_decal_offsets(
@@ -1418,6 +1465,9 @@ pub fn probe_decal_offsets(
         let probes = build_probes(target, outward, opts);
         let (closest, dwell) = approach(&anchor, &cameras, opts.require_approach);
         all_positions.extend(probes.iter().map(|p| (p.position, texture_for(p.row))));
+        if let Some(beacon) = opts.beacon_texture {
+            all_positions.extend(build_beacon(target, opts).into_iter().map(|p| (p, beacon)));
+        }
 
         grids.push(GridStats {
             axis: target.axis,
@@ -1436,6 +1486,19 @@ pub fn probe_decal_offsets(
             closest_approach: closest,
             dwell_samples: dwell,
             witness_time: target.witness_time,
+            out_row_in_view: {
+                let mut delta = [0.0f32; 3];
+                delta[target.row_axis] = opts.row_gap;
+                sightings_for(&anchor, &cameras, opts).first().and_then(|best| {
+                    let cam = cameras
+                        .iter()
+                        .find(|c| (c.svc_time - best.svc_time).abs() < 0.05)?;
+                    let fwd = normalized(&cam.forward)?;
+                    let right = normalized(&cross(&fwd, &[0.0, 0.0, 1.0]))?;
+                    let up = cross(&right, &fwd);
+                    Some([dot(&delta, &fwd), dot(&delta, &right), dot(&delta, &up)])
+                })
+            },
             in_region: region
                 .map(|c| distance(&anchor, &c) <= opts.near_radius)
                 .unwrap_or(false),
@@ -1577,6 +1640,11 @@ pub fn probe_decal_offsets(
         decals_stripped,
         sprays_stripped,
         injected_at_ordinal,
+        injected_at_time: cameras
+            .iter()
+            .find(|c| c.ordinal >= injected_at_ordinal)
+            .map(|c| c.svc_time)
+            .unwrap_or(0.0),
     };
 
     Ok((demo.write_to_bytes(), stats))
