@@ -172,6 +172,22 @@ pub struct ProbeOptions {
     /// having nothing to do with the offset under test. Findability and
     /// countability want different marks, so they get different marks.
     pub beacon_texture: Option<u8>,
+    /// Stamp only one of the three rows.
+    ///
+    /// Three rows in one demo is one playback, but it asks the viewer to hold
+    /// three counts at once, work out which line is which, and see past
+    /// whatever is lying on the floor across two of them. One row per demo
+    /// costs three playbacks and removes every one of those ambiguities: a
+    /// single line of holes, count it.
+    pub only_row: Option<ProbeRow>,
+    /// Slide the grid along the surface, in units, positive being rightward as
+    /// seen from the best viewing position.
+    ///
+    /// Which world axis that is depends on where the camera stands, so the
+    /// sign is resolved against that camera rather than asked of the caller.
+    /// Useful for nudging a grid clear of whatever happens to be lying in
+    /// front of it — a body on the floor hides a row as effectively as a wall.
+    pub shift_right: f32,
     /// Force the surface's normal axis (0=x, 1=y, 2=z) instead of detecting it.
     pub axis: Option<usize>,
     /// Hand-picked anchor point on a known surface, overriding detection
@@ -239,6 +255,8 @@ impl Default for ProbeOptions {
             texture_index: None,
             row_textures: None,
             beacon_texture: None,
+            only_row: None,
+            shift_right: 0.0,
             axis: None,
             anchor: None,
             plane_tolerance: 2.0,
@@ -1255,6 +1273,9 @@ fn build_probes(target: &Target, outward: f32, opts: &ProbeOptions) -> Vec<Probe
         (ProbeRow::Control, 0.0),
         (ProbeRow::In, -1.0),
     ] {
+        if opts.only_row.is_some_and(|only| only != row) {
+            continue;
+        }
         for (column, (&offset, &col_coord)) in
             opts.offsets.iter().zip(target.columns.iter()).enumerate()
         {
@@ -1277,6 +1298,38 @@ fn build_probes(target: &Target, outward: f32, opts: &ProbeOptions) -> Vec<Probe
         }
     }
     out
+}
+
+/// Which way along `col_axis` counts as rightward from the best view of a grid.
+///
+/// "Move it right" is a request about the screen, not the world, and which
+/// world axis that maps to depends entirely on where the camera stands. So the
+/// sign gets resolved against the camera the viewer will actually be using.
+fn rightward_sign(target: &Target, cameras: &[CameraSample], opts: &ProbeOptions) -> f32 {
+    let anchor = target.anchor();
+    // The witness moment, when there is one, because that is the timestamp the
+    // viewer is sent to. Resolving "right" against a different camera than the
+    // one they will be looking through is how you send someone the wrong way.
+    let when = target.witness_time.or_else(|| {
+        sightings_for(&anchor, cameras, opts)
+            .first()
+            .map(|s| s.svc_time)
+    });
+    let Some(when) = when else {
+        return 1.0;
+    };
+    let Some(cam) = cameras.iter().find(|c| (c.svc_time - when).abs() < 0.05) else {
+        return 1.0;
+    };
+    let Some(fwd) = normalized(&cam.forward) else {
+        return 1.0;
+    };
+    let Some(right) = normalized(&cross(&fwd, &[0.0, 0.0, 1.0])) else {
+        return 1.0;
+    };
+    let mut axis_dir = [0.0f32; 3];
+    axis_dir[target.col_axis] = 1.0;
+    if dot(&axis_dir, &right) >= 0.0 { 1.0 } else { -1.0 }
 }
 
 /// Gap between beacon marks, and their clearance from the grid.
@@ -1359,7 +1412,7 @@ pub fn probe_decal_offsets(
     let mut region: Option<[f32; 3]> = None;
     let mut region_abandoned = false;
 
-    let targets: Vec<Target> = match (opts.anchor, opts.axis) {
+    let mut targets: Vec<Target> = match (opts.anchor, opts.axis) {
         (Some(a), Some(axis)) => {
             let (t1, t2) = tangent_axes(axis);
             let columns: Vec<f32> = (0..opts.offsets.len())
@@ -1411,16 +1464,23 @@ pub fn probe_decal_offsets(
                 choose_targets(&survey.harvested, &cameras, &witnessed, opts, region, &[]);
             region_abandoned = region.is_some() && found.is_empty();
 
-            let taken: Vec<[f32; 3]> = found.iter().map(|t| t.anchor()).collect();
-            found.extend(choose_targets(
-                &survey.harvested,
-                &cameras,
-                &witnessed,
-                opts,
-                None,
-                &taken,
-            ));
-            found
+            // Naming a place explicitly means that place and no other. Only the
+            // automatic spawn guess gets topped up from the wider map, since
+            // that is a guess worth hedging.
+            if opts.near.is_some() || opts.near_at.is_some() {
+                found
+            } else {
+                let taken: Vec<[f32; 3]> = found.iter().map(|t| t.anchor()).collect();
+                found.extend(choose_targets(
+                    &survey.harvested,
+                    &cameras,
+                    &witnessed,
+                    opts,
+                    None,
+                    &taken,
+                ));
+                found
+            }
         }
     };
 
@@ -1459,7 +1519,14 @@ pub fn probe_decal_offsets(
     let mut grids: Vec<GridStats> = Vec::new();
     let mut all_positions: Vec<([f32; 3], u8)> = Vec::new();
 
-    for target in &targets {
+    for target in targets.iter_mut() {
+        if opts.shift_right != 0.0 {
+            let sign = rightward_sign(target, &cameras, opts);
+            for c in target.columns.iter_mut() {
+                *c += opts.shift_right * sign;
+            }
+        }
+        let target = &*target;
         let anchor = target.anchor();
         let outward = outward_sign(target, &anchor, &cameras);
         let probes = build_probes(target, outward, opts);

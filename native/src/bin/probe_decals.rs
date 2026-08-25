@@ -120,9 +120,43 @@ struct Args {
     #[arg(long)]
     beacon_texture: Option<u8>,
 
+    /// Stamp only one row: "out", "ctl" or "in". One line of holes per demo is
+    /// far easier to count than three at once.
+    #[arg(long, value_parser = parse_row)]
+    only_row: Option<ProbeRow>,
+
+    /// Slide the grid along the surface by this many units, positive being
+    /// rightward as seen from the best viewing position. Use it to nudge a
+    /// grid clear of a body or a crate.
+    #[arg(long, allow_negative_numbers = true)]
+    shift_right: Option<f32>,
+
     /// List the decal texture indices this demo uses, and exit.
     #[arg(long)]
     list_textures: bool,
+}
+
+/// Parses a row name into the row it selects.
+/// The offsets a grid tests, taken from whichever row it actually carries.
+/// A single-row demo has no CTL row to read them off.
+fn grid_offsets(g: &GridStats) -> Vec<f32> {
+    let Some(first) = g.probes.first().map(|p| p.row) else {
+        return Vec::new();
+    };
+    g.probes
+        .iter()
+        .filter(|p| p.row == first)
+        .map(|p| p.offset)
+        .collect()
+}
+
+fn parse_row(s: &str) -> Result<ProbeRow, String> {
+    match s.trim().to_ascii_lowercase().as_str() {
+        "out" => Ok(ProbeRow::Out),
+        "ctl" | "control" => Ok(ProbeRow::Control),
+        "in" => Ok(ProbeRow::In),
+        other => Err(format!("expected out, ctl or in — got '{}'", other)),
+    }
 }
 
 fn parse_row_textures(s: &str) -> Result<[u8; 3], String> {
@@ -262,12 +296,7 @@ fn print_grid(index: usize, g: &GridStats) {
     let col = axis_name(g.column_axis);
     let row = axis_name(g.row_axis);
     let sign = if g.outward > 0.0 { "+" } else { "-" };
-    let offsets: Vec<f32> = g
-        .probes
-        .iter()
-        .filter(|p| p.row == ProbeRow::Control)
-        .map(|p| p.offset)
-        .collect();
+    let offsets = grid_offsets(g);
 
     println!(
         "── GRID {}{} ────────────────────────────────────────────",
@@ -380,6 +409,8 @@ fn main() {
         texture_index: args.texture_index,
         row_textures: args.row_textures,
         beacon_texture: args.beacon_texture,
+        only_row: args.only_row,
+        shift_right: args.shift_right.unwrap_or(defaults.shift_right),
         axis: args.axis,
         anchor: args.anchor,
         near: args.near,
@@ -455,12 +486,7 @@ fn main() {
         print_grid(i, g);
     }
 
-    let offsets: Vec<f32> = stats.grids[0]
-        .probes
-        .iter()
-        .filter(|p| p.row == ProbeRow::Control)
-        .map(|p| p.offset)
-        .collect();
+    let offsets = grid_offsets(&stats.grids[0]);
 
     println!("HOW TO READ IT");
     println!(
