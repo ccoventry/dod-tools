@@ -134,6 +134,12 @@ struct Args {
     #[arg(long, allow_negative_numbers = true)]
     shift_right: Option<f32>,
 
+    /// Decals stacked at each position, 1-5. Darkens each mark without
+    /// widening it — useful when a small hole vanishes into a speckled
+    /// texture like sand.
+    #[arg(long)]
+    stack: Option<usize>,
+
     /// List the decal texture indices this demo uses, and exit.
     #[arg(long)]
     list_textures: bool,
@@ -430,6 +436,7 @@ fn main() {
         beacon_texture: args.beacon_texture,
         only_row: args.only_row,
         shift_right: args.shift_right.unwrap_or(defaults.shift_right),
+        stack: args.stack.unwrap_or(defaults.stack),
         axis: args.axis,
         anchor: args.anchor,
         near: args.near,

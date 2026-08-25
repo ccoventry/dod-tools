@@ -62,6 +62,7 @@ use dem::types::{
     TempEntity,
 };
 
+use super::decal_strip::MAX_OVERLAP_DECALS;
 use super::decal_strip::{
     build_world_decal, decal_texture_index, distance, frame_ordinals, strip_decal_messages, survey,
     DecalCleanOptions,
@@ -188,6 +189,15 @@ pub struct ProbeOptions {
     /// Useful for nudging a grid clear of whatever happens to be lying in
     /// front of it — a body on the floor hides a row as effectively as a wall.
     pub shift_right: f32,
+    /// Decals stacked at each position, to darken a mark without widening it.
+    ///
+    /// A single small hole disappears into a speckled texture — sand especially.
+    /// Stacking a few at the identical coordinate deepens the mark while
+    /// leaving its footprint unchanged, which a bigger texture would not: wide
+    /// marks merge with their neighbours and become uncountable. Capped below
+    /// MAX_OVERLAP_DECALS, since the stack overlaps itself and the engine
+    /// recycles rather than allocates past that.
+    pub stack: usize,
     /// Force the surface's normal axis (0=x, 1=y, 2=z) instead of detecting it.
     pub axis: Option<usize>,
     /// Hand-picked anchor point on a known surface, overriding detection
@@ -257,6 +267,7 @@ impl Default for ProbeOptions {
             beacon_texture: None,
             only_row: None,
             shift_right: 0.0,
+            stack: 1,
             axis: None,
             anchor: None,
             plane_tolerance: 2.0,
@@ -1571,7 +1582,12 @@ pub fn probe_decal_offsets(
         let outward = outward_sign(target, &anchor, &cameras);
         let probes = build_probes(target, outward, opts);
         let (closest, dwell) = approach(&anchor, &cameras, opts.require_approach);
-        all_positions.extend(probes.iter().map(|p| (p.position, texture_for(p.row))));
+        let stack = opts.stack.clamp(1, MAX_OVERLAP_DECALS - 1);
+        all_positions.extend(
+            probes
+                .iter()
+                .flat_map(|p| std::iter::repeat_n((p.position, texture_for(p.row)), stack)),
+        );
         if let Some(beacon) = opts.beacon_texture {
             all_positions.extend(build_beacon(target, opts).into_iter().map(|p| (p, beacon)));
         }
