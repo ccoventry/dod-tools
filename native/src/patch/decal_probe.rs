@@ -367,6 +367,21 @@ pub struct GridStats {
     /// one view worth describing — and it makes a requested nudge visible in
     /// the output instead of something to take on trust.
     pub witness_view: Option<(f32, f32, f32)>,
+    /// Geometry near the fitted plane over the grid's footprint: how many
+    /// harvested decals fall there and how far they spread along the normal.
+    ///
+    /// Read this as clutter, NOT as a flatness test — it was built as one and
+    /// does not work as one. Decals exist only where people shot, so absence
+    /// proves nothing about the surface, and a decal off the plane usually
+    /// means a crate or sandbag in front of it rather than the plane being
+    /// wrong. For the flush that is harmless or better: a position that finds
+    /// a crate instead of the wall still creates a decal and still turns the
+    /// ring. What actually threatens a tiled position is open space, and the
+    /// metric for that is `columns_backed`.
+    ///
+    /// Whether a fitted plane tracks a sloped surface can only be settled in
+    /// game, by tiling a wide control row across it and counting.
+    pub local_relief: (usize, f32),
     /// Where the OUT row sits relative to the CTL row as seen from the best
     /// view, as (forward, right, up) components in that camera's own basis.
     ///
@@ -1578,6 +1593,33 @@ pub fn probe_decal_offsets(
             closest_approach: closest,
             dwell_samples: dwell,
             witness_time: target.witness_time,
+            local_relief: {
+                // Everything over the ground the grid covers, plus a margin,
+                // whether or not it is coplanar with the fitted plane —
+                // but bounded along the normal too. Windowing only the two
+                // in-plane axes leaves an infinite prism, which for a wall
+                // swept in decals from every parallel surface across the map
+                // and reported thousands of units of "relief".
+                let half_col = target.pitch * opts.offsets.len() as f32 / 2.0 + target.pitch;
+                let half_row = opts.row_gap * 2.0;
+                // Far enough out to catch a ramp, close enough to exclude a
+                // different surface that merely happens to lie behind this one.
+                let half_normal = 48.0f32;
+                let mut lo = f32::INFINITY;
+                let mut hi = f32::NEG_INFINITY;
+                let mut n = 0usize;
+                for d in &survey.harvested {
+                    if (d[target.col_axis] - anchor[target.col_axis]).abs() <= half_col
+                        && (d[target.row_axis] - anchor[target.row_axis]).abs() <= half_row
+                        && (d[target.axis] - target.value).abs() <= half_normal
+                    {
+                        lo = lo.min(d[target.axis]);
+                        hi = hi.max(d[target.axis]);
+                        n += 1;
+                    }
+                }
+                (n, if lo.is_finite() { hi - lo } else { 0.0 })
+            },
             witness_view: target.witness_time.and_then(|t| {
                 let cam = cameras.iter().find(|c| (c.svc_time - t).abs() < 0.05)?;
                 look_at(cam, &anchor, opts).map(|(d, _, yaw, pitch)| (yaw, pitch, d))

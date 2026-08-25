@@ -349,6 +349,11 @@ fn print_grid(index: usize, g: &GridStats) {
         "   Camera gets within {:.0} units, and spends {} sampled frames nearby.",
         g.closest_approach, g.dwell_samples
     );
+    let (near_n, near_spread) = g.local_relief;
+    println!(
+        "   Geometry near the plane over its footprint: {} decals spanning {:.0} units.",
+        near_n, near_spread
+    );
     if let Some(t) = g.witness_time {
         println!(
             "   At {} you watch a bullet land on this exact spot — the grid is centred there.",
