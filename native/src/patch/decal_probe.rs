@@ -1581,11 +1581,15 @@ mod tests {
             svc_time: 0.0,
             distance: 80.0,
             off_axis_degrees: 3.0,
+            yaw_degrees: -3.0,
+            pitch_degrees: 0.0,
         };
         let far_peripheral = Sighting {
             svc_time: 0.0,
             distance: 700.0,
             off_axis_degrees: 22.0,
+            yaw_degrees: 20.0,
+            pitch_degrees: 8.0,
         };
         assert!(quality(&close_centred) > quality(&far_peripheral));
     }
