@@ -106,8 +106,8 @@ fn read_next_frame(file: &mut std::fs::File, demo_protocol: i32) -> Option<(Fram
 }
 
 fn main() {
-    let path_a = Path::new("./demos/wsod25-grp_r1-dyelife_gskill_armory_h1.dem");
-    let path_b = Path::new("./demos/chain_01.dem");
+    let path_a = Path::new("./local/demos/wsod25-grp_r1-dyelife_gskill_armory_h1.dem");
+    let path_b = Path::new("./local/demos/chain_01.dem");
 
     if !path_a.exists() || !path_b.exists() {
         eprintln!("Error: Both primer.dem and chain_01.dem must exist.");

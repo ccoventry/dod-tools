@@ -176,7 +176,7 @@ mod tests {
 
     #[test]
     fn test_demos_are_unique() {
-        let demos_dir = Path::new("../demos");
+        let demos_dir = Path::new("../local/demos");
         if !demos_dir.exists() {
             return;
         }
@@ -197,7 +197,7 @@ mod tests {
 
     #[test]
     fn test_duplicate_paths_deduplicated() {
-        let demos_dir = Path::new("../demos");
+        let demos_dir = Path::new("../local/demos");
         if !demos_dir.exists() {
             return;
         }

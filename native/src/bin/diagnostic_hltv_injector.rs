@@ -33,12 +33,12 @@ fn write_hltv_director_frame(
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let input_path = if Path::new("demos/test_director_cmds_hltv_source.dem").exists() {
-        Path::new("demos/test_director_cmds_hltv_source.dem")
+    let input_path = if Path::new("local/demos/test_director_cmds_hltv_source.dem").exists() {
+        Path::new("local/demos/test_director_cmds_hltv_source.dem")
     } else {
-        Path::new("demos/hltv_test.dem")
+        Path::new("local/demos/hltv_test.dem")
     };
-    let output_path = Path::new("demos/hltv_test_out.dem");
+    let output_path = Path::new("local/demos/hltv_test_out.dem");
 
     if !input_path.exists() {
         eprintln!("Input demo not found at {}", input_path.display());

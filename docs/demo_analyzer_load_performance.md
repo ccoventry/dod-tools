@@ -47,7 +47,7 @@ Commit `f6b382c` on `feature/tauri-migration`:
 
   ```
   cargo build --release -p dod-benchmark
-  ./target/release/dod-benchmark.exe ./demos          # or any folder of .dem files
+  ./target/release/dod-benchmark.exe ./local/demos          # or any folder of .dem files
   ```
 
 ## Measured baseline (release build, 4 demos, 52-89 MB each)
@@ -362,7 +362,7 @@ happened yet — Tier 4/5 is still fully unstarted, this is just no longer
 
 ```
 cargo build --release -p dod-benchmark
-./target/release/dod-benchmark.exe ./demos
+./target/release/dod-benchmark.exe ./local/demos
 ```
 
 Reproduces the phase table and the consumed/discarded netmessage histogram
