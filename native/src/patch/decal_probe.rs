@@ -59,11 +59,60 @@
 use dem::open_demo_from_bytes;
 use dem::types::{
     ByteString, ConsoleCommand, EngineMessage, Frame, FrameData, MessageData, NetMessage,
+    TempEntity,
 };
 
 use super::decal_strip::{
-    build_world_decal, distance, frame_ordinals, strip_decal_messages, survey, DecalCleanOptions,
+    build_world_decal, decal_texture_index, distance, frame_ordinals, strip_decal_messages, survey,
+    DecalCleanOptions,
 };
+
+/// Every decal texture index the demo actually uses, commonest first.
+///
+/// Worth knowing because a grid of identical holes reads as ordinary gunfire at
+/// a glance — the first in-game attempt at finding one came back as "I see
+/// bullets in a lot of places", which is exactly what 200 identical holes look
+/// like. Giving each row its own mark makes the grid obviously deliberate and
+/// makes the three counts impossible to conflate.
+pub fn decal_texture_histogram(demo_bytes: &[u8]) -> Result<Vec<(u8, usize)>, String> {
+    let demo = open_demo_from_bytes(demo_bytes)
+        .map_err(|e| format!("Could not parse demo file: {}", e))?;
+    let mut counts: std::collections::BTreeMap<u8, usize> = std::collections::BTreeMap::new();
+
+    for entry in &demo.directory.entries {
+        for frame in &entry.frames {
+            let FrameData::NetworkMessage(net_msg_box) = &frame.frame_data else {
+                continue;
+            };
+            let MessageData::Parsed(messages) = &net_msg_box.1.messages else {
+                continue;
+            };
+            for msg in messages {
+                let NetMessage::EngineMessage(eng) = msg else {
+                    continue;
+                };
+                let EngineMessage::SvcTempEntity(te) = eng.as_ref() else {
+                    continue;
+                };
+                let payload: &[u8] = match &te.entity {
+                    TempEntity::TeWorldDecal(p)
+                    | TempEntity::TeWorldDecalHigh(p)
+                    | TempEntity::TeGunshotDecal(p)
+                    | TempEntity::TeDecal(p)
+                    | TempEntity::TeDecalHigh(p) => p,
+                    _ => continue,
+                };
+                if let Some(idx) = decal_texture_index(te.entity_type, payload) {
+                    *counts.entry(idx).or_default() += 1;
+                }
+            }
+        }
+    }
+
+    let mut out: Vec<(u8, usize)> = counts.into_iter().collect();
+    out.sort_by(|a, b| b.1.cmp(&a.1));
+    Ok(out)
+}
 
 /// Offsets tested, in world units, ascending. Ascending order is what makes a
 /// row's hole count readable as a threshold rather than a pattern to decode.
@@ -104,6 +153,14 @@ pub struct ProbeOptions {
     /// Decal texture index, overriding the one harvested from the demo. A
     /// small bullet hole reads far better in a grid than a grenade scorch.
     pub texture_index: Option<u8>,
+    /// A distinct decal texture per row, as [OUT, CTL, IN].
+    ///
+    /// Three identical rows of identical holes read as ordinary gunfire at a
+    /// glance — the first attempt at finding one in game came back as "I see
+    /// bullets in a lot of places", which is exactly what 200 identical holes
+    /// look like. Three different marks make the grid obviously deliberate and
+    /// make the three counts impossible to conflate.
+    pub row_textures: Option<[u8; 3]>,
     /// Force the surface's normal axis (0=x, 1=y, 2=z) instead of detecting it.
     pub axis: Option<usize>,
     /// Hand-picked anchor point on a known surface, overriding detection
@@ -165,6 +222,7 @@ impl Default for ProbeOptions {
             row_gap: DEFAULT_ROW_GAP,
             grids: DEFAULT_GRIDS,
             texture_index: None,
+            row_textures: None,
             axis: None,
             anchor: None,
             plane_tolerance: 2.0,
@@ -177,7 +235,7 @@ impl Default for ProbeOptions {
             sighting_max_distance: 900.0,
             require_approach: 250.0,
             near: None,
-            near_radius: 1200.0,
+            near_radius: 700.0,
             spawn_only: true,
         }
     }
@@ -775,6 +833,73 @@ fn choose_targets(
     chosen
 }
 
+/// A jump in the camera path large enough that the player cannot have walked
+/// it. Samples are taken every fourth frame, and a sprinting player covers
+/// well under 50 units in that time.
+const TELEPORT_DISTANCE: f32 = 250.0;
+
+/// How close two teleport destinations must be to count as the same spawn.
+const SPAWN_CLUSTER: f32 = 300.0;
+
+/// Where the player spawns.
+///
+/// There is no spawn message to read, but there does not need to be: a respawn
+/// moves the player instantly, and an instant move is plain in the camera path
+/// as a jump no amount of running could cover. Every respawn over a whole match
+/// lands at a spawn point, so the destinations pile up there, and the densest
+/// pile is spawn.
+///
+/// Switching spectator target teleports the camera too, but those destinations
+/// are wherever a teammate happens to be — scattered across the map, and across
+/// the match they cannot out-cluster the one place everybody returns to. That
+/// is what makes taking the densest cluster, rather than any single jump,
+/// the part that works.
+///
+/// Falls back to the median of the opening camera positions when a demo is too
+/// short to contain a respawn.
+///
+/// The first version of this used the survey's `grounded_origin` — the first
+/// position that settles on solid ground, which is wherever the demo happens to
+/// begin — with a 1200-unit radius, and cheerfully labelled a wall 1139 units
+/// away as "(spawn)". It was not.
+fn spawn_position(cameras: &[CameraSample], early_samples: usize) -> Option<[f32; 3]> {
+    if cameras.is_empty() {
+        return None;
+    }
+
+    let destinations: Vec<[f32; 3]> = cameras
+        .windows(2)
+        .filter(|w| distance(&w[0].eye, &w[1].eye) > TELEPORT_DISTANCE)
+        .map(|w| w[1].eye)
+        .collect();
+
+    if !destinations.is_empty() {
+        let mut best = (0usize, destinations[0]);
+        for candidate in &destinations {
+            let n = destinations
+                .iter()
+                .filter(|d| distance(d, candidate) <= SPAWN_CLUSTER)
+                .count();
+            if n > best.0 {
+                best = (n, *candidate);
+            }
+        }
+        // A couple of coincident jumps is not a spawn; a pile of them is.
+        if best.0 >= 3 {
+            return Some(best.1);
+        }
+    }
+
+    let take = early_samples.min(cameras.len());
+    let mut out = [0.0f32; 3];
+    for axis in 0..3 {
+        let mut vals: Vec<f32> = cameras[..take].iter().map(|c| c.eye[axis]).collect();
+        vals.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        out[axis] = vals[vals.len() / 2];
+    }
+    Some(out)
+}
+
 /// Which side of the surface the room is on.
 ///
 /// Taken from where the camera actually was: an eye position is by definition
@@ -997,7 +1122,7 @@ pub fn probe_decal_offsets(
             region = opts.near.or_else(|| {
                 opts.spawn_only
                     .then_some(())
-                    .and(survey.grounded_origin.or(survey.spawn_eye))
+                    .and(spawn_position(&cameras, 200).or(survey.grounded_origin))
             });
 
             // Grids near spawn get looked at; grids chosen from the whole map
@@ -1043,15 +1168,24 @@ pub fn probe_decal_offsets(
             .to_string()
     })?;
 
+    let texture_for = |row: ProbeRow| -> u8 {
+        match (opts.row_textures, row) {
+            (Some(t), ProbeRow::Out) => t[0],
+            (Some(t), ProbeRow::Control) => t[1],
+            (Some(t), ProbeRow::In) => t[2],
+            (None, _) => texture_index,
+        }
+    };
+
     let mut grids: Vec<GridStats> = Vec::new();
-    let mut all_positions: Vec<[f32; 3]> = Vec::new();
+    let mut all_positions: Vec<([f32; 3], u8)> = Vec::new();
 
     for target in &targets {
         let anchor = target.anchor();
         let outward = outward_sign(target, &anchor, &cameras);
         let probes = build_probes(target, outward, opts);
         let (closest, dwell) = approach(&anchor, &cameras, opts.require_approach);
-        all_positions.extend(probes.iter().map(|p| p.position));
+        all_positions.extend(probes.iter().map(|p| (p.position, texture_for(p.row))));
 
         grids.push(GridStats {
             axis: target.axis,
@@ -1146,7 +1280,7 @@ pub fn probe_decal_offsets(
             let Some(pos) = position_iter.next() else {
                 break;
             };
-            messages.push(build_world_decal(pos, texture_index));
+            messages.push(build_world_decal(&pos.0, pos.1));
             placed += 1;
         }
     }

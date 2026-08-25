@@ -215,7 +215,7 @@ fn encode_coord(v: f32) -> [u8; 2] {
 /// Texture index carried by a decal temp entity, by wire layout.
 /// TE_WORLDDECAL/HIGH: coord(6) + index. TE_GUNSHOTDECAL/TE_DECALHIGH:
 /// coord(6) + entity(2) + index. TE_DECAL: coord(6) + index + entity(2).
-fn decal_texture_index(entity_type: u8, payload: &[u8]) -> Option<u8> {
+pub(super) fn decal_texture_index(entity_type: u8, payload: &[u8]) -> Option<u8> {
     match entity_type {
         116 | 117 if payload.len() >= 7 => Some(payload[6]),
         104 if payload.len() >= 7 => Some(payload[6]),

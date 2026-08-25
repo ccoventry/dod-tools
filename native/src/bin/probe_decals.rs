@@ -20,7 +20,9 @@
 //! constraint on the ring sweep.
 
 use clap::Parser;
-use native::patch::{probe_decal_offsets, GridStats, ProbeOptions, ProbeRow};
+use native::patch::{
+    decal_texture_histogram, probe_decal_offsets, GridStats, ProbeOptions, ProbeRow,
+};
 use std::fs;
 use std::path::PathBuf;
 
@@ -34,7 +36,7 @@ struct Args {
     demo_path: PathBuf,
 
     /// Output path for the probe demo
-    #[arg(long)]
+    #[arg(long, default_value = "probe_out.dem")]
     out: PathBuf,
 
     /// Offsets from the surface to test, ascending, e.g. --offsets 2,4,8,16,32
@@ -99,6 +101,31 @@ struct Args {
     /// Leave the demo's own decals in place instead of stripping them.
     #[arg(long)]
     no_strip: bool,
+
+    /// Decal texture index per row, "out,ctl,in". Three different marks make a
+    /// grid obviously deliberate rather than looking like ordinary gunfire, and
+    /// make the three counts impossible to conflate. See --list-textures.
+    #[arg(long, value_parser = parse_row_textures)]
+    row_textures: Option<[u8; 3]>,
+
+    /// List the decal texture indices this demo uses, and exit.
+    #[arg(long)]
+    list_textures: bool,
+}
+
+fn parse_row_textures(s: &str) -> Result<[u8; 3], String> {
+    let parts: Vec<&str> = s.split(',').collect();
+    if parts.len() != 3 {
+        return Err(format!("expected out,ctl,in — got '{}'", s));
+    }
+    let mut out = [0u8; 3];
+    for (i, p) in parts.iter().enumerate() {
+        out[i] = p
+            .trim()
+            .parse()
+            .map_err(|_| format!("bad texture index '{}' in '{}'", p, s))?;
+    }
+    Ok(out)
 }
 
 fn parse_offsets(s: &str) -> Result<Vec<f32>, String> {
@@ -130,9 +157,13 @@ fn axis_name(axis: usize) -> &'static str {
     ["X", "Y", "Z"][axis]
 }
 
+/// Viewdemo clock, to a tenth. The scrub bar reads in hundredths and a grid can
+/// pass through frame in well under a second, so whole seconds are not precise
+/// enough to land on.
 fn clock(seconds: f32) -> String {
-    let total = seconds.max(0.0) as u32;
-    format!("{}:{:02}", total / 60, total % 60)
+    let s = seconds.max(0.0);
+    let minutes = (s / 60.0).floor();
+    format!("{}:{:04.1}", minutes as u32, s - minutes * 60.0)
 }
 
 /// Prints one grid: where it is, how well the demo backs it, and when it is on
@@ -227,6 +258,23 @@ fn main() {
         }
     };
 
+    if args.list_textures {
+        match decal_texture_histogram(&bytes) {
+            Ok(h) if h.is_empty() => println!("No decal texture indices found."),
+            Ok(h) => {
+                println!("Decal texture indices in {}:", args.demo_path.display());
+                for (idx, count) in h {
+                    println!("  index {:>3}   x{}", idx, count);
+                }
+            }
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
+
     let defaults = ProbeOptions::default();
     let opts = ProbeOptions {
         offsets: args.offsets.unwrap_or(defaults.offsets),
@@ -234,6 +282,7 @@ fn main() {
         column_spacing: args.column_spacing.unwrap_or(defaults.column_spacing),
         row_gap: args.row_gap.unwrap_or(defaults.row_gap),
         texture_index: args.texture_index,
+        row_textures: args.row_textures,
         axis: args.axis,
         anchor: args.anchor,
         near: args.near,
@@ -261,13 +310,24 @@ fn main() {
     }
 
     println!("Wrote probe demo to: {}", args.out.display());
-    println!(
-        "{} grids, {} decals, texture index {}, stamped at frame ordinal {}.",
-        stats.grids.len(),
-        stats.decals_injected,
-        stats.texture_index,
-        stats.injected_at_ordinal
-    );
+    match opts.row_textures {
+        Some(t) => println!(
+            "{} grids, {} decals, stamped at frame ordinal {}. Row textures: OUT={} CTL={} IN={}.",
+            stats.grids.len(),
+            stats.decals_injected,
+            stats.injected_at_ordinal,
+            t[0],
+            t[1],
+            t[2]
+        ),
+        None => println!(
+            "{} grids, {} decals, texture index {}, stamped at frame ordinal {}.",
+            stats.grids.len(),
+            stats.decals_injected,
+            stats.texture_index,
+            stats.injected_at_ordinal
+        ),
+    }
     println!(
         "Stripped {} decals and {} sprays; r_decals pinned to {}.",
         stats.decals_stripped, stats.sprays_stripped, opts.ring_limit
