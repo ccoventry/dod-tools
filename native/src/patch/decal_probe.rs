@@ -362,6 +362,11 @@ pub struct GridStats {
     /// Viewdemo time at which the camera watched a bullet land on this exact
     /// spot, if it ever did. The grid is centred there when so.
     pub witness_time: Option<f32>,
+    /// Where the grid sits in frame at the witness moment, as (yaw, pitch,
+    /// distance). That is the timestamp the viewer is sent to, so it is the
+    /// one view worth describing — and it makes a requested nudge visible in
+    /// the output instead of something to take on trust.
+    pub witness_view: Option<(f32, f32, f32)>,
     /// Where the OUT row sits relative to the CTL row as seen from the best
     /// view, as (forward, right, up) components in that camera's own basis.
     ///
@@ -1300,12 +1305,21 @@ fn build_probes(target: &Target, outward: f32, opts: &ProbeOptions) -> Vec<Probe
     out
 }
 
-/// Which way along `col_axis` counts as rightward from the best view of a grid.
+/// A unit vector lying in the target's surface, pointing screen-right from the
+/// view the caller will be using.
 ///
-/// "Move it right" is a request about the screen, not the world, and which
-/// world axis that maps to depends entirely on where the camera stands. So the
-/// sign gets resolved against the camera the viewer will actually be using.
-fn rightward_sign(target: &Target, cameras: &[CameraSample], opts: &ProbeOptions) -> f32 {
+/// Not merely a sign along `col_axis`, which was the first attempt. Picking a
+/// direction from the two in-plane axes can only get within 45 degrees of
+/// screen-right, and on a floor seen down its length that is nearly all
+/// recession: shifting 250 units moved the grid 6 degrees across frame and
+/// almost doubled its distance. Projecting the camera's own right vector into
+/// the surface gives the direction that is actually lateral, whatever angle
+/// the axes happen to sit at.
+fn rightward_in_plane(
+    target: &Target,
+    cameras: &[CameraSample],
+    opts: &ProbeOptions,
+) -> Option<[f32; 3]> {
     let anchor = target.anchor();
     // The witness moment, when there is one, because that is the timestamp the
     // viewer is sent to. Resolving "right" against a different camera than the
@@ -1315,21 +1329,22 @@ fn rightward_sign(target: &Target, cameras: &[CameraSample], opts: &ProbeOptions
             .first()
             .map(|s| s.svc_time)
     });
-    let Some(when) = when else {
-        return 1.0;
-    };
-    let Some(cam) = cameras.iter().find(|c| (c.svc_time - when).abs() < 0.05) else {
-        return 1.0;
-    };
-    let Some(fwd) = normalized(&cam.forward) else {
-        return 1.0;
-    };
-    let Some(right) = normalized(&cross(&fwd, &[0.0, 0.0, 1.0])) else {
-        return 1.0;
-    };
-    let mut axis_dir = [0.0f32; 3];
-    axis_dir[target.col_axis] = 1.0;
-    if dot(&axis_dir, &right) >= 0.0 { 1.0 } else { -1.0 }
+    let when = when?;
+    let cam = cameras.iter().find(|c| (c.svc_time - when).abs() < 0.05)?;
+    let fwd = normalized(&cam.forward)?;
+    let right = normalized(&cross(&fwd, &[0.0, 0.0, 1.0]))?;
+
+    // Flatten screen-right into the surface. A wall seen face-on leaves it
+    // almost unchanged; a floor seen down its length leaves whatever component
+    // actually runs across the view.
+    let mut normal = [0.0f32; 3];
+    normal[target.axis] = 1.0;
+    let along_normal = dot(&right, &normal);
+    normalized(&[
+        right[0] - normal[0] * along_normal,
+        right[1] - normal[1] * along_normal,
+        right[2] - normal[2] * along_normal,
+    ])
 }
 
 /// Gap between beacon marks, and their clearance from the grid.
@@ -1521,9 +1536,13 @@ pub fn probe_decal_offsets(
 
     for target in targets.iter_mut() {
         if opts.shift_right != 0.0 {
-            let sign = rightward_sign(target, &cameras, opts);
-            for c in target.columns.iter_mut() {
-                *c += opts.shift_right * sign;
+            if let Some(dir) = rightward_in_plane(target, &cameras, opts) {
+                let (col, row) = (target.col_axis, target.row_axis);
+                let (dc, dr) = (dir[col] * opts.shift_right, dir[row] * opts.shift_right);
+                for c in target.columns.iter_mut() {
+                    *c += dc;
+                }
+                target.row_center += dr;
             }
         }
         let target = &*target;
@@ -1553,6 +1572,10 @@ pub fn probe_decal_offsets(
             closest_approach: closest,
             dwell_samples: dwell,
             witness_time: target.witness_time,
+            witness_view: target.witness_time.and_then(|t| {
+                let cam = cameras.iter().find(|c| (c.svc_time - t).abs() < 0.05)?;
+                look_at(cam, &anchor, opts).map(|(d, _, yaw, pitch)| (yaw, pitch, d))
+            }),
             out_row_in_view: {
                 let mut delta = [0.0f32; 3];
                 delta[target.row_axis] = opts.row_gap;

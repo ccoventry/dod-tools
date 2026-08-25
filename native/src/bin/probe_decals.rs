@@ -351,6 +351,10 @@ fn print_grid(index: usize, g: &GridStats) {
             "   At {} you watch a bullet land on this exact spot — the grid is centred there.",
             clock(t)
         );
+        if let Some((yaw, pitch, d)) = g.witness_view {
+            println!("   At that moment it sits {}.", where_to_look(yaw, pitch, d));
+            println!("   (view: yaw {:+.1} deg, pitch {:+.1} deg, {:.0} units)", yaw, pitch, d);
+        }
         if let Some(v) = g.out_row_in_view {
             println!("   From the best view, {}.", which_row_is_which(&v));
         }
