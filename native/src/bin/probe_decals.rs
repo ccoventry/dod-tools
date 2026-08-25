@@ -40,8 +40,11 @@ struct Args {
     out: PathBuf,
 
     /// Offsets from the surface to test, ascending, e.g. --offsets 2,4,8,16,32
-    #[arg(long, value_parser = parse_offsets)]
-    offsets: Option<Vec<f32>>,
+    /// Taken as a string and split here rather than by clap: a Vec<f32> field
+    /// makes clap treat the flag as a multi-value list and panic trying to
+    /// downcast the parser output.
+    #[arg(long)]
+    offsets: Option<String>,
 
     /// How many separate walls to stamp a grid onto.
     #[arg(long)]
@@ -406,7 +409,14 @@ fn main() {
 
     let defaults = ProbeOptions::default();
     let opts = ProbeOptions {
-        offsets: args.offsets.unwrap_or(defaults.offsets),
+        offsets: match args.offsets.as_deref().map(parse_offsets) {
+            Some(Ok(v)) => v,
+            Some(Err(e)) => {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+            None => defaults.offsets,
+        },
         grids: args.grids.unwrap_or(defaults.grids),
         column_spacing: args.column_spacing.unwrap_or(defaults.column_spacing),
         row_gap: args.row_gap.unwrap_or(defaults.row_gap),
