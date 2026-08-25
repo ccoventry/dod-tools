@@ -362,6 +362,11 @@ pub struct GridStats {
     /// than every column means part of the grid is placed by arithmetic.
     pub columns_backed: usize,
     pub probes: Vec<Probe>,
+    /// Beacon mark positions, if one was placed. Projected alongside the holes
+    /// as a calibration check: they are large and unmistakable, so if they land
+    /// where a screenshot shows them the projection is right and a missing hole
+    /// is a real miss.
+    pub beacon: Vec<[f32; 3]>,
     /// Distinct moments the camera is pointed at this grid, best first.
     pub sightings: Vec<Sighting>,
     /// Closest the camera ever physically gets to this grid, whether or not it
@@ -1583,13 +1588,14 @@ pub fn probe_decal_offsets(
         let probes = build_probes(target, outward, opts);
         let (closest, dwell) = approach(&anchor, &cameras, opts.require_approach);
         let stack = opts.stack.clamp(1, MAX_OVERLAP_DECALS - 1);
+        let beacon = opts.beacon_texture.map(|_| build_beacon(target, opts)).unwrap_or_default();
         all_positions.extend(
             probes
                 .iter()
                 .flat_map(|p| std::iter::repeat_n((p.position, texture_for(p.row)), stack)),
         );
-        if let Some(beacon) = opts.beacon_texture {
-            all_positions.extend(build_beacon(target, opts).into_iter().map(|p| (p, beacon)));
+        if let Some(tex) = opts.beacon_texture {
+            all_positions.extend(beacon.iter().map(|p| (*p, tex)));
         }
 
         grids.push(GridStats {
@@ -1605,6 +1611,7 @@ pub fn probe_decal_offsets(
             column_evidence: target.evidence.clone(),
             columns_backed: target.backed,
             probes,
+            beacon,
             sightings: sightings_for(&anchor, &cameras, opts),
             closest_approach: closest,
             dwell_samples: dwell,
@@ -2006,4 +2013,192 @@ mod tests {
         let err = probe_decal_offsets(demo, &opts).unwrap_err();
         assert!(err.contains("ascending"), "got: {}", err);
     }
+}
+
+/// Camera pose at a viewdemo timestamp, for projecting world points into a
+/// screenshot.
+#[derive(Debug, Clone, Copy)]
+pub struct CameraView {
+    pub eye: [f32; 3],
+    pub forward: [f32; 3],
+    /// The timestamp actually found, which may differ slightly from the one
+    /// asked for.
+    pub svc_time: f32,
+}
+
+/// Camera pose nearest a given viewdemo time.
+///
+/// Walks every frame rather than the strided sample set the rest of this module
+/// uses: a few frames of error is nothing when ranking which wall to stamp, and
+/// everything when working out where a decal lands in a specific screenshot.
+pub fn camera_at_time(demo_bytes: &[u8], svc_time: f32) -> Result<CameraView, String> {
+    let demo = open_demo_from_bytes(demo_bytes)
+        .map_err(|e| format!("Could not parse demo file: {}", e))?;
+
+    let mut best: Option<CameraView> = None;
+    let mut now = 0.0f32;
+
+    for entry in &demo.directory.entries {
+        for frame in &entry.frames {
+            let FrameData::NetworkMessage(net_msg_box) = &frame.frame_data else {
+                continue;
+            };
+            if let MessageData::Parsed(messages) = &net_msg_box.1.messages {
+                for msg in messages {
+                    if let NetMessage::EngineMessage(eng) = msg {
+                        if let EngineMessage::SvcTime(t) = eng.as_ref() {
+                            now = t.time;
+                        }
+                    }
+                }
+            }
+            let rp = &net_msg_box.1.info.refparams;
+            let (origin, fwd) = (&rp.view_origin, &rp.forward);
+            if origin.len() < 3 || fwd.len() < 3 {
+                continue;
+            }
+            let eye = [origin[0], origin[1], origin[2]];
+            if eye == [0.0, 0.0, 0.0] {
+                continue;
+            }
+            let candidate = CameraView {
+                eye,
+                forward: [fwd[0], fwd[1], fwd[2]],
+                svc_time: now,
+            };
+            let better = best
+                .map(|b| (now - svc_time).abs() < (b.svc_time - svc_time).abs())
+                .unwrap_or(true);
+            if better {
+                best = Some(candidate);
+            }
+        }
+    }
+
+    best.ok_or_else(|| "no camera frames in demo".to_string())
+}
+
+/// Where a world point lands on screen, as a fraction of width and height from
+/// the top-left. `None` when it is behind the camera.
+///
+/// GoldSrc specifies horizontal FOV and derives the vertical from the render
+/// aspect, so the screenshot's own dimensions determine the vertical field —
+/// which is why they have to be supplied rather than assumed.
+pub fn project(
+    view: &CameraView,
+    point: &[f32; 3],
+    fov_x_degrees: f32,
+    width: f32,
+    height: f32,
+) -> Option<(f32, f32)> {
+    let fwd = normalized(&view.forward)?;
+    let right = normalized(&cross(&fwd, &[0.0, 0.0, 1.0]))?;
+    let up = cross(&right, &fwd);
+
+    let v = [
+        point[0] - view.eye[0],
+        point[1] - view.eye[1],
+        point[2] - view.eye[2],
+    ];
+    let (f, r, u) = (dot(&v, &fwd), dot(&v, &right), dot(&v, &up));
+    if f <= 1.0 {
+        return None;
+    }
+
+    let tan_half_x = (fov_x_degrees.to_radians() / 2.0).tan();
+    let tan_half_y = tan_half_x * height / width;
+    Some((
+        ((r / f) / tan_half_x + 1.0) / 2.0 * width,
+        (1.0 - (u / f) / tan_half_y) / 2.0 * height,
+    ))
+}
+
+/// The frame that shows the most of `points` at once, and how well separated
+/// they are on screen.
+///
+/// A grid can be squarely in front of the camera and still be useless to count:
+/// at 12:55:30 on the anzio beach the row ran almost straight away from the
+/// viewer, putting four of its nine columns behind the camera and two more off
+/// the bottom of the frame. Being visible and being countable are different
+/// properties, and only the second one matters when someone has to tally marks
+/// off a screenshot.
+///
+/// Returns the view, how many points land on screen, and the smallest gap in
+/// pixels between any two of them — a pair closer than a few pixels reads as
+/// one mark.
+pub fn best_view_for(
+    demo_bytes: &[u8],
+    points: &[[f32; 3]],
+    fov_x_degrees: f32,
+    width: f32,
+    height: f32,
+) -> Result<Option<(CameraView, usize, f32)>, String> {
+    let demo = open_demo_from_bytes(demo_bytes)
+        .map_err(|e| format!("Could not parse demo file: {}", e))?;
+
+    let mut best: Option<(CameraView, usize, f32)> = None;
+    let mut now = 0.0f32;
+
+    for entry in &demo.directory.entries {
+        for frame in &entry.frames {
+            let FrameData::NetworkMessage(net_msg_box) = &frame.frame_data else {
+                continue;
+            };
+            if let MessageData::Parsed(messages) = &net_msg_box.1.messages {
+                for msg in messages {
+                    if let NetMessage::EngineMessage(eng) = msg {
+                        if let EngineMessage::SvcTime(t) = eng.as_ref() {
+                            now = t.time;
+                        }
+                    }
+                }
+            }
+            let rp = &net_msg_box.1.info.refparams;
+            let (origin, fwd) = (&rp.view_origin, &rp.forward);
+            if origin.len() < 3 || fwd.len() < 3 {
+                continue;
+            }
+            let eye = [origin[0], origin[1], origin[2]];
+            if eye == [0.0, 0.0, 0.0] {
+                continue;
+            }
+            let view = CameraView {
+                eye,
+                forward: [fwd[0], fwd[1], fwd[2]],
+                svc_time: now,
+            };
+
+            let on: Vec<(f32, f32)> = points
+                .iter()
+                .filter_map(|p| project(&view, p, fov_x_degrees, width, height))
+                .filter(|(x, y)| *x >= 0.0 && *x <= width && *y >= 0.0 && *y <= height)
+                .collect();
+            if on.is_empty() {
+                continue;
+            }
+
+            let mut gap = f32::INFINITY;
+            for i in 0..on.len() {
+                for j in (i + 1)..on.len() {
+                    let (dx, dy) = (on[i].0 - on[j].0, on[i].1 - on[j].1);
+                    gap = gap.min((dx * dx + dy * dy).sqrt());
+                }
+            }
+            if on.len() == 1 {
+                gap = width;
+            }
+
+            // Coverage first, then separation. A frame showing every mark but
+            // with two of them overlapping is worse than one showing every mark
+            // spread out, and both beat a frame showing half of them.
+            let better = best
+                .map(|(_, n, g)| on.len() > n || (on.len() == n && gap > g))
+                .unwrap_or(true);
+            if better {
+                best = Some((view, on.len(), gap));
+            }
+        }
+    }
+
+    Ok(best)
 }

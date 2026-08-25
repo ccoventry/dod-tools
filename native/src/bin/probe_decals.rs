@@ -21,7 +21,8 @@
 
 use clap::Parser;
 use native::patch::{
-    decal_texture_histogram, probe_decal_offsets, GridStats, ProbeOptions, ProbeRow,
+    best_view_for, camera_at_time, decal_texture_histogram, probe_decal_offsets, project,
+    CameraView, GridStats, ProbeOptions, ProbeRow, ProbeStats,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -140,6 +141,24 @@ struct Args {
     #[arg(long)]
     stack: Option<usize>,
 
+    /// Print where each hole lands in a screenshot taken at this viewdemo
+    /// timestamp (mm:ss:ff), as pixel coordinates. Needs --screen.
+    #[arg(long, value_parser = parse_clock)]
+    project_at: Option<f32>,
+
+    /// Screenshot dimensions for --project-at, as WxH.
+    #[arg(long, value_parser = parse_screen)]
+    screen: Option<(f32, f32)>,
+
+    /// Horizontal field of view for --project-at. DoD default_fov is 90.
+    #[arg(long, default_value_t = 90.0)]
+    fov: f32,
+
+    /// Find the frame that shows the most holes at once, well separated, and
+    /// project them there. Needs --screen.
+    #[arg(long)]
+    best_view: bool,
+
     /// List the decal texture indices this demo uses, and exit.
     #[arg(long)]
     list_textures: bool,
@@ -195,6 +214,19 @@ fn parse_clock(s: &str) -> Result<f32, String> {
             .map_err(|_| format!("bad number '{}' in '{}'", p, s))
     };
     Ok(num(parts[0])? * 60.0 + num(parts[1])? + num(parts[2])? / 100.0)
+}
+
+/// Parses a "WxH" screenshot size.
+fn parse_screen(s: &str) -> Result<(f32, f32), String> {
+    let (w, h) = s
+        .split_once(['x', 'X'])
+        .ok_or_else(|| format!("expected WxH — got '{}'", s))?;
+    let num = |p: &str| -> Result<f32, String> {
+        p.trim()
+            .parse::<f32>()
+            .map_err(|_| format!("bad number '{}' in '{}'", p, s))
+    };
+    Ok((num(w)?, num(h)?))
 }
 
 fn parse_offsets(s: &str) -> Result<Vec<f32>, String> {
@@ -512,6 +544,54 @@ fn main() {
         print_grid(i, g);
     }
 
+    if let Some(at) = args.project_at {
+        let Some((w, h)) = args.screen else {
+            eprintln!("--project-at needs --screen WxH (the screenshot's pixel size).");
+            std::process::exit(1);
+        };
+        let view = match camera_at_time(&bytes, at) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        };
+        project_grids(&stats, &view, args.fov, w, h);
+    }
+
+    if args.best_view {
+        let Some((w, h)) = args.screen else {
+            eprintln!("--best-view needs --screen WxH (the screenshot's pixel size).");
+            std::process::exit(1);
+        };
+        // Beacon marks are excluded from the search: they are there to be found,
+        // not counted, and letting them pull the choice of frame would trade
+        // away the holes that carry the measurement.
+        let points: Vec<[f32; 3]> = stats
+            .grids
+            .iter()
+            .flat_map(|g| g.probes.iter().map(|p| p.position))
+            .collect();
+        match best_view_for(&bytes, &points, args.fov, w, h) {
+            Ok(Some((view, on, gap))) => {
+                println!(
+                    "BEST FRAME FOR COUNTING: {}  ({} of {} holes on screen, closest pair {:.0}px apart)",
+                    clock(view.svc_time),
+                    on,
+                    points.len(),
+                    gap
+                );
+                project_grids(&stats, &view, args.fov, w, h);
+            }
+            Ok(None) => println!("No frame shows any of the holes."),
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+    }
+
+
     let offsets = grid_offsets(&stats.grids[0]);
 
     println!("HOW TO READ IT");
@@ -555,4 +635,52 @@ fn main() {
     println!("  mirv_fx_wh_enable 1 is worth a try for finding them: if HLAE's wallhack");
     println!("  draws decals through geometry it makes every grid findable at once. Count");
     println!("  one grid at a time if so — with several stamped, two can overlap on screen.");
+}
+
+/// Prints where every hole in every grid lands in a screenshot taken from
+/// `view`.
+///
+/// The beacon marks are projected alongside the holes on purpose. They are
+/// large and unmistakable, so if they land where the screenshot shows them the
+/// calibration is right and a missing hole is a real miss; if they don't, the
+/// fov or the screen size is wrong and nothing else printed here can be
+/// trusted.
+fn project_grids(stats: &ProbeStats, view: &CameraView, fov: f32, w: f32, h: f32) {
+    println!(
+        "WHERE TO LOOK IN A {:.0}x{:.0} SCREENSHOT AT {}",
+        w,
+        h,
+        clock(view.svc_time)
+    );
+    println!(
+        "  Camera at [{:.0}, {:.0}, {:.0}], fov {:.0}. Pixel coords from the top-left.",
+        view.eye[0], view.eye[1], view.eye[2], fov
+    );
+    for (i, g) in stats.grids.iter().enumerate() {
+        println!("  Grid {}:", i + 1);
+        for p in &g.probes {
+            match project(view, &p.position, fov, w, h) {
+                Some((x, y)) if x >= 0.0 && x <= w && y >= 0.0 && y <= h => {
+                    println!("    offset {:>3.0}  ->  x {:>5.0}, y {:>5.0}", p.offset, x, y)
+                }
+                Some((x, y)) => println!(
+                    "    offset {:>3.0}  ->  off screen (x {:.0}, y {:.0})",
+                    p.offset, x, y
+                ),
+                None => println!("    offset {:>3.0}  ->  behind the camera", p.offset),
+            }
+        }
+        for (k, b) in g.beacon.iter().enumerate() {
+            match project(view, b, fov, w, h) {
+                Some((x, y)) if x >= 0.0 && x <= w && y >= 0.0 && y <= h => println!(
+                    "    beacon {}  ->  x {:>5.0}, y {:>5.0}",
+                    k + 1,
+                    x,
+                    y
+                ),
+                _ => println!("    beacon {}  ->  not in frame", k + 1),
+            }
+        }
+    }
+    println!();
 }
