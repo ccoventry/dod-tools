@@ -1353,18 +1353,24 @@ fn rightward_in_plane(
 /// nearest measurement hole.
 const BEACON_SPACING: f32 = 96.0;
 
-/// A short line of large marks set clear of the grid, to catch the eye.
+/// A short bar of large marks set clear of the grid, to catch the eye.
+///
+/// Placed off to the side of the rows rather than past the end of them. Beyond
+/// the last column put it right where the highest offsets sit — the exact spot
+/// where a row is expected to run out of holes — so a mark that did get created
+/// there could vanish into the blob and read as a rejection. Alongside, it
+/// cannot swallow anything being counted.
 fn build_beacon(target: &Target, opts: &ProbeOptions) -> Vec<[f32; 3]> {
-    let Some(last) = target.columns.last().copied() else {
+    if target.columns.is_empty() {
         return Vec::new();
-    };
-    let col = last + BEACON_SPACING;
+    }
+    let middle = target.columns[target.columns.len() / 2];
     (-1..=1)
         .map(|k| {
             let mut pos = [0.0f32; 3];
             pos[target.axis] = target.value;
-            pos[target.col_axis] = col;
-            pos[target.row_axis] = target.row_center + k as f32 * opts.row_gap;
+            pos[target.col_axis] = middle + k as f32 * opts.row_gap;
+            pos[target.row_axis] = target.row_center + BEACON_SPACING;
             pos
         })
         .collect()
