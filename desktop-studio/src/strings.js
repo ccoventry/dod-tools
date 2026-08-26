@@ -594,6 +594,34 @@ export const STRINGS = {
   },
 
   // ── main.js: sessions, settings dialogs, scan status, Clear actions ─────
+  // Map library warnings. A demo names the map it was recorded on and stamps
+  // that map's build alongside it, so "missing" and "wrong build" are different
+  // problems: one cannot be played at all, the other plays and is quietly wrong.
+  MAPS: {
+    BANNER_TITLE: 'Maps needed',
+    MISSING_LABEL: 'missing',
+    WRONG_BUILD_LABEL: 'different build',
+    UNREADABLE_LABEL: 'unreadable',
+    DOWNLOAD_BUTTON: 'Download',
+    DOWNLOAD_ALL_BUTTON: 'Download all',
+    DISMISS_BUTTON: 'Dismiss',
+    DOWNLOADING: 'Downloading…',
+    NO_GAME_PATH: 'Set the hl.exe path in Configuration to check demo maps.',
+    demoCount: (n) => (n === 1 ? '1 demo' : `${n} demos`),
+    missingSummary: (maps, demos) =>
+      `${maps === 1 ? '1 map' : `${maps} maps`} needed by ${demos === 1 ? '1 demo' : `${demos} demos`}`,
+    wrongBuildDetail: (map, wanted, found) =>
+      `${map} — these demos need build ${wanted}, the installed map is ${found}`,
+    missingDetail: (map, demos) => `${map} — not installed, needed by ${demos}`,
+    installedToast: (map) => `Installed ${map}`,
+    alreadyCorrectToast: (map) => `${map} was already the right build`,
+    replacedNote: (path) => `Previous map kept at ${path}`,
+    downloadFailedToast: (map, err) => `Could not install ${map}: ${err}`,
+    checkFailed: (err) => `Could not check demo maps: ${err}`,
+    UNVERIFIABLE_NOTE:
+      'HLTV demos do not record which map build they need, so those can only be checked for the map being present.',
+  },
+
   MAIN: {
     SELECT_CAPTURE_OUTPUT_DIR_TITLE: 'Select Capture Output Directory',
     SELECT_RENDER_DIR_TITLE: 'Select Render Directory',

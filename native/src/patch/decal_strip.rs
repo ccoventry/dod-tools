@@ -1867,9 +1867,7 @@ pub fn ring_limit(config: &PatcherConfig) -> u32 {
 /// resolve to a real directory rather than handing the loader a path that can
 /// only fail per demo.
 fn maps_dir_for(config: &PatcherConfig) -> Option<std::path::PathBuf> {
-    let exe = std::path::Path::new(&config.game_path);
-    let dir = exe.parent()?.join("dod").join("maps");
-    dir.is_dir().then_some(dir)
+    super::map_check::maps_dir_for_exe(std::path::Path::new(&config.game_path))
 }
 
 fn flush_options(config: &PatcherConfig) -> DecalCleanOptions {

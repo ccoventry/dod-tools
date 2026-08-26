@@ -141,6 +141,20 @@ pub fn map_path(maps_dir: &Path, map_name: &str) -> PathBuf {
     maps_dir.join(format!("{}.bsp", map_name))
 }
 
+/// The map library belonging to a given `hl.exe`.
+///
+/// DoD's content sits beside the executable, so maps are `<hl.exe dir>/dod/maps`
+/// — and note that demos live *inside* `dod/`, one level below the exe. Deriving
+/// this from a demo's own folder instead gives `dod/dod/maps`, which exists
+/// nowhere and fails silently.
+///
+/// `None` when that does not resolve to a real directory, rather than handing
+/// back a path that can only fail later.
+pub fn maps_dir_for_exe(exe: &Path) -> Option<PathBuf> {
+    let dir = exe.parent()?.join("dod").join("maps");
+    dir.is_dir().then_some(dir)
+}
+
 /// Check one reference against a map library.
 pub fn status_of(reference: &MapReference, maps_dir: &Path) -> MapStatus {
     let path = map_path(maps_dir, &reference.map_name);

@@ -12,6 +12,7 @@ import {
   openActivityLog
 } from './ipc_bridge.js';
 import { renderMasterList, initMasterPane } from './master_pane.js';
+import { initMapWarnings, refreshMapWarnings, resetMapWarnings } from './map_warnings.js';
 import { renderDetailView, initDetailPane } from './detail_pane.js';
 import { initCaptureUI, getCommandsState, hydrateCommandsState, refreshLaunchGuard } from './capture_pane.js';
 import { initRenderUI, checkRenderRecoveryOnStartup } from './render_pane.js';
@@ -689,6 +690,13 @@ window.addEventListener("DOMContentLoaded", async () => {
       if (selectedDemoIdx !== null) {
         selectDemoAndRenderDetail(currentScannedDemos[selectedDemoIdx], selectedDemoIdx);
       }
+      // Reads 544 bytes per demo and one map file per distinct map, so it runs
+      // after the scan rather than inside it. Not awaited: the queue is already
+      // usable, and a demo whose map is missing is still worth listing.
+      refreshMapWarnings(
+        newlyScanned.map((d) => d.path),
+        document.querySelector('#hl-path-input')?.value?.trim() || ''
+      );
     } catch (err) {
       console.error("Error scanning directories:", err);
       showToast(STRINGS.MAIN.scanErrorToast(err), 'error');
@@ -939,6 +947,9 @@ window.addEventListener("DOMContentLoaded", async () => {
     updateDemoFooter(currentScannedDemos);
     renderMasterList(currentScannedDemos, selectedDemoIdx);
     renderDetailView(selectedDemoIdx !== null ? currentScannedDemos[selectedDemoIdx] : null, selectedDemoIdx);
+    // The banner is about demos in the queue. With the queue empty there is
+    // nothing left for it to be about.
+    if (currentScannedDemos.length === 0) resetMapWarnings();
   }
 
   // One-line callout appended to Clear actions' toasts/summaries whenever an
@@ -1143,6 +1154,9 @@ window.addEventListener("DOMContentLoaded", async () => {
   }
 
   initMasterPane(onDeleteDemo, requestTrackedDeleteConfirm);
+  // Read at click time, not captured: the hl.exe path can be set after a scan
+  // has already run and left the banner up.
+  initMapWarnings(() => document.querySelector('#hl-path-input')?.value?.trim() || '');
   initDetailPane(() => currentScannedDemos, () => {
     // Fired on both streak selection and status edits — selection moves
     // required capture bytes (refreshLaunchGuard) and both move the Master

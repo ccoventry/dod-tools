@@ -35,6 +35,33 @@ export async function scanDirectory(scanPaths) {
     });
 }
 
+// Map library checks. Deliberately quiet on failure: a demo whose map cannot be
+// checked is still a demo the user can work with, so this reports and returns
+// nothing rather than interrupting a scan that otherwise succeeded.
+export async function checkDemoMaps(demoPaths, gamePath) {
+  return invoke("check_demo_maps", { demoPaths, gamePath })
+    .catch((err) => {
+      console.error("IPC Execution Error (check_demo_maps):", err);
+      return [];
+    });
+}
+
+export async function downloadMap(mapName, expectedChecksum, gamePath) {
+  return invoke("download_map", { mapName, expectedChecksum, gamePath })
+    .catch((err) => {
+      console.error("IPC Execution Error (download_map):", err);
+      throw err;
+    });
+}
+
+export async function mapDownloadUrl(mapName) {
+  return invoke("map_download_url", { mapName })
+    .catch((err) => {
+      console.error("IPC Execution Error (map_download_url):", err);
+      return null;
+    });
+}
+
 export async function validatePaths(hlaePath, hlPath) {
   return await invoke('validate_paths', { hlaePath, hlPath })
     .catch((err) => {

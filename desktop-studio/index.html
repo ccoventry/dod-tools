@@ -71,6 +71,10 @@
                 <button id="clear-all-btn" disabled style="color: #ff5555; border-color: #ff5555;" data-str="WORKSPACE.CLEAR_ALL_BUTTON" data-str-title="WORKSPACE.CLEAR_ALL_TITLE_TOOLTIP">Clear All</button>
               </div>
             </div>
+            <!-- Populated by map_warnings.js when a scanned demo needs a map
+                 that is missing or is a different build than it was recorded
+                 on. Stays hidden when the library is complete. -->
+            <div id="map-warning-banner" hidden></div>
             <div class="table-wrapper">
               <table id="master-demo-table">
                 <thead>
