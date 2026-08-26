@@ -1592,6 +1592,48 @@ impl Drop for CleanedSource {
     }
 }
 
+/// Scratch demos left behind by a process that was killed rather than unwound.
+///
+/// Drop covers the error and cancellation paths, but nothing runs when a
+/// process is terminated outright, and each of these is the size of a demo —
+/// tens or hundreds of megabytes. Swept on the way past rather than tracked,
+/// since there is nowhere durable to track them.
+///
+/// Age-gated so a capture running concurrently in another process cannot have
+/// its scratch deleted out from under it. No flush takes anything like this
+/// long; the margin is for a machine that was asleep mid-run.
+const SCRATCH_STALE_AFTER: std::time::Duration = std::time::Duration::from_secs(6 * 60 * 60);
+
+/// Filename prefix identifying a flush scratch demo, so the sweep can recognise
+/// its own leavings and nothing else.
+const SCRATCH_PREFIX: &str = "dodtools_decalflush_";
+
+fn sweep_stale_scratch(dir: &std::path::Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let now = std::time::SystemTime::now();
+    for entry in entries.flatten() {
+        if !entry
+            .file_name()
+            .to_string_lossy()
+            .starts_with(SCRATCH_PREFIX)
+        {
+            continue;
+        }
+        let stale = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| now.duration_since(t).ok())
+            .map(|age| age > SCRATCH_STALE_AFTER)
+            .unwrap_or(false);
+        if stale {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
 /// Scratch path for one cleaned demo. Kept in the system temp directory rather
 /// than beside the output: the capture directories are scanned for takes and
 /// swept by the auto-clear passes, neither of which should ever see this file.
@@ -1604,8 +1646,11 @@ fn scratch_path(source_demo: &str) -> std::path::PathBuf {
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| "demo".to_string());
 
-    std::env::temp_dir().join(format!(
-        "dodtools_decalflush_{}_{}_{}.dem",
+    let dir = std::env::temp_dir();
+    sweep_stale_scratch(&dir);
+    dir.join(format!(
+        "{}{}_{}_{}.dem",
+        SCRATCH_PREFIX,
         stem,
         std::process::id(),
         SEQ.fetch_add(1, Ordering::Relaxed)
@@ -1857,6 +1902,30 @@ fn report(
         stats.bursts_placed,
         opts.ring_limit
     ));
+
+    // What the on-screen decision was actually able to consult. This changes
+    // how much the position count is worth: 68 positions chosen against real
+    // geometry and 68 chosen against a bare cone are not the same claim, and
+    // the counts look identical.
+    match stats.visibility_basis {
+        VisibilityBasis::Geometry => crate::log_markdown(&format!(
+            "👁️ **Placement used map geometry** — {} world faces{}. Positions were kept only \
+             where the map says the camera cannot see them, not merely where they fall outside \
+             the frame.",
+            stats.map_faces,
+            if stats.map_has_vis {
+                ", with visibility data"
+            } else {
+                ", but the map carries no visibility data, so every in-frame candidate needed a \
+                 trace"
+            }
+        )),
+        VisibilityBasis::ConeOnly => crate::log_markdown(
+            "⚠️ **Placement used the frame cone alone** — no map geometry was available, so the \
+             pass cannot tell a wall from a sightline. It rejects spots that are genuinely \
+             hidden, and where that leaves it with nothing it will settle for a marginal one.",
+        ),
+    }
 
     // What the map's store contributed. Worth its own line: a demo that
     // sweeps only because earlier demos proved the surface is a different
@@ -2266,5 +2335,39 @@ mod tests {
             (opts.visibility_cone_degrees - on_screen_half_angle(105.0, 1920, 1080)).abs() < 0.01
         );
         assert!(opts.visibility_cone_degrees > 55.0);
+    }
+
+    #[test]
+    fn the_sweep_takes_only_its_own_stale_leavings() {
+        // This deletes files, so what it will not touch matters more than what
+        // it will. A concurrent capture's scratch is young; everything else in
+        // the temp directory is not ours at any age.
+        use std::time::{Duration, SystemTime};
+
+        let dir = std::env::temp_dir().join("dod_sweep_test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let stale = dir.join(format!("{}old_1_0.dem", SCRATCH_PREFIX));
+        let fresh = dir.join(format!("{}live_2_0.dem", SCRATCH_PREFIX));
+        let other = dir.join("someone_elses_file.dem");
+        for p in [&stale, &fresh, &other] {
+            std::fs::write(p, b"x").unwrap();
+        }
+
+        // Backdate the stale one well past the threshold.
+        let long_ago = SystemTime::now() - SCRATCH_STALE_AFTER - Duration::from_secs(60);
+        filetime::set_file_mtime(&stale, filetime::FileTime::from_system_time(long_ago)).unwrap();
+
+        sweep_stale_scratch(&dir);
+
+        assert!(!stale.exists(), "an orphaned scratch demo should be removed");
+        assert!(
+            fresh.exists(),
+            "a scratch demo young enough to belong to a running capture must survive"
+        );
+        assert!(other.exists(), "files that are not ours must never be touched");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

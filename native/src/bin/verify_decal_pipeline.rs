@@ -34,11 +34,19 @@ fn main() {
 
     // Defaults to the demo's own folder, which is where the game keeps them,
     // so `dod/maps` resolves without being told.
+    // Demos live INSIDE the dod folder, so hl.exe sits one level above them.
+    // Getting this wrong points the map lookup at dod/dod/maps and the flush
+    // quietly falls back to the cone — which is exactly what it did first time,
+    // and the only visible symptom was a line in the log.
     let game_path = args
         .next()
         .map(std::path::PathBuf::from)
-        .or_else(|| path.parent().map(|p| p.join("hl.exe")))
-        .unwrap();
+        .or_else(|| {
+            path.parent()
+                .and_then(|p| p.parent())
+                .map(|p| p.join("hl.exe"))
+        })
+        .expect("could not locate hl.exe; pass it as the third argument");
 
     let (_t, streaks, _p, _i, _f, _m, _ft) = scan_demo_for_highlights(&path).expect("scan");
     let streaks: Vec<_> = streaks.into_iter().take(8).collect();
@@ -51,6 +59,18 @@ fn main() {
     config.record_start_lead = 1.5;
     config.record_stop_trail = 1.5;
     config.init_commands = vec!["mirv_fov 105".to_string()];
+
+    println!("game_path: {}", config.game_path);
+    println!(
+        "maps dir : {}",
+        std::path::Path::new(&config.game_path)
+            .parent()
+            .map(|p| {
+                let d = p.join("dod").join("maps");
+                format!("{} (exists: {})", d.display(), d.is_dir())
+            })
+            .unwrap_or_else(|| "<no parent>".to_string())
+    );
 
     let (jobs, _) = build_batch_queue(streaks, &config, &std::collections::HashMap::new()).unwrap();
     let source_frames = frame_count(&path).expect("source parses");
