@@ -311,6 +311,34 @@ pub fn scan(game_dir: &Path) -> CfgScan {
     out
 }
 
+/// `scan`, reading each folder at most once per process.
+///
+/// The pipeline asks per demo — once to resolve the capture FOV and once to
+/// report — so a batch of forty demos would otherwise re-read and re-parse the
+/// same configs eighty times. Configs do not change mid-batch, and if the user
+/// edits one the next run picks it up.
+pub fn scan_cached(game_dir: &Path) -> std::sync::Arc<CfgScan> {
+    static CACHE: std::sync::OnceLock<
+        std::sync::RwLock<std::collections::HashMap<PathBuf, std::sync::Arc<CfgScan>>>,
+    > = std::sync::OnceLock::new();
+    let cache = CACHE.get_or_init(Default::default);
+    let key = normalise(game_dir);
+
+    if let Ok(read) = cache.read() {
+        if let Some(hit) = read.get(&key) {
+            return std::sync::Arc::clone(hit);
+        }
+    }
+
+    let scanned = std::sync::Arc::new(scan(game_dir));
+    if let Ok(mut write) = cache.write() {
+        // Another thread may have inserted while this one was scanning. Either
+        // result is correct; keeping the stored one keeps them all identical.
+        return std::sync::Arc::clone(write.entry(key).or_insert(scanned));
+    }
+    scanned
+}
+
 /// `dirs::canonicalize` would resolve symlinks and fail on missing files; all
 /// this needs is a stable key so an `exec` cycle is recognised.
 fn normalise(path: &Path) -> PathBuf {

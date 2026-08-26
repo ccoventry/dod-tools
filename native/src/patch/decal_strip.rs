@@ -1860,7 +1860,7 @@ pub fn capture_fov_resolved(config: &PatcherConfig) -> f32 {
     let Some(dir) = game_dir_for(config) else {
         return config.capture_fov;
     };
-    let scan = cfg_scan::scan(&dir);
+    let scan = cfg_scan::scan_cached(&dir);
     for cvar in ["mirv_fov", "default_fov"] {
         if let Some(setting) = scan.effective(cvar) {
             if let Ok(v) = setting.value.parse::<f32>() {
@@ -1881,10 +1881,26 @@ fn warn_about_game_cfgs(config: &PatcherConfig) {
     let Some(dir) = game_dir_for(config) else {
         return;
     };
-    let scan = cfg_scan::scan(&dir);
+    let scan = cfg_scan::scan_cached(&dir);
     let found = scan.effective_settings();
     if found.is_empty() {
         return;
+    }
+
+    // Once per folder per run. This is called per demo, and a batch of forty
+    // would otherwise write the same paragraph into the activity log forty
+    // times — which is how a warning worth reading becomes one nobody reads.
+    {
+        static WARNED: std::sync::OnceLock<
+            std::sync::RwLock<std::collections::HashSet<std::path::PathBuf>>,
+        > = std::sync::OnceLock::new();
+        let warned = WARNED.get_or_init(Default::default);
+        let Ok(mut w) = warned.write() else {
+            return;
+        };
+        if !w.insert(dir.clone()) {
+            return;
+        }
     }
 
     let lines: Vec<String> = found
