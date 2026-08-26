@@ -1,14 +1,20 @@
 # Decal Flush: BSP-Derived Surface Coordinates
 
-> **Status 2026-08-26 — stages 1 and 2 done, 3 onwards not started.** The R&D direction for the
-> decal flush ([#60](https://github.com/ccoventry/dod-tools/issues/60)).
+> **Status 2026-08-26 — stages 1, 2 and 4 built and measured. 3, 5, 6 not started.**
+> The R&D direction for the decal flush ([#60](https://github.com/ccoventry/dod-tools/issues/60)).
 >
-> - **Stage 1 built** (`a4bed14`): `native/src/patch/bsp.rs` reads BSP v30 geometry.
+> - **Stage 1 built** (`a4bed14`, `1c86571`): `native/src/patch/bsp.rs` reads BSP v30 geometry,
+>   leaves, the node tree and visibility.
 > - **Stage 2 passed** (`46957a2`): 98.93% of **107,584 coordinates the engine provably accepted**,
->   across 83 demos and 18 maps, land on a world face within 1 unit. The parser's lump offsets,
->   edge winding, coordinate space and world-model selection are confirmed. Re-run it with
->   `native/src/bin/validate_bsp` after touching the parser.
-> - **Stages 3-7 are design only.** Nothing below the parser has been written or measured.
+>   across 83 demos and 18 maps, land on a world face within 1 unit. The node tree validates the
+>   same way — a point nudged 4 units along a face normal lands in open space 100% of the time and
+>   in solid 99.5% the other way. Re-run with `native/src/bin/validate_bsp`.
+> - **Stage 4 built** (`a9c9eab`, `da99dd7`) and it is the one that mattered. Across the whole
+>   85-demo sample at `mirv_fov 105`: **85/85 demos reach a full 68-position sweep, with zero
+>   in-clip frames showing a flush position, every one decided from geometry.** Before it, three
+>   of those demos were getting a single position — a sweep that turns 4 of 256 ring slots.
+> - **Stages 3, 5 and 6 are design only.** With stage 4 delivering full sweeps everywhere at ring
+>   256, stage 3's remaining value is the headroom stage 6 needs, not the ring itself.
 >
 > Read `docs/goldsrc_dod_quirks.md` and issue #60 first — the engine facts the flush rests on
 > are recorded there and must not be re-derived.
@@ -248,10 +254,15 @@ let the pipeline stop pinning the cvar entirely, which is worth more than the co
 
 1. **~1028 distinct positions** (4096 + 16 margin, at `DECALS_PER_POSITION` = 4). BSP-derived
    coordinates supply this easily; some demos already reach 11,000-35,000 camera-safe tiles.
-2. **~1028 carrier frames per burst** — the real constraint. Injection is capped at 4 per frame
-   into packets under 1024 bytes, so a full sweep needs ~10 seconds of demo time at 100fps ahead of
-   each clip. Gaps are usually minutes, but back-to-back and chained clips will report
-   `bursts_short` far more often than the current 272-injection burst does.
+2. **~1028 carrier frames per burst** — the real constraint, and the one still unmeasured.
+   Injection is capped at 4 per frame into packets under 1024 bytes, so a full sweep needs ~10
+   seconds of demo time at 100fps ahead of each clip. Gaps are usually minutes, but back-to-back
+   and chained clips will report `bursts_short` far more often than the current 272-injection
+   burst does.
+
+   Position supply is no longer the question: measured across the 85-demo sample after stage 4,
+   **every demo has at least 3,916 camera-safe candidates** (mean ~14,000), against the 1,028 a
+   4096 sweep needs. Stage 6 is therefore reachable without stage 3.
 3. **An in-game unknown**: 4 decals per frame across ~1028 consecutive frames is roughly 15x
    today's burst, arriving during fast-forward. Whether the engine ingests that without hitching
    is not answerable from the bytes.
