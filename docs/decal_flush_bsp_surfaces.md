@@ -367,3 +367,66 @@ BSP-derived coordinates existing, so it can land first if stage 2 says the parse
   came from before they moved into `decal_strip`.
 - `docs/goldsrc_dod_quirks.md` — engine constraints.
 - Issue #60 — the full flush history, including why the `r_decals` cvar approach cannot work.
+
+---
+
+## Map identity: is this the map the demo was recorded on?
+
+Added 2026-08-26. Not part of the seven-stage plan above — it fell out of the BSP work, and it
+answers a question the rest of the pipeline had been assuming away.
+
+A demo header carries the map's name **and its checksum**. That checksum turns out to be
+computable from the map file:
+
+    CRC-32 (reflected IEEE, init 0xFFFFFFFF) over lumps 1..14 in header order,
+    LUMP_ENTITIES (0) excluded, and left UNFINALISED — no closing XOR.
+
+The entities lump is left out on purpose: entities are what a server operator edits, so excluding
+them lets a tweaked server run without every client reporting a mismatch. It also makes the
+checksum answer exactly the question worth asking here — is this the same *geometry*.
+
+The missing final XOR is the part that is easy to get wrong. `CRC32_Final` is not called on this
+value before it is written, so a textbook CRC-32 misses by exactly `0xFFFFFFFF`.
+
+Verified against the whole library: **397 of 397 first-person demos match their own map file.**
+The 45 HLTV demos zero the field — nothing in an HLTV demo records a map build — so they are
+reported as *unverifiable*, never as wrong.
+
+### Why it matters here
+
+Three states, not two:
+
+| state | consequence |
+| --- | --- |
+| missing | the demo cannot be played at all |
+| **wrong build** | it plays, and every coordinate taken from the map refers to a different world |
+| matching | fine |
+
+The middle one is the reason this exists. `_b2` against `_b3e`, or a recompile that kept its name,
+gives a map that parses perfectly and describes somewhere else. Occlusion would answer
+confidently and wrongly, which is precisely the failure mode this feature cannot show in its
+own output. `load_map` now refuses a mismatched map and falls back to the cone.
+
+It also fixed a real defect in the atlas: `MapKey::from_header` filed every HLTV demo under
+`<map>_00000000`, separate from the same map's first-person bucket. Those now key off the local
+map's checksum.
+
+### Fetching
+
+`patch::map_fetch` downloads from the KTP mirror, which lays every file out at its path under
+`dod/` — so the URL is a pure function of the map name and there is no index to keep in step.
+
+The order is the whole point: download to a scratch file, read the checksum out of **what actually
+arrived**, and only then move it into the library. A mirror can serve an error page with a 200,
+and a wrong build installed automatically is exactly what the checksum work exists to prevent.
+An existing file is moved aside as `<name>.<crc>.bsp.bak`, never overwritten.
+
+Still open: the `.res` file lists a map's models, sounds and sprites, which would make this a full
+dependency fetch rather than a map fetch. WADs are not reliably in `.res`, but the TEXTURES lump
+already names them, so they can come from the map itself.
+
+### Tools
+
+- `native/src/bin/check_maps <demo-or-folder> [maps-dir] [--fetch]` — reports, or fetches.
+- The Master Queue banner (`desktop-studio/src/map_warnings.js`), grouped by map rather than by
+  demo: twenty demos short of one map is one download.
