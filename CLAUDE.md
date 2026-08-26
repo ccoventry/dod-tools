@@ -64,9 +64,7 @@ Cargo workspace (`Cargo.toml`, resolver "3", edition 2024) containing the follow
 
 ### Terminal & Shell Rules
 - **Diagnostics:** Never output raw compiler logs. Provide concise, single-sentence failure summaries and direct mechanical fixes.
-- **Pipeline Execution:** DO NOT run `cargo check` or `cargo run` internally without piping output. Pipe execution through `tuf` (e.g., `cmd 2>&1 | tuf`).
 - **Execution Bypass:** Use `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` for blocked scripts. For unsigned binaries blocked by WDAC, execute via `run.ps1` to sequence process stops, build steps, and signature updates.
-- **Shell Chaining:** Collapse multi-step shell commands into a single sequence using semicolons `;`.
 
 ---
 
@@ -89,14 +87,3 @@ Cargo workspace (`Cargo.toml`, resolver "3", edition 2024) containing the follow
 - **Path Escaping:** All runtime paths passed to HLAE console inputs must replace forward slashes with double-escaped backslashes (`.replace("/", "\\\\")`).
 - **Tauri IPC:** Every frontend `invoke()` call in `ipc_bridge.js` must implement a `.catch()` block to prevent swallowed Rust backend errors.
 - **Filesystem Picking:** Force the use of `@tauri-apps/plugin-dialog` native pickers instead of text input paths to prevent string escaping vulnerabilities.
-
----
-
-## Mandatory Task Completion Protocol
-
-Upon completion or blocking of any task, you MUST output a SINGLE markdown code block holding the return payload. The title MUST match the prompt title provided to you:
-
-    ### 📡 Return Payload for Web AI: [Exact Prompt Title]
-    - **Files Modified:** [List relative file paths]
-    - **Logic Changes:** [Point-form summary of modifications]
-    - **Terminal/Compiler Status:** [Status of build/test commands]

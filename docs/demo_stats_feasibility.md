@@ -2,8 +2,10 @@
 
 **Start here if you're picking this up cold.** This is a separate work stream from the
 Capture/Render Studio track in `active_sprint_state.md` / `engineering_backlog.md` — it
-lives entirely on `dev`/`main` (commits `4b2de48`, `0ec428a`, `8d483b7`, `4070d62`, all
-merged, both branches identical as of 2026-08-22), not on the capture/render feature
+lives entirely on `dev`/`main` (commits `a86973a`, `8e6c3a5`, `c3b9c88`, `669d9f9`, all
+merged, both branches identical as of 2026-08-22 — hashes corrected 2026-08-24, the
+originally-recorded ones were unreachable from either branch, likely due to a history
+rewrite), not on the capture/render feature
 branches. If you're resuming work on capture/render quick-wins, this doc doesn't affect
 you; if you're resuming the stats/league work, start here instead of re-deriving context.
 

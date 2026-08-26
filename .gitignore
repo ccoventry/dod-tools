@@ -14,7 +14,19 @@ hlcr_config.json
 # === Dependencies & Local Binaries ===
 /demos/
 /ffmpeg/
-/native/dist/
+
+# === Demo Files ===
+# Guard against demos landing anywhere outside /demos/ (gitignored scratch
+# space for real-world debugging demos) — should be root-caused in code if
+# demos keep turning up unexpectedly, but this is the safety net regardless.
+# Exception: the tracked test fixture dem-patch's tests expect (see
+# dem-patch/src/tests/README.md). demotest_out.dem, its write-test output in
+# that same folder, is already covered by dem-patch/.gitignore's `*out.dem`;
+# demo2test.dem (from the crate's own README example, doesn't match that
+# suffix) is excluded explicitly here so it can't get committed by accident.
+*.dem
+!/dem-patch/src/tests/*.dem
+/dem-patch/src/tests/demo2test.dem
 
 # === IDEs and Editors ===
 .vs/
@@ -34,17 +46,15 @@ Desktop.ini
 /local/
 
 bootstrap_payload.md
-primer.dem
-patcher_config.json
 patcher_config.json
 native/local/crash_log.md
-patcher_config.json
-primer.dem
 
 # === Node / JS Dependencies ===
-node_modules/
 **/node_modules/
 **/dist/
 
 # === Tauri Artifacts ===
 desktop-studio/src-tauri/gen/
+
+# === Claude Code harness state ===
+.claude/scheduled_tasks.lock
