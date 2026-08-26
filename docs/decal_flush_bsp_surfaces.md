@@ -250,8 +250,24 @@ BSP-derived coordinates existing, so it can land first if stage 2 says the parse
   plane (measured, #60). BSP faces give the true plane, so the existing "place on the fitted plane,
   never offset more than ~3 units" rule may need revisiting for this source — probably in our
   favour, but it should be re-measured rather than assumed.
-- **Map availability.** Custom or since-deleted maps mean no `.bsp`. Falls back to today's
-  behaviour, which is correct, but the log should say so.
+- **Map availability.** A map that is not installed means no `.bsp`, which falls back to today's
+  behaviour — correct, but the log should say so. Measured 2026-08-26: of the 17 maps referenced by
+  a 442-demo library, 16 were present and one (`dod_railyard_s9a`) was not, so this is a real but
+  narrow gap.
+
+  The KTP league mirrors the whole `/dod` folder at `https://fastdl.ktpdod.com/dod/...`, path for
+  path, so a missing map is `.../dod/maps/<name>.bsp`. Whether the pipeline should *fetch* one
+  itself is a separate decision — it would put network access in the capture path, which wants to
+  be opt-in and off by default — but the option exists, and it also makes a **pre-built,
+  distributable coordinate store** practical: BSP-derived coordinates are identical for everyone on
+  a given map build, so they could be generated once for every map on the mirror and shipped
+  through the updater rather than accumulated locally. `decal_atlas::load_all` already takes
+  read-only seed directories for exactly that.
+
+  **Verifying a downloaded map is the right build** is already solved by stage 2: run
+  `validate_bsp` against a demo that uses it. The correct build scores ~97-99% within 1 unit; a
+  wrong one collapses. That avoids having to reimplement the engine's `map_checksum` algorithm.
+  `dod_railyard_s9a` scored 99.4% and 97.5% on its two demos.
 - **Cost.** Map parsing is once per map per session and cacheable through the store, so it should
   not touch the per-demo pre-pass budget (~5s per demo today).
 
