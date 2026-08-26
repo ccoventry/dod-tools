@@ -249,9 +249,15 @@ pub struct DecalCleanStats {
     pub visibility_basis: VisibilityBasis,
     /// World faces in the map, when one was loaded.
     pub map_faces: usize,
-    /// Whether that map carries visibility data. Without it the PVS shortcut
-    /// is unavailable and every in-cone candidate needs a trace.
+    /// Whether that map carries visibility data.
     pub map_has_vis: bool,
+    /// Of the chosen positions, how many leaf visibility ALSO calls hidden.
+    /// `None` when the map has no vis data.
+    ///
+    /// Placement is decided by line-of-sight traces alone. This is the second
+    /// opinion, recorded rather than acted on: the two were caught disagreeing,
+    /// and which is right is one of the things the in-game check settles.
+    pub pvs_agrees_hidden: Option<usize>,
     /// How many of those were clear of every in-clip camera. A shortfall with
     /// these two close together means the demo offers little surface; a
     /// shortfall with a wide gap means the surface it has is all in shot.
@@ -975,15 +981,51 @@ impl<'a> Visibility<'a> {
     }
 
     fn hidden(&self, pos: &[f32; 3], cameras: &[([f32; 3], [f32; 3])]) -> bool {
-        // Ruled out for every camera at once, for one lookup.
-        if let (Some(b), Some(pvs)) = (self.bsp, self.camera_pvs.as_ref()) {
-            if !bsp::Bsp::pvs_contains(pvs, b.leaf_at(pos)) {
-                return true;
-            }
-        }
+        // Deliberately the trace alone, not PVS.
+        //
+        // PVS was a fast accept here: a candidate whose leaf is absent from
+        // every camera leaf's PVS cannot be rendered, so it could be called
+        // hidden without tracing. Sound in theory; the two disagreed in
+        // practice. At a 4096-slot ring — where selection reaches far enough
+        // down the ranked list to need marginal candidates — 200 in-clip
+        // frames had a clear line of sight to positions PVS had called
+        // invisible. One of the two is wrong, and nothing available here can
+        // say which without loading the game.
+        //
+        // So the cheaper test does not get to grant safety. Losing it costs
+        // time, and buying that back by trusting a check that has already been
+        // caught disagreeing with the geometry is not a trade worth making for
+        // the one defect this pass must never introduce.
+        //
+        // `camera_pvs` is kept because it is the thing to re-examine when the
+        // in-game check happens: if the traces prove right, this is where the
+        // speed goes back.
         !cameras
             .iter()
             .any(|(eye, fwd)| self.on_screen_from(pos, eye, fwd))
+    }
+
+    /// Whether leaf visibility also considers a position unrenderable, or
+    /// `None` when the map carries no vis data.
+    ///
+    /// Not used to decide anything — see `hidden` for why. It is measured so
+    /// the in-game check has a number to settle: if PVS agrees with the traces
+    /// on every chosen position, the fast accept can come back.
+    fn pvs_says_hidden(&self, pos: &[f32; 3]) -> Option<bool> {
+        let b = self.bsp?;
+        let pvs = self.camera_pvs.as_ref()?;
+        Some(!bsp::Bsp::pvs_contains(pvs, b.leaf_at(pos)))
+    }
+
+    /// How many of these positions leaf visibility also calls hidden.
+    fn pvs_agreement(&self, positions: &[[f32; 3]]) -> Option<usize> {
+        self.camera_pvs.as_ref()?;
+        Some(
+            positions
+                .iter()
+                .filter(|p| self.pvs_says_hidden(p).unwrap_or(false))
+                .count(),
+        )
     }
 
     /// In-clip camera samples from which any of these positions is on screen.
@@ -1386,6 +1428,7 @@ pub fn clean_demo_decals(
         stats.camera_samples = survey.window_cameras.len();
         stats.flush_on_camera_frames =
             visibility.on_camera_frames(&flush_positions, &survey.window_cameras);
+        stats.pvs_agrees_hidden = visibility.pvs_agreement(&flush_positions);
     }
 
     // ── Pass 1: strip decal messages outside the capture windows ─────────────

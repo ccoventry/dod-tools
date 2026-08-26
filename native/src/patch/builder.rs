@@ -789,7 +789,15 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
         // wraps; it does not evict anything, so lowering it once decals have
         // accumulated strands every one sitting above the new limit. Pinned
         // last so a user-supplied init command cannot override it.
-        if config.decal_flush {
+        //
+        // Except at the maximum. r_decals is clamped to MAX_RENDER_DECALS, so a
+        // sweep that size turns a full revolution whatever the cvar happens to
+        // be — any smaller ring simply gets swept several times over. Pinning
+        // then buys nothing and costs the precondition the rest of this design
+        // works around: that nothing else may touch r_decals. Left alone, an
+        // autoexec or a stray console command can no longer quietly leave the
+        // sweep under-clearing.
+        if config.decal_flush && config.decal_ring_limit < crate::patch::MAX_RENDER_DECALS {
             final_init_commands.push(format!("r_decals {}", config.decal_ring_limit));
         }
 
@@ -1533,6 +1541,47 @@ mod tests {
         assert!(
             !jobs[1].init_commands.iter().any(|c| c.starts_with("r_decals")),
             "with the flush off the pipeline must not touch the cvar at all"
+        );
+    }
+
+    #[test]
+    fn test_a_maximum_ring_sweep_stops_pinning_the_cvar() {
+        // r_decals is clamped to MAX_RENDER_DECALS, so a sweep that size turns
+        // a full revolution whatever the cvar is. Pinning then buys nothing and
+        // costs the precondition the rest of the design works around — that
+        // nothing else may set r_decals.
+        let mut config = mock_config();
+        config.decal_ring_limit = crate::patch::MAX_RENDER_DECALS;
+
+        let (jobs, _) = build_batch_queue(
+            vec![streak_with_kills(1000, 1200, &[1000, 1200])],
+            &config,
+            &std::collections::HashMap::new(),
+        ).unwrap();
+
+        assert!(
+            !jobs[1].init_commands.iter().any(|c| c.starts_with("r_decals")),
+            "a maximum sweep must leave the cvar alone: {:?}",
+            jobs[1].init_commands
+        );
+    }
+
+    #[test]
+    fn test_anything_below_the_maximum_still_pins() {
+        // Below the ceiling the sweep only covers the ring it was sized for, so
+        // the cvar has to be held there or the sweep under-clears.
+        let mut config = mock_config();
+        config.decal_ring_limit = crate::patch::MAX_RENDER_DECALS - 1;
+
+        let (jobs, _) = build_batch_queue(
+            vec![streak_with_kills(1000, 1200, &[1000, 1200])],
+            &config,
+            &std::collections::HashMap::new(),
+        ).unwrap();
+
+        assert_eq!(
+            jobs[1].init_commands.last().map(String::as_str),
+            Some("r_decals 4095")
         );
     }
 

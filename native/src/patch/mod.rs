@@ -37,6 +37,12 @@ pub const EVENT_FRAME_SIZE: usize = 84;
 pub const MAX_ECHO_CHUNK_SIZE: usize = 55;
 pub const CUSTOM_CMD_WARN_LIMIT: usize = 60;
 pub const PRIMER_DELAY_TICKS: i32 = 500;
+
+/// The engine's own ceiling on the decal ring. `r_decals` is clamped to this,
+/// so a sweep of this size turns a full revolution regardless of what the cvar
+/// is set to — which is what lets the pipeline stop pinning it. See
+/// `decal_strip` and `docs/decal_flush_bsp_surfaces.md`.
+pub const MAX_RENDER_DECALS: u32 = 4096;
 pub const BREADCRUMB_INTERVAL_TICKS: i32 = 5000;
 
 pub mod types;

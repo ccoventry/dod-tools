@@ -98,12 +98,18 @@ fn main() {
         .or_else(|| path.parent().map(|p| p.join("maps")))
         .filter(|p| p.is_dir());
 
+    let ring: u32 = std::env::var("FLUSH_RING")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(256);
+
     let opts = DecalCleanOptions {
         inject_r_decals_command: false,
         atlas_dir: std::env::var("FLUSH_ATLAS_DIR")
             .ok()
             .map(std::path::PathBuf::from),
         maps_dir,
+        ring_limit: ring,
         visibility_cone_degrees: on_screen_half_angle(fov, 1920, 1080),
         ..Default::default()
     };
@@ -130,7 +136,7 @@ fn main() {
                 VisibilityBasis::ConeOnly => "cone",
             };
             println!(
-                "{}\t{}\tOK\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                "{}\t{}\tOK\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
                 label,
                 name,
                 windows.len(),
@@ -144,6 +150,11 @@ fn main() {
                 s.atlas.total,
                 basis,
                 s.map_faces,
+                // Bursts that could not fit a whole sweep in the gap before
+                // their clip — the constraint that decides whether a maximum
+                // sweep is reachable at all.
+                s.bursts_short.len(),
+                s.bursts_placed,
             );
         }
         Err(e) => println!("{}\t{}\tSKIP\tclean failed: {}", label, name, e),
