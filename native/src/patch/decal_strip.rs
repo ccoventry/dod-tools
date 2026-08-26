@@ -141,10 +141,17 @@ pub struct DecalCleanOptions {
     /// position is trusted, so a player still falling from an elevated spawn
     /// point is never sampled mid-air.
     pub grounded_settle_frames: usize,
-    /// How far the flush coordinate must stay from every camera position
-    /// recorded inside a capture window. Distance is only a proxy for
-    /// visibility — a long sightline can still expose a distant spot — but it
-    /// reliably rules out the camera walking straight over the flush point.
+    /// Clearance from every in-window camera position that flush positions are
+    /// *preferred* to have. No longer a hard filter: positions are ranked by
+    /// clearance and the best are taken, so a demo whose every surface passes
+    /// closer than this still gets a full sweep rather than nothing. Falling
+    /// short of it is reported.
+    ///
+    /// Keeping decals off screen is the cone test's job (`visibility_cone_
+    /// degrees`); clearance is the margin against that test's own blind spot,
+    /// which is that cameras are sampled every fourth frame and a fast turn
+    /// between two samples is not seen. It still gates the last-resort
+    /// single-position fallback, where there is no spread to rank.
     pub min_camera_clearance: f32,
     /// Half-angle of the cone treated as "on screen" for the line-of-sight
     /// test. DoD's default FOV is ~90 degrees horizontal, so 40 is a slightly
@@ -792,21 +799,22 @@ fn resolve_flush_positions(survey: &Survey, opts: &DecalCleanOptions, wanted: us
         };
     }
 
-    // Only the single-position fallback still needs a spawn reference.
-    let Some(reference) = survey.grounded_origin.or(survey.spawn_eye) else {
-        return Placement::default();
-    };
-
+    // Never in shot. This is the guarantee: a position inside the camera's cone
+    // at any sampled in-clip frame is rejected outright, however far away it is.
+    //
+    // Clearance deliberately is NOT part of this test. It was, as a hard floor,
+    // and it quietly wrecked the pass on a third of a 28-demo survey: on
+    // harrington, all 8165 tiles sat within 900 units of some camera at some
+    // point in eight clips, so every one was thrown away and the flush fell
+    // back to a single position — a sweep that turns 4 of 256 ring slots.
+    // Dropping the floor to 250 there kept `flush_on_camera_frames` at 0 while
+    // restoring a full sweep, which is the measurement that settles it: the
+    // cone test is what keeps decals off screen, and distance is a tiebreak.
     let cos_cone = opts.visibility_cone_degrees.to_radians().cos();
-    let safe = |pos: &[f32; 3]| -> bool {
-        let mut nearest = f32::INFINITY;
+    let hidden = |pos: &[f32; 3]| -> bool {
         for (eye, fwd) in &survey.window_cameras {
             let v = [pos[0] - eye[0], pos[1] - eye[1], pos[2] - eye[2]];
             let dist = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
-            nearest = nearest.min(dist);
-            if nearest < opts.min_camera_clearance {
-                return false;
-            }
             if dist < 1.0 || dist > opts.visibility_max_distance {
                 continue;
             }
@@ -861,7 +869,7 @@ fn resolve_flush_positions(survey: &Survey, opts: &DecalCleanOptions, wanted: us
         let mut ok: Vec<(f32, [f32; 3])> = candidates
             .iter()
             .copied()
-            .filter(|p| safe(p))
+            .filter(|p| hidden(p))
             .map(|p| (clearance(&p), p))
             .collect();
         if src == FlushSource::TiledPlane {
@@ -891,6 +899,16 @@ fn resolve_flush_positions(survey: &Survey, opts: &DecalCleanOptions, wanted: us
         placement.source = source;
         return placement;
     }
+
+    // Only the last-resort single position needs a spawn reference, to compute
+    // a floor point beneath it. Gating the whole function on one cost two
+    // demos in the survey their entire flush: both were scrim recordings whose
+    // refparams never yielded a settled on-ground origin, yet both carried
+    // ~1500-2200 real decals that would have served as positions perfectly
+    // well. No reference now means no fallback, not no flush.
+    let Some(reference) = survey.grounded_origin.or(survey.spawn_eye) else {
+        return placement;
+    };
 
     let (positions, source) = legacy_single_position(survey, opts, reference);
     Placement {
@@ -1507,9 +1525,24 @@ fn report(
         ));
     }
 
+    // Positions closer to the lens than preferred. Not a defect on its own —
+    // every one of them cleared the cone test, so none is ever in shot — but it
+    // narrows the margin against a camera turn falling between two samples.
+    if let Some(nearest) = stats.min_camera_distance {
+        if nearest < opts.min_camera_clearance {
+            crate::log_markdown(&format!(
+                "ℹ️ **Decal flush spots are closer to the camera than preferred** — nearest \
+                 approach {:.0} units against a {:.0}-unit preference. All of them cleared the \
+                 line-of-sight test, so none should be in shot; this is the margin narrowing, \
+                 not a decal on screen.",
+                nearest, opts.min_camera_clearance
+            ));
+        }
+    }
+
     // The one outright defect this pass can introduce: its own decals on
-    // screen. Camera clearance is only a proxy for visibility, so a non-zero
-    // count here has to be looked at rather than trusted.
+    // screen. The cone test is sampled every fourth frame, so a non-zero count
+    // here has to be looked at rather than trusted.
     if stats.flush_on_camera_frames > 0 {
         crate::log_markdown(&format!(
             "⚠️ **Flush decals may be on camera** — the chosen spot(s) fall inside the camera cone \
