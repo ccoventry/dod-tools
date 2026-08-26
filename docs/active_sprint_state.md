@@ -13,7 +13,7 @@
 **In progress:**
 - `chore/docs-cleanup-issues-migration` — docs/CLAUDE.md/CI reconciled, open items migrated to GitHub Issues. Not yet merged into `dev`.
 - `feature/decal-flush-r-and-d` — decal hygiene between capture clips ([#60](https://github.com/ccoventry/dod-tools/issues/60)). **R&D complete; production wiring is what remains.** The ring sweep was validated in game (2026-08-24), and the engine constant it depended on was measured (2026-08-25): `m_Size` for the small bullet hole is ~4 units, so a position may sit 3 units off a surface outward or 4 inward. Movement *along* a fitted plane is unconstrained, so flush positions get tiled across a plane rather than harvested one at a time — which closes the old 30-of-68 position shortfall. Remaining: tile positions in `decal_strip.rs`, choose `ring_limit` from a real capture, thread `record_start_tick`/`record_stop_tick` into `CaptureBlock`. Full findings on the issue, including why the `r_decals` cvar approach cannot work and why structural verification cannot catch this feature's failure mode.
-- `chore/demos-into-local` — repo-relative demo paths repointed at `local/demos` after that folder moved under `local/` alongside a new `screenshots/`. Branched off `dev`, pushed, PR not yet opened.
+Test demos and screenshots now live in `local/demos/` and `local/screenshots/`, both gitignored via `/local/`. Repo-relative paths were repointed to match in PR #61 (`chore/demos-into-local`, merged into `dev` 2026-08-25).
 
 **Next work:** pick from the open GitHub Issues, or whatever the user brings to a fresh session.
 
