@@ -40,6 +40,7 @@
 // so 256 keeps a full flush at ~2KB of injected messages instead of the ~36KB a
 // 4096-slot ring would need.
 
+use super::bsp;
 use super::decal_atlas;
 use dem::open_demo_from_bytes;
 use dem::types::{
@@ -162,6 +163,9 @@ pub struct DecalCleanOptions {
     /// than accurate, because a caller that does not know its own FOV is
     /// better served by rejecting too many spots than by putting one in shot.
     pub visibility_cone_degrees: f32,
+    /// Directory holding the game's `.bsp` files. With one the flush can tell
+    /// a wall from a sightline; without it the frame cone is all there is.
+    pub maps_dir: Option<std::path::PathBuf>,
     /// Where this run's proven world coordinates are pooled per map, and read
     /// back from. `None` keeps the pass self-contained — it uses only what this
     /// demo proves, which is what the CLI and the probe rig want.
@@ -192,6 +196,7 @@ impl Default for DecalCleanOptions {
             flush_texture_index: None,
             floor_drop: ORIGIN_TO_FLOOR,
             grounded_settle_frames: 10,
+            maps_dir: None,
             atlas_dir: None,
             atlas_seed_dirs: Vec::new(),
             min_camera_clearance: 900.0,
@@ -240,6 +245,13 @@ pub struct DecalCleanStats {
     pub atlas: crate::patch::decal_atlas::AtlasStats,
     /// Which map build the store was keyed on, when one was resolved.
     pub atlas_map: Option<String>,
+    /// What the on-screen test was actually able to consult.
+    pub visibility_basis: VisibilityBasis,
+    /// World faces in the map, when one was loaded.
+    pub map_faces: usize,
+    /// Whether that map carries visibility data. Without it the PVS shortcut
+    /// is unavailable and every in-cone candidate needs a trace.
+    pub map_has_vis: bool,
     /// How many of those were clear of every in-clip camera. A shortfall with
     /// these two close together means the demo offers little surface; a
     /// shortfall with a wide gap means the surface it has is all in shot.
@@ -840,6 +852,157 @@ pub enum FlushSource {
 ///  3. The computed floor beneath the settled spawn position. Used only when
 ///     the demo yielded no decals at all; a spawn can sit above the floor on
 ///     some maps, so this is a geometric guess and is reported as such.
+
+
+/// How the flush decided what a camera can see, for reporting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum VisibilityBasis {
+    /// Map geometry: leaf visibility plus a line-of-sight trace. The only
+    /// basis that can tell a wall from a sightline.
+    Geometry,
+    /// No map available, so the frame cone alone. Correct about what is in
+    /// front of a camera, silent about what stands in the way, and therefore
+    /// over-rejects.
+    #[default]
+    ConeOnly,
+}
+
+/// Loads the map a demo was recorded on, when the caller supplied a maps
+/// directory.
+///
+/// A missing or unreadable map is not an error: the flush worked without one
+/// before this existed and still does, just with the cone alone. It is logged
+/// rather than swallowed, because "this capture was planned without knowing
+/// where the walls are" is worth seeing.
+fn load_map(
+    demo: &dem::types::Demo,
+    opts: &DecalCleanOptions,
+    stats: &mut DecalCleanStats,
+) -> Option<bsp::Bsp> {
+    let dir = opts.maps_dir.as_ref()?;
+    let key = decal_atlas::MapKey::from_header(&demo.header)?;
+    let path = dir.join(format!("{}.bsp", key.name));
+
+    match bsp::Bsp::from_file(&path) {
+        Ok(map) => {
+            stats.visibility_basis = VisibilityBasis::Geometry;
+            stats.map_faces = map.world_faces().len();
+            stats.map_has_vis = map.has_vis();
+            Some(map)
+        }
+        Err(e) => {
+            crate::log_markdown(&format!(
+                "ℹ️ **Decal flush has no map geometry** for `{}`: {}. Falling back to the frame \
+                 cone alone, which cannot tell a wall from a sightline and so rejects spots that \
+                 are actually hidden.",
+                key.name, e
+            ));
+            None
+        }
+    }
+}
+/// Decides whether a candidate position is ever on screen during a clip.
+///
+/// The cone alone answers "is it in front of a camera", which is not the
+/// question — a wall two rooms away is in front of the camera and invisible.
+/// Given map geometry this asks the real one, cheapest test first:
+///
+///   1. PVS. If the candidate's leaf is absent from the union of every camera
+///      leaf's potentially-visible set, the engine cannot render it from
+///      anywhere those cameras stood. One lookup, and it settles most
+///      candidates outright.
+///   2. The cone, per camera. Cheap, and skips the trace for anything behind
+///      the viewer.
+///   3. A segment trace, only for candidates a camera is actually pointing at.
+///
+/// Without a map it degrades to the cone alone, which is what shipped before.
+struct Visibility<'a> {
+    bsp: Option<&'a bsp::Bsp>,
+    /// Union of the PVS of every leaf a camera stood in. `None` when the map
+    /// has no vis data or a camera leaf had no row, in which case nothing can
+    /// be ruled out this way.
+    camera_pvs: Option<Vec<u8>>,
+    cos_cone: f32,
+    max_distance: f32,
+}
+
+impl<'a> Visibility<'a> {
+    fn new(bsp: Option<&'a bsp::Bsp>, cameras: &[([f32; 3], [f32; 3])], opts: &DecalCleanOptions) -> Self {
+        // Cameras cluster hard — thousands of samples collapse to a handful of
+        // rooms — so the union is computed over distinct leaves, not samples.
+        let camera_pvs = bsp.and_then(|b| {
+            if !b.has_vis() {
+                return None;
+            }
+            let mut leaves: Vec<usize> = cameras.iter().map(|(eye, _)| b.leaf_at(eye)).collect();
+            leaves.sort_unstable();
+            leaves.dedup();
+            b.pvs_union(&leaves)
+        });
+
+        Self {
+            bsp,
+            camera_pvs,
+            cos_cone: opts.visibility_cone_degrees.to_radians().cos(),
+            max_distance: opts.visibility_max_distance,
+        }
+    }
+
+    /// Whether one camera can see a position: inside the frame, and with
+    /// nothing solid in the way.
+    ///
+    /// This is also what the on-camera statistic counts, so the number the log
+    /// reports and the rule the selection applied cannot disagree. They did
+    /// briefly, and the stat screamed about hundreds of frames while every
+    /// position it was complaining about was behind a wall.
+    fn on_screen_from(&self, pos: &[f32; 3], eye: &[f32; 3], fwd: &[f32; 3]) -> bool {
+        let v = [pos[0] - eye[0], pos[1] - eye[1], pos[2] - eye[2]];
+        let dist = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+        if dist < 1.0 || dist > self.max_distance {
+            return false;
+        }
+        let fl = (fwd[0] * fwd[0] + fwd[1] * fwd[1] + fwd[2] * fwd[2]).sqrt();
+        if fl < 0.5 {
+            return false;
+        }
+        if (v[0] * fwd[0] + v[1] * fwd[1] + v[2] * fwd[2]) / (dist * fl) < self.cos_cone {
+            return false; // outside the frame
+        }
+        match self.bsp {
+            Some(b) => !b.line_blocked(eye, pos),
+            None => true,
+        }
+    }
+
+    fn hidden(&self, pos: &[f32; 3], cameras: &[([f32; 3], [f32; 3])]) -> bool {
+        // Ruled out for every camera at once, for one lookup.
+        if let (Some(b), Some(pvs)) = (self.bsp, self.camera_pvs.as_ref()) {
+            if !bsp::Bsp::pvs_contains(pvs, b.leaf_at(pos)) {
+                return true;
+            }
+        }
+        !cameras
+            .iter()
+            .any(|(eye, fwd)| self.on_screen_from(pos, eye, fwd))
+    }
+
+    /// In-clip camera samples from which any of these positions is on screen.
+    /// Must be zero.
+    fn on_camera_frames(
+        &self,
+        positions: &[[f32; 3]],
+        cameras: &[([f32; 3], [f32; 3])],
+    ) -> usize {
+        cameras
+            .iter()
+            .filter(|(eye, fwd)| {
+                positions
+                    .iter()
+                    .any(|p| self.on_screen_from(p, eye, fwd))
+            })
+            .count()
+    }
+}
 /// Where the burst will go, plus enough of how that was decided to explain a
 /// shortfall from the log alone.
 #[derive(Default)]
@@ -862,6 +1025,7 @@ struct Placement {
 fn resolve_flush_positions(
     survey: &Survey,
     atlas: &[[f32; 3]],
+    visibility: &Visibility,
     opts: &DecalCleanOptions,
     wanted: usize,
 ) -> Placement {
@@ -884,24 +1048,10 @@ fn resolve_flush_positions(
     // Dropping the floor to 250 there kept `flush_on_camera_frames` at 0 while
     // restoring a full sweep, which is the measurement that settles it: the
     // cone test is what keeps decals off screen, and distance is a tiebreak.
-    let cos_cone = opts.visibility_cone_degrees.to_radians().cos();
-    let hidden = |pos: &[f32; 3]| -> bool {
-        for (eye, fwd) in &survey.window_cameras {
-            let v = [pos[0] - eye[0], pos[1] - eye[1], pos[2] - eye[2]];
-            let dist = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
-            if dist < 1.0 || dist > opts.visibility_max_distance {
-                continue;
-            }
-            let fl = (fwd[0] * fwd[0] + fwd[1] * fwd[1] + fwd[2] * fwd[2]).sqrt();
-            if fl < 0.5 {
-                continue;
-            }
-            if (v[0] * fwd[0] + v[1] * fwd[1] + v[2] * fwd[2]) / (dist * fl) >= cos_cone {
-                return false;
-            }
-        }
-        true
-    };
+    // With map geometry this also asks whether anything stands in the way,
+    // which the cone alone cannot. That matters most where the cone is
+    // strictest: on a busy map most of what it discards is behind a wall.
+    let hidden = |pos: &[f32; 3]| -> bool { visibility.hidden(pos, &survey.window_cameras) };
 
     // Furthest approach any in-window camera makes to a position. Ranking by
     // this — rather than by nearness to spawn — matches what these spots are
@@ -1200,7 +1350,13 @@ pub fn clean_demo_decals(
         }
     }
 
-    let placement = resolve_flush_positions(&survey, &atlas, opts, positions_wanted);
+    // The map itself, when the caller told us where to find one. Used both to
+    // decide what is genuinely hidden and, in time, to supply coordinates that
+    // owe nothing to where anyone happened to shoot.
+    let map = load_map(&demo, opts, &mut stats);
+    let visibility = Visibility::new(map.as_ref(), &survey.window_cameras, opts);
+
+    let placement = resolve_flush_positions(&survey, &atlas, &visibility, opts, positions_wanted);
     let flush_positions = placement.positions;
     stats.flush_coord = flush_positions.first().copied();
     stats.flush_source = placement.source;
@@ -1220,29 +1376,16 @@ pub fn clean_demo_decals(
             .flat_map(|(eye, _)| flush_positions.iter().map(move |p| distance(p, eye)))
             .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
-        // Sampled in-window frames where ANY flush position falls inside the
-        // camera's cone. Non-zero means part of the spread is on screen during
-        // a recorded clip — the failure this heuristic exists to avoid.
-        let cos_cone = opts.visibility_cone_degrees.to_radians().cos();
+        // Sampled in-window frames from which ANY flush position is on screen.
+        // Non-zero means part of the spread is visible during a recorded clip —
+        // the failure this whole selection exists to avoid.
+        //
+        // Measured with the same rule the selection used, geometry included.
+        // Counting cone hits here while selecting on occlusion would report
+        // hundreds of frames for positions that are all behind walls.
         stats.camera_samples = survey.window_cameras.len();
-        stats.flush_on_camera_frames = survey
-            .window_cameras
-            .iter()
-            .filter(|(eye, fwd)| {
-                flush_positions.iter().any(|pos| {
-                    let v = [pos[0] - eye[0], pos[1] - eye[1], pos[2] - eye[2]];
-                    let dist = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
-                    if dist < 1.0 || dist > opts.visibility_max_distance {
-                        return false;
-                    }
-                    let fl = (fwd[0] * fwd[0] + fwd[1] * fwd[1] + fwd[2] * fwd[2]).sqrt();
-                    if fl < 0.5 {
-                        return false;
-                    }
-                    (v[0] * fwd[0] + v[1] * fwd[1] + v[2] * fwd[2]) / (dist * fl) >= cos_cone
-                })
-            })
-            .count();
+        stats.flush_on_camera_frames =
+            visibility.on_camera_frames(&flush_positions, &survey.window_cameras);
     }
 
     // ── Pass 1: strip decal messages outside the capture windows ─────────────
@@ -1547,6 +1690,18 @@ pub fn capture_fov(config: &PatcherConfig) -> f32 {
 /// pinned from `init_commands` (see `builder`) and no frame is inserted. The
 /// burst itself only pushes messages into frames that already exist, so it
 /// moves no ordinal and is safe.
+/// Where the game keeps its maps, derived from the configured `hl.exe`.
+///
+/// `game_path` points at the executable, and DoD's content sits beside it, so
+/// maps are `<hl.exe dir>/dod/maps`. Returned as `None` when that does not
+/// resolve to a real directory rather than handing the loader a path that can
+/// only fail per demo.
+fn maps_dir_for(config: &PatcherConfig) -> Option<std::path::PathBuf> {
+    let exe = std::path::Path::new(&config.game_path);
+    let dir = exe.parent()?.join("dod").join("maps");
+    dir.is_dir().then_some(dir)
+}
+
 fn flush_options(config: &PatcherConfig) -> DecalCleanOptions {
     DecalCleanOptions {
         ring_limit: config.decal_ring_limit,
@@ -1555,6 +1710,7 @@ fn flush_options(config: &PatcherConfig) -> DecalCleanOptions {
         // the probe rig stay self-contained, so a one-off experiment never
         // writes coordinates that a real capture would later rely on.
         atlas_dir: Some(decal_atlas::default_dir()),
+        maps_dir: maps_dir_for(config),
         // Derived, never assumed. The capture's own FOV and frame shape decide
         // how far off the view axis a decal can sit and still be in shot, and
         // a movie shot at `mirv_fov 105` puts that corner ~16 degrees further
