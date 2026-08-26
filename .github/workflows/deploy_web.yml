@@ -1,10 +1,20 @@
+# DISABLED 2026-08-24: this workflow builds the retired egui/WASM GUI via Trunk,
+# targeting a `dod-tools-gui` binary that no longer exists post-Tauri-migration
+# (merge 00e540d, 2026-08-18) — it would fail at the `trunk build` step if it ran.
+# It had in fact been failing silently on every push to `main` since 2026-08-22;
+# switched to workflow_dispatch (manual-only) so it can't do that anymore.
+#
+# GitHub Pages itself is still live at the last successful deploy (2026-06-15,
+# the pre-Tauri egui build) — untouched by this change, still serving fine.
+# Plan (per user, 2026-08-24): port this Pages deployment to the current
+# Tauri/Vite app at some point. `native/index.html` and native/Cargo.toml's
+# wasm32 deps are NOT dead weight — keep them until that port happens, or
+# until this workflow is rewritten for whatever the ported target turns out
+# to be. Re-add the push trigger below once there's something real to deploy.
 name: Deploy Web App to GitHub Pages
 
 on:
-  push:
-    branches:
-      - main
-      - master
+  workflow_dispatch:
 
 permissions:
   contents: read

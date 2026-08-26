@@ -2,8 +2,10 @@
 
 Status: **Tiers 1a/1b/2/3 implemented and committed** (`00be056` perf commit,
 `ee86ea1` follow-up `run.ps1` fix — unrelated, just adjacent history on the
-same branch). **Tier 4/5 not started**, still blocked on the future-stats
-review exactly as originally planned — see that section, it's unchanged.
+same branch). **Tier 4/5 not started**, tracked as
+[GitHub issue #37](https://github.com/ccoventry/dod-tools/issues/37) — still
+blocked on the future-stats review exactly as originally planned, see that
+section, it's unchanged.
 Written so a fresh chat (clean context) can pick this up without re-deriving
 anything. If you're that fresh session: read this whole file before touching
 code, it front-loads everything the audit already ruled out. The "Implementation
@@ -47,7 +49,7 @@ Commit `f6b382c` on `feature/tauri-migration`:
 
   ```
   cargo build --release -p dod-benchmark
-  ./target/release/dod-benchmark.exe ./demos          # or any folder of .dem files
+  ./target/release/dod-benchmark.exe ./local/demos          # or any folder of .dem files
   ```
 
 ## Measured baseline (release build, 4 demos, 52-89 MB each)
@@ -295,6 +297,8 @@ best-effort, never fails the scan itself.
 
 ### Tier 4/5 — BLOCKED on the future-stats question below, not just "later"
 
+Tracked as [issue #37](https://github.com/ccoventry/dod-tools/issues/37). Kept in full below since it's the technical detail an implementer of that issue will actually need (which message types, which fields, why the sequencing with the stats work matters).
+
 - **Selective netmessage parsing** (skip decoding message bodies for the
   74.6% the analyzer never reads, e.g. don't decode `SvcSound`/`SvcClientData`
   bodies past their length prefix). Real potential — could cut a large chunk
@@ -341,28 +345,13 @@ available isn't fixed at compile time — it's whatever `clientdata_t` /
 decoded delta's keys before designing anything, to see the real field list
 rather than guessing from the GoldSrc SDK headers.
 
-**Do not implement Tier 4's "skip decoding these message types" before
-finishing the future-stats exploration below.** If Tier 4 ships first and a
-wanted stat later needs `SvcClientData` or `SvcDeltaPacketEntities`, you'd be
-partially reverting the optimization you just wrote, having paid to build it
-in a form that has to be undone. The right sequencing is the reverse: figure
-out which fields from these two streams are worth keeping, *then* design the
-selective-parse mode to keep decoding those and skip only what's still truly
-unwanted (e.g. `SvcSound`, `ClientAreas`, `SvcTempEntity` remain good discard
-candidates regardless of the stats work). That's a smarter optimization than
-"decode nothing," and it only exists if the stats pass happens first.
-
-Do Tier 4/5 deliberately, as its own effort, now that Tier 1-3 are done
-(landed in `00be056`) **once** the future-stats review has determined which of
-the currently-discarded fields are worth computing. That review itself hasn't
-happened yet — Tier 4/5 is still fully unstarted, this is just no longer
-"blocked on other perf work too," only on the stats question.
+**Sequencing, restated plainly**: do the future-stats review first, then design the selective-parse mode around its answer (keep decoding whatever fields the stats work wants, skip only what's still unwanted regardless — e.g. `SvcSound`, `ClientAreas`, `SvcTempEntity`). Shipping Tier 4 first risks partially reverting it once a wanted stat turns out to need `SvcClientData`/`SvcDeltaPacketEntities`. That review hasn't happened yet.
 
 ## How to verify any of this yourself
 
 ```
 cargo build --release -p dod-benchmark
-./target/release/dod-benchmark.exe ./demos
+./target/release/dod-benchmark.exe ./local/demos
 ```
 
 Reproduces the phase table and the consumed/discarded netmessage histogram

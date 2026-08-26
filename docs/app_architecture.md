@@ -1,22 +1,21 @@
 # System Architecture Decisions
 
 ## Tech Stack Core
-- **Language/Runtime:** Rust targeting native desktop and `wasm32-unknown-unknown` GUI compilation.
-- **UI Framework:** `egui` (Zero-allocation immediate-mode rendering loop).
-- **Frontend Stack (Migrated):** Tauri backend with Vite/JS frontend (`feature/tauri-migration`).
+- **Language/Runtime:** Rust targeting native desktop, plus a `wasm32-unknown-unknown` compilation gate retained in `native/` for cfg-isolating non-wasm-safe code (no active wasm GUI target — see Historical Notes).
+- **UI Framework:** Tauri v2 backend + Vite/JS frontend (`desktop-studio/`), current since the `feature/tauri-migration` merge to `dev` (2026-08-18).
 
 ## Workspace Module Boundaries
-- `native/`: Handles direct GoldSrc hooks, binary stream patching, and memory injection layers.
-- `src/ui/`: Contains the immediate-mode GUI modules. Standard native threading and direct `std::fs` operations are strictly forbidden inside this module.
-- `shared/`: Holds immutable type definitions, message schemas, and atomic communication channels passing events between native loops and the UI thread.
+- `native/`: Core engine — direct GoldSrc hooks, binary stream patching (`patch/`), FFmpeg transcoding (`hlcr/`), and `native/src/shared/` (shared types/path-resolution helpers — nested inside `native/`, not a top-level workspace crate).
+- `desktop-studio/src-tauri/`: Tauri backend — Rust command handlers bridging the frontend to `native`/`analysis`/`hl-demo-auditor`.
+- `desktop-studio/src/`: Vite/JS frontend modules (one file per pane, e.g. `capture_pane.js`/`render_pane.js`). No native threading or direct `std::fs` — everything crosses the Tauri IPC boundary.
 
 ## State, Memory, & Concurrency Rules
-- **State Ingestion:** Immediate-mode execution. Telemetry data feeds sequentially from native processes into active UI state tracking blocks via bounded sync channels.
+- **State Ingestion (historical, egui-era):** Originally described as immediate-mode execution feeding a bounded sync channel into UI state blocks. Now: telemetry/progress crosses the Tauri IPC boundary as events; see CLAUDE.md's "Telemetry Throttling" rule for the current, accurate guidance (~30fps/33ms throttling via an `Arc<AtomicU32>` debouncer).
 - **Micro-Stutter Protection:** Highly accessed internal asset catalogs are wrapped in `std::sync::RwLock`. Under no circumstances should blocking mutex synchronization primitives be introduced directly on the UI frame loop thread.
 - **Network Header Alignment:** Network messages expect exactly 468 bytes of header data before reading payload lengths. Ensure byte streams slice exactly on this structural boundary before passing to structural deserializers.
 - **Memory Safety Guardrails:** Never use fixed-size stack buffers (`[u8; N]`) for binary stream slicing inside the engine memory layer. Always use heap-allocated `Vec<u8>` gated by explicit 2MB payload limits to avoid stack overruns during memory injection.
 - **Pure Float Timestamps:** Purge all average `demo_fps` math estimations when synchronizing highlights. Timeline alignment must rely strictly on extracting absolute binary float timestamps (`Arc<Vec<f32>>`) during the initial engine scan and mapping them via binary search to prevent drift over long matches.
-- **Eager Layout Gating:** Always toggle active UI state flags (e.g., `capture_engine_running = true`) to true *prior* to launching asynchronous background threads. Wrap the triggering widgets in strict `ui.add_enabled(!state)` blocks to prevent the immediate-mode loop from executing double-launch thread allocations.
+- **Eager Layout Gating:** Always toggle active state flags (e.g., `capture_engine_running = true`) to true *prior* to launching asynchronous background threads, so a double-click/double-launch can't race the flag being set. (Historical, egui-era: originally phrased as `ui.add_enabled(!state)` widget-blocking; the current Tauri/JS frontend achieves the same guard via disabling the triggering button/input in the DOM once the flag flips.)
 - **Array Bounds Clamping Danger:** When executing time-offset walkbacks (e.g., `find_tick_backwards`), out-of-bounds guards must explicitly return the requested `start_frame` unmodified. Using `.min()` on an array truncates valid late-game frame indices to local minimums.
 - **Serialization Fallback State:** Struct fields wrapped in `Arc<Vec<f32>>` marked with `#[serde(skip)]` will deserialize into empty arrays, not `None`. Fallback validation logic must strictly check `array.is_empty()`.
 - **Multi-Demo Array Routing:** When passing global state (like `frame_times` arrays) into a batch processor, strictly use a `HashMap<String, Arc<Vec<T>>>` keyed by demo filename to prevent out-of-bounds slice mapping on secondary files.
@@ -26,7 +25,7 @@
 - **Dialog API Enforcement:** Manual text inputs for OS file paths introduce severe string escaping vulnerabilities. Exclusively mandate native folder pickers (e.g., `@tauri-apps/plugin-dialog`) for filesystem routing.
 - **UI vs. Data Initialization Desync:** Applying data filters exclusively at the UI rendering layer causes active state blocks to process visually hidden data. Enforce data filtering constraints directly on struct defaults during backend ingestion.
 - **State Management:** Prioritize read-only status labels over duplicate inputs for shared values to maintain a single source of truth and prevent configuration drift.
-- **Immediate-Mode GUI State Sync:** Following data ingestion events (e.g., `ProjectLoaded`), clear stale application state explicitly (`queued.clear()`) and invoke `ctx.request_repaint()` to prevent UI desynchronization.
+- **State Sync (historical, egui-era):** Following data ingestion events (e.g., `ProjectLoaded`), clear stale application state explicitly (`queued.clear()`). The `ctx.request_repaint()` call this rule originally specified was an egui API with no Tauri/DOM equivalent — the current frontend just re-renders on state change directly (e.g. `renderMasterList()`), no manual repaint request needed.
 - **Timeline Hydration:** User-selected JSON index parameters (e.g., `start_kill: 0`) must not be parsed as physical ticks. Map them to float times and execute a linear search against the global `frame_times` array. Calculate `DEMO_END` using `total_demo_frames`, not localized streak lengths.
 - **Tauri Plugin Architecture:** A Vite frontend capability (e.g., `fs:default`) will silently fail if the corresponding backend Rust crate (e.g., `tauri-plugin-fs`) is missing from `Cargo.toml` or not initialized in the builder chain.
 - **IPC Hardware Queries:** Cross the IPC boundary to execute OS-level `sysinfo` queries to gauge capacity. Do not rely on local frontend arrays (`targetDrives.length`) for hardware estimations.
@@ -48,8 +47,8 @@
 - **First-Fit-Decreasing Bin-Packing (2026-08-18):** The `Chronological` allocation strategy (Next Fit, no drive backtracking — could fail a batch outright even with enough total free space across drives) was removed entirely; `DriveAllocationStrategy` no longer exists. `build_batch_queue` now always allocates each demo's clip blocks largest-byte-estimate-first (First-Fit-Decreasing) across the configured capture drives, so a big clip doesn't get stranded because an earlier, smaller clip already claimed the only drive with room for it.
 - **Junction-Based Pathing:** Bypassed GoldSrc string limit and escape constraints by generating temporary OS-level directory junctions (`_route_N`) in the game directory.
 - **Alias Injection:** The VDM generation now maps `mirv_movie_filename` commands to the generated junctions via aliases in `dodtools_helper.cfg`.
-- **UI State Fixes:** 
-  - Surfaced background thread capacity errors to the UI by storing them in the `egui` temporary context.
-  - State-gated the error banner to strictly render only when `current_state == CaptureStudioState::Select`.
-  - Changed default scanner initialization so `CaptureStreak` is unchecked (`is_selected: false`) to support an opt-in workflow.
 - **GC Architecture:** Garbage collection policies (configuration) are decoupled from mechanisms (execution), ensuring the `Drop` trait remains lightweight.
+
+## Historical Notes (pre-Tauri-migration, egui era — kept for context, not current architecture)
+- The original UI was `egui`/`eframe` (native immediate-mode Rust GUI, `native/src/bin/gui/`), fully replaced by the Tauri v2 + Vite/JS frontend and merged to `dev` 2026-08-18 (merge commit `00e540d`). That directory and every `egui`/`eframe` dependency are gone from the workspace — `desktop-studio/src-tauri/src/capture_manager.rs` even carries an explicit "MUST NOT import any egui / eframe symbols" comment as a guardrail against drift back.
+- One dated UI-state fix from that era, kept only as a historical record: background-thread capacity errors were once surfaced by storing them in the `egui` temporary context, gated on `current_state == CaptureStudioState::Select` (an enum that no longer exists) — not applicable to the current architecture, mentioned here only in case old commit history references it.

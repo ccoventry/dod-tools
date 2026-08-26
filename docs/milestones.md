@@ -10,6 +10,11 @@ IMMUTABLE MILESTONES ARCHITECTURE RULES:
 
 ## 🚀 Active Sprint Priorities
 
+*(Cleared 2026-08-24 — every item previously tracked here is resolved; see the archive below. Nothing currently active.)*
+
+<details>
+<summary>Click to view archived Active Sprint Priorities (all resolved, archived 2026-08-24)</summary>
+
 ### Game Capture Pipeline
 - [x] Task: HLTV Active Frame Injection — Standalone `DRC_CMD_INEYE` frame injection implemented and verified in `native/src/patch/engine.rs` with dynamic `target_player_id` extraction.
 - [x] Task: Graceful Degradation for Clutch Clips — Update `builder.rs` to handle edge cases where a kill occurs inside the 3.0-second EOF danger zone. The patcher must gracefully sacrifice the post-roll and schedule the `DOD_TOOLS_EXIT_TRIGGER` exactly 5 ticks before the absolute final frame to ensure the highlight is captured without crashing the batch.
@@ -35,9 +40,9 @@ IMMUTABLE MILESTONES ARCHITECTURE RULES:
 - [x] Task: Capture Studio High-Priority Parity Backlog Resolved — Closed all three remaining audited High Priority gaps: full `AppSettings` persistence for every Export Configuration field (resolution, HUD, auto-clear flags, timing, media dirs, target drives, custom commands); an overlap-merged pre-flight disk estimator with a hard Launch-button lock (including the zero-drive case) replacing the old post-click soft warning; and a `sysinfo`-backed running-process guard with a "Half-Life Preview Detector" modal (Force Relaunch / Copy View Command / Cancel) gating preview launches against a still-running `hl.exe`/`hlae.exe`.
 - [x] Task: "Clear Previews" Audit Modal — Sweeps `<hl>/dod` for orphaned `*_preview.dem` bookmark previews (identified by their hidden `.dodtools_preview` sidecar), reports reclaimable disk space, and purges them from a modal via new `scan_orphaned_previews`/`delete_orphaned_previews` IPC commands.
 - [x] Task: Standalone Game Launch — Restored the "Launch Game (HLAE)" button; boots `hl.exe` with no demo loaded, applying persisted resolution/HUD/init-command settings, and reuses the existing running-process guard modal via a generalized `requestProcessGuardedLaunch()` hook shared with the preview-launch path.
-- [x] Task: Demo Analyzer Load Performance Tiers 1-3 — On-disk analysis cache (cold ~1.3s -> warm cache-hit ~10-15ms), throttled progress events, dead-code removal, and Capture Studio folder scans warming the analyzer cache. Tier 4/5 (selective netmessage parsing) deliberately blocked on a future player-stats review — see `docs/demo_analyzer_load_performance.md`.
+- [x] Task: Demo Analyzer Load Performance Tiers 1-3 — On-disk analysis cache (cold ~1.3s -> warm cache-hit ~10-15ms), throttled progress events, dead-code removal, and Capture Studio folder scans warming the analyzer cache. Tier 4/5 (selective netmessage parsing) tracked as [issue #37](https://github.com/ccoventry/dod-tools/issues/37), blocked on a future player-stats review — see `docs/demo_analyzer_load_performance.md`.
 - [x] Task: Branch Merge Readiness Verification (2026-08-16) — `cargo build --workspace` and `cargo test --workspace --no-fail-fast` both clean except 4 pre-existing `analysis` crate failures (3 localization loader/test key-prefix mismatches, 1 missing local demo fixture) confirmed present identically at the `dev` merge-base (`80feaaf`) — not a regression introduced by this branch. `feature/tauri-migration` currently contains all of `dev`'s history (`dev`'s tip *is* the merge-base), so there is no divergence to reconcile before merging.
-- [ ] Task: Fix pre-existing `analysis` localization test/loader key-prefix mismatch and missing-fixture `test_inspect_lenn_demo`, independent of the merge itself.
+- [x] Task: Fix pre-existing `analysis` localization test/loader key-prefix mismatch and missing-fixture `test_inspect_lenn_demo`, independent of the merge itself. **Resolved** — see `engineering_backlog.md`'s "Fix pre-existing `analysis` test debt" entry (found already fixed 2026-08-23, this box was just never ticked).
 - [x] Task: Save/Load Project Session Fixed (2026-08-16) — was calling `@tauri-apps/plugin-fs` directly, which only ever succeeds inside the app's own AppConfig/AppData dirs; routed through new unscoped `save_project_session`/`load_project_session` Tauri commands instead.
 - [x] Task: Master Demo Queue Highlight-Count & POV-Filter Bug Fixed (2026-08-16) — root cause was the POV filter gating on the unreliable `demo.is_pov` flag (fires on an ordinary player demo whenever an HLTV caster was merely spectating) instead of whether `local_player_index` actually resolved; also redesigned the queue's columns (plain Highlights total, dropped the misleading Status badge, Actions column moved to the end) and made it live-refresh on selection/status edits.
 - [x] Task: Opt-In Streak Selection Semantics Fixed (2026-08-16) — `computeRequiredCaptureBytes`, `renderTimeline`, and `buildCapturePayload` all treated an untouched `streak.selected` (`undefined`) as selected instead of unselected; the `buildCapturePayload` instance meant a capture batch could include every player's highlights from any demo never opened in the detail view.
@@ -48,21 +53,23 @@ IMMUTABLE MILESTONES ARCHITECTURE RULES:
 ### UI/UX Polish
 - [x] Feature: Workspace Layout Updates — Transposed paths and disk space estimators, added highlight status columns to the Master List, removed legacy folder pickers, and mounted a global "Total Export Pool Free" indicator with dynamic vector list reordering.
 
+</details>
+
 ## 📋 General Backlog (Future Roadmap Items)
 
 ### Task B: Unify Killstreak Segmentation (demo_parser.rs)
 - [x] Refactor: Life-Bounded Streaks — Extracted life-bounded streak definitions from the `analysis` crate. The Capture Studio now natively limits "killstreaks" to events bounded by `DeathMsg` or `ServerReset`, avoiding arbitrary temporal-gap logic that causes recording cross-talk.
 
 ### Task D: Architectural Decoupling & File Cleanup
-- [ ] Chore: Context — Review the project to decouple logic, abstract UI components into separate modules/files, and clean up deprecated code. This is an ongoing radar item to maintain code health and readability.
+- Now tracked as [issue #55](https://github.com/ccoventry/dod-tools/issues/55).
 
 ### Phase 11 & 12 Enhancements (Deferred)
 - [x] Feature: Batch Queue UI Re-integration — Absorbed by the Master-Detail workspace UI, which supports native batch queuing, scheduling, and multi-demo dispatch.
 - [x] Task: HLTV Parser Upgrade & Active Frame Injection — Reverse-engineered GoldSrc HLTV proxy byte structure and implemented active standalone `DRC_CMD_INEYE` frame injection in `native/src/patch/engine.rs`.
-- [ ] Task: Rendering & Finalization — Handling the resulting `.mov` files.
+- [x] Task: Rendering & Finalization — Handling the resulting `.mov` files. **Superseded** — shipped as the native FFmpeg transcoding pipeline, see "Rendering & Finalization" in the archived Active Sprint Priorities above.
 
 ### Task E: Google Takeout Gemini Logs Parsing (Knowledge Harvest)
-- [ ] Task: Implementation — Determine a programmatic or streamlined method to parse offline chat logs and feed them into the Knowledge Harvester to extract and deduplicate workflow protocols, constraints, and engine quirks from historical Web AI sessions.
+- Now tracked as [issue #56](https://github.com/ccoventry/dod-tools/issues/56).
 
 ## ✅ Completed Tasks
 
