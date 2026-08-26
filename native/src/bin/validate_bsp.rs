@@ -18,7 +18,7 @@
 //! Prints one TSV line: label, demo, map, coordinates tested, hit percentage at
 //! 1/2/4/8 units, count landing on nothing, world faces, total faces.
 
-use native::patch::bsp::Bsp;
+use native::patch::bsp::{Bsp, CONTENTS_SOLID};
 use native::patch::decal_atlas::MapKey;
 use native::patch::decal_strip::proven_world_coordinates;
 
@@ -74,6 +74,15 @@ fn main() {
     let mut hits = [0usize; 4];
     let tolerances = [1.0f32, 2.0, 4.0, 8.0];
     let mut worst_miss = 0usize;
+
+    // The node tree gets the same treatment as the faces. A decal sits ON a
+    // surface, so a point nudged along the face normal must land in open space
+    // and the same nudge the other way must land in solid. If the tree were
+    // being read wrongly those would not separate.
+    let mut open_side = 0usize;
+    let mut solid_side = 0usize;
+    let mut normal_known = 0usize;
+
     for p in pts {
         let mut landed = false;
         for (i, tol) in tolerances.iter().enumerate() {
@@ -85,11 +94,25 @@ fn main() {
         if !landed {
             worst_miss += 1;
         }
+
+        if let Some((face, _)) = bsp.nearest_face(p, 2.0) {
+            if let Some(n) = bsp.face_normal(face) {
+                normal_known += 1;
+                let out = [p[0] + n[0] * 4.0, p[1] + n[1] * 4.0, p[2] + n[2] * 4.0];
+                let inn = [p[0] - n[0] * 4.0, p[1] - n[1] * 4.0, p[2] - n[2] * 4.0];
+                if bsp.leaves.get(bsp.leaf_at(&out)).map(|l| l.contents) != Some(CONTENTS_SOLID) {
+                    open_side += 1;
+                }
+                if bsp.leaves.get(bsp.leaf_at(&inn)).map(|l| l.contents) == Some(CONTENTS_SOLID) {
+                    solid_side += 1;
+                }
+            }
+        }
     }
 
     let pct = |n: usize| (n as f32 / pts.len() as f32) * 100.0;
     println!(
-        "{}\t{}\tOK\t{}\t{}\t{:.1}\t{:.1}\t{:.1}\t{:.1}\t{}\t{}\t{}",
+        "{}\t{}\tOK\t{}\t{}\t{:.1}\t{:.1}\t{:.1}\t{:.1}\t{}\t{}\t{}\t{:.1}\t{:.1}\t{}",
         label,
         name,
         key.name,
@@ -101,5 +124,8 @@ fn main() {
         worst_miss,
         bsp.world_faces().len(),
         bsp.faces.len(),
+        if normal_known > 0 { open_side as f32 * 100.0 / normal_known as f32 } else { 0.0 },
+        if normal_known > 0 { solid_side as f32 * 100.0 / normal_known as f32 } else { 0.0 },
+        if bsp.has_vis() { "vis" } else { "NOVIS" },
     );
 }

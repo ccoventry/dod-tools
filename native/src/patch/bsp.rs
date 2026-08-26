@@ -10,9 +10,14 @@
 // geometry is the one surface source that owes nothing to what happened in the
 // match. See `docs/decal_flush_bsp_surfaces.md`.
 //
-// Only what that needs is parsed. Nodes, leaves, visibility, lighting and
-// clipnodes are skipped entirely: the flush wants "where are the surfaces and
-// how big are they", not a renderer.
+// It answers two questions, and only parses what they need. Lighting,
+// clipnodes, marksurfaces and entities are skipped entirely.
+//
+//   1. WHERE ARE THE SURFACES — planes, vertices, edges, surfedges, faces,
+//      texinfo, textures, models. Coordinates that owe nothing to the match.
+//   2. WHAT CAN SEE WHAT — nodes, leaves, visibility. The flush's safety claim
+//      is that its decals are never on screen, and a cone test with no notion
+//      of walls is a poor way to establish that.
 //
 // ── Trusting these offsets ───────────────────────────────────────────────────
 // The struct layouts below are the documented v30 format, not something
@@ -26,8 +31,11 @@
 const LUMP_PLANES: usize = 1;
 const LUMP_TEXTURES: usize = 2;
 const LUMP_VERTICES: usize = 3;
+const LUMP_VISIBILITY: usize = 4;
+const LUMP_NODES: usize = 5;
 const LUMP_TEXINFO: usize = 6;
 const LUMP_FACES: usize = 7;
+const LUMP_LEAVES: usize = 10;
 const LUMP_EDGES: usize = 12;
 const LUMP_SURFEDGES: usize = 13;
 const LUMP_MODELS: usize = 14;
@@ -63,13 +71,17 @@ pub struct TexInfo {
     pub flags: i32,
 }
 
-/// Only `first_face`/`num_faces` matter here. Model 0 is the world; every other
-/// model is a brush entity — a door, a lift, a train — whose faces move with it
-/// and whose coordinates are therefore only true while it is where it was.
+/// Model 0 is the world; every other model is a brush entity — a door, a lift,
+/// a train — whose faces move with it and whose coordinates are therefore only
+/// true while it is where it was.
 #[derive(Debug, Clone, Copy)]
 pub struct Model {
     pub first_face: i32,
     pub num_faces: i32,
+    /// Root of this model's node tree for hull 0, the point hull.
+    pub head_node: i32,
+    /// Leaves the visibility lump carries rows for. Excludes the solid leaf.
+    pub vis_leafs: i32,
 }
 
 pub struct Bsp {
@@ -81,6 +93,15 @@ pub struct Bsp {
     pub texinfo: Vec<TexInfo>,
     pub texture_names: Vec<String>,
     pub models: Vec<Model>,
+    pub nodes: Vec<Node>,
+    pub leaves: Vec<Leaf>,
+    /// Raw run-length-encoded visibility lump. Empty when the map was compiled
+    /// without vis, which is common for scrim and test maps.
+    pub visibility: Vec<u8>,
+    /// Root of the world tree, cached from model 0.
+    pub head_node: i32,
+    /// How many leaves the visibility rows cover.
+    pub vis_leaf_count: usize,
     /// Axis-aligned bounds per face, cached so point lookups can reject most
     /// faces without touching their polygons.
     bounds: Vec<([f32; 3], [f32; 3])>,
@@ -188,10 +209,36 @@ impl Bsp {
             Ok(Model {
                 first_face: rd_i32(b, at + 56)?,
                 num_faces: rd_i32(b, at + 60)?,
+                head_node: rd_i32(b, at + 36)?,
+                vis_leafs: rd_i32(b, at + 52)?,
             })
         })?;
 
         let texture_names = parse_texture_names(lump(bytes, LUMP_TEXTURES)?)?;
+
+        // dnode_t: i32 planenum; i16 children[2]; i16 mins[3]; i16 maxs[3];
+        // u16 firstface; u16 numfaces.
+        let nodes = entries(lump(bytes, LUMP_NODES)?, 24, |b, at| {
+            Ok(Node {
+                plane: rd_u32(b, at)?,
+                children: [rd_i16(b, at + 4)? as i32, rd_i16(b, at + 6)? as i32],
+            })
+        })?;
+
+        // dleaf_t: i32 contents; i32 visofs; i16 mins[3]; i16 maxs[3];
+        // u16 firstmarksurface; u16 nummarksurfaces; u8 ambient_level[4].
+        let leaves = entries(lump(bytes, LUMP_LEAVES)?, 28, |b, at| {
+            Ok(Leaf {
+                contents: rd_i32(b, at)?,
+                vis_offset: rd_i32(b, at + 4)?,
+            })
+        })?;
+
+        let visibility = lump(bytes, LUMP_VISIBILITY)?.to_vec();
+        let (head_node, vis_leaf_count) = models
+            .first()
+            .map(|m| (m.head_node, m.vis_leafs.max(0) as usize))
+            .unwrap_or((0, 0));
 
         let mut bsp = Bsp {
             planes,
@@ -202,6 +249,11 @@ impl Bsp {
             texinfo,
             texture_names,
             models,
+            nodes,
+            leaves,
+            visibility,
+            head_node,
+            vis_leaf_count,
             bounds: Vec::new(),
         };
         bsp.bounds = (0..bsp.faces.len()).map(|i| bsp.compute_bounds(i)).collect();
@@ -484,6 +536,222 @@ fn point_in_polygon(poly: &[[f32; 3]], normal: &[f32; 3], p: &[f32; 3]) -> bool 
     inside
 }
 
+
+// ── Visibility: is a point hidden from a point ───────────────────────────────
+//
+// The flush's whole safety claim is that its decals are never on screen, and
+// until now the only test available was a cone: reject anything within N
+// degrees of a camera's view axis, with no notion of what stands between them.
+// That is wrong in both directions, and the expensive one is over-rejection —
+// most of what the cone throws away on a busy map is behind a wall.
+//
+// Two tests, cheapest first:
+//
+//   1. PVS. If the candidate's leaf is absent from the camera leaf's
+//      potentially-visible set, nothing in that leaf can be rendered from
+//      anywhere in the camera's leaf. That is a hard guarantee for one lookup.
+//   2. A segment trace through the node tree for whatever survives.
+
+/// Leaf contents that stop a line of sight. Empty space and water do not;
+/// water is transparent, and a decal behind it is visible through it.
+pub const CONTENTS_SOLID: i32 = -2;
+pub const CONTENTS_SKY: i32 = -6;
+
+/// Guard against a malformed tree sending the descent or the trace into a
+/// runaway. Real GoldSrc trees are nowhere near this deep.
+const MAX_TREE_DEPTH: u32 = 512;
+
+/// Distance either side of a splitting plane treated as "on it", so a segment
+/// running along a wall does not thrash between children on rounding noise.
+const PLANE_EPSILON: f32 = 0.03125;
+
+#[derive(Debug, Clone, Copy)]
+pub struct Node {
+    pub plane: u32,
+    /// Non-negative is a child node index; negative encodes a leaf as
+    /// `-1 - child`.
+    pub children: [i32; 2],
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Leaf {
+    pub contents: i32,
+    /// Offset into the visibility lump, or -1 when the map has no vis data.
+    pub vis_offset: i32,
+}
+
+impl Bsp {
+    /// Leaf containing a point, by descending the world node tree.
+    pub fn leaf_at(&self, p: &[f32; 3]) -> usize {
+        let mut node = self.head_node;
+        let mut depth = 0;
+        while node >= 0 {
+            depth += 1;
+            if depth > MAX_TREE_DEPTH {
+                return 0;
+            }
+            let Some(n) = self.nodes.get(node as usize) else {
+                return 0;
+            };
+            let Some(plane) = self.planes.get(n.plane as usize) else {
+                return 0;
+            };
+            let side = usize::from(dot(&plane.normal, p) - plane.dist < 0.0);
+            node = n.children[side];
+        }
+        (-1 - node) as usize
+    }
+
+    fn leaf_blocks(&self, leaf: usize) -> bool {
+        match self.leaves.get(leaf) {
+            Some(l) => l.contents == CONTENTS_SOLID || l.contents == CONTENTS_SKY,
+            // A leaf index the tree should not have produced. Treating it as
+            // blocking is the conservative choice: it costs a candidate
+            // position rather than exposing one.
+            None => true,
+        }
+    }
+
+    /// Whether anything solid stands between two points.
+    ///
+    /// This is the geometric half of "can the camera see it". Brush entities —
+    /// doors, lifts — are deliberately not consulted: they are not in the world
+    /// tree, and a door's position at any given moment is not knowable from
+    /// here. Ignoring them means a spot hidden behind a closed door reads as
+    /// visible, which loses a usable position rather than exposing one.
+    pub fn line_blocked(&self, from: &[f32; 3], to: &[f32; 3]) -> bool {
+        if self.nodes.is_empty() {
+            return false;
+        }
+        self.segment_blocked(self.head_node, from, to, 0)
+    }
+
+    fn segment_blocked(&self, node: i32, p1: &[f32; 3], p2: &[f32; 3], depth: u32) -> bool {
+        if depth > MAX_TREE_DEPTH {
+            return true;
+        }
+        if node < 0 {
+            return self.leaf_blocks((-1 - node) as usize);
+        }
+        let Some(n) = self.nodes.get(node as usize) else {
+            return true;
+        };
+        let Some(plane) = self.planes.get(n.plane as usize) else {
+            return true;
+        };
+
+        let d1 = dot(&plane.normal, p1) - plane.dist;
+        let d2 = dot(&plane.normal, p2) - plane.dist;
+
+        // Wholly on one side: only that child can contain the segment.
+        if d1 >= -PLANE_EPSILON && d2 >= -PLANE_EPSILON {
+            return self.segment_blocked(n.children[0], p1, p2, depth + 1);
+        }
+        if d1 < PLANE_EPSILON && d2 < PLANE_EPSILON {
+            return self.segment_blocked(n.children[1], p1, p2, depth + 1);
+        }
+
+        // Straddles the plane: split it and walk the near half first, so a hit
+        // close to the origin ends the search without touching the far half.
+        let denom = d1 - d2;
+        let frac = if denom.abs() < 1e-6 {
+            0.5
+        } else {
+            (d1 / denom).clamp(0.0, 1.0)
+        };
+        let mid = [
+            p1[0] + (p2[0] - p1[0]) * frac,
+            p1[1] + (p2[1] - p1[1]) * frac,
+            p1[2] + (p2[2] - p1[2]) * frac,
+        ];
+        let (near, far) = if d1 >= 0.0 { (0, 1) } else { (1, 0) };
+
+        self.segment_blocked(n.children[near], p1, &mid, depth + 1)
+            || self.segment_blocked(n.children[far], &mid, p2, depth + 1)
+    }
+
+    /// Bytes of one leaf's decompressed PVS row, or `None` when the map carries
+    /// no visibility data at all (`-vis` never run, or a leaf outside it).
+    ///
+    /// The lump is run-length encoded: a non-zero byte is a bitmask of eight
+    /// leaves, and a zero byte is followed by a count of zero bytes to skip.
+    pub fn pvs_row(&self, leaf: usize) -> Option<Vec<u8>> {
+        let vis_offset = self.leaves.get(leaf)?.vis_offset;
+        if vis_offset < 0 || self.visibility.is_empty() || self.vis_leaf_count == 0 {
+            return None;
+        }
+
+        let row_bytes = self.vis_leaf_count.div_ceil(8);
+        let mut row = vec![0u8; row_bytes];
+        let mut at = vis_offset as usize;
+        let mut i = 0usize;
+
+        while i < row_bytes {
+            let byte = *self.visibility.get(at)?;
+            at += 1;
+            if byte != 0 {
+                row[i] = byte;
+                i += 1;
+                continue;
+            }
+            // A zero run. A zero-length run would loop forever on malformed
+            // data, so it ends the row instead.
+            let run = *self.visibility.get(at)? as usize;
+            at += 1;
+            if run == 0 {
+                break;
+            }
+            i += run;
+        }
+        Some(row)
+    }
+
+    /// Whether `leaf` is set in a decompressed PVS row.
+    ///
+    /// Leaf 0 is the solid leaf and is not represented in vis data, so rows are
+    /// indexed from leaf 1.
+    pub fn pvs_contains(row: &[u8], leaf: usize) -> bool {
+        if leaf == 0 {
+            return false;
+        }
+        let bit = leaf - 1;
+        row.get(bit / 8)
+            .map(|b| b & (1 << (bit % 8)) != 0)
+            .unwrap_or(false)
+    }
+
+    /// Union of the PVS of every leaf in `leaves`, as one row.
+    ///
+    /// Cameras cluster heavily, so the caller is expected to collapse thousands
+    /// of samples into a handful of distinct leaves before calling this. A
+    /// `None` return means at least one leaf had no vis data, in which case
+    /// nothing can be ruled out and the caller must fall back to tracing.
+    pub fn pvs_union(&self, leaves: &[usize]) -> Option<Vec<u8>> {
+        if leaves.is_empty() || self.vis_leaf_count == 0 {
+            return None;
+        }
+        let row_bytes = self.vis_leaf_count.div_ceil(8);
+        let mut out = vec![0u8; row_bytes];
+        let mut any = false;
+        for &leaf in leaves {
+            let Some(row) = self.pvs_row(leaf) else {
+                // No vis data for a camera's own leaf: it could potentially see
+                // anywhere, so the union is useless as a filter.
+                return None;
+            };
+            any = true;
+            for (o, r) in out.iter_mut().zip(row.iter()) {
+                *o |= r;
+            }
+        }
+        any.then_some(out)
+    }
+
+    /// Whether the map carries usable visibility data.
+    pub fn has_vis(&self) -> bool {
+        !self.visibility.is_empty() && self.vis_leaf_count > 0
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -519,7 +787,32 @@ mod tests {
             models: vec![Model {
                 first_face: 0,
                 num_faces: 1,
+                head_node: 0,
+                vis_leafs: 2,
             }],
+            // A one-plane world: everything at x > 100 is inside the wall,
+            // everything at x < 100 is the room in front of it. Enough to make
+            // the leaf descent and the segment trace answerable by hand.
+            nodes: vec![Node {
+                plane: 0,
+                // Front of the plane is solid, back is the open room. Children
+                // encode a leaf as -1 - index, so -1 is leaf 0 and -2 is leaf 1.
+                children: [-1, -2],
+            }],
+            leaves: vec![
+                Leaf {
+                    contents: CONTENTS_SOLID,
+                    vis_offset: -1,
+                },
+                Leaf {
+                    contents: -1,
+                    vis_offset: 0,
+                },
+            ],
+            // One row, one byte: leaf 1 can see itself and not leaf 2.
+            visibility: vec![0b0000_0001],
+            head_node: 0,
+            vis_leaf_count: 2,
             bounds: Vec::new(),
         };
         bsp.bounds = (0..bsp.faces.len()).map(|i| bsp.compute_bounds(i)).collect();
@@ -608,10 +901,14 @@ mod tests {
             Model {
                 first_face: 0,
                 num_faces: 0,
+                head_node: 0,
+                vis_leafs: 0,
             },
             Model {
                 first_face: 0,
                 num_faces: 1,
+                head_node: 0,
+                vis_leafs: 0,
             },
         ];
         assert!(
@@ -638,5 +935,133 @@ mod tests {
             bytes[at + 4..at + 8].copy_from_slice(&1_000_000_i32.to_le_bytes());
         }
         assert!(Bsp::parse(&bytes).is_err());
+    }
+
+    #[test]
+    fn a_point_descends_to_the_leaf_it_is_in() {
+        let bsp = synthetic_bsp();
+        // In front of the wall is the open room, behind its plane is solid.
+        assert_eq!(bsp.leaf_at(&[50.0, 32.0, 32.0]), 1, "the room");
+        assert_eq!(bsp.leaf_at(&[150.0, 32.0, 32.0]), 0, "inside the wall");
+    }
+
+    #[test]
+    fn a_wall_between_two_points_blocks_the_line() {
+        // The whole point of the occlusion work: a spot the cone test would
+        // reject as "in front of the camera" is fine if this says blocked.
+        let bsp = synthetic_bsp();
+        assert!(
+            bsp.line_blocked(&[50.0, 32.0, 32.0], &[150.0, 32.0, 32.0]),
+            "a segment crossing into solid must be blocked"
+        );
+    }
+
+    #[test]
+    fn an_open_line_is_not_blocked() {
+        let bsp = synthetic_bsp();
+        assert!(!bsp.line_blocked(&[20.0, 32.0, 32.0], &[60.0, 32.0, 32.0]));
+    }
+
+    #[test]
+    fn a_line_is_blocked_from_either_end() {
+        // The trace splits at the plane and walks the near half first, so the
+        // two directions take different paths through the recursion and both
+        // have to agree.
+        let bsp = synthetic_bsp();
+        let a = [50.0, 32.0, 32.0];
+        let b = [150.0, 32.0, 32.0];
+        assert_eq!(bsp.line_blocked(&a, &b), bsp.line_blocked(&b, &a));
+    }
+
+    #[test]
+    fn sky_blocks_a_line_the_way_solid_does() {
+        let mut bsp = synthetic_bsp();
+        bsp.leaves[0].contents = CONTENTS_SKY;
+        assert!(bsp.line_blocked(&[50.0, 32.0, 32.0], &[150.0, 32.0, 32.0]));
+    }
+
+    #[test]
+    fn water_does_not_block_a_line() {
+        // Water is transparent: a decal behind it is visible through it, so
+        // treating it as an occluder would hide a spot that is actually in shot.
+        let mut bsp = synthetic_bsp();
+        bsp.leaves[0].contents = -3; // CONTENTS_WATER
+        assert!(!bsp.line_blocked(&[50.0, 32.0, 32.0], &[150.0, 32.0, 32.0]));
+    }
+
+    #[test]
+    fn a_pvs_row_decompresses_and_reads_back() {
+        let bsp = synthetic_bsp();
+        let row = bsp.pvs_row(1).expect("leaf 1 has vis data");
+        assert!(Bsp::pvs_contains(&row, 1), "leaf 1 sees itself");
+        assert!(!Bsp::pvs_contains(&row, 2), "and not leaf 2");
+        assert!(
+            !Bsp::pvs_contains(&row, 0),
+            "leaf 0 is the solid leaf and is never in a vis row"
+        );
+    }
+
+    #[test]
+    fn a_zero_run_skips_the_leaves_it_covers() {
+        // The lump is run-length encoded: a zero byte is followed by a count of
+        // zero bytes to skip. Reading that as a literal byte would shift every
+        // later leaf's bit and quietly mis-answer visibility across the map.
+        let mut bsp = synthetic_bsp();
+        bsp.vis_leaf_count = 24;
+        // Skip two zero bytes (leaves 1-16), then set bit 0 of the third byte,
+        // which is leaf 17.
+        bsp.visibility = vec![0x00, 0x02, 0b0000_0001];
+        let row = bsp.pvs_row(1).unwrap();
+
+        assert_eq!(row.len(), 3);
+        assert!(Bsp::pvs_contains(&row, 17), "leaf 17 should be visible");
+        for leaf in 1..=16 {
+            assert!(!Bsp::pvs_contains(&row, leaf), "leaf {} should not be", leaf);
+        }
+    }
+
+    #[test]
+    fn a_leaf_without_vis_data_has_no_row() {
+        let bsp = synthetic_bsp();
+        assert!(bsp.pvs_row(0).is_none(), "the solid leaf carries no vis");
+    }
+
+    #[test]
+    fn a_map_compiled_without_vis_reports_it() {
+        let mut bsp = synthetic_bsp();
+        bsp.visibility.clear();
+        assert!(!bsp.has_vis());
+        assert!(bsp.pvs_row(1).is_none());
+        assert!(bsp.pvs_union(&[1]).is_none());
+    }
+
+    #[test]
+    fn a_union_that_cannot_be_completed_is_refused() {
+        // If any camera leaf has no vis data it could potentially see anywhere,
+        // so the union rules nothing out and the caller must fall back to
+        // tracing rather than trusting a partial answer.
+        let bsp = synthetic_bsp();
+        assert!(bsp.pvs_union(&[1]).is_some());
+        assert!(
+            bsp.pvs_union(&[0, 1]).is_none(),
+            "a leaf without vis must void the union, not be skipped"
+        );
+    }
+
+    #[test]
+    fn a_union_covers_every_leaf_any_camera_can_see() {
+        let mut bsp = synthetic_bsp();
+        bsp.vis_leaf_count = 8;
+        bsp.visibility = vec![0b0000_0001, 0b0000_0010];
+        bsp.leaves = vec![
+            Leaf { contents: CONTENTS_SOLID, vis_offset: -1 },
+            Leaf { contents: -1, vis_offset: 0 },
+            Leaf { contents: -1, vis_offset: 1 },
+        ];
+
+        let union = bsp.pvs_union(&[1, 2]).unwrap();
+        assert!(Bsp::pvs_contains(&union, 1), "from leaf 1");
+        assert!(Bsp::pvs_contains(&union, 2), "from leaf 2");
+        assert!(!Bsp::pvs_contains(&union, 3));
     }
 }
