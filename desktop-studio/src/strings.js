@@ -625,6 +625,15 @@ export const STRINGS = {
       'HLTV demos do not record which map build they need, so those can only be checked for the map being present.',
   },
 
+  // The game's own config files setting cvars this app reads. Advisory only —
+  // nothing in this app writes to a config file.
+  CFG: {
+    BANNER_TITLE: "Your game's config files set values this app reads:",
+    ADVICE:
+      'These are set outside the app, so it cannot see them when it plans a capture. Either remove them from your configs, or state them in Init Commands below so the pipeline works from the same values the engine does. Nothing here changes your config files.',
+    location: (file, line) => `set in ${file}, line ${line}`,
+  },
+
   MAIN: {
     SELECT_CAPTURE_OUTPUT_DIR_TITLE: 'Select Capture Output Directory',
     SELECT_RENDER_DIR_TITLE: 'Select Render Directory',

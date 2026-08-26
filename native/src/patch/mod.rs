@@ -56,6 +56,7 @@ pub mod decal_atlas;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod bsp;
 #[cfg(not(target_arch = "wasm32"))]
+pub mod cfg_scan;
 pub mod map_check;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod map_fetch;
@@ -105,6 +106,12 @@ pub use decal_probe::{
     CameraView, GridStats, Probe, ProbeOptions, ProbeRow,
     ProbeStats, Sighting,
 };
+
+#[cfg(not(target_arch = "wasm32"))]
+pub use cfg_scan::{scan as scan_game_cfgs, CfgScan, CvarSetting, WATCHED_CVARS};
+
+#[cfg(not(target_arch = "wasm32"))]
+pub use decal_strip::capture_fov_resolved;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use map_check::{check_demo, map_reference, MapReference, MapStatus};

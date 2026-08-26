@@ -420,6 +420,7 @@ pub fn run() {
             map_manager::check_demo_maps,
             map_manager::download_map,
             map_manager::map_download_url,
+            map_manager::scan_game_configs,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

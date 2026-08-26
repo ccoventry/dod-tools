@@ -42,6 +42,7 @@
 
 use super::bsp;
 use super::decal_atlas;
+use super::cfg_scan;
 use dem::open_demo_from_bytes;
 use dem::types::{
     ByteString, ConsoleCommand, EngineMessage, Frame, FrameData, MessageData, NetMessage,
@@ -1814,6 +1815,81 @@ pub fn capture_fov(config: &PatcherConfig) -> f32 {
     config.capture_fov
 }
 
+/// The mod folder holding the game's configs, for a configured `hl.exe`.
+fn game_dir_for(config: &PatcherConfig) -> Option<std::path::PathBuf> {
+    let dir = std::path::Path::new(&config.game_path).parent()?.join("dod");
+    dir.is_dir().then_some(dir)
+}
+
+/// The FOV a capture will actually run at, including what the game's own
+/// configs set.
+///
+/// `capture_fov` reads the app's init commands, which was the whole story only
+/// as long as nothing else set it. It is not: a `config.cfg` ending in
+/// `exec movie.cfg`, with `mirv_fov 105` inside, renders at 105 while the
+/// pipeline sizes its on-screen test for the configured default — a cone some
+/// seven degrees too narrow, calling in-shot positions hidden.
+///
+/// So the order is init commands, then an executed config, then the configured
+/// default. Deliberately NOT symmetric with `r_decals`, which is left alone:
+/// the same `movie.cfg` sets `r_decals 0`, and adopting that would stand the
+/// flush down over a value the pipeline's own pin overrides anyway.
+///
+/// Reads config files. Never writes one.
+pub fn capture_fov_resolved(config: &PatcherConfig) -> f32 {
+    // An init command is the app's own statement and outranks a config, so a
+    // value that differs from the configured default came from one.
+    let from_init = capture_fov(config);
+    if from_init != config.capture_fov {
+        return from_init;
+    }
+
+    let Some(dir) = game_dir_for(config) else {
+        return from_init;
+    };
+    let scan = cfg_scan::scan(&dir);
+    for cvar in ["mirv_fov", "default_fov"] {
+        if let Some(setting) = scan.effective(cvar) {
+            if let Ok(v) = setting.value.parse::<f32>() {
+                if v > 0.0 {
+                    return v;
+                }
+            }
+        }
+    }
+    from_init
+}
+
+/// Report anything the game's configs set that the pipeline depends on.
+///
+/// Read-only, and advisory: the user's configs are theirs to change. This only
+/// makes sure a value the app never hears about does not stay invisible.
+fn warn_about_game_cfgs(config: &PatcherConfig) {
+    let Some(dir) = game_dir_for(config) else {
+        return;
+    };
+    let scan = cfg_scan::scan(&dir);
+    let found = scan.effective_settings();
+    if found.is_empty() {
+        return;
+    }
+
+    let lines: Vec<String> = found
+        .iter()
+        .map(|s| format!("`{} {}` in `{}` line {}", s.cvar, s.value, s.file_name(), s.line))
+        .collect();
+
+    crate::log_markdown(&format!(
+        "⚠️ **The game's own configs set values this pipeline depends on**: {}. Nothing here \
+         changes them — they are yours. But `r_decals` decides how many decals the engine keeps, \
+         and the sweep is sized to it; `mirv_fov` decides what counts as on screen. Stating them \
+         in the app's Init Commands instead puts them where the pipeline can see them. The FOV \
+         above has been used for this capture; `r_decals` has not, because the pipeline's own pin \
+         runs after the config and would override it anyway.",
+        lines.join(", ")
+    ));
+}
+
 /// `r_decals` as stated in `init_commands`, if it is stated there at all.
 ///
 /// The last one wins, matching the console. Clamped to the engine's own
@@ -1879,12 +1955,13 @@ fn flush_options(config: &PatcherConfig) -> DecalCleanOptions {
         // writes coordinates that a real capture would later rely on.
         atlas_dir: Some(decal_atlas::default_dir()),
         maps_dir: maps_dir_for(config),
-        // Derived, never assumed. The capture's own FOV and frame shape decide
-        // how far off the view axis a decal can sit and still be in shot, and
-        // a movie shot at `mirv_fov 105` puts that corner ~16 degrees further
-        // out than the fixed 40 this used to carry.
+        // Derived, never assumed — and looked for everywhere the engine would
+        // find it, not just in the app's own init commands. A movie shot at
+        // `mirv_fov 105` puts the frame corner ~16 degrees further out than the
+        // fixed 40 this used to carry, and that 105 is as likely to be sitting
+        // in the user's `movie.cfg` as in the app.
         visibility_cone_degrees: on_screen_half_angle(
-            capture_fov(config),
+            capture_fov_resolved(config),
             config.resolution_width,
             config.resolution_height,
         ),
@@ -1942,6 +2019,8 @@ pub fn prepare_flushed_source(job: &PatchJob, config: &PatcherConfig) -> Option<
     if job.blocks.is_empty() {
         return None;
     }
+
+    warn_about_game_cfgs(config);
 
     let keep_windows = match keep_windows_for(job) {
         Some(w) => w,
@@ -2205,6 +2284,69 @@ mod tests {
 
         assert_eq!(ring_limit(&config), 512);
         assert_eq!(flush_options(&config).ring_limit, 512);
+    }
+
+    /// A game folder laid out as the engine expects: `hl.exe` with `dod/`
+    /// beside it. Returns the path to the exe.
+    fn fake_game(tag: &str, config_cfg: &str, movie_cfg: Option<&str>) -> std::path::PathBuf {
+        let root = std::env::temp_dir()
+            .join(format!("dod_fov_cfg_{}_{}", tag, std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let dod = root.join("dod");
+        std::fs::create_dir_all(&dod).unwrap();
+        std::fs::write(dod.join("config.cfg"), config_cfg).unwrap();
+        if let Some(movie) = movie_cfg {
+            std::fs::write(dod.join("movie.cfg"), movie).unwrap();
+        }
+        let exe = root.join("hl.exe");
+        std::fs::write(&exe, b"").unwrap();
+        exe
+    }
+
+    #[test]
+    fn a_fov_the_game_config_sets_is_found_rather_than_assumed() {
+        // The real shape, and the reason this exists: config.cfg ends with
+        // `exec movie.cfg`, movie.cfg carries `mirv_fov 105`, and the app was
+        // never told. Sizing the cone for the default 90 makes it ~7 degrees
+        // too narrow and calls in-shot positions hidden.
+        let exe = fake_game("found", "exec movie.cfg\n", Some("mirv_fov \"105\"\n"));
+        let config = PatcherConfig {
+            game_path: exe.to_string_lossy().to_string(),
+            ..PatcherConfig::default()
+        };
+
+        assert_eq!(capture_fov(&config), config.capture_fov, "init commands say nothing");
+        assert_eq!(capture_fov_resolved(&config), 105.0, "the config does");
+    }
+
+    #[test]
+    fn an_init_command_outranks_the_game_config() {
+        let exe = fake_game("outrank", "exec movie.cfg\n", Some("mirv_fov \"105\"\n"));
+        let config = PatcherConfig {
+            game_path: exe.to_string_lossy().to_string(),
+            init_commands: vec!["mirv_fov 120".to_string()],
+            ..PatcherConfig::default()
+        };
+
+        assert_eq!(capture_fov_resolved(&config), 120.0);
+    }
+
+    #[test]
+    fn a_config_that_switches_decals_off_does_not_stand_the_flush_down() {
+        // The same movie.cfg that carries the FOV also carries `r_decals 0`.
+        // Adopting that the way the FOV is adopted would disable the flush over
+        // a value the pipeline's own pin runs after and overrides.
+        let exe = fake_game("decals_off", "exec movie.cfg\n", Some("r_decals \"0\"\n"));
+        let config = PatcherConfig {
+            game_path: exe.to_string_lossy().to_string(),
+            ..PatcherConfig::default()
+        };
+
+        assert_eq!(
+            ring_limit(&config),
+            PatcherConfig::default().decal_ring_limit,
+            "r_decals is read from init commands and the app's own setting, never from a config"
+        );
     }
 
     #[test]

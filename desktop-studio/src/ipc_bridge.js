@@ -62,6 +62,17 @@ export async function mapDownloadUrl(mapName) {
     });
 }
 
+
+// Read-only scan of the game's config files for cvars the pipeline depends on.
+// Nothing in this app writes to a config file; this only reports.
+export async function scanGameConfigs(gamePath) {
+  return invoke("scan_game_configs", { gamePath })
+    .catch((err) => {
+      console.error("IPC Execution Error (scan_game_configs):", err);
+      return [];
+    });
+}
+
 export async function validatePaths(hlaePath, hlPath) {
   return await invoke('validate_paths', { hlaePath, hlPath })
     .catch((err) => {

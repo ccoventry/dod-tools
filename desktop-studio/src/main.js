@@ -13,6 +13,7 @@ import {
 } from './ipc_bridge.js';
 import { renderMasterList, initMasterPane } from './master_pane.js';
 import { initMapWarnings, refreshMapWarnings, resetMapWarnings } from './map_warnings.js';
+import { refreshCfgWarnings } from './cfg_warnings.js';
 import { renderDetailView, initDetailPane } from './detail_pane.js';
 import { initCaptureUI, getCommandsState, hydrateCommandsState, refreshLaunchGuard } from './capture_pane.js';
 import { initRenderUI, checkRenderRecoveryOnStartup } from './render_pane.js';
@@ -274,6 +275,9 @@ window.addEventListener("DOMContentLoaded", async () => {
       if (settings.hl_path) {
         const inputEl = document.querySelector('#hl-path-input');
         if (inputEl) inputEl.value = settings.hl_path;
+        // The game folder is only known once the persisted path lands here, so
+        // this is where the config scan can first say anything useful.
+        refreshCfgWarnings(settings.hl_path);
       }
       if (settings.ffmpeg_path) {
         const inputEl = document.querySelector('#ffmpeg-override-path-input');
@@ -1163,6 +1167,13 @@ window.addEventListener("DOMContentLoaded", async () => {
   // Read at click time, not captured: the hl.exe path can be set after a scan
   // has already run and left the banner up.
   initMapWarnings(() => document.querySelector('#hl-path-input')?.value?.trim() || '');
+  // Scanned once the persisted hl.exe path is in the DOM, and again whenever it
+  // changes — a config file the app cannot see is exactly what this warns about.
+  const hlPathInput = document.querySelector('#hl-path-input');
+  if (hlPathInput) {
+    refreshCfgWarnings(hlPathInput.value?.trim() || '');
+    hlPathInput.addEventListener('change', () => refreshCfgWarnings(hlPathInput.value?.trim() || ''));
+  }
   initDetailPane(() => currentScannedDemos, () => {
     // Fired on both streak selection and status edits — selection moves
     // required capture bytes (refreshLaunchGuard) and both move the Master

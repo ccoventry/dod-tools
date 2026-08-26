@@ -119,6 +119,46 @@ pub async fn check_demo_maps(
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CfgWarningRow {
+    pub cvar: String,
+    pub value: String,
+    pub file: String,
+    pub line: usize,
+}
+
+/// What the game's own config files set that this pipeline reads.
+///
+/// Read-only, and advisory. Nothing in this app writes, edits or removes a
+/// config file — the fix is for the user to make, either in their config or by
+/// stating the value in Init Commands where the pipeline can see it.
+#[tauri::command]
+pub async fn scan_game_configs(game_path: String) -> Result<Vec<CfgWarningRow>, String> {
+    let exe = PathBuf::from(&game_path);
+    let Some(dir) = exe.parent().map(|p| p.join("dod")) else {
+        return Ok(Vec::new());
+    };
+    if !dir.is_dir() {
+        return Ok(Vec::new());
+    }
+
+    tokio::task::spawn_blocking(move || {
+        native::patch::cfg_scan::scan(&dir)
+            .effective_settings()
+            .into_iter()
+            .map(|s| CfgWarningRow {
+                cvar: s.cvar.clone(),
+                value: s.value.clone(),
+                file: s.file_name(),
+                line: s.line,
+            })
+            .collect()
+    })
+    .await
+    .map_err(|e| format!("config scan failed: {}", e))
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct MapFetchResult {
     pub map_name: String,
     pub installed_path: String,
