@@ -118,6 +118,52 @@ Not every face can hold a decal. At minimum, skip:
 
 ---
 
+## The second prize: real occlusion
+
+Everything above treats the BSP as a supply of coordinates. It is also the only thing that can
+answer the question the flush actually cares about — **is this spot hidden from the camera?** —
+and that is arguably worth more.
+
+The current test (`decal_strip::resolve_flush_positions`, `hidden`) rejects a candidate that falls
+inside a 40-degree cone of any sampled camera within 1800 units, **with no occlusion test at all**.
+As recorded on #60: a wall two rooms away passes the cone test happily. It errs in both
+directions, but the expensive one is over-rejection — on the starving demos, most of those 32,000
+discarded tiles are behind walls, and they are exactly the spots wanted.
+
+Two mechanisms, in cost order:
+
+- **PVS as a hard guarantee.** `LUMP_VISIBILITY` is a run-length-encoded potentially-visible set
+  per leaf. If a candidate's leaf is absent from a camera leaf's PVS, nothing in that leaf is
+  visible from anywhere in the camera's leaf — the engine cannot render it. Take the union of PVS
+  across the leaves the cameras actually occupy (they cluster hard; expect a few hundred distinct
+  leaves at most) and any candidate outside that union is provably hidden for one leaf lookup.
+- **A hull trace for the rest.** For candidates inside the union, trace eye → point through the
+  BSP the way `SV_RecursiveHullCheck` does, on hull 0. Blocked means hidden. O(tree depth) per
+  trace rather than O(faces), which is what makes it affordable at all.
+
+Ordering matters: the naive form is every camera sample times every candidate, on the order of
+10^9 operations. PVS first eliminates most candidates for free, camera positions dedupe heavily,
+and traces early-out on the first camera that can see the point.
+
+Needs four more lumps: `NODES` (5) for the point-to-leaf descent, `LEAVES` (10), `VISIBILITY` (4),
+and `CLIPNODES` (9) for the trace.
+
+**Caveats, all of which matter:**
+
+- **Masked textures.** Grates, fences and `{`-prefixed textures are solid in the BSP and
+  see-through on screen. A trace would call a spot hidden that a viewer can see straight through.
+  They must be treated as non-blocking.
+- **Brush entities.** Tracing the world model alone ignores doors and lifts, so a spot hidden
+  behind a closed door reads as visible. That fails in the safe direction — a usable spot is
+  rejected rather than an exposed one accepted.
+- **This corrects the cone test, it does not retire it.** The rule becomes *reject if inside the
+  cone AND actually unoccluded*, which is both more permissive and more accurate than today.
+
+It also gives the first real verification of the flush's central safety claim. Today the strongest
+statement available is "outside the camera's cone". With this the report could say "N of 68
+positions were provably occluded from every camera in every clip" — computable without loading the
+game.
+
 ## The assumption that needs proving in game
 
 Everything here rests on one question: **does the engine create a decal on a surface the player is
@@ -184,8 +230,14 @@ for exactly this, and the file carries a `format` version field.
    after this is built on sand.
 3. **Face → candidate coordinates.** Sample inside the polygon, inset from the edges, apply the
    texture and model filters, prefer larger faces.
-4. **Feed the coordinate store**, keyed identically to the demo-harvested coordinates.
-5. **In-game check** — which is outstanding for the flush as a whole regardless.
+4. **Occlusion.** `NODES`, `LEAVES`, `VISIBILITY`, `CLIPNODES`; PVS union first, hull trace for the
+   remainder. Replaces the cone-only test with "in cone AND unoccluded", and lets the report state
+   how many chosen positions are provably hidden from every camera.
+5. **Feed the coordinate store**, keyed identically to the demo-harvested coordinates.
+6. **In-game check** — which is outstanding for the flush as a whole regardless.
+
+Steps 3 and 4 are independent: occlusion improves every existing source immediately, without any
+BSP-derived coordinates existing, so it can land first if stage 2 says the parser is sound.
 
 ---
 
