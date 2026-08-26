@@ -168,7 +168,7 @@ export const STRINGS = {
     AUTO_CLEAR_PREVIEWS_LABEL: 'Auto-clear Previews',
     AUTO_CLEAR_TEMP_DEMOS_LABEL: 'Auto-clear Temp Demos',
     CLEAR_PREVIEWS_BUTTON: 'Clear Previews...',
-    INIT_COMMANDS_LABEL: 'Initial Commands (executed once at demo load):',
+    INIT_COMMANDS_LABEL: 'Initial Commands (run once at demo load):',
     ADD_INIT_COMMAND_BUTTON: '+ Add Initial Command',
     // Both lists on this tab are custom commands; only one is scheduled, so
     // that is what the label says. Paired with INIT_COMMANDS_LABEL's "once at
