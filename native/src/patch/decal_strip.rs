@@ -40,6 +40,7 @@
 // so 256 keeps a full flush at ~2KB of injected messages instead of the ~36KB a
 // 4096-slot ring would need.
 
+use super::decal_atlas;
 use dem::open_demo_from_bytes;
 use dem::types::{
     ByteString, ConsoleCommand, EngineMessage, Frame, FrameData, MessageData, NetMessage,
@@ -157,6 +158,17 @@ pub struct DecalCleanOptions {
     /// test. DoD's default FOV is ~90 degrees horizontal, so 40 is a slightly
     /// generous half-angle.
     pub visibility_cone_degrees: f32,
+    /// Where this run's proven world coordinates are pooled per map, and read
+    /// back from. `None` keeps the pass self-contained — it uses only what this
+    /// demo proves, which is what the CLI and the probe rig want.
+    ///
+    /// Writing happens here and nowhere else.
+    pub atlas_dir: Option<std::path::PathBuf>,
+    /// Additional read-only coordinate stores, unioned in at load and never
+    /// written to. Intended for a store shipped with the app and refreshed by
+    /// the updater, kept separate so an update can replace it wholesale without
+    /// touching what the user's own captures have harvested.
+    pub atlas_seed_dirs: Vec<std::path::PathBuf>,
     /// Beyond this range a single decal is not readable on screen, so the
     /// line-of-sight test stops caring.
     pub visibility_max_distance: f32,
@@ -176,6 +188,8 @@ impl Default for DecalCleanOptions {
             flush_texture_index: None,
             floor_drop: ORIGIN_TO_FLOOR,
             grounded_settle_frames: 10,
+            atlas_dir: None,
+            atlas_seed_dirs: Vec::new(),
             min_camera_clearance: 900.0,
             visibility_cone_degrees: 40.0,
             visibility_max_distance: 1800.0,
@@ -218,6 +232,10 @@ pub struct DecalCleanStats {
     pub flush_positions_wanted: usize,
     /// Tiles laid across the fitted planes, before camera filtering.
     pub tiled_candidates: usize,
+    /// What the map's coordinate store held, gained and offers after this demo.
+    pub atlas: crate::patch::decal_atlas::AtlasStats,
+    /// Which map build the store was keyed on, when one was resolved.
+    pub atlas_map: Option<String>,
     /// How many of those were clear of every in-clip camera. A shortfall with
     /// these two close together means the demo offers little surface; a
     /// shortfall with a wide gap means the surface it has is all in shot.
@@ -241,6 +259,38 @@ pub(super) fn decal_texture_index(entity_type: u8, payload: &[u8]) -> Option<u8>
         104 if payload.len() >= 7 => Some(payload[6]),
         109 | 118 if payload.len() >= 9 => Some(payload[8]),
         _ => None,
+    }
+}
+
+/// Whether a decal was stamped onto world geometry, and therefore whether its
+/// coordinate stays true outside the demo that produced it.
+///
+/// This only matters for `decal_atlas`. Within one demo a mark on a door is a
+/// serviceable flush position, because the door is wherever the demo last left
+/// it. In a store that outlives the demo it is a coordinate that will one day
+/// point at the air a door used to occupy, and a flush position that misses
+/// allocates no ring slot.
+///
+/// Layouts are the ones documented on `decal_texture_index`. Anything not
+/// listed stays out of the atlas: it still serves this demo, it simply never
+/// becomes a durable claim about the map.
+pub(super) fn is_world_decal(entity_type: u8, payload: &[u8]) -> bool {
+    let entity_at = |i: usize| -> Option<u16> {
+        payload
+            .get(i..i + 2)
+            .map(|b| u16::from_le_bytes([b[0], b[1]]))
+    };
+    match entity_type {
+        // TE_WORLDDECAL / HIGH carry no entity field at all: world by
+        // construction, which is also why the flush emits this type.
+        116 | 117 => true,
+        // coord(6) + entity(2) + index(1)
+        109 | 118 => entity_at(6) == Some(0),
+        // coord(6) + index(1) + entity(2)
+        104 => entity_at(7) == Some(0),
+        // TE_BSPDECAL: coord(6) + 16-bit texture index(2) + entity(2)
+        13 => entity_at(8) == Some(0),
+        _ => false,
     }
 }
 
@@ -511,6 +561,10 @@ pub(super) fn build_world_decal(pos: &[f32; 3], texture_index: u8) -> NetMessage
 pub(super) struct Survey {
     /// Positions of decals the engine actually accepted during playback.
     pub(super) harvested: Vec<[f32; 3]>,
+    /// The subset of those stamped on world geometry rather than on a brush
+    /// entity. Only these are durable enough to contribute to `decal_atlas` —
+    /// see `is_world_decal`.
+    pub(super) world_harvested: Vec<[f32; 3]>,
     pub(super) texture_index: Option<u8>,
     /// Earliest camera eye position seen in playback.
     pub(super) spawn_eye: Option<[f32; 3]>,
@@ -561,6 +615,7 @@ pub(super) fn survey(
 ) -> Survey {
     let mut out = Survey {
         harvested: Vec::new(),
+        world_harvested: Vec::new(),
         texture_index: None,
         spawn_eye: None,
         grounded_origin: None,
@@ -676,6 +731,9 @@ pub(super) fn survey(
                 if let TempEntity::TeBspDecal(d) = &te.entity {
                     if let Some(pos) = decal_position(&d.unknown1) {
                         out.harvested.push(pos);
+                        if is_world_decal(te.entity_type, &d.unknown1) {
+                            out.world_harvested.push(pos);
+                        }
                     }
                     if d.unknown1.len() >= 8 {
                         let raw = i16::from_le_bytes([d.unknown1[6], d.unknown1[7]]);
@@ -713,6 +771,9 @@ pub(super) fn survey(
                 };
                 if let Some(pos) = decal_position(payload) {
                     out.harvested.push(pos);
+                    if is_world_decal(te.entity_type, payload) {
+                        out.world_harvested.push(pos);
+                    }
                 }
                 if let Some(idx) = decal_texture_index(te.entity_type, payload) {
                     // Prefer a bullet-hole texture. TE_GUNSHOTDECAL indices are
@@ -750,6 +811,10 @@ pub enum FlushSource {
     /// Floor points under the player's own walked path. Proven surfaces (they
     /// stood on them) and naturally spread apart, which is what a sweep needs.
     PlayerFloorPath,
+    /// A coordinate from the map's accumulated store — proven by some earlier
+    /// demo on this exact map build, and too isolated to have formed a tileable
+    /// patch. See `decal_atlas`.
+    MapAtlas,
     /// A grid tiled across a plane fitted to the demo's own decals. The surface
     /// is proven by those decals; the individual tiles are inference from them,
     /// which the engine permits — it constrains distance from a surface, not
@@ -790,7 +855,12 @@ struct Placement {
 /// `wanted` is how many distinct spots are needed to place the whole burst at
 /// `DECALS_PER_POSITION` each. Returning fewer means the sweep will fall short,
 /// which the caller reports rather than hiding.
-fn resolve_flush_positions(survey: &Survey, opts: &DecalCleanOptions, wanted: usize) -> Placement {
+fn resolve_flush_positions(
+    survey: &Survey,
+    atlas: &[[f32; 3]],
+    opts: &DecalCleanOptions,
+    wanted: usize,
+) -> Placement {
     if let Some(coord) = opts.flush_coord {
         return Placement {
             positions: vec![coord],
@@ -849,7 +919,12 @@ fn resolve_flush_positions(survey: &Survey, opts: &DecalCleanOptions, wanted: us
     // points under the player's own path come last — plentiful and proven, but
     // by construction where the player walks, which is the worst place to hide
     // something. Used only to make up a shortfall in count.
-    let tiled = tile_positions(&survey.harvested);
+    // Tiled across everything proven to be surface on this map, not just what
+    // this demo proved. The atlas is what makes a quiet wall tileable when the
+    // POV player never shot it.
+    let mut proven: Vec<[f32; 3]> = survey.harvested.clone();
+    proven.extend_from_slice(atlas);
+    let tiled = tile_positions(&proven);
     let mut placement = Placement {
         tiled: tiled.len(),
         ..Placement::default()
@@ -857,11 +932,15 @@ fn resolve_flush_positions(survey: &Survey, opts: &DecalCleanOptions, wanted: us
 
     let mut pool: Vec<[f32; 3]> = Vec::new();
     let mut source = None;
-    for (candidates, src) in [
+    let sources: [(&[[f32; 3]], FlushSource); 4] = [
         (&tiled, FlushSource::TiledPlane),
         (&survey.harvested, FlushSource::HarvestedNearSpawn),
+        // Atlas coordinates too isolated to have formed a tileable patch still
+        // stand on their own as proven surface.
+        (atlas, FlushSource::MapAtlas),
         (&survey.floor_candidates, FlushSource::PlayerFloorPath),
-    ] {
+    ];
+    for (candidates, src) in sources {
         // Clearance is measured against every in-window camera sample, so it is
         // computed once per candidate rather than inside the comparator — tiling
         // multiplies the candidate count by an order of magnitude and a sort
@@ -1092,7 +1171,32 @@ pub fn clean_demo_decals(
     let burst_count = opts.ring_limit as usize + opts.burst_margin;
     let positions_wanted = burst_count.div_ceil(DECALS_PER_POSITION);
 
-    let placement = resolve_flush_positions(&survey, opts, positions_wanted);
+    // The map's own coordinate store. This demo's proven world coordinates go
+    // in, the union of every demo ever processed for this exact map build comes
+    // back out. A demo whose player never shot the quiet side of the map can
+    // still flush there, because some earlier demo proved that surface exists.
+    let mut atlas: Vec<[f32; 3]> = Vec::new();
+    if let Some(dir) = &opts.atlas_dir {
+        match decal_atlas::MapKey::from_header(&demo.header) {
+            Some(key) => {
+                let (merged, astats) = decal_atlas::merge_and_save(
+                    dir,
+                    &opts.atlas_seed_dirs,
+                    &key,
+                    &survey.world_harvested,
+                );
+                stats.atlas = astats;
+                stats.atlas_map = Some(format!("{} ({:08x})", key.name, key.checksum));
+                atlas = merged;
+            }
+            None => crate::log_markdown(
+                "⚠️ **Decal atlas skipped** — the demo header carries no usable map name, so \
+                 there is nothing to key a coordinate store on.",
+            ),
+        }
+    }
+
+    let placement = resolve_flush_positions(&survey, &atlas, opts, positions_wanted);
     let flush_positions = placement.positions;
     stats.flush_coord = flush_positions.first().copied();
     stats.flush_source = placement.source;
@@ -1367,6 +1471,10 @@ fn flush_options(config: &PatcherConfig) -> DecalCleanOptions {
     DecalCleanOptions {
         ring_limit: config.decal_ring_limit,
         inject_r_decals_command: false,
+        // The pipeline is the only caller that accumulates a store. The CLI and
+        // the probe rig stay self-contained, so a one-off experiment never
+        // writes coordinates that a real capture would later rely on.
+        atlas_dir: Some(decal_atlas::default_dir()),
         ..Default::default()
     }
 }
@@ -1481,6 +1589,7 @@ fn report(
     // produce identical counts and completely different odds of working.
     let source = match stats.flush_source {
         Some(FlushSource::TiledPlane) => "tiled planes",
+        Some(FlushSource::MapAtlas) => "the map coordinate store",
         Some(FlushSource::HarvestedNearSpawn) => "harvested decals",
         Some(FlushSource::PlayerFloorPath) => "floor under the player's path",
         Some(FlushSource::ComputedSpawnFloor) => "computed spawn floor",
@@ -1503,6 +1612,18 @@ fn report(
         stats.bursts_placed,
         opts.ring_limit
     ));
+
+    // What the map's store contributed. Worth its own line: a demo that
+    // sweeps only because earlier demos proved the surface is a different
+    // situation from one that stands on its own, and the difference is
+    // invisible in the position count.
+    if let Some(map) = &stats.atlas_map {
+        crate::log_markdown(&format!(
+            "🗺️ **Map coordinate store** for `{}`: {} coordinate(s) already known, {} added by \
+             this demo, {} now available to the flush.",
+            map, stats.atlas.known, stats.atlas.added, stats.atlas.total
+        ));
+    }
 
     // Too few distinct spots. Past MAX_OVERLAP_DECALS at one position the
     // engine recycles a decal instead of allocating, and a recycled decal never

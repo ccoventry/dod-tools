@@ -46,6 +46,8 @@ pub mod highlevel;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod decal_strip;
 #[cfg(not(target_arch = "wasm32"))]
+pub mod decal_atlas;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod decal_probe;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod engine;

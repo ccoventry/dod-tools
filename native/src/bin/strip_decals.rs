@@ -158,6 +158,9 @@ fn main() {
                 Some(FlushSource::TiledPlane) => println!(
                     "Flush source:          grid tiled across a plane fitted to real decals"
                 ),
+                Some(FlushSource::MapAtlas) => println!(
+                    "Flush source:          the map's accumulated coordinate store"
+                ),
                 None => println!("Flush source:          <none>"),
             }
             println!(
