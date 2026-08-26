@@ -169,7 +169,7 @@ export const STRINGS = {
     AUTO_CLEAR_TEMP_DEMOS_LABEL: 'Auto-clear Temp Demos',
     CLEAR_PREVIEWS_BUTTON: 'Clear Previews...',
     INIT_COMMANDS_LABEL: 'Initial Commands (executed once at demo load):',
-    ADD_INIT_COMMAND_BUTTON: '+ Add Init Command',
+    ADD_INIT_COMMAND_BUTTON: '+ Add Initial Command',
     // Both lists on this tab are custom commands; only one is scheduled, so
     // that is what the label says. Paired with INIT_COMMANDS_LABEL's "once at
     // demo load", the two read as the distinction they actually are.
@@ -645,7 +645,7 @@ export const STRINGS = {
     shadowedByApp: (cvar, yours, winner, setting) =>
       `${cvar} ${yours} never applies — the app sets ${winner} from ${setting}`,
     shadowedByYou: (cvar, yours, winner) =>
-      `${cvar} ${yours} never applies — a later Init Command sets ${winner}`,
+      `${cvar} ${yours} never applies — a later Initial Command sets ${winner}`,
     // Which setting owns a value the pipeline appends for itself, so the advice
     // can name the control rather than leaving the user to hunt for it.
     SETTING_FOR_CVAR: {
