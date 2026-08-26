@@ -137,10 +137,21 @@ impl StreamPatcher {
         }
     }
 
-    pub fn patch(&self, job: &PatchJob, _config: &PatcherConfig, cancel_token: &Arc<AtomicBool>) -> Result<(), std::io::Error> {
+    pub fn patch(&self, job: &PatchJob, config: &PatcherConfig, cancel_token: &Arc<AtomicBool>) -> Result<(), std::io::Error> {
         use std::io::{BufReader, BufWriter, Read, Write, Seek, SeekFrom};
 
-        let input_file = std::fs::File::open(&job.source_demo)?;
+        // Decal hygiene runs first, as a whole-file rewrite the stream below
+        // then reads from. Held for the whole patch: the scratch demo is
+        // deleted when this drops, including on the cancellation path.
+        // Falls back to the original demo (having logged why) rather than
+        // failing the batch — see `prepare_flushed_source`.
+        let cleaned_source = crate::patch::decal_strip::prepare_flushed_source(job, config);
+        let source_demo: &std::path::Path = match &cleaned_source {
+            Some(c) => c.path(),
+            None => std::path::Path::new(&job.source_demo),
+        };
+
+        let input_file = std::fs::File::open(source_demo)?;
         let output_file = std::fs::File::create(&job.output_demo)?;
 
         let mut reader = BufReader::with_capacity(crate::patch::IO_BUFFER_CAPACITY, input_file);

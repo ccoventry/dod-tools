@@ -567,6 +567,11 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
                 source_streak_indices: merged_sources[block_index].clone(),
                 start_tick: streak.start_tick,
                 end_tick: streak.end_tick,
+                // Filled in by the scheduling loop below, which is where the
+                // record bounds are actually derived. Left at 0 here rather
+                // than duplicating that arithmetic.
+                record_start_tick: 0,
+                record_stop_tick: 0,
             });
         }
         blocks.sort_by_key(|b| b.block_index);
@@ -649,6 +654,17 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
             } else {
                 r_stop = r_stop.min(exit_frame);
                 s_end = s_end.min(exit_frame);
+            }
+
+            // Hand the finished record bounds back to the block. This loop and
+            // the block-allocation loop above both walk `merged_streaks` in its
+            // original order, so `i` is the block index — matched on rather
+            // than indexed with, since allocation may reorder `blocks`.
+            // The decal flush is the consumer: it needs the frames that end up
+            // in the take, which `start_tick`/`end_tick` are not.
+            if let Some(block) = blocks.iter_mut().find(|b| b.block_index == i) {
+                block.record_start_tick = record_start_tick;
+                block.record_stop_tick = r_stop;
             }
 
             // Custom command overrides
@@ -767,6 +783,15 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
 
         let separate_hud_str = if config.separate_hud { "1" } else { "0" };
         final_init_commands.push(format!("mirv_movie_separate_hud {}", separate_hud_str));
+
+        // The decal flush pins the ring here, at demo load, and nowhere else.
+        // r_decals bounds how far the rotating index may travel before it
+        // wraps; it does not evict anything, so lowering it once decals have
+        // accumulated strands every one sitting above the new limit. Pinned
+        // last so a user-supplied init command cannot override it.
+        if config.decal_flush {
+            final_init_commands.push(format!("r_decals {}", config.decal_ring_limit));
+        }
 
         jobs.push(PatchJob {
             source_demo: source_demo.to_string(),
@@ -1417,6 +1442,98 @@ mod tests {
         // resumes it afterwards.
         assert_eq!(ticks_for(job, "sys_normal_speed").len(), 6, "3-frame redundancy per block");
         assert_eq!(ticks_for(job, "sys_sound").len(), 2);
+    }
+
+    #[test]
+    fn test_blocks_carry_the_record_bounds_the_decal_flush_keys_off() {
+        // A block's start_tick/end_tick are the highlight's own bounds — not
+        // the frames HLAE records between, which are computed separately in the
+        // scheduling loop. The decal flush strips every decal outside a block's
+        // recorded frames, so bounds that came back wrong (or as 0) would scrub
+        // the very clip the pass exists to protect.
+        let config = mock_config();
+        let raw_streaks = vec![
+            streak_with_kills(1000, 1200, &[1000, 1200]),
+            streak_with_kills(5000, 5200, &[5000, 5200]),
+        ];
+
+        let (jobs, _) = build_batch_queue(raw_streaks, &config, &std::collections::HashMap::new()).unwrap();
+        let job = &jobs[1];
+
+        assert_eq!(job.blocks.len(), 2);
+
+        // scheduled_commands is tick-sorted and the blocks don't overlap, so
+        // the Nth start pairs with the Nth stop.
+        let mut expected: Vec<(i32, i32)> = ticks_for(job, "sys_record_start")
+            .into_iter()
+            .zip(ticks_for(job, "sys_record_stop"))
+            .collect();
+        expected.sort_unstable();
+
+        let mut reported: Vec<(i32, i32)> = job
+            .blocks
+            .iter()
+            .map(|b| (b.record_start_tick, b.record_stop_tick))
+            .collect();
+        reported.sort_unstable();
+
+        assert_eq!(
+            reported, expected,
+            "blocks must report the same frames the capture actually records between"
+        );
+        for b in &job.blocks {
+            assert!(
+                b.record_start_tick > 0 && b.record_stop_tick >= b.record_start_tick,
+                "block {} has an unusable record window {}..{}",
+                b.block_index, b.record_start_tick, b.record_stop_tick
+            );
+        }
+    }
+
+    #[test]
+    fn test_decal_flush_pins_the_ring_once_at_demo_load_and_never_again() {
+        // r_decals bounds how far the rotating decal index may travel before it
+        // wraps; it evicts nothing. Setting it a second time, lower, strands
+        // every decal above the new limit permanently — so exactly one command
+        // may own it, and it has to land at demo load.
+        let mut config = mock_config();
+        config.decal_ring_limit = 128;
+        config.init_commands = vec!["r_decals 4096".to_string()];
+
+        let (jobs, _) = build_batch_queue(
+            vec![streak_with_kills(1000, 1200, &[1000, 1200])],
+            &config,
+            &std::collections::HashMap::new(),
+        ).unwrap();
+        let job = &jobs[1];
+
+        assert_eq!(
+            job.init_commands.last().map(String::as_str),
+            Some("r_decals 128"),
+            "the pipeline's pin must be the last word on r_decals: {:?}",
+            job.init_commands
+        );
+        assert!(
+            !job.scheduled_commands.iter().any(|(_, c)| c.starts_with("r_decals")),
+            "r_decals must never be touched mid-demo — that is what strands decals"
+        );
+    }
+
+    #[test]
+    fn test_decal_flush_disabled_leaves_r_decals_untouched() {
+        let mut config = mock_config();
+        config.decal_flush = false;
+
+        let (jobs, _) = build_batch_queue(
+            vec![streak_with_kills(1000, 1200, &[1000, 1200])],
+            &config,
+            &std::collections::HashMap::new(),
+        ).unwrap();
+
+        assert!(
+            !jobs[1].init_commands.iter().any(|c| c.starts_with("r_decals")),
+            "with the flush off the pipeline must not touch the cvar at all"
+        );
     }
 
     #[test]

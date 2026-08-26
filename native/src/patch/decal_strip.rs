@@ -30,9 +30,10 @@
 //  2. FLUSH BURST — pin r_decals to a modest ring size, then inject exactly
 //     that many synthetic decals into the gap before each clip. That walks the
 //     ring index a full revolution, unlinking every real decal still on a wall.
-//     The synthetic decals are stacked at one coordinate near the player's
-//     spawn (see `resolve_flush_position`) so they land where the capture
-//     camera never looks.
+//     They are spread across many positions rather than stacked at one (see
+//     `resolve_flush_positions` and MAX_OVERLAP_DECALS below — a stack stops
+//     advancing the ring after the sixth), each ranked by how far it stays from
+//     every in-clip camera, so they land where the capture never looks.
 //
 // Pinning the ring small is what makes the burst cheap: a sweep costs
 // `ring_limit` injections regardless of how many decals are actually out there,
@@ -987,4 +988,342 @@ pub fn strip_decals_outside_windows(
         ..Default::default()
     };
     clean_demo_decals(demo_bytes, keep_windows, &opts)
+}
+
+// ── Batch-pipeline pre-pass ──────────────────────────────────────────────────
+//
+// `StreamPatcher::patch` streams its input as a file, while `clean_demo_decals`
+// is a whole-file parse and rewrite — the two cannot share a buffer. So the
+// flush runs ahead of the patch, writing cleaned bytes to a scratch demo that
+// the patch then streams from. It lives inside `patch()` rather than at its
+// call sites (the CLI, `spawn_patch_batch`, and two in `capture_manager`) so
+// those cannot drift apart on whether decals get cleaned.
+
+use super::types::{PatchJob, PatcherConfig};
+
+/// A cleaned copy of a source demo, alive only as long as the patch reading it.
+/// Removed on drop, which covers the error and cancellation paths as well as
+/// the ordinary one.
+pub struct CleanedSource {
+    path: std::path::PathBuf,
+}
+
+impl CleanedSource {
+    pub fn path(&self) -> &std::path::Path {
+        &self.path
+    }
+}
+
+impl Drop for CleanedSource {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+/// Scratch path for one cleaned demo. Kept in the system temp directory rather
+/// than beside the output: the capture directories are scanned for takes and
+/// swept by the auto-clear passes, neither of which should ever see this file.
+fn scratch_path(source_demo: &str) -> std::path::PathBuf {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static SEQ: AtomicU32 = AtomicU32::new(0);
+
+    let stem = std::path::Path::new(source_demo)
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "demo".to_string());
+
+    std::env::temp_dir().join(format!(
+        "dodtools_decalflush_{}_{}_{}.dem",
+        stem,
+        std::process::id(),
+        SEQ.fetch_add(1, Ordering::Relaxed)
+    ))
+}
+
+/// Clean options for the batch pipeline, as distinct from the `strip_decals`
+/// CLI's.
+///
+/// The one difference that matters is `inject_r_decals_command`. The CLI has no
+/// `init_commands` to pin the cvar from, so it inserts a `ConsoleCommand` frame
+/// into the playback entry. In the pipeline that insertion would shift every
+/// later frame ordinal by +1 and silently desync `job.scheduled_commands` from
+/// `StreamPatcher`'s `frame_counter` — every scheduled command firing a frame
+/// late, with nothing in the output bytes to show for it. So here the cvar is
+/// pinned from `init_commands` (see `builder`) and no frame is inserted. The
+/// burst itself only pushes messages into frames that already exist, so it
+/// moves no ordinal and is safe.
+fn flush_options(config: &PatcherConfig) -> DecalCleanOptions {
+    DecalCleanOptions {
+        ring_limit: config.decal_ring_limit,
+        inject_r_decals_command: false,
+        ..Default::default()
+    }
+}
+
+/// The frames each of a job's blocks records between, in the frame-ordinal
+/// domain that `StreamPatcher`'s `frame_counter` and `job.scheduled_commands`
+/// already share.
+///
+/// All or nothing: `None` unless every block contributes a window. Stripping
+/// keys off these, so a block that contributed none would have its own recorded
+/// clip treated as outside every window — scrubbing the bullet holes that land
+/// during the action. Dirty walls are much the lesser defect.
+///
+/// A start of 0 means the bounds never got filled in. Equal bounds do not: with
+/// no record lead or trail configured, a single-kill highlight genuinely does
+/// start and stop recording on one frame. Only an inverted window is rejected —
+/// an `r_stop` clamped back to an end-of-demo frame ahead of its own start.
+fn keep_windows_for(job: &PatchJob) -> Option<Vec<(i32, i32)>> {
+    let windows: Vec<(i32, i32)> = job
+        .blocks
+        .iter()
+        .filter(|b| b.record_start_tick > 0 && b.record_stop_tick >= b.record_start_tick)
+        .map(|b| (b.record_start_tick, b.record_stop_tick))
+        .collect();
+
+    (windows.len() == job.blocks.len()).then_some(windows)
+}
+
+/// Cleans a job's source demo of wall decals outside its recorded clips, and
+/// sweeps the decal ring ahead of each one.
+///
+/// Returns `None` when there is nothing to do, and — deliberately — also when
+/// the flush fails. Decal hygiene is cosmetic; losing an entire capture batch
+/// over it would not be. Every such path logs loudly first, because this is a
+/// feature whose failures are invisible in the output bytes: a demo that was
+/// not cleaned patches and records exactly like one that was, and only looks
+/// wrong on screen.
+pub fn prepare_flushed_source(job: &PatchJob, config: &PatcherConfig) -> Option<CleanedSource> {
+    if !config.decal_flush {
+        return None;
+    }
+
+    // The primer job and preview jobs carry no blocks: nothing is being
+    // recorded from them, so there is no clip to keep clean.
+    if job.blocks.is_empty() {
+        return None;
+    }
+
+    let keep_windows = match keep_windows_for(job) {
+        Some(w) => w,
+        None => {
+            crate::log_markdown(&format!(
+                "⚠️ **Decal flush skipped** — not every block in `{}` carries usable record \
+                 bounds. Capture continues; walls will not be cleaned between clips.",
+                job.source_demo
+            ));
+            return None;
+        }
+    };
+
+    let bytes = match std::fs::read(&job.source_demo) {
+        Ok(b) => b,
+        Err(e) => {
+            crate::log_markdown(&format!(
+                "⚠️ **Decal flush skipped** — could not read `{}`: {}",
+                job.source_demo, e
+            ));
+            return None;
+        }
+    };
+
+    let opts = flush_options(config);
+
+    let (cleaned, stats) = match clean_demo_decals(&bytes, &keep_windows, &opts) {
+        Ok(v) => v,
+        Err(e) => {
+            crate::log_markdown(&format!(
+                "⚠️ **Decal flush failed** on `{}`: {}. Capture continues with the unmodified \
+                 demo; walls will not be cleaned between clips.",
+                job.source_demo, e
+            ));
+            return None;
+        }
+    };
+    drop(bytes);
+
+    let path = scratch_path(&job.source_demo);
+    if let Err(e) = std::fs::write(&path, &cleaned) {
+        crate::log_markdown(&format!(
+            "⚠️ **Decal flush skipped** — could not write scratch demo `{}`: {}",
+            path.display(),
+            e
+        ));
+        return None;
+    }
+
+    report(job, &stats, &keep_windows, config.decal_ring_limit);
+    Some(CleanedSource { path })
+}
+
+/// Writes the flush result to the capture log. The counts are informational;
+/// the warnings below are not — each marks a way the sweep can come out
+/// structurally correct and still be wrong on screen.
+fn report(job: &PatchJob, stats: &DecalCleanStats, keep_windows: &[(i32, i32)], ring_limit: u32) {
+    crate::log_markdown(&format!(
+        "🧹 **Decal flush** on `{}`: stripped {} wall decals and {} sprays outside {} clip(s); \
+         injected {} flush decals across {} position(s) in {} burst(s); r_decals pinned to {}.",
+        job.source_demo,
+        stats.temp_entity_stripped,
+        stats.player_spray_stripped,
+        keep_windows.len(),
+        stats.flush_decals_injected,
+        stats.flush_positions,
+        stats.bursts_placed,
+        ring_limit
+    ));
+
+    // Too few distinct spots. Past MAX_OVERLAP_DECALS at one position the
+    // engine recycles a decal instead of allocating, and a recycled decal never
+    // advances the ring — so the sweep stops short of a full revolution and
+    // some of the old decals survive it.
+    if stats.flush_positions < stats.flush_positions_wanted {
+        crate::log_markdown(&format!(
+            "⚠️ **Partial decal sweep** — only {} of the {} distinct positions a full ring \
+             revolution needs. Some decals will survive into the clip. Lower `decal_ring_limit` \
+             or accept a partial clean.",
+            stats.flush_positions, stats.flush_positions_wanted
+        ));
+    }
+
+    // The one outright defect this pass can introduce: its own decals on
+    // screen. Camera clearance is only a proxy for visibility, so a non-zero
+    // count here has to be looked at rather than trusted.
+    if stats.flush_on_camera_frames > 0 {
+        crate::log_markdown(&format!(
+            "⚠️ **Flush decals may be on camera** — the chosen spot(s) fall inside the camera cone \
+             on {} of {} sampled in-clip frames. Review the takes.",
+            stats.flush_on_camera_frames, stats.camera_samples
+        ));
+    }
+
+    // A gap too short to fit a whole sweep before the clip opens.
+    for (window_start, placed, wanted) in &stats.bursts_short {
+        crate::log_markdown(&format!(
+            "⚠️ **Short decal burst** before frame {} — placed {} of {}. That clip is not \
+             guaranteed to start clean.",
+            window_start, placed, wanted
+        ));
+    }
+
+    // A computed floor point is geometry the demo never proved. If it misses a
+    // surface the engine creates nothing and the entire sweep no-ops silently.
+    if stats.flush_source == Some(FlushSource::ComputedSpawnFloor) {
+        crate::log_markdown(
+            "⚠️ **Decal flush anchored on a computed floor point** — the demo contained no real \
+             decal to borrow a proven surface from. If that point misses geometry, the sweep does \
+             nothing at all.",
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::patch::types::CaptureBlock;
+
+    /// `source_demo` deliberately points at nothing: every case below must
+    /// decide to skip before it ever opens the file, so a read attempt would
+    /// surface as a failure rather than a silent fallback.
+    fn job_with_blocks(blocks: Vec<CaptureBlock>) -> PatchJob {
+        PatchJob {
+            source_demo: "no_such_demo_should_ever_be_read.dem".to_string(),
+            output_demo: std::path::PathBuf::from("unused_output.dem"),
+            streaks: Vec::new(),
+            target_player: None,
+            init_commands: Vec::new(),
+            scheduled_commands: Vec::new(),
+            director_events: Vec::new(),
+            block_routes: Vec::new(),
+            blocks,
+        }
+    }
+
+    fn block(block_index: usize, record_start_tick: i32, record_stop_tick: i32) -> CaptureBlock {
+        CaptureBlock {
+            demo_name: "chain_01".to_string(),
+            block_index,
+            drive_index: 0,
+            take_folder: std::path::PathBuf::from("take"),
+            take_key: String::new(),
+            source_streak_indices: vec![block_index],
+            start_tick: record_start_tick,
+            end_tick: record_stop_tick,
+            record_start_tick,
+            record_stop_tick,
+        }
+    }
+
+    #[test]
+    fn the_pipeline_never_inserts_the_r_decals_frame() {
+        // Inserting that ConsoleCommand frame shifts every later frame ordinal
+        // by +1, which desyncs the scheduled capture commands from the
+        // patcher's frame counter — invisibly, since the demo still parses and
+        // plays. The pipeline pins the cvar from init_commands instead.
+        let config = PatcherConfig {
+            decal_ring_limit: 128,
+            ..PatcherConfig::default()
+        };
+        let opts = flush_options(&config);
+
+        assert!(
+            !opts.inject_r_decals_command,
+            "the pipeline must not insert a console-command frame — init_commands owns r_decals"
+        );
+        assert_eq!(opts.ring_limit, 128, "the configured ring size must reach the sweep");
+    }
+
+    #[test]
+    fn flush_disabled_leaves_the_demo_alone() {
+        let config = PatcherConfig {
+            decal_flush: false,
+            ..PatcherConfig::default()
+        };
+        let job = job_with_blocks(vec![block(0, 1000, 2000)]);
+
+        assert!(prepare_flushed_source(&job, &config).is_none());
+    }
+
+    #[test]
+    fn jobs_with_no_blocks_are_skipped() {
+        // The primer job and preview jobs record nothing, so there is no clip
+        // to keep clean and nothing to strip against.
+        let job = job_with_blocks(Vec::new());
+
+        assert!(prepare_flushed_source(&job, &PatcherConfig::default()).is_none());
+    }
+
+    #[test]
+    fn one_block_missing_its_record_bounds_skips_the_whole_job() {
+        // A partial window set would strip the decals landing inside the clip
+        // whose bounds went missing — worse than the dirty walls being fixed.
+        let job = job_with_blocks(vec![block(0, 1000, 2000), block(1, 0, 0)]);
+
+        assert!(keep_windows_for(&job).is_none());
+        assert!(prepare_flushed_source(&job, &PatcherConfig::default()).is_none());
+    }
+
+    #[test]
+    fn an_inverted_record_window_skips_the_whole_job() {
+        // A record stop clamped back to the end of the demo can land ahead of
+        // its own start. That window keeps nothing, so the clip would be
+        // stripped rather than protected.
+        let job = job_with_blocks(vec![block(0, 1000, 2000), block(1, 9000, 8000)]);
+
+        assert!(keep_windows_for(&job).is_none());
+    }
+
+    #[test]
+    fn a_single_frame_record_window_is_usable() {
+        // With no record lead or trail, a one-kill highlight really does start
+        // and stop on the same frame. Rejecting that would silently disable the
+        // flush for the whole job.
+        let job = job_with_blocks(vec![block(0, 1000, 2000), block(1, 5000, 5000)]);
+
+        assert_eq!(
+            keep_windows_for(&job),
+            Some(vec![(1000, 2000), (5000, 5000)]),
+            "equal record bounds are a real one-frame window, not a missing one"
+        );
+    }
 }

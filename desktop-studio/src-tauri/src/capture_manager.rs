@@ -79,6 +79,14 @@ pub struct CapturePayload {
     /// User-defined commands scheduled relative to each highlight's bounds.
     #[serde(default)]
     pub custom_commands: Vec<CustomCommandPayload>,
+    /// Clear accumulated wall decals ahead of every recorded clip, so the
+    /// second and later takes cut from one demo don't start dirty. Absent
+    /// means "leave it at the pipeline default".
+    #[serde(default)]
+    pub decal_flush: Option<bool>,
+    /// Decal ring size the flush pins `r_decals` to. Absent means the default.
+    #[serde(default)]
+    pub decal_ring_limit: Option<u32>,
 }
 
 fn default_initial_delay() -> f32 { 3.0 }
@@ -219,6 +227,12 @@ fn config_from_payload(payload: &CapturePayload) -> PatcherConfig {
             _ => CommandRelation::Before,
         },
     }).collect();
+    if let Some(v) = payload.decal_flush {
+        cfg.decal_flush = v;
+    }
+    if let Some(v) = payload.decal_ring_limit {
+        cfg.decal_ring_limit = v;
+    }
     // Capture Output is the sole (required) source of output directories —
     // the frontend already blocks the batch if `drives` is empty.
     cfg.primary_media_dir = payload.drives.first().map(std::path::PathBuf::from);
@@ -1224,6 +1238,8 @@ mod tests {
                 CustomCommandPayload { command: "say after".to_string(), relation: "After".to_string(), offset_seconds: 1.0 },
                 CustomCommandPayload { command: "say unrecognized".to_string(), relation: "Sideways".to_string(), offset_seconds: 1.0 },
             ],
+            decal_flush: None,
+            decal_ring_limit: None,
         }
     }
 
@@ -1241,6 +1257,24 @@ mod tests {
         assert_eq!(cfg.session_id, "session_test");
         assert_eq!(cfg.init_commands, vec!["exec autoexec".to_string()]);
         assert_eq!(cfg.capture_directories, vec![PathBuf::from("D:/capture")]);
+    }
+
+    #[test]
+    fn test_config_from_payload_decal_flush_overrides_only_when_sent() {
+        // Absent means "leave the pipeline default alone", so a frontend that
+        // knows nothing about decals still gets the flush.
+        let defaults = PatcherConfig::default();
+        let mut payload = sample_payload();
+
+        let cfg = config_from_payload(&payload);
+        assert_eq!(cfg.decal_flush, defaults.decal_flush);
+        assert_eq!(cfg.decal_ring_limit, defaults.decal_ring_limit);
+
+        payload.decal_flush = Some(false);
+        payload.decal_ring_limit = Some(64);
+        let cfg = config_from_payload(&payload);
+        assert!(!cfg.decal_flush);
+        assert_eq!(cfg.decal_ring_limit, 64);
     }
 
     #[test]
