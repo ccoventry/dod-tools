@@ -111,7 +111,7 @@ pub use decal_probe::{
 pub use cfg_scan::{scan as scan_game_cfgs, CfgScan, CvarSetting, WATCHED_CVARS};
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use decal_strip::capture_fov_resolved;
+pub use decal_strip::{capture_fov_from_init, capture_fov_resolved};
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use map_check::{check_demo, map_reference, MapReference, MapStatus};

@@ -1794,7 +1794,19 @@ pub fn on_screen_half_angle(fov_degrees: f32, width: i32, height: i32) -> f32 {
 /// silently disagree with it. The last one wins, matching the console. Falls
 /// back to the configured default when nothing sets it.
 pub fn capture_fov(config: &PatcherConfig) -> f32 {
-    for cmd in config.init_commands.iter().rev() {
+    capture_fov_from_init(&config.init_commands).unwrap_or(config.capture_fov)
+}
+
+/// The FOV `init_commands` states, if it states one at all.
+///
+/// Separate from `capture_fov` because "nothing was stated" and "the stated
+/// value happens to equal the default" are different facts, and collapsing them
+/// into one number loses the difference. `capture_fov_resolved` needs it: the
+/// app's own seeded default is `mirv_fov 90`, so a user who takes the defaults
+/// and has `mirv_fov 105` in a config would otherwise have their explicit 90
+/// silently replaced by the config's 105.
+pub fn capture_fov_from_init(init_commands: &[String]) -> Option<f32> {
+    for cmd in init_commands.iter().rev() {
         let trimmed = cmd.trim();
         let Some(rest) = trimmed
             .strip_prefix("mirv_fov")
@@ -1808,11 +1820,11 @@ pub fn capture_fov(config: &PatcherConfig) -> f32 {
         }
         if let Ok(v) = rest.trim().parse::<f32>() {
             if v > 0.0 {
-                return v;
+                return Some(v);
             }
         }
     }
-    config.capture_fov
+    None
 }
 
 /// The mod folder holding the game's configs, for a configured `hl.exe`.
@@ -1837,15 +1849,16 @@ fn game_dir_for(config: &PatcherConfig) -> Option<std::path::PathBuf> {
 ///
 /// Reads config files. Never writes one.
 pub fn capture_fov_resolved(config: &PatcherConfig) -> f32 {
-    // An init command is the app's own statement and outranks a config, so a
-    // value that differs from the configured default came from one.
-    let from_init = capture_fov(config);
-    if from_init != config.capture_fov {
-        return from_init;
+    // An init command is the app's own statement and outranks a config —
+    // including when it states the same number the default happens to be. The
+    // seeded default IS `mirv_fov 90`, so treating that as "nothing was said"
+    // would hand every defaulted install over to whatever its movie.cfg says.
+    if let Some(stated) = capture_fov_from_init(&config.init_commands) {
+        return stated;
     }
 
     let Some(dir) = game_dir_for(config) else {
-        return from_init;
+        return config.capture_fov;
     };
     let scan = cfg_scan::scan(&dir);
     for cvar in ["mirv_fov", "default_fov"] {
@@ -1857,7 +1870,7 @@ pub fn capture_fov_resolved(config: &PatcherConfig) -> f32 {
             }
         }
     }
-    from_init
+    config.capture_fov
 }
 
 /// Report anything the game's configs set that the pipeline depends on.
@@ -2317,6 +2330,25 @@ mod tests {
 
         assert_eq!(capture_fov(&config), config.capture_fov, "init commands say nothing");
         assert_eq!(capture_fov_resolved(&config), 105.0, "the config does");
+    }
+
+    #[test]
+    fn an_init_command_stating_the_default_value_still_outranks_the_config() {
+        // The trap: `mirv_fov 90` is what the app seeds into a new install's
+        // init commands, and 90 is also the configured default. Deciding
+        // "was one stated?" by comparing against the default would read that as
+        // silence and hand every defaulted install to its movie.cfg — here,
+        // rendering the cone for 105 when the user asked for 90.
+        let exe = fake_game("states_default", "exec movie.cfg\n", Some("mirv_fov \"105\"\n"));
+        let config = PatcherConfig {
+            game_path: exe.to_string_lossy().to_string(),
+            init_commands: vec!["mirv_fov 90".to_string()],
+            ..PatcherConfig::default()
+        };
+
+        assert_eq!(config.capture_fov, 90.0, "the default this could be confused with");
+        assert_eq!(capture_fov_from_init(&config.init_commands), Some(90.0));
+        assert_eq!(capture_fov_resolved(&config), 90.0, "the user asked for 90");
     }
 
     #[test]
