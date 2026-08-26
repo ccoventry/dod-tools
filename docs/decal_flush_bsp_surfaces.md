@@ -1,6 +1,6 @@
 # Decal Flush: BSP-Derived Surface Coordinates
 
-> **Status 2026-08-26 — stages 1, 2 and 4 built and measured. 3, 5, 6 not started.**
+> **Status 2026-08-26 — stages 1, 2, 4 and 6 built and measured. 3 and 5 not started.**
 > The R&D direction for the decal flush ([#60](https://github.com/ccoventry/dod-tools/issues/60)).
 >
 > - **Stage 1 built** (`a4bed14`, `1c86571`): `native/src/patch/bsp.rs` reads BSP v30 geometry,
@@ -13,8 +13,11 @@
 >   85-demo sample at `mirv_fov 105`: **85/85 demos reach a full 68-position sweep, with zero
 >   in-clip frames showing a flush position, every one decided from geometry.** Before it, three
 >   of those demos were getting a single position — a sweep that turns 4 of 256 ring slots.
-> - **Stages 3, 5 and 6 are design only.** With stage 4 delivering full sweeps everywhere at ring
->   256, stage 3's remaining value is the headroom stage 6 needs, not the ring itself.
+> - **Stage 6 built** (`35fdee9`), measured, and off by default: a sweep at MAX_RENDER_DECALS stops
+>   pinning `r_decals` at all. At ring 4096 all 85 demos still reach a full sweep with zero
+>   on-camera frames and 1 short burst in 668. The default stays 256 — see that section for why.
+> - **Stages 3 and 5 are design only.** With stage 4 delivering full sweeps everywhere, BSP-derived
+>   coordinates are now headroom rather than a need.
 >
 > Read `docs/goldsrc_dod_quirks.md` and issue #60 first — the engine facts the flush rests on
 > are recorded there and must not be re-derived.
@@ -143,6 +146,13 @@ discarded tiles are behind walls, and they are exactly the spots wanted.
 
 Two mechanisms, in cost order:
 
+> **What actually happened (2026-08-26):** the trace was kept and the PVS shortcut was NOT. They
+> disagreed — at ring 4096, 200 in-clip frames on one demo had a clear line of sight to positions
+> PVS had called invisible. One of the two is wrong and nothing short of the game can say which, so
+> PVS no longer grants safety; it is measured alongside as `pvs_agrees_hidden` for the in-game check
+> to settle. Dropping it cost nothing measurable, because the frame cone already rejects most
+> candidates before a trace is reached. The design below is preserved as written.
+
 - **PVS as a hard guarantee.** `LUMP_VISIBILITY` is a run-length-encoded potentially-visible set
   per leaf. If a candidate's leaf is absent from a camera leaf's PVS, nothing in that leaf is
   visible from anywhere in the camera's leaf — the engine cannot render it. Take the union of PVS
@@ -267,14 +277,29 @@ let the pipeline stop pinning the cvar entirely, which is worth more than the co
    today's burst, arriving during fast-forward. Whether the engine ingests that without hitching
    is not answerable from the bytes.
 
-**Shape to build: adaptive, not always-maximum.** If the camera-safe position supply supports a
-full 4096 sweep, take it and stop pinning; otherwise pin the largest ring the available positions
-can actually turn, and sweep that. The second branch is close to today's behaviour plus the ring
-size the partial-sweep warning already computes.
+### Built, measured, and off by default (2026-08-26, `35fdee9`)
 
-One ordering wrinkle: `r_decals` is pinned in `builder.rs` at job-build time, before the pre-pass
-has surveyed the demo and knows its position count. Making the choice adaptive means moving that
-pin into the pre-pass, where the information is.
+No adaptive machinery was needed in the end. `decal_ring_limit` was already configurable, so the
+whole change is that a sweep **at** `MAX_RENDER_DECALS` stops pinning the cvar — below the ceiling
+it pins exactly as before. Set `decal_ring_limit = 4096` and `r_decals` is left alone entirely.
+
+Measured across the 85-demo sample at FOV 105, with occlusion:
+
+| | ring 256 | ring 4096 |
+|---|---|---|
+| demos reaching a full sweep | 85 / 85 | **85 / 85** |
+| positions per sweep | 68 | 1,028 |
+| demos with a position on camera | 0 | **0** |
+| bursts short of a full sweep | 0 of 668 | **1 of 668** |
+| smallest camera-safe pool | — | 3,852 (needs 1,028) |
+
+The carrier-frame limit that looked like the binding constraint bites exactly once in 668 bursts.
+
+**The default stays 256.** Not because 4096 measured worse — it did not — but because the one thing
+measurement cannot speak to is how the engine ingests 16x the injected messages during
+fast-forward, and the in-game validation on 2026-08-24 was done at a small ring. The first capture
+watched in game should be the configuration closest to the one already known to work. After that,
+4096 is a one-value change and the pin disappears on its own.
 
 Unchanged either way: `FDECAL_PERMANENT` decals are skipped by `R_DecalAlloc`, so no sweep of any
 size clears those.
