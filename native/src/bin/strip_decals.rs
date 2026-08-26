@@ -155,6 +155,9 @@ fn main() {
                 Some(FlushSource::PlayerFloorPath) => println!(
                     "Flush source:          floor under the player's own path (surfaces they stood on)"
                 ),
+                Some(FlushSource::TiledPlane) => println!(
+                    "Flush source:          grid tiled across a plane fitted to real decals"
+                ),
                 None => println!("Flush source:          <none>"),
             }
             println!(

@@ -64,8 +64,8 @@ use dem::types::{
 
 use super::decal_strip::MAX_OVERLAP_DECALS;
 use super::decal_strip::{
-    build_world_decal, decal_texture_index, distance, frame_ordinals, strip_decal_messages, survey,
-    DecalCleanOptions,
+    build_world_decal, cluster, connected_patches, decal_texture_index, distance, extent,
+    frame_ordinals, strip_decal_messages, survey, tangent_axes, DecalCleanOptions,
 };
 
 /// Every decal texture index the demo actually uses, commonest first.
@@ -580,45 +580,6 @@ fn approach(point: &[f32; 3], cameras: &[CameraSample], radius: f32) -> (f32, us
     (closest, dwell)
 }
 
-/// Groups values into runs no wider than `tolerance`, returning each run's mean
-/// and its members' indices.
-///
-/// A sweep rather than bucket-rounding: rounding puts two values a hair apart
-/// into different buckets whenever they straddle a boundary, which would split
-/// one surface into two undersized patches and lose it to `min_plane_decals`.
-fn cluster(values: &[f32], tolerance: f32) -> Vec<(f32, Vec<usize>)> {
-    let mut order: Vec<usize> = (0..values.len()).collect();
-    order.sort_by(|&a, &b| {
-        values[a]
-            .partial_cmp(&values[b])
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-
-    let mut out: Vec<(f32, Vec<usize>)> = Vec::new();
-    let mut current: Vec<usize> = Vec::new();
-    let mut anchor = f32::NAN;
-
-    for idx in order {
-        let v = values[idx];
-        if current.is_empty() {
-            anchor = v;
-            current.push(idx);
-        } else if (v - anchor).abs() <= tolerance {
-            current.push(idx);
-        } else {
-            let mean = current.iter().map(|&i| values[i]).sum::<f32>() / current.len() as f32;
-            out.push((mean, std::mem::take(&mut current)));
-            anchor = v;
-            current.push(idx);
-        }
-    }
-    if !current.is_empty() {
-        let mean = current.iter().map(|&i| values[i]).sum::<f32>() / current.len() as f32;
-        out.push((mean, current));
-    }
-    out
-}
-
 /// The patch of surface a grid gets stamped onto, and the layout chosen for it.
 struct Target {
     /// Normal axis: 0=x, 1=y, 2=z.
@@ -688,59 +649,6 @@ impl Target {
         a[self.row_axis] = self.row_center;
         a
     }
-}
-
-/// The two axes that lie in a plane whose normal runs along `axis`.
-fn tangent_axes(axis: usize) -> (usize, usize) {
-    match axis {
-        0 => (1, 2),
-        1 => (0, 2),
-        _ => (0, 1),
-    }
-}
-
-fn extent(members: &[[f32; 3]], ax: usize) -> f32 {
-    let mut lo = f32::INFINITY;
-    let mut hi = f32::NEG_INFINITY;
-    for m in members {
-        lo = lo.min(m[ax]);
-        hi = hi.max(m[ax]);
-    }
-    if lo.is_finite() { hi - lo } else { 0.0 }
-}
-
-/// Splits a coplanar set into spatially connected patches.
-///
-/// Coplanar is not contiguous. Every floor in a map that happens to sit at the
-/// same height lands in one Z cluster — the first run of this picked exactly
-/// that: a "plane" whose decals spanned 2173 x 5273 units across the whole map.
-/// A grid centred anywhere in it would have had columns hanging in mid-air over
-/// a different room. Linking members that sit within `radius` of each other is
-/// what makes "there is surface between these two decals" a defensible claim.
-fn connected_patches(members: &[[f32; 3]], radius: f32) -> Vec<Vec<[f32; 3]>> {
-    let n = members.len();
-    let mut seen = vec![false; n];
-    let mut out = Vec::new();
-
-    for start in 0..n {
-        if seen[start] {
-            continue;
-        }
-        seen[start] = true;
-        let mut stack = vec![start];
-        let mut patch = Vec::new();
-        while let Some(i) = stack.pop() {
-            patch.push(members[i]);
-            for j in 0..n {
-                if !seen[j] && distance(&members[i], &members[j]) <= radius {
-                    seen[j] = true;
-                    stack.push(j);
-                }
-            }
-        }
-        out.push(patch);
-    }
-    out
 }
 
 /// Centre of the `+/- half` window containing the most values.

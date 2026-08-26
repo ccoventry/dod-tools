@@ -95,8 +95,14 @@ pub const MAX_OVERLAP_DECALS: usize = 6;
 pub const DECALS_PER_POSITION: usize = MAX_OVERLAP_DECALS - 2;
 
 /// Minimum spacing between two flush positions, so the engine cannot see them
-/// as overlapping. Comfortably wider than a decal's own footprint.
-const MIN_POSITION_SPACING: f32 = 28.0;
+/// as overlapping.
+///
+/// `m_Size` for the small bullet hole was later measured at ~4 units, and that
+/// is the decal's own radius — two overlap only within ~8 units of each other.
+/// This was 28 when the footprint was a guess; it now sits at 1.5x the measured
+/// overlap distance, which is what lets a tiled grid at `TILE_PITCH` survive the
+/// spacing filter instead of being decimated by it.
+const MIN_POSITION_SPACING: f32 = 12.0;
 
 #[derive(Debug, Clone)]
 pub struct DecalCleanOptions {
@@ -203,6 +209,12 @@ pub struct DecalCleanStats {
     /// the engine's overlap limit. If `flush_positions` is below this, some
     /// injected decals get recycled instead of turning the ring.
     pub flush_positions_wanted: usize,
+    /// Tiles laid across the fitted planes, before camera filtering.
+    pub tiled_candidates: usize,
+    /// How many of those were clear of every in-clip camera. A shortfall with
+    /// these two close together means the demo offers little surface; a
+    /// shortfall with a wide gap means the surface it has is all in shot.
+    pub tiled_camera_safe: usize,
 }
 
 fn decode_coord(b: &[u8]) -> f32 {
@@ -239,6 +251,240 @@ fn decal_position(payload: &[u8]) -> Option<[f32; 3]> {
 pub(super) fn distance(a: &[f32; 3], b: &[f32; 3]) -> f32 {
     let (dx, dy, dz) = (a[0] - b[0], a[1] - b[1], a[2] - b[2]);
     (dx * dx + dy * dy + dz * dz).sqrt()
+}
+
+// ── Plane geometry ───────────────────────────────────────────────────────────
+// Shared with `decal_probe`, which measures on the same fitted planes this
+// tiles across. Kept here because the dependency runs probe -> strip.
+
+/// Groups values into runs no wider than `tolerance`, returning each run's mean
+/// and its members' indices.
+///
+/// A sweep rather than bucket-rounding: rounding puts two values a hair apart
+/// into different buckets whenever they straddle a boundary, which would split
+/// one surface into two undersized patches and lose it to a minimum-size check.
+pub(super) fn cluster(values: &[f32], tolerance: f32) -> Vec<(f32, Vec<usize>)> {
+    let mut order: Vec<usize> = (0..values.len()).collect();
+    order.sort_by(|&a, &b| {
+        values[a]
+            .partial_cmp(&values[b])
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    let mut out: Vec<(f32, Vec<usize>)> = Vec::new();
+    let mut current: Vec<usize> = Vec::new();
+    let mut anchor = f32::NAN;
+
+    for idx in order {
+        let v = values[idx];
+        if current.is_empty() {
+            anchor = v;
+            current.push(idx);
+        } else if (v - anchor).abs() <= tolerance {
+            current.push(idx);
+        } else {
+            let mean = current.iter().map(|&i| values[i]).sum::<f32>() / current.len() as f32;
+            out.push((mean, std::mem::take(&mut current)));
+            anchor = v;
+            current.push(idx);
+        }
+    }
+    if !current.is_empty() {
+        let mean = current.iter().map(|&i| values[i]).sum::<f32>() / current.len() as f32;
+        out.push((mean, current));
+    }
+    out
+}
+
+/// The two axes that lie in a plane whose normal runs along `axis`.
+pub(super) fn tangent_axes(axis: usize) -> (usize, usize) {
+    match axis {
+        0 => (1, 2),
+        1 => (0, 2),
+        _ => (0, 1),
+    }
+}
+
+pub(super) fn extent(members: &[[f32; 3]], ax: usize) -> f32 {
+    let mut lo = f32::INFINITY;
+    let mut hi = f32::NEG_INFINITY;
+    for m in members {
+        lo = lo.min(m[ax]);
+        hi = hi.max(m[ax]);
+    }
+    if lo.is_finite() { hi - lo } else { 0.0 }
+}
+
+/// Splits a coplanar set into spatially connected patches.
+///
+/// Coplanar is not contiguous. Every floor in a map that happens to sit at the
+/// same height lands in one Z cluster — the first run of this picked exactly
+/// that: a "plane" whose decals spanned 2173 x 5273 units across the whole map.
+/// A grid centred anywhere in it would have had columns hanging in mid-air over
+/// a different room. Linking members that sit within `radius` of each other is
+/// what makes "there is surface between these two decals" a defensible claim.
+pub(super) fn connected_patches(members: &[[f32; 3]], radius: f32) -> Vec<Vec<[f32; 3]>> {
+    let n = members.len();
+    let mut seen = vec![false; n];
+    let mut out = Vec::new();
+
+    for start in 0..n {
+        if seen[start] {
+            continue;
+        }
+        seen[start] = true;
+        let mut stack = vec![start];
+        let mut patch = Vec::new();
+        while let Some(i) = stack.pop() {
+            patch.push(members[i]);
+            for j in 0..n {
+                if !seen[j] && distance(&members[i], &members[j]) <= radius {
+                    seen[j] = true;
+                    stack.push(j);
+                }
+            }
+        }
+        out.push(patch);
+    }
+    out
+}
+
+// ── Tiling ───────────────────────────────────────────────────────────────────
+
+/// Coplanarity tolerance when grouping decals into a candidate surface. Matches
+/// the probe's: a decal sits on the plane, not near it, so this only has to
+/// absorb coordinate quantisation.
+const PLANE_TOLERANCE: f32 = 2.0;
+
+/// How close two decals must be to count as evidence of the same continuous
+/// patch of surface. See `connected_patches` for why coplanar alone is not
+/// enough.
+const PATCH_LINK_RADIUS: f32 = 160.0;
+
+/// Decals needed before a patch is believed to be a real surface rather than a
+/// coincidence of two stray marks.
+const MIN_PATCH_DECALS: usize = 4;
+
+/// Spacing between tiled positions.
+///
+/// `m_Size` for the small bullet hole was measured at ~4 units, and that is the
+/// decal's own radius — two of them overlap only if their centres come within
+/// ~8 units. A 16-unit pitch is twice that, so no tile can be recycled as an
+/// overlap of its neighbour, which is the failure that stops the ring advancing.
+const TILE_PITCH: f32 = 16.0;
+
+/// Cap on how far a tiled grid may spread from its patch centre along either
+/// in-plane axis.
+///
+/// Movement along a plane is unconstrained as far as the engine is concerned —
+/// synthesised positions 224 units apart all created decals, two of them with
+/// no real decal within 30 units. The cap is not an engine limit but a
+/// confidence one: the further a tile sits from the decals proving the surface,
+/// the more it is inference. ~200 units keeps a grid inside the room its
+/// evidence came from.
+const TILE_MAX_EXTENT: f32 = 200.0;
+
+/// How close a tile must come to a real decal on its own patch to be kept.
+///
+/// A tile that lands past the end of a wall hits nothing, and a position that
+/// creates no decal allocates no pool slot — so the sweep silently comes up
+/// short rather than failing. Dilating the proven decals by this much is the
+/// compromise between that risk and the position count the ring needs.
+const TILE_REACH: f32 = 64.0;
+
+/// Ceiling on tiles generated per patch.
+///
+/// `TILE_MAX_EXTENT` and `TILE_PITCH` already bound a grid at 13x13, so at the
+/// current values this cannot trigger. It exists so that widening the extent or
+/// tightening the pitch cannot quietly turn one densely-shot wall into tens of
+/// thousands of candidates for the camera filters to score.
+const MAX_TILES_PER_PATCH: usize = 512;
+
+/// Positions tiled across the planes the demo's own decals prove exist.
+///
+/// The flush needs one distinct position per few ring slots, and harvesting
+/// them one-per-real-decal never yielded enough — a 256-slot ring wants 68
+/// positions and a busy demo offered 30. Tiling is what closes that: the engine
+/// does not care how far a decal sits from another along a surface, only that
+/// there IS surface, so one patch of proven wall can carry a whole grid.
+///
+/// Returned in no particular order; the caller ranks them by camera clearance
+/// and enforces spacing across the whole pool.
+pub(super) fn tile_positions(harvested: &[[f32; 3]]) -> Vec<[f32; 3]> {
+    let mut out = Vec::new();
+
+    for axis in 0..3 {
+        let (t1, t2) = tangent_axes(axis);
+        let values: Vec<f32> = harvested.iter().map(|p| p[axis]).collect();
+
+        for (value, idxs) in cluster(&values, PLANE_TOLERANCE) {
+            if idxs.len() < MIN_PATCH_DECALS {
+                continue;
+            }
+            let coplanar: Vec<[f32; 3]> = idxs.iter().map(|&i| harvested[i]).collect();
+
+            for patch in connected_patches(&coplanar, PATCH_LINK_RADIUS) {
+                if patch.len() < MIN_PATCH_DECALS {
+                    continue;
+                }
+                tile_patch(&patch, axis, value, t1, t2, &mut out);
+            }
+        }
+    }
+
+    out
+}
+
+/// Lays a grid over one patch, keeping only the tiles its decals vouch for.
+fn tile_patch(
+    patch: &[[f32; 3]],
+    axis: usize,
+    value: f32,
+    t1: usize,
+    t2: usize,
+    out: &mut Vec<[f32; 3]>,
+) {
+    // Centred on the patch's own centre of mass rather than its bounding box,
+    // so the extent cap is spent where the evidence actually is. A wall with
+    // one stray mark 400 units down its length would otherwise drag the grid
+    // half way to nothing.
+    let centre = |ax: usize| patch.iter().map(|m| m[ax]).sum::<f32>() / patch.len() as f32;
+    let half = TILE_MAX_EXTENT / 2.0;
+
+    let span = |ax: usize| -> (f32, f32) {
+        let c = centre(ax);
+        let lo = patch.iter().fold(f32::INFINITY, |a, m| a.min(m[ax]));
+        let hi = patch.iter().fold(f32::NEG_INFINITY, |a, m| a.max(m[ax]));
+        (lo.max(c - half), hi.min(c + half))
+    };
+
+    let (lo1, hi1) = span(t1);
+    let (lo2, hi2) = span(t2);
+
+    let steps = |lo: f32, hi: f32| -> usize { ((hi - lo) / TILE_PITCH).floor() as usize + 1 };
+    let (n1, n2) = (steps(lo1, hi1), steps(lo2, hi2));
+
+    let mut placed = 0usize;
+    for i in 0..n1 {
+        for j in 0..n2 {
+            if placed >= MAX_TILES_PER_PATCH {
+                return;
+            }
+            let mut p = [0.0f32; 3];
+            // Straight onto the fitted plane. The fine sweep put that plane
+            // ~0.5 units proud of the true BSP one, well inside the ~3 units of
+            // slack `R_DecalShoot`'s walk allows, so no offset is applied —
+            // guessing at one is how a whole sweep lands in mid-air.
+            p[axis] = value;
+            p[t1] = lo1 + i as f32 * TILE_PITCH;
+            p[t2] = lo2 + j as f32 * TILE_PITCH;
+
+            if patch.iter().any(|m| distance(m, &p) <= TILE_REACH) {
+                out.push(p);
+                placed += 1;
+            }
+        }
+    }
 }
 
 pub(super) fn build_world_decal(pos: &[f32; 3], texture_index: u8) -> NetMessage {
@@ -497,6 +743,11 @@ pub enum FlushSource {
     /// Floor points under the player's own walked path. Proven surfaces (they
     /// stood on them) and naturally spread apart, which is what a sweep needs.
     PlayerFloorPath,
+    /// A grid tiled across a plane fitted to the demo's own decals. The surface
+    /// is proven by those decals; the individual tiles are inference from them,
+    /// which the engine permits — it constrains distance from a surface, not
+    /// movement along one.
+    TiledPlane,
 }
 
 /// Picks where the synthetic flush decals go.
@@ -513,23 +764,37 @@ pub enum FlushSource {
 ///  3. The computed floor beneath the settled spawn position. Used only when
 ///     the demo yielded no decals at all; a spawn can sit above the floor on
 ///     some maps, so this is a geometric guess and is reported as such.
+/// Where the burst will go, plus enough of how that was decided to explain a
+/// shortfall from the log alone.
+#[derive(Default)]
+struct Placement {
+    positions: Vec<[f32; 3]>,
+    source: Option<FlushSource>,
+    /// Tiles laid across the fitted planes, before any camera filtering.
+    tiled: usize,
+    /// How many of those survived the clearance and line-of-sight tests. The
+    /// gap between these two separates "this demo has no surface to work with"
+    /// from "everything it has is in shot", which want opposite fixes.
+    tiled_safe: usize,
+}
+
 /// Picks the set of positions the flush burst is spread across.
 ///
 /// `wanted` is how many distinct spots are needed to place the whole burst at
 /// `DECALS_PER_POSITION` each. Returning fewer means the sweep will fall short,
 /// which the caller reports rather than hiding.
-fn resolve_flush_positions(
-    survey: &Survey,
-    opts: &DecalCleanOptions,
-    wanted: usize,
-) -> (Vec<[f32; 3]>, Option<FlushSource>) {
+fn resolve_flush_positions(survey: &Survey, opts: &DecalCleanOptions, wanted: usize) -> Placement {
     if let Some(coord) = opts.flush_coord {
-        return (vec![coord], Some(FlushSource::Override));
+        return Placement {
+            positions: vec![coord],
+            source: Some(FlushSource::Override),
+            ..Placement::default()
+        };
     }
 
     // Only the single-position fallback still needs a spawn reference.
     let Some(reference) = survey.grounded_origin.or(survey.spawn_eye) else {
-        return (Vec::new(), None);
+        return Placement::default();
     };
 
     let cos_cone = opts.visibility_cone_degrees.to_radians().cos();
@@ -569,25 +834,43 @@ fn resolve_flush_positions(
             .fold(f32::INFINITY, f32::min)
     };
 
-    // Harvested decal positions first: they sit on walls the demo has already
-    // drawn decals on. Floor points under the player's own path come last —
-    // they are plentiful and their surfaces are proven, but they are by
-    // construction where the player walks, which is the worst place to hide
+    // Tiles across the fitted planes first: same proven surfaces the harvested
+    // decals sit on, but a whole grid per patch instead of one point per decal,
+    // which is what lets a sweep reach a full ring revolution. Raw harvested
+    // positions follow, covering decals too isolated to form a patch. Floor
+    // points under the player's own path come last — plentiful and proven, but
+    // by construction where the player walks, which is the worst place to hide
     // something. Used only to make up a shortfall in count.
+    let tiled = tile_positions(&survey.harvested);
+    let mut placement = Placement {
+        tiled: tiled.len(),
+        ..Placement::default()
+    };
+
     let mut pool: Vec<[f32; 3]> = Vec::new();
     let mut source = None;
     for (candidates, src) in [
+        (&tiled, FlushSource::TiledPlane),
         (&survey.harvested, FlushSource::HarvestedNearSpawn),
         (&survey.floor_candidates, FlushSource::PlayerFloorPath),
     ] {
-        let mut ok: Vec<[f32; 3]> = candidates.iter().copied().filter(|p| safe(p)).collect();
+        // Clearance is measured against every in-window camera sample, so it is
+        // computed once per candidate rather than inside the comparator — tiling
+        // multiplies the candidate count by an order of magnitude and a sort
+        // that recomputed it would dominate the whole pass.
+        let mut ok: Vec<(f32, [f32; 3])> = candidates
+            .iter()
+            .copied()
+            .filter(|p| safe(p))
+            .map(|p| (clearance(&p), p))
+            .collect();
+        if src == FlushSource::TiledPlane {
+            placement.tiled_safe = ok.len();
+        }
         // Furthest from the camera first.
-        ok.sort_by(|a, b| {
-            clearance(b)
-                .partial_cmp(&clearance(a))
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-        for p in ok {
+        ok.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+
+        for (_, p) in ok {
             if pool.len() >= wanted {
                 break;
             }
@@ -604,10 +887,17 @@ fn resolve_flush_positions(
     }
 
     if !pool.is_empty() {
-        return (pool, source);
+        placement.positions = pool;
+        placement.source = source;
+        return placement;
     }
 
-    legacy_single_position(survey, opts, reference)
+    let (positions, source) = legacy_single_position(survey, opts, reference);
+    Placement {
+        positions,
+        source,
+        ..placement
+    }
 }
 
 /// Original single-position selection, retained as the last resort for demos
@@ -784,11 +1074,14 @@ pub fn clean_demo_decals(
     let burst_count = opts.ring_limit as usize + opts.burst_margin;
     let positions_wanted = burst_count.div_ceil(DECALS_PER_POSITION);
 
-    let (flush_positions, flush_source) = resolve_flush_positions(&survey, opts, positions_wanted);
+    let placement = resolve_flush_positions(&survey, opts, positions_wanted);
+    let flush_positions = placement.positions;
     stats.flush_coord = flush_positions.first().copied();
-    stats.flush_source = flush_source;
+    stats.flush_source = placement.source;
     stats.flush_positions = flush_positions.len();
     stats.flush_positions_wanted = positions_wanted;
+    stats.tiled_candidates = placement.tiled;
+    stats.tiled_camera_safe = placement.tiled_safe;
 
     if let (Some(pos), Some(reference)) = (flush_positions.first(), survey.grounded_origin) {
         stats.spawn_to_flush_distance = Some(distance(pos, &reference));
@@ -1152,25 +1445,45 @@ pub fn prepare_flushed_source(job: &PatchJob, config: &PatcherConfig) -> Option<
         return None;
     }
 
-    report(job, &stats, &keep_windows, config.decal_ring_limit);
+    report(job, &stats, &keep_windows, &opts);
     Some(CleanedSource { path })
 }
 
 /// Writes the flush result to the capture log. The counts are informational;
 /// the warnings below are not — each marks a way the sweep can come out
 /// structurally correct and still be wrong on screen.
-fn report(job: &PatchJob, stats: &DecalCleanStats, keep_windows: &[(i32, i32)], ring_limit: u32) {
+fn report(
+    job: &PatchJob,
+    stats: &DecalCleanStats,
+    keep_windows: &[(i32, i32)],
+    opts: &DecalCleanOptions,
+) {
+    // The source is on the main line, not just in the warning below it: a
+    // sweep anchored on tiled planes and one anchored on a computed floor point
+    // produce identical counts and completely different odds of working.
+    let source = match stats.flush_source {
+        Some(FlushSource::TiledPlane) => "tiled planes",
+        Some(FlushSource::HarvestedNearSpawn) => "harvested decals",
+        Some(FlushSource::PlayerFloorPath) => "floor under the player's path",
+        Some(FlushSource::ComputedSpawnFloor) => "computed spawn floor",
+        Some(FlushSource::Override) => "caller override",
+        None => "none",
+    };
+
     crate::log_markdown(&format!(
         "🧹 **Decal flush** on `{}`: stripped {} wall decals and {} sprays outside {} clip(s); \
-         injected {} flush decals across {} position(s) in {} burst(s); r_decals pinned to {}.",
+         injected {} flush decals across {} of {} position(s) from {}, in {} burst(s); \
+         r_decals pinned to {}.",
         job.source_demo,
         stats.temp_entity_stripped,
         stats.player_spray_stripped,
         keep_windows.len(),
         stats.flush_decals_injected,
         stats.flush_positions,
+        stats.flush_positions_wanted,
+        source,
         stats.bursts_placed,
-        ring_limit
+        opts.ring_limit
     ));
 
     // Too few distinct spots. Past MAX_OVERLAP_DECALS at one position the
@@ -1180,9 +1493,17 @@ fn report(job: &PatchJob, stats: &DecalCleanStats, keep_windows: &[(i32, i32)], 
     if stats.flush_positions < stats.flush_positions_wanted {
         crate::log_markdown(&format!(
             "⚠️ **Partial decal sweep** — only {} of the {} distinct positions a full ring \
-             revolution needs. Some decals will survive into the clip. Lower `decal_ring_limit` \
-             or accept a partial clean.",
-            stats.flush_positions, stats.flush_positions_wanted
+             revolution needs, so some decals will survive into the clip. {} tiles were laid \
+             across the demo's proven planes and {} of those stayed clear of every in-clip \
+             camera. Setting `decal_ring_limit` to {} would give a complete sweep of a smaller \
+             ring instead.",
+            stats.flush_positions,
+            stats.flush_positions_wanted,
+            stats.tiled_candidates,
+            stats.tiled_camera_safe,
+            // The largest ring this many positions can fully turn, backing the
+            // over-provision margin out of the burst it implies.
+            (stats.flush_positions * DECALS_PER_POSITION).saturating_sub(opts.burst_margin)
         ));
     }
 
@@ -1325,5 +1646,119 @@ mod tests {
             Some(vec![(1000, 2000), (5000, 5000)]),
             "equal record bounds are a real one-frame window, not a missing one"
         );
+    }
+
+    /// A patch of decals on an upright wall at x = `plane`.
+    fn wall_patch(plane: f32, ys: &[f32], zs: &[f32]) -> Vec<[f32; 3]> {
+        let mut out = Vec::new();
+        for &y in ys {
+            for &z in zs {
+                out.push([plane, y, z]);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn the_spacing_filter_cannot_decimate_a_tiled_grid() {
+        // Tiles are laid at TILE_PITCH and then every candidate has to clear
+        // MIN_POSITION_SPACING against the pool. If the spacing ever exceeded
+        // the pitch, neighbouring tiles would reject each other and tiling
+        // would quietly stop multiplying positions at all.
+        assert!(
+            MIN_POSITION_SPACING < TILE_PITCH,
+            "spacing {} must stay under the tile pitch {}",
+            MIN_POSITION_SPACING,
+            TILE_PITCH
+        );
+        // And the pitch must clear the engine's overlap distance, which is
+        // twice the measured ~4-unit decal radius. Inside that, the engine
+        // recycles instead of allocating and the ring stops turning.
+        assert!(TILE_PITCH > 8.0, "tiles would overlap and be recycled");
+    }
+
+    #[test]
+    fn tiling_multiplies_positions_across_a_proven_plane() {
+        let members = wall_patch(100.0, &[0.0, 20.0, 40.0, 60.0], &[0.0, 20.0]);
+        let tiles = tile_positions(&members);
+
+        assert!(
+            tiles.len() > members.len(),
+            "tiling produced {} positions from {} decals — the whole point is a grid per patch",
+            tiles.len(),
+            members.len()
+        );
+        for t in &tiles {
+            assert!(
+                (t[0] - 100.0).abs() < 0.001,
+                "tile {:?} left the fitted plane — it would miss the wall entirely",
+                t
+            );
+        }
+    }
+
+    #[test]
+    fn tiles_stay_within_reach_of_a_real_decal() {
+        // A tile past the end of a wall hits nothing, and a position that
+        // creates no decal allocates no ring slot — so the sweep comes up short
+        // silently rather than failing.
+        let members = wall_patch(100.0, &[0.0, 20.0, 40.0, 60.0], &[0.0, 20.0]);
+        let tiles = tile_positions(&members);
+
+        for t in &tiles {
+            let nearest = members
+                .iter()
+                .map(|m| distance(m, t))
+                .fold(f32::INFINITY, f32::min);
+            assert!(
+                nearest <= TILE_REACH,
+                "tile {:?} sits {:.1} units from any proven decal",
+                t,
+                nearest
+            );
+        }
+    }
+
+    #[test]
+    fn coplanar_but_distant_groups_are_not_bridged() {
+        // Coplanar is not contiguous: two stretches of wall at the same x with
+        // a doorway between them must not get tiles hung across the gap.
+        let mut members = wall_patch(100.0, &[0.0, 20.0, 40.0, 60.0], &[0.0, 20.0]);
+        members.extend(wall_patch(100.0, &[900.0, 920.0, 940.0, 960.0], &[0.0, 20.0]));
+
+        let tiles = tile_positions(&members);
+        assert!(!tiles.is_empty());
+
+        for t in &tiles {
+            let in_gap = t[1] > 60.0 + TILE_REACH && t[1] < 900.0 - TILE_REACH;
+            assert!(!in_gap, "tile {:?} hangs in the gap between two patches", t);
+        }
+    }
+
+    #[test]
+    fn a_long_wall_is_capped_at_the_tiling_extent() {
+        // The cap is a confidence limit, not an engine one: the further a tile
+        // sits from the decals proving the surface, the more it is inference.
+        let ys: Vec<f32> = (0..13).map(|i| i as f32 * 50.0).collect();
+        let members = wall_patch(100.0, &ys, &[0.0]);
+
+        let tiles = tile_positions(&members);
+        assert!(!tiles.is_empty());
+
+        let lo = tiles.iter().fold(f32::INFINITY, |a, t| a.min(t[1]));
+        let hi = tiles.iter().fold(f32::NEG_INFINITY, |a, t| a.max(t[1]));
+        assert!(
+            hi - lo <= TILE_MAX_EXTENT + TILE_PITCH,
+            "tiles spanned {:.0} units across a 600-unit wall; the cap is {}",
+            hi - lo,
+            TILE_MAX_EXTENT
+        );
+    }
+
+    #[test]
+    fn a_couple_of_stray_marks_are_not_treated_as_a_surface() {
+        // Two decals prove two points, not a plane worth tiling.
+        let members = vec![[100.0, 0.0, 0.0], [100.0, 20.0, 0.0]];
+        assert!(tile_positions(&members).is_empty());
     }
 }
