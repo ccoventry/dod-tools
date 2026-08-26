@@ -784,21 +784,31 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
         let separate_hud_str = if config.separate_hud { "1" } else { "0" };
         final_init_commands.push(format!("mirv_movie_separate_hud {}", separate_hud_str));
 
-        // The decal flush pins the ring here, at demo load, and nowhere else.
-        // r_decals bounds how far the rotating index may travel before it
-        // wraps; it does not evict anything, so lowering it once decals have
-        // accumulated strands every one sitting above the new limit. Pinned
-        // last so a user-supplied init command cannot override it.
+        // The decal flush needs the ring set once, at demo load, and never
+        // again. r_decals bounds how far the rotating index may travel before
+        // it wraps; it does not evict anything, so lowering it once decals have
+        // accumulated strands every one sitting above the new limit.
         //
-        // Except at the maximum. r_decals is clamped to MAX_RENDER_DECALS, so a
-        // sweep that size turns a full revolution whatever the cvar happens to
-        // be — any smaller ring simply gets swept several times over. Pinning
+        // The sweep is sized to that same number, so there is only one number
+        // here and `r_decals` is where the engine reads it. When init_commands
+        // states it, that is the value the sweep uses and the line is already
+        // the pin — appending a second one could only overrule what was asked
+        // for, silently. When nothing states it, the engine would otherwise use
+        // whatever the user's config left behind, so it gets pinned to the
+        // configured default.
+        //
+        // Not at the maximum, though. r_decals is clamped to MAX_RENDER_DECALS,
+        // so a sweep that size turns a full revolution whatever the cvar happens
+        // to be — any smaller ring simply gets swept several times over. Pinning
         // then buys nothing and costs the precondition the rest of this design
-        // works around: that nothing else may touch r_decals. Left alone, an
-        // autoexec or a stray console command can no longer quietly leave the
-        // sweep under-clearing.
-        if config.decal_flush && config.decal_ring_limit < crate::patch::MAX_RENDER_DECALS {
-            final_init_commands.push(format!("r_decals {}", config.decal_ring_limit));
+        // works around: that nothing else may touch r_decals.
+        if config.decal_flush
+            && crate::patch::ring_limit_from_init(&config.init_commands).is_none()
+        {
+            let ring = crate::patch::ring_limit(config);
+            if ring > 0 && ring < crate::patch::MAX_RENDER_DECALS {
+                final_init_commands.push(format!("r_decals {}", ring));
+            }
         }
 
         jobs.push(PatchJob {
@@ -1506,7 +1516,6 @@ mod tests {
         // may own it, and it has to land at demo load.
         let mut config = mock_config();
         config.decal_ring_limit = 128;
-        config.init_commands = vec!["r_decals 4096".to_string()];
 
         let (jobs, _) = build_batch_queue(
             vec![streak_with_kills(1000, 1200, &[1000, 1200])],
@@ -1516,14 +1525,72 @@ mod tests {
         let job = &jobs[1];
 
         assert_eq!(
+            job.init_commands.iter().filter(|c| c.starts_with("r_decals")).count(),
+            1,
+            "exactly one command may own the ring: {:?}",
+            job.init_commands
+        );
+        assert_eq!(
             job.init_commands.last().map(String::as_str),
             Some("r_decals 128"),
-            "the pipeline's pin must be the last word on r_decals: {:?}",
+            "and it has to land at demo load: {:?}",
             job.init_commands
         );
         assert!(
             !job.scheduled_commands.iter().any(|(_, c)| c.starts_with("r_decals")),
             "r_decals must never be touched mid-demo — that is what strands decals"
+        );
+    }
+
+    #[test]
+    fn test_an_init_command_owns_the_ring_and_is_not_pinned_over() {
+        // The sweep is sized to the ring, so the two are one number and
+        // r_decals is where the engine reads it. Appending a second value could
+        // only overrule what was asked for, with nothing on screen to show it:
+        // the capture would run a ring the user did not choose, swept correctly
+        // for a size they did not ask for.
+        let mut config = mock_config();
+        config.decal_ring_limit = 128;
+        config.init_commands = vec!["r_decals 512".to_string()];
+
+        let (jobs, _) = build_batch_queue(
+            vec![streak_with_kills(1000, 1200, &[1000, 1200])],
+            &config,
+            &std::collections::HashMap::new(),
+        ).unwrap();
+
+        let pins: Vec<&String> = jobs[1]
+            .init_commands
+            .iter()
+            .filter(|c| c.starts_with("r_decals"))
+            .collect();
+        assert_eq!(
+            pins,
+            vec![&"r_decals 512".to_string()],
+            "the user's own line is the pin: {:?}",
+            jobs[1].init_commands
+        );
+    }
+
+    #[test]
+    fn test_decals_switched_off_entirely_is_left_alone() {
+        // r_decals 0 means no decals at all. There is no ring to turn and
+        // nothing to clear, so the flush has no work and no business pinning
+        // the cvar back up to a value that would start collecting them.
+        let mut config = mock_config();
+        config.init_commands = vec!["r_decals 0".to_string()];
+
+        let (jobs, _) = build_batch_queue(
+            vec![streak_with_kills(1000, 1200, &[1000, 1200])],
+            &config,
+            &std::collections::HashMap::new(),
+        ).unwrap();
+
+        assert_eq!(
+            jobs[1].init_commands.iter().filter(|c| c.starts_with("r_decals")).count(),
+            1,
+            "the user's r_decals 0 must survive untouched: {:?}",
+            jobs[1].init_commands
         );
     }
 

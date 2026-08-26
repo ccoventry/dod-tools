@@ -1766,6 +1766,41 @@ pub fn capture_fov(config: &PatcherConfig) -> f32 {
     }
     config.capture_fov
 }
+
+/// `r_decals` as stated in `init_commands`, if it is stated there at all.
+///
+/// The last one wins, matching the console. Clamped to the engine's own
+/// ceiling, because the engine clamps it too and a sweep sized past the ceiling
+/// would spend its extra positions turning a ring that had already come round.
+pub fn ring_limit_from_init(init_commands: &[String]) -> Option<u32> {
+    for cmd in init_commands.iter().rev() {
+        let trimmed = cmd.trim();
+        let Some(rest) = trimmed.strip_prefix("r_decals") else {
+            continue;
+        };
+        // Guard against matching a longer command that merely starts the same.
+        if !rest.starts_with(char::is_whitespace) {
+            continue;
+        }
+        if let Ok(v) = rest.trim().parse::<u32>() {
+            return Some(v.min(crate::patch::MAX_RENDER_DECALS));
+        }
+    }
+    None
+}
+
+/// How many decals the ring will hold, and so how many positions a full sweep
+/// has to turn.
+///
+/// This is one number, and `r_decals` is where the engine reads it. A separate
+/// setting could only ever agree with the cvar or silently disagree with it, so
+/// an `init_commands` entry is the authority when there is one and the
+/// configured default fills in when there is not. Same rule as `capture_fov`.
+pub fn ring_limit(config: &PatcherConfig) -> u32 {
+    ring_limit_from_init(&config.init_commands)
+        .unwrap_or_else(|| config.decal_ring_limit.min(crate::patch::MAX_RENDER_DECALS))
+}
+
 /// Clean options for the batch pipeline, as distinct from the `strip_decals`
 /// CLI's.
 ///
@@ -1792,7 +1827,7 @@ fn maps_dir_for(config: &PatcherConfig) -> Option<std::path::PathBuf> {
 
 fn flush_options(config: &PatcherConfig) -> DecalCleanOptions {
     DecalCleanOptions {
-        ring_limit: config.decal_ring_limit,
+        ring_limit: ring_limit(config),
         inject_r_decals_command: false,
         // The pipeline is the only caller that accumulates a store. The CLI and
         // the probe rig stay self-contained, so a one-off experiment never
@@ -1847,6 +1882,13 @@ fn keep_windows_for(job: &PatchJob) -> Option<Vec<(i32, i32)>> {
 /// wrong on screen.
 pub fn prepare_flushed_source(job: &PatchJob, config: &PatcherConfig) -> Option<CleanedSource> {
     if !config.decal_flush {
+        return None;
+    }
+
+    // `r_decals 0` turns decals off outright. There is then no ring to turn and
+    // no bullet hole to clear, and a sweep sized zero would be a burst with
+    // nowhere to put anything.
+    if ring_limit(config) == 0 {
         return None;
     }
 
@@ -1991,7 +2033,7 @@ fn report(
             "⚠️ **Partial decal sweep** — only {} of the {} distinct positions a full ring \
              revolution needs, so some decals will survive into the clip. {} tiles were laid \
              across the demo's proven planes and {} of those stayed clear of every in-clip \
-             camera. Setting `decal_ring_limit` to {} would give a complete sweep of a smaller \
+             camera. An `r_decals {}` init command would give a complete sweep of a smaller \
              ring instead.",
             stats.flush_positions,
             stats.flush_positions_wanted,
@@ -2103,6 +2145,82 @@ mod tests {
             "the pipeline must not insert a console-command frame — init_commands owns r_decals"
         );
         assert_eq!(opts.ring_limit, 128, "the configured ring size must reach the sweep");
+    }
+
+    #[test]
+    fn an_init_command_states_the_ring_and_the_sweep_is_sized_to_it() {
+        // One number, read where the engine reads it. A separate setting could
+        // only agree with the cvar or silently disagree, and a sweep sized to
+        // the wrong one under-clears with nothing in the output to show it.
+        let config = PatcherConfig {
+            decal_ring_limit: 128,
+            init_commands: vec!["r_decals 512".to_string()],
+            ..PatcherConfig::default()
+        };
+
+        assert_eq!(ring_limit(&config), 512);
+        assert_eq!(flush_options(&config).ring_limit, 512);
+    }
+
+    #[test]
+    fn the_last_r_decals_wins_like_the_console_does() {
+        let config = PatcherConfig {
+            init_commands: vec!["r_decals 512".to_string(), "r_decals 64".to_string()],
+            ..PatcherConfig::default()
+        };
+
+        assert_eq!(ring_limit(&config), 64);
+    }
+
+    #[test]
+    fn the_configured_default_fills_in_when_nothing_states_it() {
+        let config = PatcherConfig {
+            decal_ring_limit: 128,
+            init_commands: vec!["mirv_fov 105".to_string()],
+            ..PatcherConfig::default()
+        };
+
+        assert_eq!(ring_limit_from_init(&config.init_commands), None);
+        assert_eq!(ring_limit(&config), 128);
+    }
+
+    #[test]
+    fn a_ring_past_the_engine_ceiling_is_clamped_to_it() {
+        // The engine clamps r_decals to MAX_RENDER_DECALS, so positions beyond
+        // that would be spent turning a ring that had already come round.
+        let config = PatcherConfig {
+            init_commands: vec!["r_decals 99999".to_string()],
+            ..PatcherConfig::default()
+        };
+
+        assert_eq!(ring_limit(&config), crate::patch::MAX_RENDER_DECALS);
+    }
+
+    #[test]
+    fn a_longer_command_that_merely_starts_the_same_is_not_the_ring() {
+        let config = PatcherConfig {
+            decal_ring_limit: 256,
+            init_commands: vec!["r_decals_enabled 1".to_string()],
+            ..PatcherConfig::default()
+        };
+
+        assert_eq!(ring_limit_from_init(&config.init_commands), None);
+        assert_eq!(ring_limit(&config), 256);
+    }
+
+    #[test]
+    fn decals_switched_off_entirely_leaves_the_demo_alone() {
+        // r_decals 0 is no decals at all: no ring to turn, no bullet holes to
+        // clear, and a sweep sized zero would be a burst with nowhere to put
+        // anything.
+        let config = PatcherConfig {
+            init_commands: vec!["r_decals 0".to_string()],
+            ..PatcherConfig::default()
+        };
+        let job = job_with_blocks(vec![block(0, 1000, 2000)]);
+
+        assert_eq!(ring_limit(&config), 0);
+        assert!(prepare_flushed_source(&job, &config).is_none());
     }
 
     #[test]
