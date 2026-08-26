@@ -1,9 +1,14 @@
 # Decal Flush: BSP-Derived Surface Coordinates
 
-> **Status 2026-08-26 — designed, not built.** This is the next R&D step for the decal
-> flush ([#60](https://github.com/ccoventry/dod-tools/issues/60)), written up before any code
-> exists so the reasoning survives a break. Everything in "Current state" below is merged on
-> `feature/decal-flush-r-and-d` and measured; everything under "The proposal" is untested.
+> **Status 2026-08-26 — stages 1 and 2 done, 3 onwards not started.** The R&D direction for the
+> decal flush ([#60](https://github.com/ccoventry/dod-tools/issues/60)).
+>
+> - **Stage 1 built** (`a4bed14`): `native/src/patch/bsp.rs` reads BSP v30 geometry.
+> - **Stage 2 passed** (`46957a2`): 98.93% of **107,584 coordinates the engine provably accepted**,
+>   across 83 demos and 18 maps, land on a world face within 1 unit. The parser's lump offsets,
+>   edge winding, coordinate space and world-model selection are confirmed. Re-run it with
+>   `native/src/bin/validate_bsp` after touching the parser.
+> - **Stages 3-7 are design only.** Nothing below the parser has been written or measured.
 >
 > Read `docs/goldsrc_dod_quirks.md` and issue #60 first — the engine facts the flush rests on
 > are recorded there and must not be re-derived.
@@ -221,6 +226,48 @@ for exactly this, and the file carries a `format` version field.
 
 ---
 
+## What an unlimited coordinate supply makes possible: stop pinning the cvar
+
+Once positions are no longer scarce, the sweep size stops being a budget decision, and that
+reopens something the whole design currently works around.
+
+`r_decals` is clamped to `MAX_RENDER_DECALS` (4096), so **a sweep of 4096 turns a full revolution
+whatever the cvar is set to** — any smaller ring simply gets swept several times over. That would
+let the pipeline stop pinning the cvar entirely, which is worth more than the convenience:
+
+- **It removes a silent failure mode.** The design currently depends on the precondition recorded
+  on #60 — "the demo pins the cvar itself, so `r_decals` must not be set anywhere else". Anything
+  that sets it after our init command (an autoexec, a config, a stray console command) leaves the
+  sweep under-clearing with nothing to report. Sweeping the maximum makes the value irrelevant.
+- **It stops the ring evicting decals during the clip.** A small ring cuts both ways: at 256, a
+  busy 20-second clip with grenades and sustained fire can reach the limit, and past it the ring
+  starts eating its own — bullet holes vanishing on screen mid-action. Pinning small was only ever
+  a cost optimisation, and it has this cost.
+
+**What it needs, in order of how binding it is:**
+
+1. **~1028 distinct positions** (4096 + 16 margin, at `DECALS_PER_POSITION` = 4). BSP-derived
+   coordinates supply this easily; some demos already reach 11,000-35,000 camera-safe tiles.
+2. **~1028 carrier frames per burst** — the real constraint. Injection is capped at 4 per frame
+   into packets under 1024 bytes, so a full sweep needs ~10 seconds of demo time at 100fps ahead of
+   each clip. Gaps are usually minutes, but back-to-back and chained clips will report
+   `bursts_short` far more often than the current 272-injection burst does.
+3. **An in-game unknown**: 4 decals per frame across ~1028 consecutive frames is roughly 15x
+   today's burst, arriving during fast-forward. Whether the engine ingests that without hitching
+   is not answerable from the bytes.
+
+**Shape to build: adaptive, not always-maximum.** If the camera-safe position supply supports a
+full 4096 sweep, take it and stop pinning; otherwise pin the largest ring the available positions
+can actually turn, and sweep that. The second branch is close to today's behaviour plus the ring
+size the partial-sweep warning already computes.
+
+One ordering wrinkle: `r_decals` is pinned in `builder.rs` at job-build time, before the pre-pass
+has surveyed the demo and knows its position count. Making the choice adaptive means moving that
+pin into the pre-pass, where the information is.
+
+Unchanged either way: `FDECAL_PERMANENT` decals are skipped by `R_DecalAlloc`, so no sweep of any
+size clears those.
+
 ## Staging
 
 1. **BSP lump parser.** Pure, read-only, no I/O beyond reading the file. Planes, vertices, edges,
@@ -234,7 +281,10 @@ for exactly this, and the file carries a `format` version field.
    remainder. Replaces the cone-only test with "in cone AND unoccluded", and lets the report state
    how many chosen positions are provably hidden from every camera.
 5. **Feed the coordinate store**, keyed identically to the demo-harvested coordinates.
-6. **In-game check** — which is outstanding for the flush as a whole regardless.
+6. **Adaptive sweep size.** With positions no longer scarce, sweep 4096 where the supply and the
+   gap allow and stop pinning `r_decals` at all; otherwise pin the largest ring the positions can
+   turn. Needs the pin moved out of `builder.rs` into the pre-pass.
+7. **In-game check** — which is outstanding for the flush as a whole regardless.
 
 Steps 3 and 4 are independent: occlusion improves every existing source immediately, without any
 BSP-derived coordinates existing, so it can land first if stage 2 says the parser is sound.
