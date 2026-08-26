@@ -58,6 +58,8 @@ pub mod bsp;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod map_check;
 #[cfg(not(target_arch = "wasm32"))]
+pub mod map_fetch;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod decal_probe;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod engine;
@@ -106,6 +108,9 @@ pub use decal_probe::{
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use map_check::{check_demo, map_reference, MapReference, MapStatus};
+
+#[cfg(not(target_arch = "wasm32"))]
+pub use map_fetch::{fetch_map, map_url, FetchOutcome, DEFAULT_MIRROR};
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use engine::StreamPatcher;

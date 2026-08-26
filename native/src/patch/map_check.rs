@@ -128,7 +128,7 @@ pub fn map_reference(demo: &Path) -> Result<MapReference, String> {
 
 /// A map name is a short identifier. One that is not is not a map name worth
 /// joining onto a path.
-fn is_safe_map_name(name: &str) -> bool {
+pub fn is_safe_map_name(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 64
         && name

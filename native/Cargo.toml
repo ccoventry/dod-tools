@@ -27,6 +27,10 @@ rfd = "0.14"
 open = "5.1"
 sysinfo = "0.29"
 keepawake = "0.6"
+# Map fetching (see patch/map_fetch.rs). Blocking and small on purpose: the
+# download runs on a worker thread and verifies before it installs, so there is
+# nothing for an async client to overlap with.
+ureq = "3"
 
 [[bin]]
 name = "preview_cli"
