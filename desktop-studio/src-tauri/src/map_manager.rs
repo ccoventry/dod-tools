@@ -400,4 +400,159 @@ mod tests {
         let err = maps_dir("Z:/nowhere/hl.exe").unwrap_err();
         assert!(err.contains("dod/maps"), "{}", err);
     }
+
+    // ── Config warning report ────────────────────────────────────────────────
+    //
+    // These drive the real command rather than a extracted helper, so the wiring
+    // is covered too: the scan, `final_init_commands`, and the assembly. Two
+    // display bugs in this report were found by screenshot, which is the wrong
+    // way to find them.
+
+    /// A game folder as the engine expects it: `hl.exe` with `dod/` beside it,
+    /// a `config.cfg` that execs `movie.cfg`, and the values that caused all
+    /// this in `movie.cfg`.
+    fn fake_game(tag: &str) -> String {
+        let root = std::env::temp_dir().join(format!("dod_cfgrep_{}_{}", tag, std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let dod = root.join("dod");
+        std::fs::create_dir_all(&dod).unwrap();
+        std::fs::write(&dod.join("config.cfg"), "bind \"F7\" \"r_decals 4000\"\nexec movie.cfg\n")
+            .unwrap();
+        std::fs::write(
+            &dod.join("movie.cfg"),
+            "r_decals \"0\"\nmirv_movie_fps \"300\"\nmirv_fov \"105\"\n",
+        )
+        .unwrap();
+        let exe = root.join("hl.exe");
+        std::fs::write(&exe, b"").unwrap();
+        exe.to_string_lossy().to_string()
+    }
+
+    fn report(
+        tag: &str,
+        init: &[&str],
+        custom: &[&str],
+        fps: i32,
+    ) -> CfgReport {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(scan_game_configs(
+            fake_game(tag),
+            init.iter().map(|s| s.to_string()).collect(),
+            custom.iter().map(|s| s.to_string()).collect(),
+            Some(fps),
+            Some(false),
+            Some(true),
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_cvar_only_a_config_sets_is_reported_as_unseen() {
+        // Nothing names mirv_fov, so the engine renders at 105 and the app is
+        // working from its own default. That is the silent case.
+        let r = report("unseen", &[], &[], 120);
+
+        assert!(
+            r.unseen.iter().any(|u| u.cvar == "mirv_fov" && u.value == "105"),
+            "{:?}",
+            r.unseen
+        );
+        assert!(
+            !r.unseen.iter().any(|u| u.cvar == "r_decals"),
+            "the decal pin names r_decals, so it is not unseen: {:?}",
+            r.unseen
+        );
+    }
+
+    #[test]
+    fn naming_a_cvar_at_the_config_s_own_value_still_counts_as_seeing_it() {
+        // Regression: matching on differing values put a cvar the user HAD
+        // typed into the "the app cannot see these" list.
+        let r = report("agrees", &["mirv_fov 105"], &[], 120);
+
+        assert!(
+            !r.unseen.iter().any(|u| u.cvar == "mirv_fov"),
+            "it is in Init Commands — it is seen: {:?}",
+            r.unseen
+        );
+    }
+
+    #[test]
+    fn one_override_row_per_cvar_even_when_two_commands_set_it() {
+        // Regression: typing the value the app also appends produced two rows
+        // saying the identical thing, which reads as a bug rather than as two
+        // facts.
+        let r = report("dupe", &["mirv_movie_fps 120"], &[], 120);
+
+        let fps_rows: Vec<_> = r
+            .overrides
+            .iter()
+            .filter(|o| o.cvar.eq_ignore_ascii_case("mirv_movie_fps"))
+            .collect();
+        assert_eq!(fps_rows.len(), 1, "{:?}", r.overrides);
+        assert_eq!(fps_rows[0].cfg_value, "300");
+    }
+
+    #[test]
+    fn a_typed_command_the_app_overrides_is_reported_against_the_setting() {
+        // The screenshot case: mirv_movie_fps 500 typed by hand, Capture FPS at
+        // 120 appended after it. The typed value never applies.
+        let r = report("shadow", &["mirv_movie_fps 500"], &[], 120);
+
+        assert_eq!(r.shadowed.len(), 1, "{:?}", r.shadowed);
+        assert_eq!(r.shadowed[0].shadowed_value, "500");
+        assert_eq!(r.shadowed[0].winner_value, "120");
+        assert!(r.shadowed[0].winner_from_app, "the app appended the winner");
+
+        assert!(
+            !r.overrides.iter().any(|o| o.command == "mirv_movie_fps 500"),
+            "a command that never applies overrides nothing: {:?}",
+            r.overrides
+        );
+    }
+
+    #[test]
+    fn a_scheduled_r_decals_is_reported_as_breaking_the_flush() {
+        let r = report("hazard", &[], &["r_decals 128"], 120);
+
+        let hazards: Vec<_> = r.custom.iter().filter(|c| c.kind == "hazard").collect();
+        assert_eq!(hazards.len(), 1, "{:?}", r.custom);
+        assert_eq!(hazards[0].cvar, "r_decals");
+        assert_eq!(
+            r.custom.iter().filter(|c| c.command == "r_decals 128").count(),
+            1,
+            "the hazard must not also be listed as an ordinary override"
+        );
+    }
+
+    #[test]
+    fn a_scheduled_command_is_reported_against_whatever_it_displaces() {
+        // Scheduled commands run last of all, so they beat the init commands as
+        // well as the configs.
+        let r = report("custom", &["mirv_fov 90"], &["mirv_fov 130"], 120);
+
+        let row = r
+            .custom
+            .iter()
+            .find(|c| c.cvar.eq_ignore_ascii_case("mirv_fov"))
+            .expect("reported");
+        assert_eq!(row.kind, "overridesInit");
+        assert_eq!(row.replaced_value, "90");
+    }
+
+    #[test]
+    fn a_bound_key_in_a_config_is_never_treated_as_a_setting() {
+        // config.cfg here binds F7 to `r_decals 4000`. Nothing happens until
+        // someone presses F7, and warning about it would be noise.
+        let r = report("bind", &[], &[], 120);
+
+        assert!(
+            !r.overrides.iter().any(|o| o.cfg_value == "4000"),
+            "{:?}",
+            r.overrides
+        );
+    }
 }
