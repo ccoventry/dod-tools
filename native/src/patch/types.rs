@@ -206,6 +206,15 @@ pub struct PatcherConfig {
     /// set `r_decals` — lowering it mid-demo is precisely what strands decals.
     #[serde(default = "default_decal_ring_limit")]
     pub decal_ring_limit: u32,
+    /// Horizontal field of view the capture will run at, in degrees. Together
+    /// with the frame shape it decides how far off the view axis a flush
+    /// position may sit and still be in shot.
+    ///
+    /// `mirv_fov` in `init_commands` overrides this when present, since that is
+    /// the value the engine will actually use and two settings that disagree
+    /// would be worse than one.
+    #[serde(default = "default_capture_fov")]
+    pub capture_fov: f32,
 }
 
 fn default_decal_flush() -> bool {
@@ -214,6 +223,10 @@ fn default_decal_flush() -> bool {
 
 fn default_decal_ring_limit() -> u32 {
     256
+}
+
+fn default_capture_fov() -> f32 {
+    90.0
 }
 
 impl PatcherConfig {
@@ -293,6 +306,7 @@ impl Default for PatcherConfig {
             auto_clear_temp_demos: false,
             decal_flush: default_decal_flush(),
             decal_ring_limit: default_decal_ring_limit(),
+            capture_fov: default_capture_fov(),
         }
     }
 }

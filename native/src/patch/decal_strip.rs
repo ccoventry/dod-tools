@@ -155,8 +155,12 @@ pub struct DecalCleanOptions {
     /// single-position fallback, where there is no spread to rank.
     pub min_camera_clearance: f32,
     /// Half-angle of the cone treated as "on screen" for the line-of-sight
-    /// test. DoD's default FOV is ~90 degrees horizontal, so 40 is a slightly
-    /// generous half-angle.
+    /// test.
+    ///
+    /// The pipeline derives this from the capture FOV and frame shape — see
+    /// `on_screen_half_angle`. The default here is deliberately wide rather
+    /// than accurate, because a caller that does not know its own FOV is
+    /// better served by rejecting too many spots than by putting one in shot.
     pub visibility_cone_degrees: f32,
     /// Where this run's proven world coordinates are pooled per map, and read
     /// back from. `None` keeps the pass self-contained — it uses only what this
@@ -1391,6 +1395,16 @@ pub fn clean_demo_decals(
     Ok((demo.write_to_bytes(), stats))
 }
 
+/// Every world-surface coordinate this demo proves exists.
+///
+/// No capture windows are applied: this is the demo's whole contribution, not
+/// the subset outside a clip. Exposed because these are coordinates the engine
+/// provably accepted, which makes them the one honest way to check parsed map
+/// geometry without loading the game. See `docs/decal_flush_bsp_surfaces.md`.
+pub fn proven_world_coordinates(demo: &dem::types::Demo) -> Vec<[f32; 3]> {
+    survey(demo, &[], &DecalCleanOptions::default()).world_harvested
+}
+
 /// Strip-only entry point, kept for callers that just want the decal messages
 /// outside `keep_windows` blanked with no burst injection or cvar pinning.
 pub fn strip_decals_outside_windows(
@@ -1455,6 +1469,72 @@ fn scratch_path(source_demo: &str) -> std::path::PathBuf {
     ))
 }
 
+
+/// Extra half-angle allowed beyond the frame's own corner.
+///
+/// Cameras are sampled every fourth in-window frame, so a fast turn can carry a
+/// spot into shot between two samples and never be seen by the test. This is
+/// the margin against that, and against the FOV in effect differing slightly
+/// from the one configured.
+const CAMERA_TURN_MARGIN_DEGREES: f32 = 6.0;
+
+/// Half-angle off the view axis that must be treated as on screen, for a given
+/// capture FOV and frame shape.
+///
+/// A cone is a crude stand-in for a frustum, and the part that decides the
+/// answer is the CORNER of the frame, not its edge. At 105 degrees horizontal
+/// on a 16:9 frame a decal can sit ~56 degrees off the view axis and still be
+/// in shot; the horizontal half-angle alone would say 52.5, and the 40 degrees
+/// this code used before — justified as "generous" against a 90-degree FOV —
+/// was under even the horizontal half-angle of 45. It was rejecting nothing
+/// between 40 and 49 degrees that a 90-degree capture genuinely showed, and
+/// nothing between 40 and 56 at 105.
+///
+/// Erring wide only costs candidate positions. Erring narrow puts a decal on
+/// screen during a recorded clip, which is the one defect this pass exists to
+/// avoid, so the bias here is deliberate and one-directional.
+pub fn on_screen_half_angle(fov_degrees: f32, width: i32, height: i32) -> f32 {
+    let fov = fov_degrees.clamp(1.0, 179.0);
+    let aspect = if width > 0 && height > 0 {
+        width as f32 / height as f32
+    } else {
+        4.0 / 3.0
+    };
+
+    let tan_h = (fov.to_radians() / 2.0).tan();
+    let tan_v = tan_h / aspect.max(0.01);
+    let corner = (tan_h * tan_h + tan_v * tan_v).sqrt().atan().to_degrees();
+
+    (corner + CAMERA_TURN_MARGIN_DEGREES).min(89.0)
+}
+
+/// The FOV a capture will actually run at.
+///
+/// Read out of `init_commands` when HLAE's `mirv_fov` is among them, because
+/// that is the value the engine will be using and a separate setting could
+/// silently disagree with it. The last one wins, matching the console. Falls
+/// back to the configured default when nothing sets it.
+pub fn capture_fov(config: &PatcherConfig) -> f32 {
+    for cmd in config.init_commands.iter().rev() {
+        let trimmed = cmd.trim();
+        let Some(rest) = trimmed
+            .strip_prefix("mirv_fov")
+            .or_else(|| trimmed.strip_prefix("default_fov"))
+        else {
+            continue;
+        };
+        // Guard against matching a longer command that merely starts the same.
+        if !rest.starts_with(char::is_whitespace) {
+            continue;
+        }
+        if let Ok(v) = rest.trim().parse::<f32>() {
+            if v > 0.0 {
+                return v;
+            }
+        }
+    }
+    config.capture_fov
+}
 /// Clean options for the batch pipeline, as distinct from the `strip_decals`
 /// CLI's.
 ///
@@ -1475,6 +1555,15 @@ fn flush_options(config: &PatcherConfig) -> DecalCleanOptions {
         // the probe rig stay self-contained, so a one-off experiment never
         // writes coordinates that a real capture would later rely on.
         atlas_dir: Some(decal_atlas::default_dir()),
+        // Derived, never assumed. The capture's own FOV and frame shape decide
+        // how far off the view axis a decal can sit and still be in shot, and
+        // a movie shot at `mirv_fov 105` puts that corner ~16 degrees further
+        // out than the fixed 40 this used to carry.
+        visibility_cone_degrees: on_screen_half_angle(
+            capture_fov(config),
+            config.resolution_width,
+            config.resolution_height,
+        ),
         ..Default::default()
     }
 }
@@ -1914,5 +2003,112 @@ mod tests {
         // Two decals prove two points, not a plane worth tiling.
         let members = vec![[100.0, 0.0, 0.0], [100.0, 20.0, 0.0]];
         assert!(tile_positions(&members).is_empty());
+    }
+
+    #[test]
+    fn the_cone_covers_the_corner_of_the_frame_not_its_edge() {
+        // A decal at the corner of the frame is further off the view axis than
+        // one at the edge, so the horizontal half-angle is not enough on its
+        // own. Testing against it is what let a spot at 47 degrees pass as
+        // "hidden" during a 90-degree capture.
+        for fov in [75.0f32, 90.0, 105.0, 120.0] {
+            let half = on_screen_half_angle(fov, 1920, 1080);
+            assert!(
+                half > fov / 2.0,
+                "at {} degrees the cone was {:.1}, which does not even reach the frame edge at {:.1}",
+                fov,
+                half,
+                fov / 2.0
+            );
+        }
+    }
+
+    #[test]
+    fn a_wider_capture_needs_a_wider_cone() {
+        let at90 = on_screen_half_angle(90.0, 1920, 1080);
+        let at105 = on_screen_half_angle(105.0, 1920, 1080);
+        assert!(
+            at105 > at90 + 5.0,
+            "105 gave {:.1} against 90's {:.1} — a movie shot wide would keep spots that are in shot",
+            at105,
+            at90
+        );
+    }
+
+    #[test]
+    fn the_old_fixed_cone_was_too_narrow_at_every_common_fov() {
+        // Regression guard for the bug this replaced: 40 degrees, justified as
+        // "generous" against a 90-degree FOV, was under even the 45-degree
+        // horizontal half-angle.
+        const OLD_FIXED_CONE: f32 = 40.0;
+        for (fov, w, h) in [(90.0f32, 1920, 1080), (90.0, 1280, 960), (105.0, 1920, 1080)] {
+            assert!(
+                on_screen_half_angle(fov, w, h) > OLD_FIXED_CONE,
+                "fov {} at {}x{} still fits inside the old fixed cone",
+                fov,
+                w,
+                h
+            );
+        }
+    }
+
+    #[test]
+    fn a_taller_frame_pushes_the_corner_further_out() {
+        // 4:3 puts more of the frame vertically, so its corner sits further off
+        // the axis than a 16:9 corner at the same horizontal FOV.
+        let wide = on_screen_half_angle(90.0, 1920, 1080);
+        let tall = on_screen_half_angle(90.0, 1280, 960);
+        assert!(tall > wide, "4:3 {:.1} should exceed 16:9 {:.1}", tall, wide);
+    }
+
+    #[test]
+    fn a_nonsense_resolution_falls_back_rather_than_dividing_by_zero() {
+        let half = on_screen_half_angle(90.0, 0, 0);
+        assert!(half.is_finite() && half > 45.0);
+    }
+
+    #[test]
+    fn mirv_fov_in_the_init_commands_wins() {
+        // The capture runs at whatever the console was last told, so reading it
+        // from there is the only way the two cannot disagree.
+        let mut config = PatcherConfig {
+            capture_fov: 90.0,
+            ..PatcherConfig::default()
+        };
+        assert_eq!(capture_fov(&config), 90.0);
+
+        config.init_commands = vec!["exec autoexec".to_string(), "mirv_fov 105".to_string()];
+        assert_eq!(capture_fov(&config), 105.0);
+
+        // Last one wins, as at the console.
+        config.init_commands.push("mirv_fov 100".to_string());
+        assert_eq!(capture_fov(&config), 100.0);
+    }
+
+    #[test]
+    fn a_command_that_merely_starts_the_same_is_not_mistaken_for_it() {
+        let config = PatcherConfig {
+            capture_fov: 90.0,
+            init_commands: vec!["mirv_fov_something_else 12".to_string()],
+            ..PatcherConfig::default()
+        };
+        assert_eq!(capture_fov(&config), 90.0);
+    }
+
+    #[test]
+    fn the_pipeline_derives_its_cone_from_the_capture_fov() {
+        // The whole point: a movie shot at mirv_fov 105 must not be planned
+        // against a 90-degree frame.
+        let config = PatcherConfig {
+            resolution_width: 1920,
+            resolution_height: 1080,
+            init_commands: vec!["mirv_fov 105".to_string()],
+            ..PatcherConfig::default()
+        };
+        let opts = flush_options(&config);
+        assert!(
+            (opts.visibility_cone_degrees - on_screen_half_angle(105.0, 1920, 1080)).abs() < 0.01
+        );
+        assert!(opts.visibility_cone_degrees > 55.0);
     }
 }
