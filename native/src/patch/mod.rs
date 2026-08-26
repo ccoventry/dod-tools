@@ -123,7 +123,7 @@ pub use map_fetch::{fetch_map, map_url, FetchOutcome, DEFAULT_MIRROR};
 pub use engine::StreamPatcher;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use builder::{build_batch_queue, spawn_patch_batch, WorkspaceGuard, build_director_message, build_director_stufftext, build_preview_patch_jobs};
+pub use builder::{build_batch_queue, final_init_commands, spawn_patch_batch, WorkspaceGuard, build_director_message, build_director_stufftext, build_preview_patch_jobs};
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use scanner::{is_hltv_demo, scan_demo_for_highlights, scan_demo_for_highlights_with_analysis};

@@ -4,6 +4,7 @@ import { confirm } from '@tauri-apps/plugin-dialog';
 import { showToast } from './toast.js';
 import { requestProcessGuardedLaunch } from './detail_pane.js';
 import { createListEditor } from './list_editor.js';
+import { refreshCfgWarnings } from './cfg_warnings.js';
 import { streakUid, recordTake } from './take_index.js';
 import { STRINGS } from './strings.js';
 
@@ -40,6 +41,31 @@ let unlistenTakesVerified = null;
 
 function notifySettingsChange() {
   if (currentOnSettingsChange) currentOnSettingsChange();
+}
+
+/**
+ * Re-check the game's config files against the commands a capture would apply.
+ *
+ * Passes the settings that decide what the pipeline appends for itself — the
+ * movie fps, the HUD split, the decal pin — so the overrides reported are the
+ * ones a real capture would really perform, not just the ones typed by hand.
+ * `movie.cfg` setting `mirv_movie_fps 300` against a capture configured for 120
+ * is a collision nobody typed and nobody would otherwise see.
+ *
+ * Called by main.js once persisted settings have landed in the DOM, whenever
+ * the hl.exe path changes, and by the init command editor on every edit.
+ */
+export function refreshInitCommandWarnings() {
+  const gamePath = document.querySelector('#hl-path-input')?.value?.trim() || '';
+  refreshCfgWarnings(
+    gamePath,
+    initCommands.map((c) => c.trim()).filter((c) => c.length > 0),
+    {
+      captureFps: parseInt(document.querySelector('#config-capture-fps')?.value, 10) || null,
+      separateHud: document.querySelector('#config-separate-hud')?.checked ?? null,
+      decalFlush: document.querySelector('#config-decal-flush')?.checked ?? true,
+    }
+  );
 }
 
 /** Generates a `session_YYYYMMDD_HHMMSS` id so each batch routes into its own
@@ -516,7 +542,12 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
     container: document.querySelector('#init-commands-list'),
     getItems: () => initCommands,
     fields: [{ key: 'value', type: 'text', primitive: true, placeholder: STRINGS.CAPTURE_CONFIG.INIT_COMMAND_PLACEHOLDER }],
-    onChange: notifySettingsChange,
+    onChange: () => {
+      notifySettingsChange();
+      // Typing a command here can silence a line in the user's own config, and
+      // this is the moment they can still see both.
+      refreshInitCommandWarnings();
+    },
   });
 
   customCommandsEditor = createListEditor({

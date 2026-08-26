@@ -1,36 +1,61 @@
 // cfg_warnings.js
-// Tells the user when the game's own config files set something this app reads.
+// Tells the user what their own config files set, and what the app will
+// override in them.
 //
-// The case that prompted it: a `config.cfg` ending in `exec movie.cfg`, and a
-// `movie.cfg` carrying `mirv_fov 105`. The engine renders at 105; the app, which
-// only ever looked at its own Init Commands, sized the decal flush's on-screen
-// test for the default 90 — a cone some seven degrees too narrow. Nothing on
-// screen says so.
+// Two different problems, both invisible without this:
+//
+//   1. A config sets something the pipeline reads and the app never hears about
+//      it. That is how a capture ran at `mirv_fov 105` from movie.cfg while the
+//      flush sized its on-screen test for the default 90.
+//   2. An init command sets the same cvar a config does. The init command runs
+//      later, so it wins — which is the point of typing it, but it also means a
+//      line the user set deliberately, possibly years ago, quietly stops
+//      applying. Including the commands the app adds for itself: the capture
+//      fps overrides a `mirv_movie_fps` in movie.cfg, and the decal pin
+//      overrides an `r_decals` there.
 //
 // ADVISORY ONLY. Nothing here, or anywhere in this app, writes to a config file.
-// Those are the user's. The banner says what was found and leaves the decision
-// where it belongs.
 
 import { scanGameConfigs } from './ipc_bridge.js';
 import { STRINGS } from './strings.js';
 
-let findings = [];
+let report = { unseen: [], overrides: [] };
 
 function bannerEl() {
   return document.querySelector('#cfg-warning-banner');
 }
 
-/** Re-scan the configured game folder and redraw. Safe to call repeatedly. */
-export async function refreshCfgWarnings(gamePath) {
-  findings = gamePath ? await scanGameConfigs(gamePath) : [];
+/**
+ * Re-scan and redraw. Safe to call repeatedly — on start-up, when the hl.exe
+ * path changes, and whenever the init command list is edited.
+ *
+ * `context` carries the settings that decide what the app appends for itself,
+ * so the overrides it reports are the ones a capture would really apply.
+ */
+export async function refreshCfgWarnings(gamePath, initCommands = [], context = {}) {
+  report = gamePath
+    ? await scanGameConfigs(gamePath, initCommands, context)
+    : { unseen: [], overrides: [] };
   render();
+}
+
+function section(title, advice, rows) {
+  return `
+    <div style="margin-bottom:8px;">
+      <strong>${title}</strong>
+      <ul style="margin:6px 0 6px 18px; padding:0;">${rows}</ul>
+      <div style="opacity:.8">${advice}</div>
+    </div>`;
 }
 
 function render() {
   const el = bannerEl();
   if (!el) return;
 
-  if (!Array.isArray(findings) || findings.length === 0) {
+  const unseen = report?.unseen ?? [];
+  const overrides = report?.overrides ?? [];
+
+  if (unseen.length === 0 && overrides.length === 0) {
     el.hidden = true;
     el.innerHTML = '';
     return;
@@ -41,15 +66,29 @@ function render() {
     'margin: 0 0 8px; padding: 10px 12px; border: 1px solid #b58900; ' +
     'border-radius: 4px; background: #2a2410; color: #e8dcb0; font-size: 12px;';
 
-  const rows = findings
-    .map(
-      (f) =>
-        `<li><code>${f.cvar} ${f.value}</code> — ${STRINGS.CFG.location(f.file, f.line)}</li>`
-    )
-    .join('');
+  let html = '';
 
-  el.innerHTML = `
-    <strong>${STRINGS.CFG.BANNER_TITLE}</strong>
-    <ul style="margin:6px 0 6px 18px; padding:0;">${rows}</ul>
-    <div style="opacity:.8">${STRINGS.CFG.ADVICE}</div>`;
+  if (unseen.length > 0) {
+    const rows = unseen
+      .map(
+        (f) =>
+          `<li><code>${f.cvar} ${f.value}</code> — ${STRINGS.CFG.location(f.file, f.line)}</li>`
+      )
+      .join('');
+    html += section(STRINGS.CFG.BANNER_TITLE, STRINGS.CFG.ADVICE, rows);
+  }
+
+  if (overrides.length > 0) {
+    const rows = overrides
+      .map((o) => {
+        const note = o.fromApp
+          ? ` <span style="opacity:.7">(${STRINGS.CFG.FROM_APP_NOTE})</span>`
+          : '';
+        return `<li><code>${STRINGS.CFG.override(o.cvar, o.initValue, o.cfgValue, o.file, o.line)}</code>${note}</li>`;
+      })
+      .join('');
+    html += section(STRINGS.CFG.OVERRIDE_TITLE, STRINGS.CFG.OVERRIDE_ADVICE, rows);
+  }
+
+  el.innerHTML = html;
 }

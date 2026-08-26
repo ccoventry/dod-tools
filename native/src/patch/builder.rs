@@ -173,6 +173,50 @@ fn build_safe_echos(tick: i32, message: &str) -> Vec<(i32, String)> {
 ///
 /// Public so the `find_overlaps` diagnostic can ask the same questions without
 /// running a capture, and can't drift from the real decision.
+/// Every command the engine will run at demo load: the user's own init
+/// commands, then the ones the pipeline adds for itself.
+///
+/// Extracted so it can be asked ahead of a capture as well as during one. The
+/// app's own additions override whatever the game's configs set — `capture_fps`
+/// beats a `mirv_movie_fps` in `movie.cfg`, and the decal pin beats an
+/// `r_decals` there — and a user is entitled to know that before it happens
+/// rather than by noticing the result.
+pub fn final_init_commands(config: &PatcherConfig) -> Vec<String> {
+    let mut out = config.init_commands.clone();
+    out.push("sys_autodir".to_string());
+    out.push(format!("mirv_movie_fps {}", config.capture_fps));
+    out.push(format!(
+        "mirv_movie_separate_hud {}",
+        if config.separate_hud { "1" } else { "0" }
+    ));
+
+    // The decal flush needs the ring set once, at demo load, and never again.
+    // r_decals bounds how far the rotating index may travel before it wraps; it
+    // does not evict anything, so lowering it once decals have accumulated
+    // strands every one sitting above the new limit.
+    //
+    // The sweep is sized to that same number, so there is only one number here
+    // and `r_decals` is where the engine reads it. When init_commands states it,
+    // that is the value the sweep uses and the line is already the pin —
+    // appending a second one could only overrule what was asked for, silently.
+    // When nothing states it, the engine would otherwise use whatever the user's
+    // config left behind, so it gets pinned to the configured default.
+    //
+    // Not at the maximum, though. r_decals is clamped to MAX_RENDER_DECALS, so a
+    // sweep that size turns a full revolution whatever the cvar happens to be —
+    // any smaller ring simply gets swept several times over. Pinning then buys
+    // nothing and costs the precondition the rest of this design works around:
+    // that nothing else may touch r_decals.
+    if config.decal_flush && crate::patch::ring_limit_from_init(&config.init_commands).is_none() {
+        let ring = crate::patch::ring_limit(config);
+        if ring > 0 && ring < crate::patch::MAX_RENDER_DECALS {
+            out.push(format!("r_decals {}", ring));
+        }
+    }
+
+    out
+}
+
 pub fn blocks_merge(prev_end: i32, next_start: i32, lead_ticks: i32, trail_ticks: i32) -> bool {
     (next_start - lead_ticks).max(0) <= prev_end + trail_ticks
 }
@@ -776,40 +820,7 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
         // Sort scheduled_commands by tick
         scheduled_commands.sort_by_key(|(tick, _)| *tick);
 
-        let mut final_init_commands = config.init_commands.clone();
-        final_init_commands.push("sys_autodir".to_string());
-
-        final_init_commands.push(format!("mirv_movie_fps {}", config.capture_fps));
-
-        let separate_hud_str = if config.separate_hud { "1" } else { "0" };
-        final_init_commands.push(format!("mirv_movie_separate_hud {}", separate_hud_str));
-
-        // The decal flush needs the ring set once, at demo load, and never
-        // again. r_decals bounds how far the rotating index may travel before
-        // it wraps; it does not evict anything, so lowering it once decals have
-        // accumulated strands every one sitting above the new limit.
-        //
-        // The sweep is sized to that same number, so there is only one number
-        // here and `r_decals` is where the engine reads it. When init_commands
-        // states it, that is the value the sweep uses and the line is already
-        // the pin — appending a second one could only overrule what was asked
-        // for, silently. When nothing states it, the engine would otherwise use
-        // whatever the user's config left behind, so it gets pinned to the
-        // configured default.
-        //
-        // Not at the maximum, though. r_decals is clamped to MAX_RENDER_DECALS,
-        // so a sweep that size turns a full revolution whatever the cvar happens
-        // to be — any smaller ring simply gets swept several times over. Pinning
-        // then buys nothing and costs the precondition the rest of this design
-        // works around: that nothing else may touch r_decals.
-        if config.decal_flush
-            && crate::patch::ring_limit_from_init(&config.init_commands).is_none()
-        {
-            let ring = crate::patch::ring_limit(config);
-            if ring > 0 && ring < crate::patch::MAX_RENDER_DECALS {
-                final_init_commands.push(format!("r_decals {}", ring));
-            }
-        }
+        let final_init_commands = final_init_commands(config);
 
         jobs.push(PatchJob {
             source_demo: source_demo.to_string(),

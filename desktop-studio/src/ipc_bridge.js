@@ -65,11 +65,17 @@ export async function mapDownloadUrl(mapName) {
 
 // Read-only scan of the game's config files for cvars the pipeline depends on.
 // Nothing in this app writes to a config file; this only reports.
-export async function scanGameConfigs(gamePath) {
-  return invoke("scan_game_configs", { gamePath })
+export async function scanGameConfigs(gamePath, initCommands = [], context = {}) {
+  return invoke("scan_game_configs", {
+    gamePath,
+    initCommands,
+    captureFps: context.captureFps ?? null,
+    separateHud: context.separateHud ?? null,
+    decalFlush: context.decalFlush ?? null,
+  })
     .catch((err) => {
       console.error("IPC Execution Error (scan_game_configs):", err);
-      return [];
+      return { unseen: [], overrides: [] };
     });
 }
 

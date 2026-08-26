@@ -1,19 +1,23 @@
 //! What the game's own config files set behind the pipeline's back.
 //!
 //! ```text
-//! cargo run --release -p native --bin check_cfgs -- <dod-folder>
+//! cargo run --release -p native --bin check_cfgs -- <dod-folder> ["init command"...]
 //! ```
+//!
+//! Any init commands passed after the folder are checked for overriding a value
+//! a config already sets.
 //!
 //! Read-only. This never writes, edits or removes a config file.
 
 use native::patch::cfg_scan;
 
 fn main() {
+    let mut args = std::env::args().skip(1);
     let dir = std::path::PathBuf::from(
-        std::env::args()
-            .nth(1)
-            .expect("usage: check_cfgs <dod-folder>"),
+        args.next()
+            .expect("usage: check_cfgs <dod-folder> [\"init command\"...]"),
     );
+    let init_commands: Vec<String> = args.collect();
 
     let scan = cfg_scan::scan(&dir);
     println!("{}\n{} config file(s) executed\n", dir.display(), scan.files_read);
@@ -28,15 +32,45 @@ fn main() {
         }
     }
 
+    // Only the cvars in play. A full config.cfg is ~200 assignments, and
+    // printing every one buries the two that matter.
     let shadowed: Vec<_> = scan
         .settings
         .iter()
-        .filter(|s| s.auto_executed && !effective.iter().any(|e| std::ptr::eq(*e, *s)))
+        .filter(|s| {
+            s.auto_executed
+                && cfg_scan::WATCHED_CVARS
+                    .iter()
+                    .any(|w| s.cvar.eq_ignore_ascii_case(w))
+                && !effective.iter().any(|e| std::ptr::eq(*e, *s))
+        })
         .collect();
     if !shadowed.is_empty() {
-        println!("\nAlso set, but overridden later:");
+        println!("\nAlso set, but overridden later in the chain:");
         for s in shadowed {
             println!("  {:<12} {:<8} {}:{}", s.cvar, s.value, s.file_name(), s.line);
+        }
+    }
+
+    println!("\n{} assignment(s) seen across those configs.", scan.settings.len());
+
+    if !init_commands.is_empty() {
+        let overrides = scan.overrides_in(&init_commands);
+        println!();
+        if overrides.is_empty() {
+            println!("None of those init commands override a config value.");
+        } else {
+            println!("Init commands that will override a config value:");
+            for o in overrides {
+                println!(
+                    "  {:<20} overrides {} {} ({}:{})",
+                    o.command,
+                    o.cvar,
+                    o.cfg_value,
+                    o.file_name(),
+                    o.line
+                );
+            }
         }
     }
 

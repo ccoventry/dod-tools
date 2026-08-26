@@ -37,6 +37,9 @@ const ENTRY_POINTS: &[&str] = &["valve.rc", "config.cfg", "autoexec.cfg", "userc
 const MAX_DEPTH: usize = 8;
 const MAX_FILES: usize = 64;
 const MAX_FILE_BYTES: u64 = 1024 * 1024;
+/// A full `config.cfg` is a couple of hundred assignments. This is a ceiling on
+/// something pathological, not a working limit.
+const MAX_SETTINGS: usize = 4096;
 
 /// Commands whose arguments are stored, not run.
 const NOT_EXECUTED: &[&str] = &["bind", "unbind", "alias", "bindtoggle", "+bind"];
@@ -93,6 +96,65 @@ impl CfgScan {
 
     pub fn is_empty(&self) -> bool {
         self.settings.is_empty() && self.unreferenced.is_empty()
+    }
+
+    /// Which of these init commands will override something a config already
+    /// sets.
+    ///
+    /// Init commands reach the engine after its configs have run, so where both
+    /// name the same cvar the init command is the one that takes effect. That
+    /// is usually what the user wants — it is the whole point of putting it
+    /// there — but they should not have to find out by noticing their movie
+    /// looks different. Silence here would mean a value they had set
+    /// deliberately, years ago, quietly stopping applying.
+    pub fn overrides_in(&self, init_commands: &[String]) -> Vec<CommandOverride> {
+        let mut out = Vec::new();
+        for command in init_commands {
+            let trimmed = command.trim();
+            let mut parts = trimmed.split_whitespace();
+            let Some(head) = parts.next() else { continue };
+            let Some(value) = parts.next() else { continue };
+            if parts.next().is_some() {
+                continue;
+            }
+            let Some(setting) = self.effective(head) else {
+                continue;
+            };
+            // Setting it to what the config already says overrides nothing that
+            // anyone would notice.
+            if setting.value.eq_ignore_ascii_case(&unquote(value)) {
+                continue;
+            }
+            out.push(CommandOverride {
+                command: trimmed.to_string(),
+                cvar: setting.cvar.clone(),
+                init_value: unquote(value),
+                cfg_value: setting.value.clone(),
+                file: setting.file.clone(),
+                line: setting.line,
+            });
+        }
+        out
+    }
+}
+
+/// An init command that will take precedence over a config file's value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandOverride {
+    pub command: String,
+    pub cvar: String,
+    pub init_value: String,
+    pub cfg_value: String,
+    pub file: PathBuf,
+    pub line: usize,
+}
+
+impl CommandOverride {
+    pub fn file_name(&self) -> String {
+        self.file
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| self.file.to_string_lossy().to_string())
     }
 }
 
@@ -189,25 +251,32 @@ fn read_config(
                 continue;
             }
 
-            if let Some(cvar) = WATCHED_CVARS
-                .iter()
-                .find(|c| head_lower == c.to_lowercase())
-            {
-                let Some(value) = parts.next() else { continue };
-                // `mirv_fov handleZoom enabled 1` is a sub-command, not an
-                // assignment — a numeric first argument is what makes it one.
-                let value = unquote(value);
-                if value.parse::<f32>().is_err() {
-                    continue;
-                }
-                out.settings.push(CvarSetting {
-                    cvar: (*cvar).to_string(),
-                    value,
-                    file: path.to_path_buf(),
-                    line: index + 1,
-                    auto_executed,
-                });
+            // Every assignment is recorded, not just the ones the pipeline
+            // reads, so an init command can be checked against whatever the
+            // user actually has — most people's configs do not mention
+            // `r_decals` at all, and the ones that surprise you are the ones
+            // nobody thought to watch for.
+            if out.settings.len() >= MAX_SETTINGS || !is_cvar_name(head) {
+                continue;
             }
+            let Some(value) = parts.next() else {
+                // No argument is a command, not an assignment: `+mlook`,
+                // `stopsound`, `clear`.
+                continue;
+            };
+            if parts.next().is_some() {
+                // More than one argument is a sub-command, not an assignment —
+                // `mirv_fov handleZoom enabled 1` appears in real movie configs
+                // and sets no FOV.
+                continue;
+            }
+            out.settings.push(CvarSetting {
+                cvar: head.to_string(),
+                value: unquote(value),
+                file: path.to_path_buf(),
+                line: index + 1,
+                auto_executed,
+            });
         }
     }
 }
@@ -239,6 +308,15 @@ fn commands_in(line: &str) -> Vec<String> {
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .collect()
+}
+
+/// Whether a token reads as a cvar name rather than a console verb.
+///
+/// `+mlook` and `-attack` are commands with a sign prefix, never assignments.
+fn is_cvar_name(token: &str) -> bool {
+    let mut chars = token.chars();
+    chars.next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && token.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 fn unquote(token: &str) -> String {
@@ -320,6 +398,60 @@ mod tests {
         assert!(scan.effective("mirv_fov").is_none());
         assert_eq!(scan.unreferenced.len(), 1);
         assert_eq!(scan.unreferenced[0].file_name().unwrap(), "movie.cfg");
+    }
+
+    #[test]
+    fn an_init_command_that_overrides_a_config_value_is_reported() {
+        // The case that matters: someone sets mirv_fov in Init Commands with a
+        // different value sitting in movie.cfg. The init command wins, which is
+        // the point — but they should be told, not left to notice.
+        let dir = scratch("override");
+        std::fs::write(dir.join("config.cfg"), "exec movie.cfg\n").unwrap();
+        std::fs::write(dir.join("movie.cfg"), "mirv_fov \"105\"\nr_decals \"0\"\n").unwrap();
+
+        let scan = scan(&dir);
+        let hits = scan.overrides_in(&[
+            "mirv_fov 90".to_string(),
+            "sys_autodir".to_string(),
+            "cl_showfps 1".to_string(),
+        ]);
+
+        assert_eq!(hits.len(), 1, "{:?}", hits);
+        assert_eq!(hits[0].cvar, "mirv_fov");
+        assert_eq!(hits[0].init_value, "90");
+        assert_eq!(hits[0].cfg_value, "105");
+        assert_eq!(hits[0].file_name(), "movie.cfg");
+        assert_eq!(hits[0].line, 1);
+    }
+
+    #[test]
+    fn setting_a_cvar_to_what_the_config_already_says_is_not_an_override() {
+        let dir = scratch("agrees");
+        std::fs::write(dir.join("config.cfg"), "mirv_fov \"105\"\n").unwrap();
+
+        assert!(scan(&dir).overrides_in(&["mirv_fov 105".to_string()]).is_empty());
+    }
+
+    #[test]
+    fn every_assignment_is_recorded_not_just_the_ones_the_pipeline_reads() {
+        // Most configs never mention r_decals. The collisions that surprise
+        // people are the ones nobody thought to watch for.
+        let dir = scratch("all_cvars");
+        std::fs::write(
+            dir.join("config.cfg"),
+            "volume \"0.5\"\nzoom_sensitivity_ratio \"1.2\"\n+mlook\nstopsound\n",
+        )
+        .unwrap();
+
+        let scan = scan(&dir);
+        assert_eq!(scan.effective("volume").unwrap().value, "0.5");
+        assert!(scan.effective("+mlook").is_none(), "a verb is not an assignment");
+        assert!(scan.effective("stopsound").is_none(), "nor is a bare command");
+        assert_eq!(
+            scan.overrides_in(&["volume 1".to_string()]).len(),
+            1,
+            "and a collision on any of them is worth reporting"
+        );
     }
 
     #[test]

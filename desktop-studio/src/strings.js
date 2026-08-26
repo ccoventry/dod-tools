@@ -632,6 +632,12 @@ export const STRINGS = {
     ADVICE:
       'These are set outside the app, so it cannot see them when it plans a capture. Either remove them from your configs, or state them in Init Commands below so the pipeline works from the same values the engine does. Nothing here changes your config files.',
     location: (file, line) => `set in ${file}, line ${line}`,
+    OVERRIDE_TITLE: 'These Init Commands will override your config files:',
+    OVERRIDE_ADVICE:
+      'Init commands run after the game loads its configs, so these values win. That is usually the point — but the config line stops applying, and nothing else would tell you.',
+    FROM_APP_NOTE: 'added by the app',
+    override: (cvar, initValue, cfgValue, file, line) =>
+      `${cvar} ${initValue} replaces ${cfgValue} from ${file}, line ${line}`,
   },
 
   MAIN: {

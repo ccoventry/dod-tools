@@ -126,32 +126,104 @@ pub struct CfgWarningRow {
     pub line: usize,
 }
 
-/// What the game's own config files set that this pipeline reads.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CfgOverrideRow {
+    pub command: String,
+    pub cvar: String,
+    pub init_value: String,
+    pub cfg_value: String,
+    pub file: String,
+    pub line: usize,
+    /// True when the command comes from the pipeline itself rather than from
+    /// something the user typed — those override a config too, and the user has
+    /// no other way to find out.
+    pub from_app: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct CfgReport {
+    /// Values the pipeline reads that a config sets and nothing overrides.
+    pub unseen: Vec<CfgWarningRow>,
+    /// Init commands that will win over a config's value.
+    pub overrides: Vec<CfgOverrideRow>,
+}
+
+/// What the game's own config files set, and what the app's init commands will
+/// override.
 ///
 /// Read-only, and advisory. Nothing in this app writes, edits or removes a
-/// config file — the fix is for the user to make, either in their config or by
-/// stating the value in Init Commands where the pipeline can see it.
+/// config file — the fix is always the user's to make.
 #[tauri::command]
-pub async fn scan_game_configs(game_path: String) -> Result<Vec<CfgWarningRow>, String> {
+pub async fn scan_game_configs(
+    game_path: String,
+    init_commands: Vec<String>,
+    capture_fps: Option<i32>,
+    separate_hud: Option<bool>,
+    decal_flush: Option<bool>,
+) -> Result<CfgReport, String> {
     let exe = PathBuf::from(&game_path);
     let Some(dir) = exe.parent().map(|p| p.join("dod")) else {
-        return Ok(Vec::new());
+        return Ok(CfgReport::default());
     };
     if !dir.is_dir() {
-        return Ok(Vec::new());
+        return Ok(CfgReport::default());
     }
 
     tokio::task::spawn_blocking(move || {
-        native::patch::cfg_scan::scan(&dir)
+        let scan = native::patch::cfg_scan::scan(&dir);
+
+        // The list the engine will actually receive, so the app's own additions
+        // — the movie fps, the decal pin — are checked too.
+        let mut cfg = native::patch::PatcherConfig {
+            init_commands: init_commands.clone(),
+            ..Default::default()
+        };
+        if let Some(v) = capture_fps {
+            cfg.capture_fps = v;
+        }
+        if let Some(v) = separate_hud {
+            cfg.separate_hud = v;
+        }
+        if let Some(v) = decal_flush {
+            cfg.decal_flush = v;
+        }
+        let effective_commands = native::patch::final_init_commands(&cfg);
+        let user_typed: std::collections::HashSet<String> =
+            init_commands.iter().map(|c| c.trim().to_string()).collect();
+
+        let overrides = scan
+            .overrides_in(&effective_commands)
+            .into_iter()
+            .map(|o| CfgOverrideRow {
+                from_app: !user_typed.contains(&o.command),
+                file: o.file_name(),
+                command: o.command,
+                cvar: o.cvar,
+                init_value: o.init_value,
+                cfg_value: o.cfg_value,
+                line: o.line,
+            })
+            .collect::<Vec<_>>();
+
+        // Anything the pipeline reads that a config sets and no init command
+        // overrides — the silent case.
+        let overridden: std::collections::HashSet<String> =
+            overrides.iter().map(|o| o.cvar.to_lowercase()).collect();
+        let unseen = scan
             .effective_settings()
             .into_iter()
+            .filter(|s| !overridden.contains(&s.cvar.to_lowercase()))
             .map(|s| CfgWarningRow {
                 cvar: s.cvar.clone(),
                 value: s.value.clone(),
                 file: s.file_name(),
                 line: s.line,
             })
-            .collect()
+            .collect();
+
+        CfgReport { unseen, overrides }
     })
     .await
     .map_err(|e| format!("config scan failed: {}", e))
