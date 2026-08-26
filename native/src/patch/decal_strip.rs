@@ -880,6 +880,30 @@ pub enum VisibilityBasis {
 /// before this existed and still does, just with the cone alone. It is logged
 /// rather than swallowed, because "this capture was planned without knowing
 /// where the walls are" is worth seeing.
+/// The key this demo's harvest is filed under.
+///
+/// HLTV demos leave the header's checksum field zeroed, so every one of them
+/// would otherwise share a single `_00000000` bucket per map name — separate
+/// from the bucket the same map's first-person demos fill, and unable to tell
+/// two builds apart. When the map is here, its own checksum stands in, which
+/// puts both kinds of demo in the same store.
+///
+/// That trusts the local library to be the build the HLTV demo was recorded on.
+/// Nothing in an HLTV demo can confirm it, and the coordinates themselves are
+/// proven either way — the cost of being wrong is a mis-filed harvest, not a
+/// bad coordinate.
+fn atlas_key(demo: &dem::types::Demo, opts: &DecalCleanOptions) -> Option<decal_atlas::MapKey> {
+    let mut key = decal_atlas::MapKey::from_header(&demo.header)?;
+    if key.checksum == 0 {
+        if let Some(dir) = &opts.maps_dir {
+            if let Ok(found) = bsp::map_checksum_of_file(&dir.join(format!("{}.bsp", key.name))) {
+                key.checksum = found;
+            }
+        }
+    }
+    Some(key)
+}
+
 fn load_map(
     demo: &dem::types::Demo,
     opts: &DecalCleanOptions,
@@ -888,6 +912,29 @@ fn load_map(
     let dir = opts.maps_dir.as_ref()?;
     let key = decal_atlas::MapKey::from_header(&demo.header)?;
     let path = dir.join(format!("{}.bsp", key.name));
+
+    // A map of the right name but the wrong build is worse than no map. Every
+    // face, leaf and plane would be read successfully and refer to a different
+    // world, so occlusion would answer confidently and wrongly — and a position
+    // called hidden on geometry that is not the geometry being rendered is
+    // exactly the failure this feature cannot show in its output.
+    if key.checksum != 0 {
+        match bsp::map_checksum_of_file(&path) {
+            Ok(found) if found != key.checksum => {
+                crate::log_markdown(&format!(
+                    "⚠️ **Decal flush is ignoring `{}`** — the map here is a different build than \
+                     the demo was recorded on (demo wants `{:08x}`, this is `{:08x}`). Its \
+                     geometry describes a different world, so it cannot be trusted to say what a \
+                     camera can see. Falling back to the frame cone alone.",
+                    key.name, key.checksum, found
+                ));
+                return None;
+            }
+            Ok(_) => {}
+            // Unreadable is left to `Bsp::from_file` below, which reports it.
+            Err(_) => {}
+        }
+    }
 
     match bsp::Bsp::from_file(&path) {
         Ok(map) => {
@@ -1373,7 +1420,7 @@ pub fn clean_demo_decals(
     // still flush there, because some earlier demo proved that surface exists.
     let mut atlas: Vec<[f32; 3]> = Vec::new();
     if let Some(dir) = &opts.atlas_dir {
-        match decal_atlas::MapKey::from_header(&demo.header) {
+        match atlas_key(&demo, opts) {
             Some(key) => {
                 let (merged, astats) = decal_atlas::merge_and_save(
                     dir,

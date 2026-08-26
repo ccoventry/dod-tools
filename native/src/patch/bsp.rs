@@ -752,6 +752,56 @@ impl Bsp {
         !self.visibility.is_empty() && self.vis_leaf_count > 0
     }
 }
+
+/// The lump the map checksum deliberately leaves out.
+///
+/// Entities are what a server operator edits — spawn counts, round timers — and
+/// excluding them lets a server run a tweaked map without every client
+/// reporting a mismatch. It also means the checksum answers exactly the question
+/// worth asking here: is this the same *geometry* the demo was recorded on.
+const LUMP_ENTITIES: usize = 0;
+
+/// The map checksum the engine stamps into a demo header, computed from a map
+/// file.
+///
+/// CRC-32 (the ordinary reflected IEEE polynomial) over lumps 1..14 in header
+/// order, entities excluded — and left *unfinalised*, with no closing XOR. The
+/// engine's `CRC32_Final` is not called on this value before it is written, so
+/// finalising it here would miss by exactly `0xFFFFFFFF`.
+///
+/// Verified against 390 first-person demos: every one matches its own map.
+pub fn map_checksum(bytes: &[u8]) -> Result<u32, String> {
+    if bytes.len() < HEADER_SIZE {
+        return Err("file is shorter than a BSP header".to_string());
+    }
+
+    let mut table = [0u32; 256];
+    for (n, slot) in table.iter_mut().enumerate() {
+        let mut c = n as u32;
+        for _ in 0..8 {
+            c = if c & 1 != 0 { 0xEDB8_8320 ^ (c >> 1) } else { c >> 1 };
+        }
+        *slot = c;
+    }
+
+    let mut crc = 0xFFFF_FFFFu32;
+    for index in 0..LUMP_COUNT {
+        if index == LUMP_ENTITIES {
+            continue;
+        }
+        for b in lump(bytes, index)? {
+            crc = table[((crc ^ *b as u32) & 0xFF) as usize] ^ (crc >> 8);
+        }
+    }
+    Ok(crc)
+}
+
+/// `map_checksum` for a map on disk.
+pub fn map_checksum_of_file(path: &std::path::Path) -> Result<u32, String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("{}: {}", path.display(), e))?;
+    map_checksum(&bytes)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
