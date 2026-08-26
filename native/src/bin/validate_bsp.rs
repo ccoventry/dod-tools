@@ -1,12 +1,22 @@
-//! TEMPORARY validation harness — not for commit.
+//! Checks the BSP parser against coordinates the engine provably accepted.
 //!
-//! Stage 2 of docs/decal_flush_bsp_surfaces.md. Every harvested decal in a demo
-//! is a coordinate the engine provably accepted, so running thousands of them
-//! against the parsed map geometry validates the lump offsets, edge winding and
-//! coordinate space in one pass. A wrong offset collapses the hit rate rather
-//! than producing plausible garbage.
+//! Stage 2 of `docs/decal_flush_bsp_surfaces.md`, kept because it is the only
+//! honest test the map geometry has. Every harvested decal in a demo is a point
+//! the engine created a decal at, so running thousands of them against the
+//! parsed geometry validates the lump offsets, edge winding, coordinate space
+//! and world-model selection in one pass. A wrong offset collapses the hit rate
+//! rather than producing plausible garbage.
 //!
-//! Prints one TSV line: map, demo, decals tested, hits at each tolerance.
+//! Measured 2026-08-26 over 107,584 coordinates from 83 demos across 18 maps:
+//! 98.93% land on a world face within 1 unit. Re-run it after touching
+//! `patch::bsp` — a drop means the parser broke, not that the demos changed.
+//!
+//! ```text
+//! cargo run --release -p native --bin validate_bsp -- <demo> <maps_dir> <label>
+//! ```
+//!
+//! Prints one TSV line: label, demo, map, coordinates tested, hit percentage at
+//! 1/2/4/8 units, count landing on nothing, world faces, total faces.
 
 use native::patch::bsp::Bsp;
 use native::patch::decal_atlas::MapKey;
