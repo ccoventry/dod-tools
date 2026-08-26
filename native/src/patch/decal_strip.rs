@@ -893,8 +893,8 @@ pub enum VisibilityBasis {
 /// Nothing in an HLTV demo can confirm it, and the coordinates themselves are
 /// proven either way — the cost of being wrong is a mis-filed harvest, not a
 /// bad coordinate.
-fn atlas_key(demo: &dem::types::Demo, opts: &DecalCleanOptions) -> Option<decal_atlas::MapKey> {
-    let mut key = decal_atlas::MapKey::from_header(&demo.header)?;
+fn atlas_key(header: &dem::types::Header, opts: &DecalCleanOptions) -> Option<decal_atlas::MapKey> {
+    let mut key = decal_atlas::MapKey::from_header(header)?;
     if key.checksum == 0 {
         if let Some(dir) = &opts.maps_dir {
             if let Ok(found) = bsp::map_checksum_of_file(&dir.join(format!("{}.bsp", key.name))) {
@@ -1421,7 +1421,7 @@ pub fn clean_demo_decals(
     // still flush there, because some earlier demo proved that surface exists.
     let mut atlas: Vec<[f32; 3]> = Vec::new();
     if let Some(dir) = &opts.atlas_dir {
-        match atlas_key(&demo, opts) {
+        match atlas_key(&demo.header, opts) {
             Some(key) => {
                 let (merged, astats) = decal_atlas::merge_and_save(
                     dir,
@@ -2346,6 +2346,70 @@ mod tests {
 
         assert_eq!(capture_fov(&config), config.capture_fov, "init commands say nothing");
         assert_eq!(capture_fov_resolved(&config), 105.0, "the config does");
+    }
+
+    /// A demo header naming a map, with the checksum an HLTV recording would
+    /// leave zeroed.
+    fn header_for(map: &str, checksum: u32) -> dem::types::Header {
+        let mut name = vec![0u8; 260];
+        name[..map.len()].copy_from_slice(map.as_bytes());
+        dem::types::Header {
+            magic: b"HLDEMO\0\0".to_vec(),
+            demo_protocol: 5,
+            network_protocol: 48,
+            map_name: name.into(),
+            game_directory: vec![0u8; 260].into(),
+            map_checksum: checksum,
+            directory_offset: 0,
+        }
+    }
+
+    /// The smallest thing `map_checksum` will read: a v30 header with fifteen
+    /// empty lumps. No geometry needed — only the checksum is being asked for.
+    fn empty_map(dir: &std::path::Path, name: &str) -> u32 {
+        let mut bytes = vec![0u8; 4 + 15 * 8];
+        bytes[0] = 30;
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(dir.join(format!("{}.bsp", name)), &bytes).unwrap();
+        crate::patch::bsp::map_checksum(&bytes).unwrap()
+    }
+
+    #[test]
+    fn an_hltv_demo_keys_its_harvest_off_the_local_map_not_a_zero() {
+        // HLTV demos zero the checksum field, so every one of them would
+        // otherwise share a single `<map>_00000000` bucket — separate from the
+        // bucket the same map's first-person demos fill, and unable to tell two
+        // builds apart.
+        let dir = std::env::temp_dir()
+            .join(format!("dod_atlas_key_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let expected = empty_map(&dir, "dod_anzio");
+
+        let opts = DecalCleanOptions {
+            maps_dir: Some(dir.clone()),
+            ..Default::default()
+        };
+
+        let hltv = atlas_key(&header_for("dod_anzio", 0), &opts).unwrap();
+        assert_eq!(hltv.checksum, expected, "resolved from the map on disk");
+
+        let pov = atlas_key(&header_for("dod_anzio", 0xdead_beef), &opts).unwrap();
+        assert_eq!(
+            pov.checksum, 0xdead_beef,
+            "a demo that states its build is never second-guessed"
+        );
+    }
+
+    #[test]
+    fn an_hltv_demo_with_no_map_available_keeps_its_zero() {
+        // Nothing to resolve from, and inventing a checksum would be worse than
+        // an honest shared bucket.
+        let opts = DecalCleanOptions {
+            maps_dir: Some(std::env::temp_dir().join("dod_atlas_key_absent")),
+            ..Default::default()
+        };
+
+        assert_eq!(atlas_key(&header_for("dod_anzio", 0), &opts).unwrap().checksum, 0);
     }
 
     #[test]
