@@ -2,8 +2,8 @@
 #![allow(unused_variables)]
 //
 // Usage:
-//   cargo run --bin check_ticks -- demos/wsod25-grp_r1-dyelife_gskill_armory_h1.dem
-//   cargo run --bin check_ticks -- demos/ktps8w9-gorilla_gskill_rr2_h1.dem "PlayerName"
+//   cargo run --bin check_ticks -- local/demos/wsod25-grp_r1-dyelife_gskill_armory_h1.dem
+//   cargo run --bin check_ticks -- local/demos/ktps8w9-gorilla_gskill_rr2_h1.dem "PlayerName"
 //
 // Runs build_batch_queue under two conditions and prints where every command lands:
 //   SCENARIO A = fresh scan   (global_arrays has real frame_times)
@@ -69,7 +69,7 @@ fn run_scenario(
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let demo_path = args.get(1).map(String::as_str)
-        .unwrap_or("demos/wsod25-grp_r1-dyelife_gskill_armory_h1.dem");
+        .unwrap_or("local/demos/wsod25-grp_r1-dyelife_gskill_armory_h1.dem");
     let player_filter = args.get(2).map(String::as_str);
 
     println!("Demo  : {}", demo_path);
@@ -100,7 +100,7 @@ fn main() {
     }
 
     let mut config = PatcherConfig::default();
-    config.capture_directories = vec![std::path::PathBuf::from("demos")];
+    config.capture_directories = vec![std::path::PathBuf::from("local/demos")];
     config.record_start_lead = 3.0;
     config.record_stop_trail = 1.0;
     config.post_roll_seconds = 3.0;

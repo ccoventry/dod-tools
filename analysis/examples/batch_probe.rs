@@ -7,7 +7,7 @@
 //! reconciliation against the server's own frag counter.
 //!
 //!     cargo run --release -p analysis --example batch_probe -- demo.dem
-//!     for f in demos/*.dem; do batch_probe "$f" >> out.tsv; done
+//!     for f in local/demos/*.dem; do batch_probe "$f" >> out.tsv; done
 
 use dem::open_demo_from_bytes;
 use dem::types::{EngineMessage, FrameData, MessageData, NetMessage};

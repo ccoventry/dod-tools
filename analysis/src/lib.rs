@@ -1038,14 +1038,14 @@ mod tests {
     #[ignore]
     fn test_optimized_vs_unoptimized() {
         let paths = [
-            "../demos/bb-scrim-harr-h1.dem",
-            "demos/bb-scrim-harr-h1.dem",
-            "../demos/bb-scrim-harr-h2.dem",
-            "demos/bb-scrim-harr-h2.dem",
-            "../demos/bb-scrim-railyard-h1.dem",
-            "demos/bb-scrim-railyard-h1.dem",
-            "../demos/bewton-playoffs-round1-armory-allied.dem",
-            "demos/bewton-playoffs-round1-armory-allied.dem",
+            "../local/demos/bb-scrim-harr-h1.dem",
+            "local/demos/bb-scrim-harr-h1.dem",
+            "../local/demos/bb-scrim-harr-h2.dem",
+            "local/demos/bb-scrim-harr-h2.dem",
+            "../local/demos/bb-scrim-railyard-h1.dem",
+            "local/demos/bb-scrim-railyard-h1.dem",
+            "../local/demos/bewton-playoffs-round1-armory-allied.dem",
+            "local/demos/bewton-playoffs-round1-armory-allied.dem",
         ];
 
         let mut tested_any = false;
@@ -1419,9 +1419,9 @@ mod tests {
 
     #[test]
     fn test_inspect_lenn_demo() {
-        let mut path = "demos/ktps8w1-m00cat_soul_lenn_h2.dem";
+        let mut path = "local/demos/ktps8w1-m00cat_soul_lenn_h2.dem";
         if !std::path::Path::new(path).exists() {
-            path = "../demos/ktps8w1-m00cat_soul_lenn_h2.dem";
+            path = "../local/demos/ktps8w1-m00cat_soul_lenn_h2.dem";
         }
         if std::path::Path::new(path).exists() {
             let file_bytes = fs::read(path).unwrap();
@@ -1483,9 +1483,9 @@ mod tests {
 
     #[test]
     fn test_stealth_partial_demo() {
-        let mut path = "demos/ktps8w8-stealth_ih_saints_h1_p2.dem";
+        let mut path = "local/demos/ktps8w8-stealth_ih_saints_h1_p2.dem";
         if !std::path::Path::new(path).exists() {
-            path = "../demos/ktps8w8-stealth_ih_saints_h1_p2.dem";
+            path = "../local/demos/ktps8w8-stealth_ih_saints_h1_p2.dem";
         }
         if std::path::Path::new(path).exists() {
             let file_bytes = fs::read(path).unwrap();
@@ -1499,9 +1499,9 @@ mod tests {
 
     #[test]
     fn test_parse_fingerprint() {
-        let mut path = "demos/ktps8w8-stealth_ih_saints_h1_p2.dem";
+        let mut path = "local/demos/ktps8w8-stealth_ih_saints_h1_p2.dem";
         if !std::path::Path::new(path).exists() {
-            path = "../demos/ktps8w8-stealth_ih_saints_h1_p2.dem";
+            path = "../local/demos/ktps8w8-stealth_ih_saints_h1_p2.dem";
         }
         if std::path::Path::new(path).exists() {
             let file_bytes = fs::read(path).unwrap();

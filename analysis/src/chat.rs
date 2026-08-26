@@ -595,7 +595,7 @@ mod tests {
     #[ignore]
     fn test_find_untranslated_chat_keys() {
         use std::fs;
-        let dir = std::path::Path::new("../demos");
+        let dir = std::path::Path::new("../local/demos");
         if let Ok(entries) = fs::read_dir(dir) {
             for entry in entries.filter_map(Result::ok) {
                 let path = entry.path();
