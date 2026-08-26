@@ -154,6 +154,18 @@ pub struct CfgShadowRow {
     pub winner_from_app: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomCommandWarning {
+    pub command: String,
+    pub cvar: String,
+    /// `hazard` | `overridesInit` | `overridesConfig`
+    pub kind: String,
+    /// What this displaces, and where that came from.
+    pub replaced_value: String,
+    pub source: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct CfgReport {
@@ -163,6 +175,8 @@ pub struct CfgReport {
     pub overrides: Vec<CfgOverrideRow>,
     /// Init commands beaten by a later entry in the same list.
     pub shadowed: Vec<CfgShadowRow>,
+    /// Scheduled commands that displace something, or that must not run mid-demo.
+    pub custom: Vec<CustomCommandWarning>,
 }
 
 /// What the game's own config files set, and what the app's init commands will
@@ -174,6 +188,7 @@ pub struct CfgReport {
 pub async fn scan_game_configs(
     game_path: String,
     init_commands: Vec<String>,
+    custom_commands: Vec<String>,
     capture_fps: Option<i32>,
     separate_hud: Option<bool>,
     decal_flush: Option<bool>,
@@ -217,20 +232,29 @@ pub async fn scan_game_configs(
                 .map(|s| s.shadowed)
                 .collect();
 
-        let overrides = scan
-            .overrides_in(&effective_commands)
-            .into_iter()
-            .filter(|o| !dead.contains(&o.command))
-            .map(|o| CfgOverrideRow {
-                from_app: !user_typed.contains(&o.command),
-                file: o.file_name(),
-                command: o.command,
-                cvar: o.cvar,
-                init_value: o.init_value,
-                cfg_value: o.cfg_value,
-                line: o.line,
-            })
-            .collect::<Vec<_>>();
+        // One row per cvar. Typing `mirv_movie_fps 120` when the app appends the
+        // same value produces two commands that both override movie.cfg, and
+        // listing the identical consequence twice reads as a bug rather than as
+        // two facts. Only the last one applies, so that is the one reported.
+        let mut by_cvar: indexmap::IndexMap<String, CfgOverrideRow> = indexmap::IndexMap::new();
+        for o in scan.overrides_in(&effective_commands) {
+            if dead.contains(&o.command) {
+                continue;
+            }
+            by_cvar.insert(
+                o.cvar.to_lowercase(),
+                CfgOverrideRow {
+                    from_app: !user_typed.contains(&o.command),
+                    file: o.file_name(),
+                    command: o.command,
+                    cvar: o.cvar,
+                    init_value: o.init_value,
+                    cfg_value: o.cfg_value,
+                    line: o.line,
+                },
+            );
+        }
+        let overrides: Vec<CfgOverrideRow> = by_cvar.into_iter().map(|(_, v)| v).collect();
 
         // An init command later in the list beats an earlier one, so a value the
         // user typed can be dead on arrival without anything on screen saying
@@ -267,7 +291,48 @@ pub async fn scan_game_configs(
             })
             .collect();
 
-        CfgReport { unseen, overrides, shadowed }
+        // Custom commands are scheduled into playback, so they run after the
+        // configs AND after the init commands — they are the last word on any
+        // cvar they touch, and the only place a value can change mid-demo.
+        let mut custom = Vec::new();
+        for (cvar, command) in native::patch::cfg_scan::mid_demo_hazards(&custom_commands) {
+            custom.push(CustomCommandWarning {
+                command,
+                cvar,
+                kind: "hazard".to_string(),
+                replaced_value: String::new(),
+                source: String::new(),
+            });
+        }
+        for command in &custom_commands {
+            let Some((cvar, _)) = native::patch::cfg_scan::assigned_cvar(command) else {
+                continue;
+            };
+            if custom.iter().any(|w| w.command == command.trim()) {
+                continue;
+            }
+            if let Some(existing) =
+                native::patch::cfg_scan::effective_in(&effective_commands, &cvar)
+            {
+                custom.push(CustomCommandWarning {
+                    command: command.trim().to_string(),
+                    cvar,
+                    kind: "overridesInit".to_string(),
+                    replaced_value: existing,
+                    source: String::new(),
+                });
+            } else if let Some(setting) = scan.effective(&cvar) {
+                custom.push(CustomCommandWarning {
+                    command: command.trim().to_string(),
+                    cvar,
+                    kind: "overridesConfig".to_string(),
+                    replaced_value: setting.value.clone(),
+                    source: format!("{}, line {}", setting.file_name(), setting.line),
+                });
+            }
+        }
+
+        CfgReport { unseen, overrides, shadowed, custom }
     })
     .await
     .map_err(|e| format!("config scan failed: {}", e))

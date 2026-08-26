@@ -19,7 +19,7 @@
 import { scanGameConfigs } from './ipc_bridge.js';
 import { STRINGS } from './strings.js';
 
-const EMPTY = { unseen: [], overrides: [], shadowed: [] };
+const EMPTY = { unseen: [], overrides: [], shadowed: [], custom: [] };
 
 let report = EMPTY;
 
@@ -34,9 +34,21 @@ function bannerEl() {
  * `context` carries the settings that decide what the app appends for itself,
  * so the overrides it reports are the ones a capture would really apply.
  */
-export async function refreshCfgWarnings(gamePath, initCommands = [], context = {}) {
-  report = gamePath ? await scanGameConfigs(gamePath, initCommands, context) : EMPTY;
+export async function refreshCfgWarnings(
+  gamePath,
+  initCommands = [],
+  customCommands = [],
+  context = {}
+) {
+  report = gamePath
+    ? await scanGameConfigs(gamePath, initCommands, customCommands, context)
+    : EMPTY;
   render();
+}
+
+/** The value half of `cvar value`, for rows that name the cvar separately. */
+function valueOf(command) {
+  return String(command).trim().split(/\s+/)[1] ?? '';
 }
 
 function section(title, advice, rows, accent) {
@@ -56,8 +68,16 @@ function render() {
   const unseen = report?.unseen ?? [];
   const overrides = report?.overrides ?? [];
   const shadowed = report?.shadowed ?? [];
+  const custom = report?.custom ?? [];
+  const hazards = custom.filter((c) => c.kind === 'hazard');
+  const customOverrides = custom.filter((c) => c.kind !== 'hazard');
 
-  if (unseen.length === 0 && overrides.length === 0 && shadowed.length === 0) {
+  if (
+    unseen.length === 0 &&
+    overrides.length === 0 &&
+    shadowed.length === 0 &&
+    custom.length === 0
+  ) {
     el.hidden = true;
     el.innerHTML = '';
     return;
@@ -70,8 +90,35 @@ function render() {
 
   let html = '';
 
-  // First, because it is the only one where something the user typed is being
-  // thrown away rather than winning.
+  // First of all, because this one does not merely surprise: it breaks the
+  // flush and leaves a capture that completes and looks plausible.
+  if (hazards.length > 0) {
+    const rows = hazards
+      .map((h) => `<li><code>${STRINGS.CFG.hazardRow(h.command)}</code></li>`)
+      .join('');
+    html += section(STRINGS.CFG.HAZARD_TITLE, STRINGS.CFG.HAZARD_ADVICE, rows, '#ff6b6b');
+  }
+
+  if (customOverrides.length > 0) {
+    const rows = customOverrides
+      .map((c) => {
+        const text =
+          c.kind === 'overridesInit'
+            ? STRINGS.CFG.customOverridesInit(c.cvar, valueOf(c.command), c.replacedValue)
+            : STRINGS.CFG.customOverridesConfig(
+                c.cvar,
+                valueOf(c.command),
+                c.replacedValue,
+                c.source
+              );
+        return `<li><code>${text}</code></li>`;
+      })
+      .join('');
+    html += section(STRINGS.CFG.CUSTOM_TITLE, STRINGS.CFG.CUSTOM_ADVICE, rows, '#ff8a5c');
+  }
+
+  // Then, because something the user typed is being thrown away rather than
+  // winning.
   if (shadowed.length > 0) {
     const rows = shadowed
       .map((s) => {

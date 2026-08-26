@@ -651,6 +651,17 @@ export const STRINGS = {
       r_decals: 'Capture Config → Flush Decals Between Clips',
     },
     UNKNOWN_SETTING: 'its own setting',
+    HAZARD_TITLE: 'These Custom Commands will break the decal flush:',
+    HAZARD_ADVICE:
+      'r_decals bounds how far the engine\'s decal ring may travel before it wraps — it evicts nothing. Setting it during playback strands every decal above the new limit for the rest of the demo, and the capture still completes looking plausible. Set the ring once, in Init Commands, and leave it alone.',
+    CUSTOM_TITLE: 'These Custom Commands override earlier values:',
+    CUSTOM_ADVICE:
+      'Custom commands are scheduled into playback, so they run after your configs and after the Init Commands — they are the last word on whatever they set, and the only place a value changes partway through a capture.',
+    hazardRow: (command) => `${command} — runs during playback`,
+    customOverridesInit: (cvar, value, previous) =>
+      `${cvar} ${value} replaces ${previous}, set before the demo loads`,
+    customOverridesConfig: (cvar, value, previous, source) =>
+      `${cvar} ${value} replaces ${previous} from ${source}`,
     override: (cvar, initValue, cfgValue, file, line) =>
       `${cvar} ${initValue} replaces ${cfgValue} from ${file}, line ${line}`,
   },

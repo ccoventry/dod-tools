@@ -159,6 +159,59 @@ pub struct CommandShadow {
     pub winner_index: usize,
 }
 
+/// Cvars that must not change once a demo is playing.
+///
+/// `r_decals` is the one that matters and the reason this list exists. It bounds
+/// how far the engine's rotating decal index may travel before it wraps; it
+/// evicts nothing. Lowering it mid-demo strands every decal sitting above the
+/// new limit — permanently, for the rest of playback — and the decal flush's
+/// entire design rests on the ring being set once at demo load and never
+/// touched again. A scheduled command that sets it is not a preference; it
+/// breaks the feature, and the capture still completes and still looks
+/// plausible.
+pub const MID_DEMO_HAZARDS: &[&str] = &["r_decals"];
+
+/// Commands from this list that must not be run during playback.
+pub fn mid_demo_hazards(commands: &[String]) -> Vec<(String, String)> {
+    commands
+        .iter()
+        .filter_map(|raw| {
+            let trimmed = raw.trim();
+            let head = trimmed.split_whitespace().next()?;
+            MID_DEMO_HAZARDS
+                .iter()
+                .find(|h| head.eq_ignore_ascii_case(h))
+                .map(|h| ((*h).to_string(), trimmed.to_string()))
+        })
+        .collect()
+}
+
+/// What a list of commands leaves a cvar set to, last one winning.
+pub fn effective_in(commands: &[String], cvar: &str) -> Option<String> {
+    commands.iter().rev().find_map(|raw| {
+        let trimmed = raw.trim();
+        let mut parts = trimmed.split_whitespace();
+        let head = parts.next()?;
+        let value = parts.next()?;
+        if parts.next().is_some() || !head.eq_ignore_ascii_case(cvar) {
+            return None;
+        }
+        Some(unquote(value))
+    })
+}
+
+/// The cvar a command assigns to, if it assigns to one at all.
+pub fn assigned_cvar(command: &str) -> Option<(String, String)> {
+    let trimmed = command.trim();
+    let mut parts = trimmed.split_whitespace();
+    let head = parts.next()?;
+    let value = parts.next()?;
+    if parts.next().is_some() || !is_cvar_name(head) {
+        return None;
+    }
+    Some((head.to_string(), unquote(value)))
+}
+
 /// Commands in this list that a later command in the same list overrides.
 ///
 /// Last one wins, as the console does — so every entry for a cvar except the
@@ -507,6 +560,38 @@ mod tests {
         assert_eq!(hits[0].shadowed_value, "500");
         assert_eq!(hits[0].winner_value, "120");
         assert_eq!(hits[0].winner_index, 3, "so a caller can tell who appended it");
+    }
+
+    #[test]
+    fn a_scheduled_r_decals_is_flagged_however_it_is_written() {
+        // Setting the ring mid-demo strands every decal above the new limit and
+        // breaks the flush, while the capture still completes and still looks
+        // plausible — so this is the one that has to be caught by name.
+        let hits = mid_demo_hazards(&[
+            "mirv_movie_fps 500".to_string(),
+            "R_Decals 128".to_string(),
+        ]);
+
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].0, "r_decals");
+        assert_eq!(hits[0].1, "R_Decals 128");
+    }
+
+    #[test]
+    fn the_last_assignment_in_a_list_is_the_one_that_holds() {
+        let commands = vec![
+            "mirv_movie_fps 500".to_string(),
+            "sys_autodir".to_string(),
+            "mirv_movie_fps 120".to_string(),
+        ];
+
+        assert_eq!(effective_in(&commands, "mirv_movie_fps").as_deref(), Some("120"));
+        assert_eq!(effective_in(&commands, "mirv_fov"), None);
+        assert_eq!(
+            assigned_cvar("mirv_movie_fps 500"),
+            Some(("mirv_movie_fps".to_string(), "500".to_string()))
+        );
+        assert_eq!(assigned_cvar("sys_autodir"), None);
     }
 
     #[test]

@@ -60,6 +60,7 @@ export function refreshInitCommandWarnings() {
   refreshCfgWarnings(
     gamePath,
     initCommands.map((c) => c.trim()).filter((c) => c.length > 0),
+    customCommands.map((c) => (c?.command || '').trim()).filter((c) => c.length > 0),
     {
       captureFps: parseInt(document.querySelector('#config-capture-fps')?.value, 10) || null,
       separateHud: document.querySelector('#config-separate-hud')?.checked ?? null,
@@ -558,7 +559,12 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
       { key: 'relation', type: 'select', options: STRINGS.CAPTURE_CONFIG.CUSTOM_COMMAND_RELATION_OPTIONS },
       { key: 'offsetSeconds', type: 'number', step: 0.1, min: 0, width: '70px' },
     ],
-    onChange: notifySettingsChange,
+    onChange: () => {
+      notifySettingsChange();
+      // These run last of all — after the configs and after the init commands —
+      // and are the only place a cvar changes partway through a capture.
+      refreshInitCommandWarnings();
+    },
   });
 
   initClearPreviewsModal();
