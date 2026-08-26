@@ -636,6 +636,21 @@ export const STRINGS = {
     OVERRIDE_ADVICE:
       'Init commands run after the game loads its configs, so these values win. That is usually the point — but the config line stops applying, and nothing else would tell you.',
     FROM_APP_NOTE: 'added by the app',
+    SHADOWED_TITLE: 'These Init Commands will not take effect:',
+    SHADOWED_ADVICE:
+      'The app appends its own commands after yours, and the last one wins. Change the setting that owns the value instead — editing the line here cannot win.',
+    shadowedByApp: (cvar, yours, winner, setting) =>
+      `${cvar} ${yours} never applies — the app sets ${winner} from ${setting}`,
+    shadowedByYou: (cvar, yours, winner) =>
+      `${cvar} ${yours} never applies — a later Init Command sets ${winner}`,
+    // Which setting owns a value the pipeline appends for itself, so the advice
+    // can name the control rather than leaving the user to hunt for it.
+    SETTING_FOR_CVAR: {
+      mirv_movie_fps: 'Timing Options → Capture FPS',
+      mirv_movie_separate_hud: 'Capture Config → Separate HUD',
+      r_decals: 'Capture Config → Flush Decals Between Clips',
+    },
+    UNKNOWN_SETTING: 'its own setting',
     override: (cvar, initValue, cfgValue, file, line) =>
       `${cvar} ${initValue} replaces ${cfgValue} from ${file}, line ${line}`,
   },

@@ -138,6 +138,72 @@ impl CfgScan {
     }
 }
 
+/// One init command silently beaten by a later one in the same list.
+///
+/// The list the engine receives is the user's own init commands followed by the
+/// ones the pipeline appends for itself, so a `mirv_movie_fps 500` typed by hand
+/// is overwritten by the Capture FPS setting a few entries later. Nothing about
+/// the list on screen shows that: both lines are there, and only the last one
+/// happens.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandShadow {
+    pub cvar: String,
+    /// The command that will not take effect.
+    pub shadowed: String,
+    pub shadowed_value: String,
+    /// The one that will.
+    pub winner: String,
+    pub winner_value: String,
+    /// Position of the winner in the list, so a caller can tell whether it came
+    /// from the user's own entries or was appended after them.
+    pub winner_index: usize,
+}
+
+/// Commands in this list that a later command in the same list overrides.
+///
+/// Last one wins, as the console does — so every entry for a cvar except the
+/// final one is dead, and each is reported against the one that beat it.
+pub fn self_overrides(commands: &[String]) -> Vec<CommandShadow> {
+    let assignments: Vec<(usize, String, String, String)> = commands
+        .iter()
+        .enumerate()
+        .filter_map(|(i, raw)| {
+            let trimmed = raw.trim();
+            let mut parts = trimmed.split_whitespace();
+            let head = parts.next()?;
+            let value = parts.next()?;
+            if parts.next().is_some() || !is_cvar_name(head) {
+                return None;
+            }
+            Some((i, head.to_lowercase(), unquote(value), trimmed.to_string()))
+        })
+        .collect();
+
+    let mut out = Vec::new();
+    for (index, (_, cvar, value, command)) in assignments.iter().enumerate() {
+        let Some((w_pos, _, w_value, w_command)) = assignments
+            .iter()
+            .skip(index + 1)
+            .find(|(_, other, _, _)| other == cvar)
+        else {
+            continue;
+        };
+        // Repeating a value changes nothing anyone would notice.
+        if value.eq_ignore_ascii_case(w_value) {
+            continue;
+        }
+        out.push(CommandShadow {
+            cvar: cvar.clone(),
+            shadowed: command.clone(),
+            shadowed_value: value.clone(),
+            winner: w_command.clone(),
+            winner_value: w_value.clone(),
+            winner_index: *w_pos,
+        });
+    }
+    out
+}
+
 /// An init command that will take precedence over a config file's value.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandOverride {
@@ -422,6 +488,34 @@ mod tests {
         assert_eq!(hits[0].cfg_value, "105");
         assert_eq!(hits[0].file_name(), "movie.cfg");
         assert_eq!(hits[0].line, 1);
+    }
+
+    #[test]
+    fn a_command_beaten_by_a_later_one_in_the_same_list_is_reported() {
+        // The real shape: the user types `mirv_movie_fps 500`, and the pipeline
+        // appends the Capture FPS setting after it. Both lines are on screen and
+        // only the second one happens.
+        let hits = self_overrides(&[
+            "mirv_fov 105".to_string(),
+            "mirv_movie_fps 500".to_string(),
+            "sys_autodir".to_string(),
+            "mirv_movie_fps 120".to_string(),
+        ]);
+
+        assert_eq!(hits.len(), 1, "{:?}", hits);
+        assert_eq!(hits[0].cvar, "mirv_movie_fps");
+        assert_eq!(hits[0].shadowed_value, "500");
+        assert_eq!(hits[0].winner_value, "120");
+        assert_eq!(hits[0].winner_index, 3, "so a caller can tell who appended it");
+    }
+
+    #[test]
+    fn repeating_the_same_value_shadows_nothing_worth_saying() {
+        assert!(self_overrides(&[
+            "mirv_movie_fps 120".to_string(),
+            "mirv_movie_fps 120".to_string(),
+        ])
+        .is_empty());
     }
 
     #[test]

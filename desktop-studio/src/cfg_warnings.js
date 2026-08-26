@@ -19,7 +19,9 @@
 import { scanGameConfigs } from './ipc_bridge.js';
 import { STRINGS } from './strings.js';
 
-let report = { unseen: [], overrides: [] };
+const EMPTY = { unseen: [], overrides: [], shadowed: [] };
+
+let report = EMPTY;
 
 function bannerEl() {
   return document.querySelector('#cfg-warning-banner');
@@ -33,16 +35,15 @@ function bannerEl() {
  * so the overrides it reports are the ones a capture would really apply.
  */
 export async function refreshCfgWarnings(gamePath, initCommands = [], context = {}) {
-  report = gamePath
-    ? await scanGameConfigs(gamePath, initCommands, context)
-    : { unseen: [], overrides: [] };
+  report = gamePath ? await scanGameConfigs(gamePath, initCommands, context) : EMPTY;
   render();
 }
 
-function section(title, advice, rows) {
+function section(title, advice, rows, accent) {
+  const style = accent ? ` style="color:${accent}"` : '';
   return `
     <div style="margin-bottom:8px;">
-      <strong>${title}</strong>
+      <strong${style}>${title}</strong>
       <ul style="margin:6px 0 6px 18px; padding:0;">${rows}</ul>
       <div style="opacity:.8">${advice}</div>
     </div>`;
@@ -54,8 +55,9 @@ function render() {
 
   const unseen = report?.unseen ?? [];
   const overrides = report?.overrides ?? [];
+  const shadowed = report?.shadowed ?? [];
 
-  if (unseen.length === 0 && overrides.length === 0) {
+  if (unseen.length === 0 && overrides.length === 0 && shadowed.length === 0) {
     el.hidden = true;
     el.innerHTML = '';
     return;
@@ -67,6 +69,25 @@ function render() {
     'border-radius: 4px; background: #2a2410; color: #e8dcb0; font-size: 12px;';
 
   let html = '';
+
+  // First, because it is the only one where something the user typed is being
+  // thrown away rather than winning.
+  if (shadowed.length > 0) {
+    const rows = shadowed
+      .map((s) => {
+        const text = s.winnerFromApp
+          ? STRINGS.CFG.shadowedByApp(
+              s.cvar,
+              s.shadowedValue,
+              s.winnerValue,
+              STRINGS.CFG.SETTING_FOR_CVAR[s.cvar.toLowerCase()] || STRINGS.CFG.UNKNOWN_SETTING
+            )
+          : STRINGS.CFG.shadowedByYou(s.cvar, s.shadowedValue, s.winnerValue);
+        return `<li><code>${text}</code></li>`;
+      })
+      .join('');
+    html += section(STRINGS.CFG.SHADOWED_TITLE, STRINGS.CFG.SHADOWED_ADVICE, rows, '#ff8a5c');
+  }
 
   if (unseen.length > 0) {
     const rows = unseen

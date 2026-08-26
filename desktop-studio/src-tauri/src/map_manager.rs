@@ -141,13 +141,28 @@ pub struct CfgOverrideRow {
     pub from_app: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CfgShadowRow {
+    pub cvar: String,
+    /// The command that will not take effect.
+    pub shadowed: String,
+    pub shadowed_value: String,
+    pub winner_value: String,
+    /// True when the winning command is one the pipeline appends for itself, in
+    /// which case the fix is a setting rather than an edit to this list.
+    pub winner_from_app: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct CfgReport {
-    /// Values the pipeline reads that a config sets and nothing overrides.
+    /// Values the pipeline reads that a config sets and no init command names.
     pub unseen: Vec<CfgWarningRow>,
     /// Init commands that will win over a config's value.
     pub overrides: Vec<CfgOverrideRow>,
+    /// Init commands beaten by a later entry in the same list.
+    pub shadowed: Vec<CfgShadowRow>,
 }
 
 /// What the game's own config files set, and what the app's init commands will
@@ -193,9 +208,19 @@ pub async fn scan_game_configs(
         let user_typed: std::collections::HashSet<String> =
             init_commands.iter().map(|c| c.trim().to_string()).collect();
 
+        // A command that never applies cannot override anything, so the ones
+        // beaten later in the list are dropped rather than reported twice with
+        // opposite implications.
+        let dead: std::collections::HashSet<String> =
+            native::patch::cfg_scan::self_overrides(&effective_commands)
+                .into_iter()
+                .map(|s| s.shadowed)
+                .collect();
+
         let overrides = scan
             .overrides_in(&effective_commands)
             .into_iter()
+            .filter(|o| !dead.contains(&o.command))
             .map(|o| CfgOverrideRow {
                 from_app: !user_typed.contains(&o.command),
                 file: o.file_name(),
@@ -207,14 +232,33 @@ pub async fn scan_game_configs(
             })
             .collect::<Vec<_>>();
 
+        // An init command later in the list beats an earlier one, so a value the
+        // user typed can be dead on arrival without anything on screen saying
+        // so — the pipeline appends its own commands after theirs.
+        let user_count = init_commands.len();
+        let shadowed = native::patch::cfg_scan::self_overrides(&effective_commands)
+            .into_iter()
+            .filter(|s| user_typed.contains(&s.shadowed))
+            .map(|s| CfgShadowRow {
+                winner_from_app: s.winner_index >= user_count,
+                cvar: s.cvar,
+                shadowed: s.shadowed,
+                shadowed_value: s.shadowed_value,
+                winner_value: s.winner_value,
+            })
+            .collect::<Vec<_>>();
+
         // Anything the pipeline reads that a config sets and no init command
-        // overrides — the silent case.
-        let overridden: std::collections::HashSet<String> =
-            overrides.iter().map(|o| o.cvar.to_lowercase()).collect();
+        // even names — the genuinely silent case. Naming it at the same value
+        // still counts as seeing it, so that is not reported as unseen.
+        let named: std::collections::HashSet<String> = effective_commands
+            .iter()
+            .filter_map(|c| c.trim().split_whitespace().next().map(str::to_lowercase))
+            .collect();
         let unseen = scan
             .effective_settings()
             .into_iter()
-            .filter(|s| !overridden.contains(&s.cvar.to_lowercase()))
+            .filter(|s| !named.contains(&s.cvar.to_lowercase()))
             .map(|s| CfgWarningRow {
                 cvar: s.cvar.clone(),
                 value: s.value.clone(),
@@ -223,7 +267,7 @@ pub async fn scan_game_configs(
             })
             .collect();
 
-        CfgReport { unseen, overrides }
+        CfgReport { unseen, overrides, shadowed }
     })
     .await
     .map_err(|e| format!("config scan failed: {}", e))

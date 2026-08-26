@@ -55,7 +55,25 @@ fn main() {
     println!("\n{} assignment(s) seen across those configs.", scan.settings.len());
 
     if !init_commands.is_empty() {
-        let overrides = scan.overrides_in(&init_commands);
+        let shadows = cfg_scan::self_overrides(&init_commands);
+        let dead: std::collections::HashSet<&str> =
+            shadows.iter().map(|s| s.shadowed.as_str()).collect();
+        if !shadows.is_empty() {
+            println!("\nInit commands beaten by a later one in the same list:");
+            for s in &shadows {
+                println!(
+                    "  {:<20} never applies — {} sets {} (position {})",
+                    s.shadowed, s.cvar, s.winner_value, s.winner_index
+                );
+            }
+        }
+
+        // A command that never applies overrides nothing.
+        let overrides: Vec<_> = scan
+            .overrides_in(&init_commands)
+            .into_iter()
+            .filter(|o| !dead.contains(o.command.as_str()))
+            .collect();
         println!();
         if overrides.is_empty() {
             println!("None of those init commands override a config value.");
