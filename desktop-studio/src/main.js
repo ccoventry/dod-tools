@@ -199,6 +199,9 @@ window.addEventListener("DOMContentLoaded", async () => {
     const resWidth = parseInt(document.querySelector('#config-res-width')?.value, 10) || 1280;
     const resHeight = parseInt(document.querySelector('#config-res-height')?.value, 10) || 720;
     const separateHud = document.querySelector('#config-separate-hud')?.checked || false;
+    // Defaults on when the element is missing, matching the backend default —
+    // `?? true` rather than `|| false`, which would silently disable it.
+    const decalFlush = document.querySelector('#config-decal-flush')?.checked ?? true;
     const addCondebug = document.querySelector('#config-add-condebug')?.checked || false;
 
     const autoClearLogs = document.querySelector('#config-auto-clear-logs')?.checked || false;
@@ -233,6 +236,7 @@ window.addEventListener("DOMContentLoaded", async () => {
       resolution_width: resWidth,
       resolution_height: resHeight,
       separate_hud: separateHud,
+      decal_flush: decalFlush,
       add_condebug: addCondebug,
       auto_clear_logs: autoClearLogs,
       auto_clear_previews: autoClearPreviews,
@@ -297,6 +301,8 @@ window.addEventListener("DOMContentLoaded", async () => {
       }
       const separateHudEl = document.querySelector('#config-separate-hud');
       if (separateHudEl) separateHudEl.checked = !!settings.separate_hud;
+      const decalFlushEl = document.querySelector('#config-decal-flush');
+      if (decalFlushEl) decalFlushEl.checked = settings.decal_flush !== false;
       const addCondebugEl = document.querySelector('#config-add-condebug');
       if (addCondebugEl) addCondebugEl.checked = !!settings.add_condebug;
       const autoClearLogsEl = document.querySelector('#config-auto-clear-logs');

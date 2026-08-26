@@ -149,6 +149,9 @@ export const STRINGS = {
     WIDTH_LABEL: 'Width:',
     HEIGHT_LABEL: 'Height:',
     SEPARATE_HUD_LABEL: 'Separate HUD',
+    DECAL_FLUSH_LABEL: 'Flush Decals Between Clips',
+    DECAL_FLUSH_TITLE:
+      'Clear bullet holes and blood off the walls between one clip and the next, so a later capture does not inherit the damage from an earlier one. Off captures the walls exactly as the engine leaves them. How many decals the engine keeps is a separate thing — set r_decals in Init Commands.',
     SAVE_LOCAL_PATCHED_LABEL: 'Save Local Patched Copy',
     ADD_CONDEBUG_LABEL: 'Add Condebug',
     PRE_ROLL_LABEL: 'Pre-roll (s):',

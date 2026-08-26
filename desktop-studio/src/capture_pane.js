@@ -738,6 +738,9 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
     const resWidthVal = parseInt(document.querySelector("#config-res-width")?.value, 10) || 1280;
     const resHeightVal = parseInt(document.querySelector("#config-res-height")?.value, 10) || 720;
     const separateHudVal = document.querySelector("#config-separate-hud")?.checked || false;
+    // `?? true` not `|| false`: a missing element must not silently disable
+    // the flush, since nothing in the captured video would show that it had.
+    const decalFlushVal = document.querySelector("#config-decal-flush")?.checked ?? true;
     const saveLocalPatchedCopyVal = document.querySelector("#config-save-local-patched")?.checked || false;
     const addCondebugVal = document.querySelector("#config-add-condebug")?.checked || false;
 
@@ -782,6 +785,7 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
       resolution_width: resWidthVal,
       resolution_height: resHeightVal,
       separate_hud: separateHudVal,
+      decal_flush: decalFlushVal,
       save_local_patched_copy: saveLocalPatchedCopyVal,
       add_condebug: addCondebugVal,
       streaks: selectedStreaks,
