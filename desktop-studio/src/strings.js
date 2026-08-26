@@ -151,7 +151,7 @@ export const STRINGS = {
     SEPARATE_HUD_LABEL: 'Separate HUD',
     DECAL_FLUSH_LABEL: 'Flush Decals Between Clips',
     DECAL_FLUSH_TITLE:
-      'Clear bullet holes and blood off the walls between one clip and the next, so a later capture does not inherit the damage from an earlier one. Off captures the walls exactly as the engine leaves them. How many decals the engine keeps is a separate thing — set r_decals in Init Commands.',
+      'Clear bullet holes and blood off the walls between one clip and the next, so a later capture does not inherit the damage from an earlier one. Off captures the walls exactly as the engine leaves them. How many decals the engine keeps is a separate thing — set r_decals in Initial Commands.',
     SAVE_LOCAL_PATCHED_LABEL: 'Save Local Patched Copy',
     ADD_CONDEBUG_LABEL: 'Add Condebug',
     PRE_ROLL_LABEL: 'Pre-roll (s):',
@@ -170,8 +170,11 @@ export const STRINGS = {
     CLEAR_PREVIEWS_BUTTON: 'Clear Previews...',
     INIT_COMMANDS_LABEL: 'Initial Commands (executed once at demo load):',
     ADD_INIT_COMMAND_BUTTON: '+ Add Init Command',
-    CUSTOM_COMMANDS_LABEL: 'Custom Commands (scheduled relative to each highlight):',
-    ADD_CUSTOM_COMMAND_BUTTON: '+ Add Custom Command',
+    // Both lists on this tab are custom commands; only one is scheduled, so
+    // that is what the label says. Paired with INIT_COMMANDS_LABEL's "once at
+    // demo load", the two read as the distinction they actually are.
+    CUSTOM_COMMANDS_LABEL: 'Scheduled Commands (run relative to each highlight):',
+    ADD_CUSTOM_COMMAND_BUTTON: '+ Add Scheduled Command',
     START_CAPTURE_BUTTON: 'Start Capture Batch',
     CANCEL_BATCH_BUTTON: 'Cancel Batch',
     STATUS_WAITING: 'Status: Waiting...',
@@ -630,13 +633,13 @@ export const STRINGS = {
   CFG: {
     BANNER_TITLE: "Your game's config files set values this app reads:",
     ADVICE:
-      'These are set outside the app, so it cannot see them when it plans a capture. Either remove them from your configs, or state them in Init Commands below so the pipeline works from the same values the engine does. Nothing here changes your config files.',
+      'These are set outside the app, so it cannot see them when it plans a capture. Either remove them from your configs, or state them in Initial Commands below so the pipeline works from the same values the engine does. Nothing here changes your config files.',
     location: (file, line) => `set in ${file}, line ${line}`,
-    OVERRIDE_TITLE: 'These Init Commands will override your config files:',
+    OVERRIDE_TITLE: 'These Initial Commands will override your config files:',
     OVERRIDE_ADVICE:
       'Init commands run after the game loads its configs, so these values win. That is usually the point — but the config line stops applying, and nothing else would tell you.',
     FROM_APP_NOTE: 'added by the app',
-    SHADOWED_TITLE: 'These Init Commands will not take effect:',
+    SHADOWED_TITLE: 'These Initial Commands will not take effect:',
     SHADOWED_ADVICE:
       'The app appends its own commands after yours, and the last one wins. Change the setting that owns the value instead — editing the line here cannot win.',
     shadowedByApp: (cvar, yours, winner, setting) =>
@@ -651,12 +654,12 @@ export const STRINGS = {
       r_decals: 'Capture Config → Flush Decals Between Clips',
     },
     UNKNOWN_SETTING: 'its own setting',
-    HAZARD_TITLE: 'These Custom Commands will break the decal flush:',
+    HAZARD_TITLE: 'These Scheduled Commands will break the decal flush:',
     HAZARD_ADVICE:
-      'r_decals bounds how far the engine\'s decal ring may travel before it wraps — it evicts nothing. Setting it during playback strands every decal above the new limit for the rest of the demo, and the capture still completes looking plausible. Set the ring once, in Init Commands, and leave it alone.',
-    CUSTOM_TITLE: 'These Custom Commands override earlier values:',
+      'r_decals bounds how far the engine\'s decal ring may travel before it wraps — it evicts nothing. Setting it during playback strands every decal above the new limit for the rest of the demo, and the capture still completes looking plausible. Set the ring once, in Initial Commands, and leave it alone.',
+    CUSTOM_TITLE: 'These Scheduled Commands override earlier values:',
     CUSTOM_ADVICE:
-      'Custom commands are scheduled into playback, so they run after your configs and after the Init Commands — they are the last word on whatever they set, and the only place a value changes partway through a capture.',
+      'Scheduled commands run during playback, so they come after your configs and after the Initial Commands — they are the last word on whatever they set, and the only place a value changes partway through a capture.',
     hazardRow: (command) => `${command} — runs during playback`,
     customOverridesInit: (cvar, value, previous) =>
       `${cvar} ${value} replaces ${previous}, set before the demo loads`,
