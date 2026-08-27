@@ -73,6 +73,7 @@ using job for player {:?}", job.target_player);
         ring_limit: ring,
         visibility_cone_degrees: cone_deg,
         collect_diagnostics: true,
+        require_pvs_hidden: std::env::var("FLUSH_PVS_ONLY").is_ok(),
         ..Default::default()
     };
 

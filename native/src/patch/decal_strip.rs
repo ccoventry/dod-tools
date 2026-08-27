@@ -206,6 +206,24 @@ pub struct DecalCleanOptions {
     /// Keep every camera sample rather than the usual stride, and hand back
     /// the chosen positions with them. Diagnostics only — off in the pipeline.
     pub collect_diagnostics: bool,
+    /// Place the sweep ONLY where leaf visibility says the engine never renders
+    /// it — the drawn surface sitting outside the PVS union of every camera
+    /// leaf, not merely occluded from them.
+    ///
+    /// An experiment, not a feature. It answers the one question BSP-derived
+    /// coordinates depend on: does a decal on a face the player never renders
+    /// still allocate a ring slot? Allocation is what turns the ring; drawing
+    /// is irrelevant to the sweep. If it does, a map can be seeded from its
+    /// own geometry and the coordinate store stops being a cold-start
+    /// dependency. If it does not, a sweep placed in unvisited geometry turns
+    /// fewer slots than it reports — silently, which is this feature's
+    /// signature failure.
+    ///
+    /// Tests the DRAWN surface, not the coordinate. A coordinate inside solid
+    /// lands in a leaf no PVS row contains, so asking about the coordinate
+    /// would call every buried candidate "never rendered" for the same reason
+    /// the old camera test called them hidden.
+    pub require_pvs_hidden: bool,
 }
 
 impl Default for DecalCleanOptions {
@@ -229,6 +247,7 @@ impl Default for DecalCleanOptions {
             visibility_cone_degrees: 40.0,
             visibility_max_distance: f32::INFINITY,
             collect_diagnostics: false,
+            require_pvs_hidden: false,
         }
     }
 }
@@ -1092,6 +1111,8 @@ struct Visibility<'a> {
     camera_pvs: Option<Vec<u8>>,
     cos_cone: f32,
     max_distance: f32,
+    /// Experiment gate — see `DecalCleanOptions::require_pvs_hidden`.
+    require_pvs_hidden: bool,
 }
 
 impl<'a> Visibility<'a> {
@@ -1113,6 +1134,7 @@ impl<'a> Visibility<'a> {
             camera_pvs,
             cos_cone: opts.visibility_cone_degrees.to_radians().cos(),
             max_distance: opts.visibility_max_distance,
+            require_pvs_hidden: opts.require_pvs_hidden,
         }
     }
 
@@ -1188,6 +1210,13 @@ impl<'a> Visibility<'a> {
         let Some(draw) = self.draw_point(pos) else {
             return false;
         };
+        // Experiment gate: demand that leaf visibility also say the engine never
+        // renders the drawn surface. Asked of `draw`, not `pos`, for the same
+        // reason the camera test is — a coordinate inside solid sits in a leaf
+        // no PVS row contains and would pass this trivially.
+        if self.require_pvs_hidden && !self.pvs_says_hidden(&draw).unwrap_or(false) {
+            return false;
+        }
         !cameras
             .iter()
             .any(|(eye, fwd)| self.on_screen_from(&draw, eye, fwd))
@@ -2194,6 +2223,11 @@ fn flush_options(config: &PatcherConfig) -> DecalCleanOptions {
             config.resolution_width,
             config.resolution_height,
         ),
+        // One experiment, reachable from a real capture because the engine is
+        // the only thing that can answer it — see `require_pvs_hidden`.
+        // Env-gated rather than exposed as a setting: it is a question being
+        // asked once, not a mode anyone should be choosing between.
+        require_pvs_hidden: std::env::var("DOD_FLUSH_PVS_ONLY").is_ok(),
         ..Default::default()
     }
 }
@@ -2324,6 +2358,18 @@ fn report(
         Some(FlushSource::Override) => "caller override",
         None => "none",
     };
+
+    // Say so loudly. A run under the experiment gate is not a normal capture,
+    // and a log that does not mention it is a log someone will later read as
+    // evidence about the shipped behaviour.
+    if opts.require_pvs_hidden {
+        crate::log_markdown(
+            "🧪 **EXPERIMENT: `DOD_FLUSH_PVS_ONLY` is set.** The sweep was placed only where leaf \
+             visibility says the engine never renders it. This is the test of whether a decal on \
+             an unrendered face still allocates a ring slot — if old bullet holes survive into a \
+             clip, it does not. Unset the variable for a normal capture.",
+        );
+    }
 
     crate::log_markdown(&format!(
         "🧹 **Decal flush** on `{}`: stripped {} wall decals and {} sprays outside {} clip(s); \
