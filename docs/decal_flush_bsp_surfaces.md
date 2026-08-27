@@ -199,6 +199,25 @@ At ring 256 the change is invisible on this library: **60/60 demos reach a full 
 before and after**, so the map source is never reached. That is the intended shape — headroom, not
 a dependency — and it is also why `DOD_FLUSH_MAP_GEOMETRY_ONLY` exists.
 
+### The map source standing entirely on its own
+
+Forced with `FLUSH_MAP_ONLY` (the offline twin of the capture gate), every source drawn from the
+match refused — no harvested decals, no tiled planes, no store, no floor path, and no spawn-floor
+last resort. Same 64-demo sample, ring 256:
+
+| | |
+|---|---|
+| demos reaching a full 68-position sweep | **60 / 60** |
+| smallest sweep | 68 — every demo full |
+| demos with a position on camera | **0** |
+| demos whose source was anything but the map | **0** |
+| camera-safe map candidates | mean 8,428, min **4,832** |
+
+Every demo in the sample can be swept from map geometry alone, from an empty store, with nothing on
+camera. That is the structural half of the claim; the half it cannot make is what the decals look
+like on screen, which is what the in-game gate run is for — see the masked-texture caveat above for
+the specific artefact to watch.
+
 ## The second prize: real occlusion
 
 Everything above treats the BSP as a supply of coordinates. It is also the only thing that can

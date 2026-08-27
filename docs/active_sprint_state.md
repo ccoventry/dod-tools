@@ -94,6 +94,11 @@
   together cannot fill a sweep, so a mature map pays nothing for it and the validated ordering is
   untouched. `DOD_FLUSH_MAP_GEOMETRY_ONLY=1` forces it — the only way to put the new source in
   front of someone watching the game, since on this library it otherwise almost never fires.
+  **Pre-checked offline** with the survey's `FLUSH_MAP_ONLY` twin over the same 64 demos at ring
+  256, every match-derived source refused: **60/60 full 68-position sweeps, every one sourced from
+  the map, zero on camera**, mean 8,428 camera-safe candidates (min 4,832). So the gate run is
+  worth the seven minutes, and what it adds is the only thing measurement cannot — what the decals
+  look like on screen.
   **The artefact to watch for on that run is a grid of decals visible *through* something**: the
   hull trace treats a fence or grate brush as solid while it renders see-through, and the map
   source is the first one that deliberately reaches behind them. Pre-existing mechanism, higher
