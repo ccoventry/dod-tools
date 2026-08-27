@@ -180,6 +180,30 @@ pub struct CfgReport {
     pub custom: Vec<CustomCommandWarning>,
 }
 
+/// Scheduled commands in the order the engine reaches them.
+///
+/// Everything set before the highlight runs first — larger offsets are further
+/// back, so they come earlier — then everything set after it, nearest first.
+/// Which one is first matters: only the first command to touch a cvar displaces
+/// what the configs and init commands left it at. The rest displace each other.
+fn application_order(commands: &[CustomCommandPayload]) -> Vec<&CustomCommandPayload> {
+    let is_after = |c: &CustomCommandPayload| c.relation == "After";
+    let mut before: Vec<&CustomCommandPayload> =
+        commands.iter().filter(|c| !is_after(c)).collect();
+    before.sort_by(|a, b| {
+        b.offset_seconds
+            .partial_cmp(&a.offset_seconds)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let mut after: Vec<&CustomCommandPayload> = commands.iter().filter(|c| is_after(c)).collect();
+    after.sort_by(|a, b| {
+        a.offset_seconds
+            .partial_cmp(&b.offset_seconds)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    before.into_iter().chain(after).collect()
+}
+
 /// What the game's own config files set, and what the app's init commands will
 /// override.
 ///
@@ -189,7 +213,7 @@ pub struct CfgReport {
 pub async fn scan_game_configs(
     game_path: String,
     init_commands: Vec<String>,
-    custom_commands: Vec<String>,
+    custom_commands: Vec<CustomCommandPayload>,
     capture_fps: Option<i32>,
     separate_hud: Option<bool>,
     decal_flush: Option<bool>,
@@ -296,7 +320,11 @@ pub async fn scan_game_configs(
         // configs AND after the init commands — they are the last word on any
         // cvar they touch, and the only place a value can change mid-demo.
         let mut custom = Vec::new();
-        for (cvar, command) in native::patch::cfg_scan::mid_demo_hazards(&custom_commands) {
+        let command_texts: Vec<String> =
+            custom_commands.iter().map(|c| c.command.clone()).collect();
+        // Every scheduled `r_decals` breaks the flush, however many there are,
+        // so the hazard list is not deduplicated the way the overrides are.
+        for (cvar, command) in native::patch::cfg_scan::mid_demo_hazards(&command_texts) {
             custom.push(CustomCommandWarning {
                 command,
                 cvar,
@@ -305,11 +333,23 @@ pub async fn scan_game_configs(
                 source: String::new(),
             });
         }
-        for command in &custom_commands {
+
+        // Only the FIRST scheduled command to touch a cvar displaces the config
+        // or init value. A paired set — `hud_deathnotice_time 555` before the
+        // clip and `1` after it — is one override and one restore, and
+        // reporting the restore against the config file too says the same thing
+        // twice while describing the second one wrongly.
+        let mut already_reported: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+        for payload in application_order(&custom_commands) {
+            let command = &payload.command;
             let Some((cvar, _)) = native::patch::cfg_scan::assigned_cvar(command) else {
                 continue;
             };
             if custom.iter().any(|w| w.command == command.trim()) {
+                continue;
+            }
+            if !already_reported.insert(cvar.to_lowercase()) {
                 continue;
             }
             if let Some(existing) =
@@ -488,12 +528,96 @@ mod tests {
             .unwrap();
         std::fs::write(
             &dod.join("movie.cfg"),
-            "r_decals \"0\"\nmirv_movie_fps \"300\"\nmirv_fov \"105\"\n",
+            // hud_deathnotice_time is here because it is the cvar people
+            // genuinely pair around a clip — raised before, restored after.
+            "r_decals \"0\"\nmirv_movie_fps \"300\"\nhud_deathnotice_time \"10\"\nmirv_fov \"105\"\n",
         )
         .unwrap();
         let exe = root.join("hl.exe");
         std::fs::write(&exe, b"").unwrap();
         exe.to_string_lossy().to_string()
+    }
+
+    fn scheduled(command: &str, relation: &str, offset: f32) -> CustomCommandPayload {
+        CustomCommandPayload {
+            command: command.to_string(),
+            relation: relation.to_string(),
+            offset_seconds: offset,
+        }
+    }
+
+    fn report_scheduled(tag: &str, custom: Vec<CustomCommandPayload>) -> CfgReport {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(scan_game_configs(
+            fake_game(tag),
+            Vec::new(),
+            custom,
+            Some(120),
+            Some(false),
+            Some(true),
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_set_and_restore_pair_is_one_override_not_two() {
+        // The real shape: raise a cvar before the clip, put it back after.
+        // Only the first one displaces what movie.cfg left it at — the second
+        // displaces the first. Reporting both against the config file says the
+        // same thing twice and describes the second one wrongly.
+        let r = report_scheduled(
+            "pair",
+            vec![
+                scheduled("hud_deathnotice_time 555", "Before", 10.0),
+                scheduled("hud_deathnotice_time 1", "After", 5.0),
+            ],
+        );
+
+        let rows: Vec<_> = r
+            .custom
+            .iter()
+            .filter(|c| c.cvar.eq_ignore_ascii_case("hud_deathnotice_time"))
+            .collect();
+        assert_eq!(rows.len(), 1, "{:?}", r.custom);
+        assert_eq!(rows[0].command, "hud_deathnotice_time 555", "the one that displaces");
+    }
+
+    #[test]
+    fn the_earliest_before_command_is_the_one_that_displaces() {
+        // Larger "Before" offsets are further back, so they run first.
+        let r = report_scheduled(
+            "order",
+            vec![
+                scheduled("hud_deathnotice_time 1", "Before", 2.0),
+                scheduled("hud_deathnotice_time 555", "Before", 10.0),
+            ],
+        );
+
+        let rows: Vec<_> = r
+            .custom
+            .iter()
+            .filter(|c| c.cvar.eq_ignore_ascii_case("hud_deathnotice_time"))
+            .collect();
+        assert_eq!(rows.len(), 1, "{:?}", r.custom);
+        assert_eq!(rows[0].command, "hud_deathnotice_time 555", "10s back runs before 2s back");
+    }
+
+    #[test]
+    fn every_scheduled_r_decals_is_still_flagged_however_many_there_are() {
+        // Deduplication is about which command displaces a config value. Each
+        // scheduled r_decals breaks the flush on its own, so they all count.
+        let r = report_scheduled(
+            "hazards",
+            vec![
+                scheduled("r_decals 128", "Before", 5.0),
+                scheduled("r_decals 4096", "After", 1.0),
+            ],
+        );
+
+        assert_eq!(r.custom.iter().filter(|c| c.kind == "hazard").count(), 2, "{:?}", r.custom);
     }
 
     fn report(
@@ -509,7 +633,7 @@ mod tests {
         rt.block_on(scan_game_configs(
             fake_game(tag),
             init.iter().map(|s| s.to_string()).collect(),
-            custom.iter().map(|s| s.to_string()).collect(),
+            custom.iter().map(|s| scheduled(s, "Before", 2.0)).collect(),
             Some(fps),
             Some(false),
             Some(true),

@@ -33,6 +33,10 @@ function bannerEl() {
  *
  * `context` carries the settings that decide what the app appends for itself,
  * so the overrides it reports are the ones a capture would really apply.
+ *
+ * `customCommands` are `{command, relation, offset_seconds}` rather than bare
+ * strings, because the order the engine reaches them decides which one is
+ * actually displacing a config value and which is just changing it again.
  */
 export async function refreshCfgWarnings(
   gamePath,

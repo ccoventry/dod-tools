@@ -78,7 +78,16 @@ export function refreshInitCommandWarnings() {
   refreshCfgWarnings(
     gamePath,
     initCommands.map((c) => c.trim()).filter((c) => c.length > 0),
-    customCommands.map((c) => (c?.command || '').trim()).filter((c) => c.length > 0),
+    // Relation and offset travel with the command: they decide which one the
+    // engine reaches first, and only the first to touch a cvar displaces what
+    // the configs left it at.
+    customCommands
+      .filter((c) => (c?.command || '').trim())
+      .map((c) => ({
+        command: c.command.trim(),
+        relation: c.relation === 'After' ? 'After' : 'Before',
+        offset_seconds: Number(c.offsetSeconds) || 0,
+      })),
     {
       captureFps: parseInt(document.querySelector('#config-capture-fps')?.value, 10) || null,
       separateHud: document.querySelector('#config-separate-hud')?.checked ?? null,
