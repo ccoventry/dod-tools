@@ -134,7 +134,15 @@ window.addEventListener("DOMContentLoaded", () => {
   if (btnSelectAll) {
     btnSelectAll.addEventListener('click', () => {
       if (!currentDemo || !currentDemo.streaks) return;
-      currentDemo.streaks.forEach(s => { s.selected = true; });
+      // Only the rows on screen. `demo.streaks` holds every player's streaks,
+      // and the table shows the recording player's at or above Min Kills — so
+      // selecting the raw list checked highlights belonging to other players
+      // that were never rendered and could not be unchecked. The batch groups
+      // by (demo, target player), so each of those became its own chained demo:
+      // one 15-row table produced five passes over the same file.
+      currentDemo.streaks.forEach(s => {
+        if (isVisibleStreak(currentDemo, s)) s.selected = true;
+      });
       const checkboxes = document.querySelectorAll('#detail-streaks-container input[type="checkbox"]');
       checkboxes.forEach(cb => { cb.checked = true; });
       renderDetailView(currentDemo, currentDemoIdx);
@@ -144,6 +152,10 @@ window.addEventListener("DOMContentLoaded", () => {
   if (btnDeselectAll) {
     btnDeselectAll.addEventListener('click', () => {
       if (!currentDemo || !currentDemo.streaks) return;
+      // Deliberately NOT filtered, unlike Select All. This is the escape hatch:
+      // if anything ever selects a streak the table does not show, this is what
+      // clears it. Erring wide costs nothing here; erring narrow leaves a
+      // capture running that nobody asked for.
       currentDemo.streaks.forEach(s => { s.selected = false; });
       const checkboxes = document.querySelectorAll('#detail-streaks-container input[type="checkbox"]');
       checkboxes.forEach(cb => { cb.checked = false; });
@@ -277,6 +289,35 @@ window.addEventListener("DOMContentLoaded", () => {
   }
 });
 
+/**
+ * Whether a streak is one of the rows the Highlights table actually shows.
+ *
+ * Two filters, and both matter to anything that acts on "all" of them:
+ *
+ *  1. **The recording player only.** `demo.streaks` holds every player's
+ *     streaks — everyone in the server. Gated on `local_player_index` rather
+ *     than `demo.is_pov`, because is_pov fires on any demo containing
+ *     SvcHltv/SvcDirector messages, which a normal player recording also picks
+ *     up when an HLTV caster happens to be spectating. `scan_demo_for_highlights`
+ *     already rejects true HLTV proxy files, so a missing index means "no
+ *     resolvable owner", not "spectator demo".
+ *  2. **Min Kills.**
+ *
+ * Select All uses this too. When it did not, it checked highlights belonging to
+ * other players that were never rendered and could not be unchecked — and since
+ * the batch builder groups by (demo, target player), each of those became its
+ * own chained demo. One fifteen-row table turned into five passes over the same
+ * file.
+ */
+export function isVisibleStreak(demo, streak, minKills) {
+  if (!demo || !streak) return false;
+  if (demo.local_player_index !== null && demo.local_player_index !== undefined) {
+    if (streak.player_index !== demo.local_player_index) return false;
+  }
+  const threshold = minKills ?? parseInt(document.querySelector('#input-min-kills')?.value || "1", 10);
+  return streak.kill_count >= threshold;
+}
+
 export function renderDetailView(demo, selectedDemoIdx) {
   currentDemo = demo;
   currentDemoIdx = selectedDemoIdx;
@@ -352,22 +393,10 @@ export function renderDetailView(demo, selectedDemoIdx) {
   let renderedRowNum = 0;
 
   demo.streaks.forEach((streak, streakIdx) => {
-    // 1. POV Filter — gate on whether the analyzer actually resolved a
-    // recording player (local_player_index), not on demo.is_pov. is_pov
-    // reflects whether the demo contains any SvcHltv/SvcDirector message
-    // anywhere in the file, which also fires on a normal player-recorded
-    // demo if an HLTV caster was merely spectating the live match (those
-    // are server-broadcast messages every connected client picks up) — so
-    // it's not a reliable signal that this is an actual spectator/HLTV
-    // recording with no single owner. scan_demo_for_highlights already
-    // rejects true HLTV proxy files before local_player_index is ever
-    // computed, so None here means "no resolvable owner", not "is_pov".
-    if (demo.local_player_index !== null && demo.local_player_index !== undefined) {
-       if (streak.player_index !== demo.local_player_index) return;
-    }
-
-    // 2. Min Kills filter
-    if (streak.kill_count < minKills) {
+    // Both filters live in isVisibleStreak so Select All applies exactly the
+    // same rule. They disagreed once, and the result was five chained demos
+    // from a fifteen-row table.
+    if (!isVisibleStreak(demo, streak, minKills)) {
       return;
     }
 
