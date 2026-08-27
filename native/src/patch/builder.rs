@@ -207,9 +207,17 @@ pub fn final_init_commands(config: &PatcherConfig) -> Vec<String> {
     // any smaller ring simply gets swept several times over. Pinning then buys
     // nothing and costs the precondition the rest of this design works around:
     // that nothing else may touch r_decals.
+    //
+    // Unless a config already touches it. "Whatever the cvar happens to be" is
+    // true for every value but zero, and `r_decals 0` in a movie.cfg is real —
+    // the sweep would be sized to the maximum, report a full revolution, and
+    // inject into a ring the engine keeps nothing in. So the pin is spent after
+    // all when a config assigns the cvar, which is also the only case where the
+    // precondition was already broken.
     if config.decal_flush && crate::patch::ring_limit_from_init(&config.init_commands).is_none() {
         let ring = crate::patch::ring_limit(config);
-        if ring > 0 && ring < crate::patch::MAX_RENDER_DECALS {
+        let below_ceiling = ring < crate::patch::MAX_RENDER_DECALS;
+        if ring > 0 && (below_ceiling || crate::patch::ring_set_by_game_config(config)) {
             out.push(format!("r_decals {}", ring));
         }
     }
@@ -1596,12 +1604,35 @@ mod tests {
         }
     }
 
+    /// A game folder of this test's own.
+    ///
+    /// One folder per call, because `build_batch_queue` writes its helper and
+    /// chain `.cfg` files into the game folder and deletes the previous run's
+    /// on the way in. A shared path meant tests running in parallel deleted
+    /// each other's files mid-write, which surfaces as a sharing violation on
+    /// Windows and an `Err` out of a call every test `unwrap`s.
+    ///
+    /// `game_path` names the executable, not the folder — the engine's content
+    /// sits beside `hl.exe` and every caller reads `game_path.parent()`. Naming
+    /// the folder here put `dod_dir` one level too high, at the temp root, so
+    /// the tests were writing to a single shared `%TEMP%/dod` regardless.
+    /// Named after the running test, which the harness puts on the thread. That
+    /// is unique per test and stable across runs, so folders are isolated
+    /// without a counter that would leave a fresh one behind every run.
     fn mock_config() -> PatcherConfig {
+        let tag = std::thread::current()
+            .name()
+            .map(|n| n.replace(|c: char| !c.is_ascii_alphanumeric(), "_"))
+            .unwrap_or_else(|| "mock".to_string());
+        mock_config_in(&tag)
+    }
+
+    fn mock_config_in(tag: &str) -> PatcherConfig {
+        let root = std::env::temp_dir().join(format!("dod_test_{}", tag));
+        std::fs::create_dir_all(root.join("dod")).expect("Failed to create dummy dod dir");
         let mut config = PatcherConfig::default();
-        let temp_game_path = std::env::temp_dir().join("dod_test_mock");
-        std::fs::create_dir_all(temp_game_path.join("dod")).expect("Failed to create dummy dod dir");
-        config.game_path = temp_game_path.to_string_lossy().to_string();
-        config.primary_media_dir = Some(temp_game_path);
+        config.game_path = root.join("hl.exe").to_string_lossy().to_string();
+        config.primary_media_dir = Some(root);
         config
     }
 
@@ -1913,6 +1944,96 @@ mod tests {
             !jobs[1].init_commands.iter().any(|c| c.starts_with("r_decals")),
             "a maximum sweep must leave the cvar alone: {:?}",
             jobs[1].init_commands
+        );
+    }
+
+    /// As `mock_config`, with a `config.cfg` in the game folder so the config
+    /// scan sees exactly what the test put there and nothing else.
+    ///
+    /// The tag is fixed rather than counted: scans are cached per folder, so a
+    /// case has to name its own folder to be sure of what it is reading.
+    fn mock_config_with_game_cfg(tag: &str, cfg_body: &str) -> PatcherConfig {
+        let config = mock_config_in(&format!("ring_{}", tag));
+        let cfg = std::path::Path::new(&config.game_path)
+            .parent()
+            .expect("game folder")
+            .join("dod")
+            .join("config.cfg");
+        if cfg_body.is_empty() {
+            let _ = std::fs::remove_file(&cfg);
+        } else {
+            std::fs::write(&cfg, cfg_body).expect("config.cfg");
+        }
+        config
+    }
+
+    #[test]
+    fn test_a_maximum_ring_still_pins_when_a_game_config_sets_the_cvar() {
+        // "A full revolution whatever the cvar is" holds for every value but
+        // zero. A movie.cfg setting `r_decals 0` is real — it is in the working
+        // install — and without a pin the sweep would be sized to the maximum,
+        // report a full revolution, and inject into a ring the engine keeps
+        // nothing in. Silent, and invisible in every statistic the flush logs.
+        let mut config = mock_config_with_game_cfg("zero", "r_decals 0\nfps_max 999\n");
+        config.decal_ring_limit = crate::patch::MAX_RENDER_DECALS;
+
+        let (jobs, _) = build_batch_queue(
+            vec![streak_with_kills(1000, 1200, &[1000, 1200])],
+            &config,
+            &std::collections::HashMap::new(),
+        ).unwrap();
+
+        assert!(
+            jobs[1].init_commands.iter().any(|c| c == "r_decals 4096"),
+            "a config that sets the cvar has to be answered: {:?}",
+            jobs[1].init_commands
+        );
+    }
+
+    #[test]
+    fn test_a_maximum_ring_leaves_the_cvar_alone_when_no_config_touches_it() {
+        // The other half of the rule, against a game folder proven empty rather
+        // than one that merely happens to be.
+        let mut config = mock_config_with_game_cfg("clean", "");
+        config.decal_ring_limit = crate::patch::MAX_RENDER_DECALS;
+
+        let (jobs, _) = build_batch_queue(
+            vec![streak_with_kills(1000, 1200, &[1000, 1200])],
+            &config,
+            &std::collections::HashMap::new(),
+        ).unwrap();
+
+        assert!(
+            !jobs[1].init_commands.iter().any(|c| c.starts_with("r_decals")),
+            "nothing else sets the cvar, so the pin buys nothing: {:?}",
+            jobs[1].init_commands
+        );
+    }
+
+    #[test]
+    fn test_a_config_never_overrides_what_init_commands_state() {
+        // The config only decides whether the pin is worth spending. It is
+        // never adopted as a value — `init_commands` stays the authority, and a
+        // stated maximum is still the user's own line and still the pin.
+        let mut config = mock_config_with_game_cfg("stated", "r_decals 0\n");
+        config.decal_ring_limit = 256;
+        config.init_commands = vec!["r_decals 4096".to_string()];
+
+        let (jobs, _) = build_batch_queue(
+            vec![streak_with_kills(1000, 1200, &[1000, 1200])],
+            &config,
+            &std::collections::HashMap::new(),
+        ).unwrap();
+
+        let pins: Vec<&String> = jobs[1]
+            .init_commands
+            .iter()
+            .filter(|c| c.starts_with("r_decals"))
+            .collect();
+        assert_eq!(
+            pins,
+            vec![&"r_decals 4096".to_string()],
+            "exactly the stated line, appended once"
         );
     }
 

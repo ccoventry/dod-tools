@@ -2058,6 +2058,27 @@ pub fn ring_limit(config: &PatcherConfig) -> u32 {
         .unwrap_or_else(|| config.decal_ring_limit.min(crate::patch::MAX_RENDER_DECALS))
 }
 
+/// Whether a config the engine actually executes assigns `r_decals` itself.
+///
+/// Decides whether the pin is still worth spending at `MAX_RENDER_DECALS`.
+/// Normally it is not — the cvar is clamped to that ceiling, so a sweep sized
+/// there turns a full revolution whatever the engine's standing value is, and
+/// any smaller ring simply gets swept several times over. That holds for every
+/// value except zero, and a config setting `r_decals 0` is exactly the case
+/// the user's own install presents. Without a pin the sweep would be sized to
+/// the maximum, report a full revolution, and inject into a ring the engine
+/// keeps nothing in.
+///
+/// Read-only, like everything touching the user's configs — this decides what
+/// the pipeline states in its own init commands, never what the config says.
+/// See [`crate::patch::cfg_scan`].
+pub fn ring_set_by_game_config(config: &PatcherConfig) -> bool {
+    let Some(dir) = game_dir_for(config) else {
+        return false;
+    };
+    cfg_scan::scan_cached(&dir).effective("r_decals").is_some()
+}
+
 /// Clean options for the batch pipeline, as distinct from the `strip_decals`
 /// CLI's.
 ///
