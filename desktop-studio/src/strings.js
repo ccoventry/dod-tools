@@ -135,10 +135,16 @@ export const STRINGS = {
   // ── Export Configuration & Batch Capture Pipeline ────────────────────────
   CAPTURE_CONFIG: {
     PANEL_TITLE: 'Export Configuration & Batch Capture Pipeline',
-    TAB_PATH_ROUTING: 'Path Routing',
-    TAB_TIMING_OPTIONS: 'Timing Options',
-    TAB_CAPTURE_OUTPUT: 'Capture Output',
-    TAB_CUSTOM_COMMANDS: 'Custom Commands',
+    // Grouped by what a field does, not by what it historically sat next to.
+    // Capture FPS moved out of Timing — it is the recording rate and has
+    // nothing to do with when anything happens — and joined resolution, which
+    // is the other half of "what the video is".
+    TAB_PATH_ROUTING: 'Paths',
+    TAB_OUTPUT_FORMAT: 'Output Format',
+    TAB_TIMING_OPTIONS: 'Timing',
+    TAB_PIPELINE: 'Pipeline',
+    TAB_CAPTURE_OUTPUT: 'Destinations',
+    TAB_CUSTOM_COMMANDS: 'Commands',
     HLAE_EXEC_LABEL: 'HLAE Executable:',
     HLAE_EXEC_PLACEHOLDER: 'Path to hlae.exe',
     HL_EXEC_LABEL: 'Half-Life Executable:',
@@ -162,6 +168,12 @@ export const STRINGS = {
     FF_SPEED_LABEL: 'FF Speed (x):',
     FF_SPEED_TITLE: 'Locked, matching dev — not currently user-editable.',
     CAPTURE_FPS_LABEL: 'Capture FPS:',
+    // Worth stating outright. This used to sit under Timing Options, and the
+    // adjacency invited exactly the confusion that cost real time: the demo's
+    // own tickrate is a different number entirely, and conflating the two is
+    // how a "3 second" margin turned out to be 0.6.
+    CAPTURE_FPS_TITLE:
+      'Frames per second written to the recorded video. Nothing to do with the demo\'s own tickrate, which is a property of how the demo was recorded and is not adjustable here.',
     OUTPUT_DIR_PLACEHOLDER: 'Capture output directory path...',
     ADD_DIRECTORY_BUTTON: 'Add Directory',
     AUTO_CLEAR_LOGS_LABEL: 'Auto-clear Logs',
