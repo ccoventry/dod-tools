@@ -72,6 +72,26 @@
 
   **Unrendered faces do allocate ring slots — the stage 3 prerequisite is answered (2026-08-27, in game).** Run behind `DOD_FLUSH_PVS_ONLY`, which restricts placement to positions whose drawn surface is outside the union of the capture's camera PVS — faces the engine provably never renders. Same demo, same 15 highlights, ring 256: **68 of 68 positions, 4080 decals, 15 bursts, 15/15 takes renderable, 404.7s, no old decals surviving into any clip.** qconsole for the session is clean — 15 `START_RECORD` / 15 `STOP_RECORD`, no `svc_bad`, 8 `SZ_GetSpace` (the usual drip, same count as the 4096 run). So `R_DecalShoot` takes its slot at shoot time and rendering is a separate later pass; see the ring bullet in `docs/goldsrc_dod_quirks.md`. **Consequence for stage 3:** candidate coordinates no longer need to come from harvested demos at all — any BSP face in a leaf outside the camera PVS union is a valid dump site, so a new map can get a full sweep from a BSP scan alone. What this run did *not* test is supply: it turned a 68-position ring against a 14,128-coordinate store, so whether a BSP scan yields 1,028 PVS-hidden positions on an arbitrary map is still open.
 
+  **Stage 3 built — flush candidates sampled off the map's own faces (2026-08-27).**
+  `Bsp::face_candidates` lays a 32-unit grid across every world face, inset 8 units from the
+  polygon edges and lifted 2 units along the outward normal, largest faces first, capped at 48 per
+  face and 12,000 overall. Samples landing inside solid are dropped at the source — 0.5% to 21% of
+  raw samples do, on faces sealed against another brush or facing the void, and each one is the
+  projection bug waiting to happen. Supply across **all 219 installed maps**: every map yields at
+  least 6,561 candidates (mean 11,835) against the 1,028 a 4096 ring needs, 100% projection hit
+  rate, ~15 ms to scan. Measure it with `native/src/bin/probe_map_candidates`.
+
+  Wired as a **fallback**, reached only when the demo's own decals and the coordinate store
+  together cannot fill a sweep, so a mature map pays nothing for it and the validated ordering is
+  untouched. `DOD_FLUSH_MAP_GEOMETRY_ONLY=1` forces it — the only way to put the new source in
+  front of someone watching the game, since on this library it otherwise almost never fires.
+  **The artefact to watch for on that run is a grid of decals visible *through* something**: the
+  hull trace treats a fence or grate brush as solid while it renders see-through, and the map
+  source is the first one that deliberately reaches behind them. Pre-existing mechanism, higher
+  exposure. Stage 5 (writing map-derived coordinates into the store) is deliberately **not** done:
+  the store's invariant today is "coordinates the engine accepted", which is what `validate_bsp`
+  tests against, and mixing computed coordinates in under the same key would retire that check.
+
   **Ring pre-check for the next in-game test.** `survey_decal_flush` with `FLUSH_RING` at 256 / 1024 / 2048 / 4096 on the lennon demo: full sweep at every level (68 / 260 / 516 / 1028 positions, wanted == got), zero on-camera, all geometry, drawn from 8,934 camera-safe tiles of 27,523 laid. The only untested variable at 4096 is how the engine ingests 4,112 decals per burst rather than 272.
 
 Test demos and screenshots now live in `local/demos/` and `local/screenshots/`, both gitignored via `/local/`. Repo-relative paths were repointed to match in PR #61 (`chore/demos-into-local`, merged into `dev` 2026-08-25).

@@ -16,8 +16,13 @@
 > - **Stage 6 built** (`35fdee9`), measured, and off by default: a sweep at MAX_RENDER_DECALS stops
 >   pinning `r_decals` at all. At ring 4096 all 85 demos still reach a full sweep with zero
 >   on-camera frames and 1 short burst in 668. The default stays 256 — see that section for why.
-> - **Stages 3 and 5 are design only.** With stage 4 delivering full sweeps everywhere, BSP-derived
->   coordinates are now headroom rather than a need.
+> - **Stage 3 built** (2026-08-27): `Bsp::face_candidates` samples a grid across the world's own
+>   faces. Reached only when the demo's decals and the coordinate store together cannot fill a
+>   sweep, so a mature map pays nothing for it. `DOD_FLUSH_MAP_GEOMETRY_ONLY` forces it for an
+>   in-game look. See "What the map is worth on its own" below.
+> - **Stage 5 is design only.** Stage 3 feeds `resolve_flush_positions` directly rather than the
+>   coordinate store; writing map-derived coordinates into the store is still open, and is what
+>   would make a pre-built store distributable.
 >
 > Read `docs/goldsrc_dod_quirks.md` and issue #60 first — the engine facts the flush rests on
 > are recorded there and must not be re-derived.
@@ -132,6 +137,40 @@ Not every face can hold a decal. At minimum, skip:
 
 ---
 
+## What the map is worth on its own (stage 3, built 2026-08-27)
+
+`Bsp::face_candidates` lays a 32-unit grid across every world face, keeps samples 8 units clear of
+the polygon's edges, and lifts each one 2 units off along the face's outward normal — open space,
+inside the 4-unit projection reach, so `decal_draw_point` lands it back on the face it came from.
+Faces are taken largest first, capped at 48 samples each so one hangar floor cannot spend the
+budget, and stopped at 12,000 overall.
+
+**A sample that lands inside solid is dropped at the source.** Between 0.5% and 21% of raw samples
+do, measured across five DoD maps: faces sealed against another brush, faces pointing into the void
+outside the playable hull, thin geometry where two units crosses into the next brush. Every one of
+those is the projection bug waiting to happen — a decal aimed inside a wall is drawn on whichever
+face the engine's walk reaches, which can be the one in shot — so the sampler never offers them.
+The pipeline would reject them anyway; doing it here makes the supply figure mean what it says.
+
+Measured with `native/src/bin/probe_map_candidates` across **all 219 installed maps**:
+
+| | |
+|---|---|
+| maps parsed | 219 / 219 |
+| candidates per map | min **6,561**, mean 11,835, cap 12,000 |
+| maps reaching the 1,028 a 4096 ring needs | **219 / 219** |
+| distinct leaves the candidates occupy | mean 323 |
+| projection hit rate (strided sample) | **100%** on every map |
+| scan cost | ~15 ms per map |
+
+The smallest supplier is `dod_tensions` at 6,561 candidates from 1,484 world faces — still six times
+what a maximum ring asks for. Scan cost turned out to be a non-issue; what costs time is the camera
+test afterwards, which is why the source is reached lazily rather than sampled on every demo.
+
+This is an **upper bound**: it is what the map holds before any camera has looked at it. What
+survives the in-clip camera test is the number that decides a sweep, and it needs a demo to
+measure.
+
 ## The second prize: real occlusion
 
 Everything above treats the BSP as a supply of coordinates. It is also the only thing that can
@@ -174,6 +213,16 @@ and `CLIPNODES` (9) for the trace.
 - **Masked textures.** Grates, fences and `{`-prefixed textures are solid in the BSP and
   see-through on screen. A trace would call a spot hidden that a viewer can see straight through.
   They must be treated as non-blocking.
+
+  **Stage 3 raises the exposure here and does not change the mechanism.** The hazard is the
+  *occluder*, not the candidate's own face, so it cannot be fixed by filtering which faces get
+  sampled. What changes is the odds: every earlier source draws from ground people fought over,
+  where a spot behind a fence is unlikely to be the furthest-from-camera candidate available, while
+  the map source deliberately reaches into places nobody went — including the far side of fences.
+  Nothing has been seen in game (the 2026-08-27 run at ring 4096 went through the same trace and
+  came back clean), and the clearance ranking prefers distant spots, which helps. But this is the
+  specific artefact to watch for when the map source is first watched under
+  `DOD_FLUSH_MAP_GEOMETRY_ONLY`: a grid of decals visible *through* something.
 - **Brush entities.** Tracing the world model alone ignores doors and lifts, so a spot hidden
   behind a closed door reads as visible. That fails in the safe direction — a usable spot is
   rejected rather than an exposed one accepted.

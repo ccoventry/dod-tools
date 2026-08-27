@@ -15,6 +15,10 @@
 //!   `FLUSH_MAPS_DIR`   map directory (default: derived from the demo's folder)
 //!   `FLUSH_FOV`        capture FOV (default 90)
 //!   `FLUSH_LEAD_SECONDS` seconds the sweep must finish before a clip (default 2.0)
+//!   `FLUSH_RING`       decal ring the sweep is sized to (default 256)
+//!   `FLUSH_MAP_ONLY`   place from the map's own faces alone, skipping every
+//!                      source drawn from the match — the offline twin of
+//!                      `DOD_FLUSH_MAP_GEOMETRY_ONLY`
 //!
 //! Columns: label, demo, status, clips, positions, positions wanted, tiles,
 //! camera-safe tiles, source, on-camera frames, harvested decals, atlas size,
@@ -124,6 +128,10 @@ fn main() {
         ring_limit: ring,
         lead_seconds: lead,
         visibility_cone_degrees: on_screen_half_angle(fov, 1920, 1080),
+        // The same gate the capture path reads from `DOD_FLUSH_MAP_GEOMETRY_ONLY`,
+        // so the map source can be measured over a library before anyone spends
+        // seven minutes watching it in game.
+        map_geometry_only: std::env::var("FLUSH_MAP_ONLY").is_ok(),
         ..Default::default()
     };
 
