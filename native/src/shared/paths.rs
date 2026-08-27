@@ -39,6 +39,18 @@ pub fn take_key(take_folder: &Path) -> Option<String> {
     Some(format!("{}/{}", session, take_name))
 }
 
+/// Deletes the engine's `qconsole.log`.
+///
+/// `-condebug` writes it to `hl.exe`'s own folder, not the mod folder, so
+/// cleanup that named `dod/qconsole.log` never matched anything and the log
+/// accumulated across every session indefinitely. (`condump` is the separate
+/// console command that drops a numbered `condump_NNN.txt`; nothing here
+/// issues it.)
+#[cfg(not(target_arch = "wasm32"))]
+pub fn remove_console_log(game_root: &Path) {
+    let _ = std::fs::remove_file(game_root.join("qconsole.log"));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -90,5 +102,56 @@ mod tests {
     fn test_take_key_handles_higher_numbered_takes() {
         let key = take_key(Path::new(r"D:\Captures\session_1\chain_01_b0\take0003"));
         assert_eq!(key, Some("session_1/chain_01_b0".to_string()));
+    }
+
+    #[test]
+    fn console_log_is_cleared_beside_hl_exe() {
+        let root = std::env::temp_dir().join(format!("dod_qconsole_root_{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let log = root.join("qconsole.log");
+        std::fs::write(&log, b"console spam").unwrap();
+
+        remove_console_log(&root);
+
+        assert!(!log.exists(), "qconsole.log beside hl.exe should be removed");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Cleanup runs whether or not the engine was launched with `-condebug`,
+    /// so an absent log is ordinary rather than an error worth surfacing.
+    #[test]
+    fn a_missing_console_log_is_not_an_error() {
+        let root = std::env::temp_dir().join(format!("dod_qconsole_none_{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+
+        remove_console_log(&root);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Nothing but that one file may be touched — the game folder holds the
+    /// user's own configs, and anything wider here would be unrecoverable.
+    #[test]
+    fn nothing_but_the_console_log_is_touched() {
+        let root = std::env::temp_dir().join(format!("dod_qconsole_keep_{}", std::process::id()));
+        let dod = root.join("dod");
+        std::fs::create_dir_all(&dod).unwrap();
+        let keep = [
+            dod.join("config.cfg"),
+            dod.join("movie.cfg"),
+            root.join("debug.log"),
+            root.join("condump_001.txt"),
+        ];
+        for f in &keep {
+            std::fs::write(f, b"mine").unwrap();
+        }
+        std::fs::write(root.join("qconsole.log"), b"spam").unwrap();
+
+        remove_console_log(&root);
+
+        for f in &keep {
+            assert!(f.exists(), "{:?} is the user's file and must survive", f);
+        }
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

@@ -83,7 +83,7 @@ impl Drop for CaptureCleanupGuard {
             let dod_dir = parent.join("dod");
             
             if self.auto_clear_logs {
-                let _ = std::fs::remove_file(dod_dir.join("qconsole.log"));
+                crate::shared::paths::remove_console_log(parent);
                 let _ = std::fs::remove_file(dod_dir.join("dodtools_helper.cfg"));
                 let _ = std::fs::remove_file(dod_dir.join("dodtools_capture_done.cfg"));
                 let _ = std::fs::remove_file(dod_dir.join("dod_quit.cfg"));
