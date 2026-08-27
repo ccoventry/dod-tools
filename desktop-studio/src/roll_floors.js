@@ -80,7 +80,8 @@ export async function refreshRollFloors() {
  */
 export function initRollFloors(customCommandSource) {
   if (typeof customCommandSource === 'function') getCustomCommands = customCommandSource;
-  ['#config-pre-roll', '#config-post-roll', '#config-decal-flush'].forEach((sel) => {
+  ['#config-pre-roll', '#config-post-roll', '#config-decal-flush',
+   '#config-record-start-lead', '#config-record-stop-trail'].forEach((sel) => {
     const input = document.querySelector(sel);
     if (input) input.addEventListener('change', refreshRollFloors);
   });

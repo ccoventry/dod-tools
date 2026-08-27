@@ -420,12 +420,19 @@ pub struct RollFloorReport {
 pub fn roll_floors(
     pre_roll: f32,
     post_roll: f32,
+    record_start_lead: Option<f32>,
+    record_stop_trail: Option<f32>,
     decal_flush: Option<bool>,
     custom_commands: Vec<CustomCommandPayload>,
 ) -> RollFloorReport {
+    // The lead and trail matter: a scheduled offset anchors to the kill, and
+    // recording starts a lead before that, so the lead already covers part of
+    // the distance a Before command has to reach back.
     let mut cfg = native::patch::PatcherConfig {
         pre_roll_seconds: pre_roll,
         post_roll_seconds: post_roll,
+        record_start_lead: record_start_lead.unwrap_or(0.0),
+        record_stop_trail: record_stop_trail.unwrap_or(0.0),
         ..Default::default()
     };
     if let Some(v) = decal_flush {

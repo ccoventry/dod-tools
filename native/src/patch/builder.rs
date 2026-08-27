@@ -271,8 +271,17 @@ pub fn roll_floors(config: &PatcherConfig) -> RollFloors {
             .map(|c| c.offset)
             .fold(0.0f32, f32::max)
     };
-    let scheduled_before = offset_for(false);
-    let scheduled_after = offset_for(true);
+    // Scheduled offsets anchor to the KILL, not to the record start — while the
+    // speed drop sits a pre-roll before the record start, which is itself a
+    // start-lead before the kill. So the real-time window opens
+    // `record_start_lead + pre_roll` ahead of the kill, and a Before offset only
+    // needs the pre-roll to cover what the start lead does not.
+    //
+    // Comparing the raw offset against the pre-roll alone is what made this warn
+    // about a 10s command with a 5s lead and a 5s pre-roll, which lands exactly
+    // on the speed drop and is fine.
+    let scheduled_before = (offset_for(false) - config.record_start_lead).max(0.0);
+    let scheduled_after = (offset_for(true) - config.record_stop_trail).max(0.0);
 
     // Highest wins, and the label names it so the message can be acted on.
     let pre_terms = [
@@ -1598,7 +1607,7 @@ mod tests {
         assert_eq!(f.post_roll, 0.0, "nothing needs post-roll on its own");
 
         // A Scheduled Command further out than that takes over, because
-        // anything beyond the pre-roll fires during fast-forward.
+        // anything beyond the real-time window fires during fast-forward.
         config.custom_commands = vec![crate::patch::CustomCommand {
             command: "mirv_movie_fps 500".to_string(),
             offset: 8.0,
@@ -1607,6 +1616,21 @@ mod tests {
         let f = roll_floors(&config);
         assert_eq!(f.pre_roll, 8.0);
         assert!(f.pre_roll_binding.contains("Scheduled"), "{}", f.pre_roll_binding);
+
+        // The start lead covers part of that distance, because the offset
+        // anchors to the kill and recording starts a lead before it. The real
+        // configuration this got wrong: a 10s command with a 5s start lead
+        // needs only 5s of pre-roll, and warning at 10 was a false alarm.
+        config.record_start_lead = 5.0;
+        config.custom_commands[0].offset = 10.0;
+        let f = roll_floors(&config);
+        assert_eq!(f.scheduled_before, 5.0, "10s out, 5s of it covered by the lead");
+        assert_eq!(f.pre_roll, AUDIO_RESYNC_SECONDS.max(5.0));
+
+        // And a lead longer than the offset leaves nothing for the pre-roll.
+        config.record_start_lead = 12.0;
+        let f = roll_floors(&config);
+        assert_eq!(f.scheduled_before, 0.0, "never negative");
 
         // And an "After" command is the only thing that asks for post-roll.
         config.custom_commands = vec![crate::patch::CustomCommand {
