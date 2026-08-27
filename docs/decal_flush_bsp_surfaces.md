@@ -330,8 +330,14 @@ BSP-derived coordinates existing, so it can land first if stage 2 says the parse
 ## Open questions
 
 - **PVS dependence** (above) — the one that decides whether this works at all.
-- **Does a decal on a face the player has never rendered still allocate a ring slot?** Allocation
-  is what the sweep needs; drawing is irrelevant to us. Believed yes, unverified.
+- ~~**Does a decal on a face the player has never rendered still allocate a ring slot?**~~
+  **Answered yes, in game, 2026-08-27.** Run behind `DOD_FLUSH_PVS_ONLY`, which restricts placement
+  to positions whose drawn surface falls outside the union of the capture's camera PVS — faces the
+  engine provably never renders. 68/68 positions, 4080 decals, ring 256, 15 clips, and no old
+  decals survived into any of them; qconsole clean, 15/15 takes renderable. `R_DecalShoot` claims
+  its ring slot at shoot time and rendering is a separate later pass. This is the assumption the
+  whole BSP direction rested on, and it is the one that made stage 3 worth building: a dump site
+  does not have to be a surface anyone could ever see, only a *surface*.
 - **Displacement of the fitted plane.** Harvested-decal planes sit ~0.5 units proud of the true BSP
   plane (measured, #60). BSP faces give the true plane, so the existing "place on the fitted plane,
   never offset more than ~3 units" rule may need revisiting for this source — probably in our

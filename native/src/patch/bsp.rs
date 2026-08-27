@@ -468,6 +468,213 @@ impl Bsp {
         }
         best
     }
+
+    /// Candidate decal aim points sampled across the world's own faces.
+    ///
+    /// Every other source of flush coordinates is drawn from what people did in
+    /// the match — harvested decals are where somebody shot, tiles are fitted to
+    /// those, the coordinate store is their union across demos, floor points are
+    /// where somebody walked. "Where people shoot" correlates hard with "where
+    /// people look", which is exactly what the camera test then rejects, so
+    /// those sources mine the same distribution they are afterwards filtered
+    /// against. A demo whose camera covered everything its own gunfire proved
+    /// cannot be rescued by more of them. The map can: it holds the quiet back
+    /// rooms nobody entered, which is the inventory a flush actually wants.
+    ///
+    /// Points come back lifted `lift` units off the face along its outward
+    /// normal — open space rather than inside the brush, so the leaf test reads
+    /// empty and `decal_draw_point` projects back onto the face they came from.
+    /// `inset` keeps them clear of the polygon's edges, because a decal has
+    /// radius and one straddling an edge is drawn short or lands on the
+    /// neighbouring face instead.
+    ///
+    /// Faces are taken largest first, so a broad quiet wall is sampled before a
+    /// doorframe, and `per_face` stops one hangar floor spending the whole
+    /// budget.
+    pub fn face_candidates(&self, opts: &FaceSampling) -> Vec<[f32; 3]> {
+        let mut eligible: Vec<(usize, f32)> = self
+            .world_faces()
+            .filter(|&i| self.face_takes_decals(i))
+            .map(|i| (i, self.face_area(i)))
+            .filter(|&(_, area)| area >= opts.min_area)
+            .collect();
+        // Largest first. `total_cmp` rather than `partial_cmp` so a degenerate
+        // face with a NaN area sorts somewhere instead of poisoning the order.
+        eligible.sort_by(|a, b| b.1.total_cmp(&a.1));
+
+        let mut out = Vec::new();
+        for (face, _) in eligible {
+            if out.len() >= opts.limit {
+                break;
+            }
+            self.sample_face(face, opts, &mut out);
+        }
+        out
+    }
+
+    /// One face's share of the grid, laid in the plane's dominant projection.
+    fn sample_face(&self, face: usize, opts: &FaceSampling, out: &mut Vec<[f32; 3]>) {
+        let poly = self.face_polygon(face);
+        if poly.len() < 3 {
+            return;
+        }
+        let Some(f) = self.faces.get(face) else {
+            return;
+        };
+        let Some(plane) = self.planes.get(f.plane as usize) else {
+            return;
+        };
+        let Some(normal) = self.face_normal(face) else {
+            return;
+        };
+
+        // The grid is laid on two axes and the third is recovered from the
+        // plane equation. Dropping the dominant axis is what makes that
+        // division safe: it is by definition the largest normal component, so
+        // it is the one of the three that cannot be near zero.
+        let drop = dominant_axis(&plane.normal);
+        let (u, v) = match drop {
+            0 => (1, 2),
+            1 => (0, 2),
+            _ => (0, 1),
+        };
+        let nd = plane.normal[drop];
+        if nd.abs() < 1e-6 {
+            return;
+        }
+
+        let pitch = opts.pitch.max(1.0);
+        let (lo, hi) = self.face_bounds(face);
+        let steps = |lo: f32, hi: f32| -> usize {
+            if !(hi > lo) {
+                0
+            } else {
+                ((hi - lo) / pitch).floor() as usize + 1
+            }
+        };
+
+        let mut placed = 0usize;
+        for i in 0..steps(lo[u], hi[u]) {
+            for j in 0..steps(lo[v], hi[v]) {
+                if placed >= opts.per_face || out.len() >= opts.limit {
+                    return;
+                }
+                // Half a pitch in, so a face exactly one cell wide still gets
+                // its centre sampled rather than both edges.
+                let a = lo[u] + i as f32 * pitch + pitch * 0.5;
+                let b = lo[v] + j as f32 * pitch + pitch * 0.5;
+                let mut p = [0.0f32; 3];
+                p[u] = a;
+                p[v] = b;
+                p[drop] = (plane.dist - plane.normal[u] * a - plane.normal[v] * b) / nd;
+
+                if !point_in_polygon(&poly, &plane.normal, &p) {
+                    continue;
+                }
+                if edge_clearance(&poly, &p) < opts.inset {
+                    continue;
+                }
+                let lifted = [
+                    p[0] + normal[0] * opts.lift,
+                    p[1] + normal[1] * opts.lift,
+                    p[2] + normal[2] * opts.lift,
+                ];
+                // Stepping off a face along its outward normal usually lands in
+                // open space, and on a real map often does not: measured across
+                // five DoD maps, between 0.5% and 21% of samples came back
+                // inside solid — faces sealed against another brush, faces
+                // pointing into the void outside the playable hull, and thin
+                // geometry where two units is enough to cross into the next
+                // brush. Every one of those is a coordinate the flush would
+                // then have to throw away, and one that is *drawn* on whichever
+                // face the engine's walk reaches — the projection bug exactly.
+                // Cheaper and more honest to never offer them.
+                let contents = self.leaf_contents(self.leaf_at(&lifted));
+                if contents == CONTENTS_SOLID || contents == CONTENTS_SKY {
+                    continue;
+                }
+                out.push(lifted);
+                placed += 1;
+            }
+        }
+    }
+}
+
+/// How densely to sample world faces for flush candidates, and how much of the
+/// map to spend doing it.
+#[derive(Debug, Clone, Copy)]
+pub struct FaceSampling {
+    /// Grid spacing across a face.
+    pub pitch: f32,
+    /// Keep candidates at least this far from the polygon's edges.
+    pub inset: f32,
+    /// Step off the face along its outward normal, into open space.
+    pub lift: f32,
+    /// Skip faces too small to hold a decal clear of their own edges.
+    pub min_area: f32,
+    /// Cap per face, so one hangar floor cannot spend the whole budget.
+    pub per_face: usize,
+    /// Cap overall. Every candidate is line-of-sight tested against every
+    /// sampled camera afterwards, so this is a time budget as much as a memory
+    /// one.
+    pub limit: usize,
+}
+
+impl Default for FaceSampling {
+    fn default() -> Self {
+        Self {
+            // Wider than the 16-unit tile grid: this source is not trying to
+            // blanket a proven patch, it is trying to spread across a whole
+            // map, and the pool enforces its own 12-unit spacing afterwards.
+            pitch: 32.0,
+            // A decal's radius measured ~4 units, so this is double clearance
+            // on every side.
+            inset: 8.0,
+            // Off the surface but well inside the 4-unit projection reach, so
+            // the point reads as empty space and still lands back on its face.
+            lift: 2.0,
+            // Below ~24x24 a face cannot hold a point inset 8 units from every
+            // edge, so sampling it is wasted work.
+            min_area: 576.0,
+            per_face: 48,
+            limit: 12_000,
+        }
+    }
+}
+
+/// A one-wall room, for tests in sibling modules that need a real map rather
+/// than `None`: a 64x64 brick face on the plane x=100, with the open room in
+/// front of it at x &lt; 100 and solid behind.
+///
+/// The `side` flip is the point. The raw fixture puts solid on the plane's
+/// front, so its face normal points *into* the wall — the opposite of a real
+/// map, and an orientation in which sampling buries every candidate in the
+/// brush while still returning the right count.
+#[cfg(test)]
+pub(super) fn one_wall_room() -> Bsp {
+    let mut bsp = tests::synthetic_bsp();
+    bsp.faces[0].side = 1;
+    debug_assert_eq!(bsp.face_normal(0), Some([-1.0, 0.0, 0.0]));
+    bsp
+}
+
+/// Distance from a point on a face's plane to the nearest polygon edge.
+fn edge_clearance(poly: &[[f32; 3]], p: &[f32; 3]) -> f32 {
+    let mut best = f32::INFINITY;
+    for i in 0..poly.len() {
+        let a = poly[i];
+        let b = poly[(i + 1) % poly.len()];
+        let ab = sub(&b, &a);
+        let len2 = dot(&ab, &ab);
+        let t = if len2 <= f32::EPSILON {
+            0.0
+        } else {
+            (dot(&sub(p, &a), &ab) / len2).clamp(0.0, 1.0)
+        };
+        let closest = [a[0] + ab[0] * t, a[1] + ab[1] * t, a[2] + ab[2] * t];
+        best = best.min(norm(&sub(p, &closest)));
+    }
+    best
 }
 
 /// The TEXTURES lump is a directory: a count, then one offset per texture
@@ -841,7 +1048,7 @@ mod tests {
 
     /// A single square face at x = 100, spanning y and z from 0 to 64, built by
     /// hand so the parser's own arithmetic is exercised without a map file.
-    fn synthetic_bsp() -> Bsp {
+    pub(super) fn synthetic_bsp() -> Bsp {
         let mut bsp = Bsp {
             planes: vec![Plane {
                 normal: [1.0, 0.0, 0.0],
@@ -1214,5 +1421,127 @@ mod tests {
             !bsp.line_blocked(&eye, &drawn),
             "nothing stands between the room and the face it is looking at"
         );
+    }
+
+    /// The fixture's one face is 64x64 at x=100, and its plane's front side is
+    /// SOLID — so its normal points *into* the wall, the opposite of a real
+    /// map. Flipping `side` puts the normal back where a room would be, which
+    /// is the only orientation these tests mean anything in: sampling along the
+    /// unflipped normal would bury every candidate in the brush and still
+    /// return the right *count*.
+    fn room_bsp() -> Bsp {
+        let bsp = super::one_wall_room();
+        assert_eq!(bsp.face_normal(0), Some([-1.0, 0.0, 0.0]));
+        bsp
+    }
+
+    #[test]
+    fn face_candidates_land_off_the_surface_in_open_space() {
+        let bsp = room_bsp();
+        let pts = bsp.face_candidates(&FaceSampling::default());
+
+        // 64 units at a 32 pitch samples at 16 and 48 on both axes; the third
+        // step lands at 80, off the polygon.
+        assert_eq!(pts.len(), 4, "{:?}", pts);
+        for p in &pts {
+            assert!((p[0] - 98.0).abs() < 1e-3, "lifted 2 units into the room: {:?}", p);
+            assert_ne!(
+                bsp.leaf_contents(bsp.leaf_at(p)),
+                CONTENTS_SOLID,
+                "a candidate inside solid is exactly what the flush must never place: {:?}",
+                p
+            );
+        }
+    }
+
+    #[test]
+    fn a_sampled_point_projects_back_onto_the_face_it_came_from() {
+        // The whole source is worthless if the engine's projection sends these
+        // somewhere other than the face they were measured on.
+        let bsp = room_bsp();
+        for p in bsp.face_candidates(&FaceSampling::default()) {
+            let drawn = bsp
+                .decal_draw_point(&p, 4.0, 1.0)
+                .expect("a point 2 units off a face is within a 4-unit reach");
+            assert!((drawn[0] - 99.0).abs() < 1e-3, "{:?} -> {:?}", p, drawn);
+        }
+    }
+
+    #[test]
+    fn candidates_keep_their_distance_from_the_polygon_edges() {
+        let bsp = room_bsp();
+        // The four samples sit 16 units from the nearest edge, so an inset just
+        // above that must clear the face out entirely — proving the check is
+        // measuring the edge and not merely the bounding box.
+        let tight = FaceSampling {
+            inset: 20.0,
+            ..FaceSampling::default()
+        };
+        assert!(bsp.face_candidates(&tight).is_empty());
+
+        let loose = FaceSampling {
+            inset: 15.0,
+            ..FaceSampling::default()
+        };
+        assert_eq!(bsp.face_candidates(&loose).len(), 4);
+    }
+
+    #[test]
+    fn a_face_too_small_to_hold_a_decal_is_never_sampled() {
+        let bsp = room_bsp();
+        let opts = FaceSampling {
+            min_area: 5000.0, // the face is 64x64 = 4096
+            ..FaceSampling::default()
+        };
+        assert!(bsp.face_candidates(&opts).is_empty());
+    }
+
+    #[test]
+    fn one_face_cannot_spend_the_whole_budget() {
+        let bsp = room_bsp();
+        let opts = FaceSampling {
+            pitch: 8.0,
+            per_face: 3,
+            ..FaceSampling::default()
+        };
+        assert_eq!(bsp.face_candidates(&opts).len(), 3);
+    }
+
+    #[test]
+    fn the_overall_limit_stops_the_scan() {
+        let bsp = room_bsp();
+        let opts = FaceSampling {
+            limit: 2,
+            ..FaceSampling::default()
+        };
+        assert_eq!(bsp.face_candidates(&opts).len(), 2);
+    }
+
+    #[test]
+    fn a_face_whose_front_is_sealed_yields_nothing() {
+        // The unflipped fixture is a face whose outward normal points into
+        // solid — a brush sealed against another one, or one facing the void
+        // outside the hull. Real maps are full of them: sampling five DoD maps
+        // put between 0.5% and 21% of raw samples inside solid. Offering those
+        // to the flush would hand it the projection bug back, since a decal
+        // aimed inside a wall is drawn on whichever face the engine reaches.
+        let bsp = synthetic_bsp();
+        assert_eq!(bsp.face_normal(0), Some([1.0, 0.0, 0.0]), "into the solid side");
+        assert!(bsp.face_candidates(&FaceSampling::default()).is_empty());
+    }
+
+    #[test]
+    fn a_face_that_holds_no_decal_is_never_sampled() {
+        // Sky, liquid and trigger brushes take no decal at all, so a candidate
+        // on one costs the sweep a ring slot and reports nothing.
+        for name in ["sky_day", "!water", "aaatrigger", "clipbrush"] {
+            let mut bsp = room_bsp();
+            bsp.texture_names = vec![name.to_string()];
+            assert!(
+                bsp.face_candidates(&FaceSampling::default()).is_empty(),
+                "sampled a {} face",
+                name
+            );
+        }
     }
 }

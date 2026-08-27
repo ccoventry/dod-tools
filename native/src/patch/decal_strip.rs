@@ -224,6 +224,15 @@ pub struct DecalCleanOptions {
     /// would call every buried candidate "never rendered" for the same reason
     /// the old camera test called them hidden.
     pub require_pvs_hidden: bool,
+    /// Experiment gate: place the sweep from the map's own faces ALONE, with
+    /// every source drawn from the match skipped.
+    ///
+    /// The map source is normally a fallback, reached only when a demo's own
+    /// decals and the coordinate store between them cannot fill a sweep — so on
+    /// a mature library it never runs, and the one thing that can judge where it
+    /// puts decals is the game. This forces it, which is how a source meant for
+    /// maps nobody has captured yet gets tested on a map somebody can watch.
+    pub map_geometry_only: bool,
 }
 
 impl Default for DecalCleanOptions {
@@ -248,6 +257,7 @@ impl Default for DecalCleanOptions {
             visibility_max_distance: f32::INFINITY,
             collect_diagnostics: false,
             require_pvs_hidden: false,
+            map_geometry_only: false,
         }
     }
 }
@@ -316,6 +326,12 @@ pub struct DecalCleanStats {
     /// these two close together means the demo offers little surface; a
     /// shortfall with a wide gap means the surface it has is all in shot.
     pub tiled_camera_safe: usize,
+    /// Candidates sampled off the map's own world faces, and how many of those
+    /// cleared every in-clip camera. Both stay 0 unless the proven sources fell
+    /// short and the map source was actually reached — it is not sampled
+    /// speculatively, because on a map with a populated store it is pure cost.
+    pub map_candidates: usize,
+    pub map_camera_safe: usize,
     /// The chosen positions and the in-clip camera samples they were judged
     /// against, populated only when `collect_diagnostics` is set.
     pub diagnostic_positions: Vec<[f32; 3]>,
@@ -976,6 +992,11 @@ pub enum FlushSource {
     /// which the engine permits — it constrains distance from a surface, not
     /// movement along one.
     TiledPlane,
+    /// Sampled straight off the map's own world faces. The only source that
+    /// owes nothing to what anyone did in the match, and therefore the only one
+    /// that can supply a map the coordinate store has never seen. See
+    /// `bsp::Bsp::face_candidates`.
+    MapGeometry,
 }
 
 /// Picks where the synthetic flush decals go.
@@ -1278,6 +1299,9 @@ struct Placement {
     /// gap between these two separates "this demo has no surface to work with"
     /// from "everything it has is in shot", which want opposite fixes.
     tiled_safe: usize,
+    /// The same pair for the map-geometry source, when it was reached.
+    map_sampled: usize,
+    map_safe: usize,
 }
 
 /// Picks the set of positions the flush burst is spread across.
@@ -1349,15 +1373,14 @@ fn resolve_flush_positions(
 
     let mut pool: Vec<[f32; 3]> = Vec::new();
     let mut source = None;
-    let sources: [(&[[f32; 3]], FlushSource); 4] = [
-        (&tiled, FlushSource::TiledPlane),
-        (&survey.harvested, FlushSource::HarvestedNearSpawn),
-        // Atlas coordinates too isolated to have formed a tileable patch still
-        // stand on their own as proven surface.
-        (atlas, FlushSource::MapAtlas),
-        (&survey.floor_candidates, FlushSource::PlayerFloorPath),
-    ];
-    for (candidates, src) in sources {
+
+    // Returns how many of the candidates cleared every camera, having taken
+    // what it could from them.
+    let absorb = |candidates: &[[f32; 3]],
+                  src: FlushSource,
+                  pool: &mut Vec<[f32; 3]>,
+                  source: &mut Option<FlushSource>|
+     -> usize {
         // Clearance is measured against every in-window camera sample, so it is
         // computed once per candidate rather than inside the comparator — tiling
         // multiplies the candidate count by an order of magnitude and a sort
@@ -1368,9 +1391,7 @@ fn resolve_flush_positions(
             .filter(|p| hidden(p))
             .map(|p| (clearance(&p), p))
             .collect();
-        if src == FlushSource::TiledPlane {
-            placement.tiled_safe = ok.len();
-        }
+        let safe = ok.len();
         // Furthest from the camera first.
         ok.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 
@@ -1385,9 +1406,52 @@ fn resolve_flush_positions(
                 source.get_or_insert(src);
             }
         }
-        if pool.len() >= wanted {
-            break;
+        safe
+    };
+
+    // Everything drawn from the match, unless the experiment gate is holding
+    // them back so the map source can be judged on its own.
+    if !opts.map_geometry_only {
+        placement.tiled_safe = absorb(&tiled, FlushSource::TiledPlane, &mut pool, &mut source);
+        if pool.len() < wanted {
+            absorb(
+                &survey.harvested,
+                FlushSource::HarvestedNearSpawn,
+                &mut pool,
+                &mut source,
+            );
         }
+        // Atlas coordinates too isolated to have formed a tileable patch still
+        // stand on their own as proven surface.
+        if pool.len() < wanted {
+            absorb(atlas, FlushSource::MapAtlas, &mut pool, &mut source);
+        }
+    }
+    // The map's own faces, and only now. Sampling them is not free — every
+    // candidate is projected onto a face and traced against every camera — and
+    // on a map whose store is populated the sources above have already filled
+    // the pool, so paying for it there would be pure cost for no position. The
+    // case it exists for is the opposite one: a map nothing has been harvested
+    // from yet, where everything above comes back nearly empty.
+    if pool.len() < wanted {
+        if let Some(map) = visibility.bsp {
+            let sampled = map.face_candidates(&bsp::FaceSampling::default());
+            placement.map_sampled = sampled.len();
+            placement.map_safe = absorb(
+                &sampled,
+                FlushSource::MapGeometry,
+                &mut pool,
+                &mut source,
+            );
+        }
+    }
+    if pool.len() < wanted && !opts.map_geometry_only {
+        absorb(
+            &survey.floor_candidates,
+            FlushSource::PlayerFloorPath,
+            &mut pool,
+            &mut source,
+        );
     }
 
     if !pool.is_empty() {
@@ -1405,6 +1469,12 @@ fn resolve_flush_positions(
     let Some(reference) = survey.grounded_origin.or(survey.spawn_eye) else {
         return placement;
     };
+    // Under the experiment gate a spawn-floor guess would quietly put the
+    // sweep back on ground the player walked, which is the one thing the gate
+    // exists to exclude. Better to report no positions at all.
+    if opts.map_geometry_only {
+        return placement;
+    }
 
     let (positions, source) = legacy_single_position(survey, opts, reference);
     Placement {
@@ -1627,6 +1697,8 @@ pub fn clean_demo_decals(
     stats.flush_positions_wanted = positions_wanted;
     stats.tiled_candidates = placement.tiled;
     stats.tiled_camera_safe = placement.tiled_safe;
+    stats.map_candidates = placement.map_sampled;
+    stats.map_camera_safe = placement.map_safe;
 
     if let (Some(pos), Some(reference)) = (flush_positions.first(), survey.grounded_origin) {
         stats.spawn_to_flush_distance = Some(distance(pos, &reference));
@@ -2228,6 +2300,9 @@ fn flush_options(config: &PatcherConfig) -> DecalCleanOptions {
         // Env-gated rather than exposed as a setting: it is a question being
         // asked once, not a mode anyone should be choosing between.
         require_pvs_hidden: std::env::var("DOD_FLUSH_PVS_ONLY").is_ok(),
+        // Forces the map-geometry source, which is otherwise unreachable on a
+        // map whose coordinate store is already full — see `map_geometry_only`.
+        map_geometry_only: std::env::var("DOD_FLUSH_MAP_GEOMETRY_ONLY").is_ok(),
         ..Default::default()
     }
 }
@@ -2351,6 +2426,7 @@ fn report(
     // produce identical counts and completely different odds of working.
     let source = match stats.flush_source {
         Some(FlushSource::TiledPlane) => "tiled planes",
+        Some(FlushSource::MapGeometry) => "the map's own geometry",
         Some(FlushSource::MapAtlas) => "the map coordinate store",
         Some(FlushSource::HarvestedNearSpawn) => "harvested decals",
         Some(FlushSource::PlayerFloorPath) => "floor under the player's path",
@@ -2368,6 +2444,15 @@ fn report(
              visibility says the engine never renders it. This is the test of whether a decal on \
              an unrendered face still allocates a ring slot — if old bullet holes survive into a \
              clip, it does not. Unset the variable for a normal capture.",
+        );
+    }
+    if opts.map_geometry_only {
+        crate::log_markdown(
+            "🧪 **EXPERIMENT: `DOD_FLUSH_MAP_GEOMETRY_ONLY` is set.** The sweep was placed from \
+             the map's own world faces alone — no harvested decals, no tiled planes, no \
+             coordinate store, no floor path. This is how the source meant for maps nobody has \
+             captured yet gets watched on a map somebody can watch. Unset the variable for a \
+             normal capture.",
         );
     }
 
@@ -2420,6 +2505,22 @@ fn report(
             "🗺️ **Map coordinate store** for `{}`: {} coordinate(s) already known, {} added by \
              this demo, {} now available to the flush.",
             map, stats.atlas.known, stats.atlas.added, stats.atlas.total
+        ));
+    }
+
+    // The map's own faces, reached only when everything proven fell short.
+    // Worth saying out loud: it means this demo's own decals and the store
+    // between them could not fill a sweep, and the map covered the difference.
+    // On a map nothing has been harvested from yet that is the expected path,
+    // not a warning.
+    if stats.map_candidates > 0 {
+        crate::log_markdown(&format!(
+            "🧱 **Fell back to the map's own geometry** — the demo's decals and the coordinate \
+             store together could not fill a sweep, so {} point(s) were sampled off the map's \
+             world faces and {} of those stayed clear of every in-clip camera. This source owes \
+             nothing to where anyone shot or walked, which is what lets it cover a map the store \
+             has never seen.",
+            stats.map_candidates, stats.map_camera_safe
         ));
     }
 
@@ -3150,5 +3251,88 @@ mod tests {
         assert!(other.exists(), "files that are not ours must never be touched");
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A survey with one camera in the room, facing away from the only wall in
+    /// it — so nothing on that wall is ever on screen and the camera test is
+    /// not what any of these assertions are about.
+    fn survey_facing_away(harvested: Vec<[f32; 3]>) -> Survey {
+        Survey {
+            harvested,
+            world_harvested: Vec::new(),
+            texture_index: Some(0),
+            spawn_eye: None,
+            grounded_origin: None,
+            floor_candidates: Vec::new(),
+            window_cameras: vec![([50.0, 32.0, 32.0], [-1.0, 0.0, 0.0])],
+        }
+    }
+
+    #[test]
+    fn the_map_is_not_scanned_when_the_demo_can_fill_the_sweep_itself() {
+        // The laziness is the design, not an optimisation detail. Sampling a
+        // map's faces and tracing each one against every camera costs real time
+        // on every demo, and on a map whose coordinate store is populated it
+        // buys nothing — the proven sources have already filled the pool. A
+        // regression here is invisible in the output and shows up only as the
+        // pre-pass getting slower.
+        let map = bsp::one_wall_room();
+        let opts = DecalCleanOptions::default();
+        let survey = survey_facing_away(vec![[98.0, 20.0, 20.0], [98.0, 40.0, 40.0]]);
+        let visibility = Visibility::new(Some(&map), &survey.window_cameras, &opts);
+
+        let placement = resolve_flush_positions(&survey, &[], &visibility, &opts, 2);
+
+        assert_eq!(placement.positions.len(), 2);
+        assert_eq!(
+            placement.map_sampled, 0,
+            "the map was scanned even though the demo's own decals sufficed"
+        );
+    }
+
+    #[test]
+    fn a_demo_that_proves_nothing_is_carried_by_the_map_itself() {
+        // The case the source exists for: a map nothing has been harvested
+        // from, where every source drawn from the match comes back empty. The
+        // map still has walls.
+        let map = bsp::one_wall_room();
+        let opts = DecalCleanOptions::default();
+        let survey = survey_facing_away(Vec::new());
+        let visibility = Visibility::new(Some(&map), &survey.window_cameras, &opts);
+
+        let placement = resolve_flush_positions(&survey, &[], &visibility, &opts, 2);
+
+        assert!(placement.map_sampled > 0, "the map was never consulted");
+        assert_eq!(placement.positions.len(), 2);
+        assert_eq!(placement.source, Some(FlushSource::MapGeometry));
+        for p in &placement.positions {
+            assert!(
+                (p[0] - 98.0).abs() < 1e-3,
+                "off the wall and into the room: {:?}",
+                p
+            );
+        }
+    }
+
+    #[test]
+    fn the_experiment_gate_refuses_everything_the_match_proved() {
+        // `DOD_FLUSH_MAP_GEOMETRY_ONLY` exists to put the map source in front
+        // of someone watching the game. It is worthless if a harvested decal
+        // can still slip into the pool and be the thing they end up looking at.
+        let map = bsp::one_wall_room();
+        let opts = DecalCleanOptions {
+            map_geometry_only: true,
+            ..Default::default()
+        };
+        let survey = survey_facing_away(vec![[98.0, 20.0, 20.0], [98.0, 40.0, 40.0]]);
+        let visibility = Visibility::new(Some(&map), &survey.window_cameras, &opts);
+
+        let placement = resolve_flush_positions(&survey, &[], &visibility, &opts, 2);
+
+        assert_eq!(placement.source, Some(FlushSource::MapGeometry));
+        assert_eq!(
+            placement.tiled_safe, 0,
+            "the proven sources were still consulted under the gate"
+        );
     }
 }

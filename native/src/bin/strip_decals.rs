@@ -161,6 +161,9 @@ fn main() {
                 Some(FlushSource::MapAtlas) => println!(
                     "Flush source:          the map's accumulated coordinate store"
                 ),
+                Some(FlushSource::MapGeometry) => println!(
+                    "Flush source:          sampled off the map's own world faces (BSP geometry)"
+                ),
                 None => println!("Flush source:          <none>"),
             }
             println!(

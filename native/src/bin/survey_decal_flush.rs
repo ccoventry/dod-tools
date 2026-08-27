@@ -18,7 +18,12 @@
 //!
 //! Columns: label, demo, status, clips, positions, positions wanted, tiles,
 //! camera-safe tiles, source, on-camera frames, harvested decals, atlas size,
-//! visibility basis, map faces.
+//! visibility basis, map faces, bursts short, bursts placed, carriers inside a
+//! clip, map-geometry candidates, camera-safe map-geometry candidates.
+//!
+//! Leaving `FLUSH_ATLAS_DIR` unset is how a **new map** is simulated: no
+//! coordinate store, so the demo stands on its own decals and, failing those,
+//! on the map's own faces.
 
 use native::patch::scanner::scan_demo_for_highlights;
 use native::patch::types::PatcherConfig;
@@ -127,6 +132,7 @@ fn main() {
             let source = match s.flush_source {
                 Some(FlushSource::TiledPlane) => "tiled",
                 Some(FlushSource::MapAtlas) => "atlas",
+                Some(FlushSource::MapGeometry) => "mapgeom",
                 Some(FlushSource::HarvestedNearSpawn) => "harvested",
                 Some(FlushSource::PlayerFloorPath) => "floorpath",
                 Some(FlushSource::ComputedSpawnFloor) => "computed",
@@ -144,7 +150,7 @@ fn main() {
                 VisibilityBasis::ConeOnly => "cone",
             };
             println!(
-                "{}\t{}\tOK\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                "{}\t{}\tOK\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
                 label,
                 name,
                 windows.len(),
@@ -164,6 +170,11 @@ fn main() {
                 s.bursts_short.len(),
                 s.bursts_placed,
                 s.burst_frames_inside_clip,
+                // Candidates sampled off the map's own faces, and how many
+                // survived the camera test. Both 0 unless the proven sources
+                // fell short and the map source was actually reached.
+                s.map_candidates,
+                s.map_camera_safe,
             );
         }
         Err(e) => println!("{}\t{}\tSKIP\tclean failed: {}", label, name, e),
