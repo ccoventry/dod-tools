@@ -2399,15 +2399,16 @@ fn report(
     }
 
     // Positions closer to the lens than preferred. Not a defect on its own —
-    // every one of them cleared the cone test, so none is ever in shot — but it
-    // narrows the margin against a camera turn falling between two samples.
+    // the surface each is drawn on cleared the on-screen test, so none is ever
+    // in shot — but it narrows the margin against a camera turn falling between
+    // two samples.
     if let Some(nearest) = stats.min_camera_distance {
         if nearest < opts.min_camera_clearance {
             crate::log_markdown(&format!(
                 "ℹ️ **Decal flush spots are closer to the camera than preferred** — nearest \
-                 approach {:.0} units against a {:.0}-unit preference. All of them cleared the \
-                 line-of-sight test, so none should be in shot; this is the margin narrowing, \
-                 not a decal on screen.",
+                 approach {:.0} units against a {:.0}-unit preference. The surface each one is \
+                 drawn on cleared the line-of-sight test, so none should be in shot; this is the \
+                 margin narrowing, not a decal on screen.",
                 nearest, opts.min_camera_clearance
             ));
         }
