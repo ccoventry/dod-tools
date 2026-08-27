@@ -125,8 +125,20 @@ pub struct DecalCleanOptions {
     /// Cap on synthetic decals added to any single network packet, so injection
     /// never meaningfully grows a frame the engine already sized.
     pub max_per_frame: usize,
-    /// Finish the burst this many ticks before the capture window opens.
-    pub lead_ticks: i32,
+    /// Finish the burst this long, in **seconds of demo time**, before the
+    /// capture window opens.
+    ///
+    /// Seconds, not frames, for two reasons. A frame count is not a duration —
+    /// frame records are not evenly spaced, and there are ~4.4 of them per
+    /// rendered frame, so the flat `300` this used to be was worth a median of
+    /// 0.6s across a real library rather than the ~3s it read as. And the
+    /// margin has a job that is measured in time: the engine has to actually
+    /// ingest the burst — 272 decals at a 256 ring, 4,112 at the maximum — and
+    /// finish turning the ring before the first recorded frame.
+    ///
+    /// Resolved by walking the frames' own timestamps, per the "Pure Float
+    /// Timestamps" rule in `docs/app_architecture.md`. Never `seconds * fps`.
+    pub lead_seconds: f32,
     /// Emit `r_decals <ring_limit>` as a console-command frame at playback
     /// start, making a patched demo self-contained for testing.
     pub inject_r_decals_command: bool,
@@ -191,7 +203,7 @@ impl Default for DecalCleanOptions {
             ring_limit: 256,
             burst_margin: 16,
             max_per_frame: 4,
-            lead_ticks: 300,
+            lead_seconds: DEFAULT_LEAD_SECONDS,
             inject_r_decals_command: true,
             flush_coord: None,
             flush_texture_index: None,
@@ -217,6 +229,14 @@ pub struct DecalCleanStats {
     /// are NOT guaranteed clean, so they are reported rather than silently
     /// under-flushed.
     pub bursts_short: Vec<(i32, usize, usize)>,
+    /// Burst carrier frames that fall *inside* a clip being recorded.
+    ///
+    /// The sweep is supposed to turn the decal ring in the gap before a clip.
+    /// A carrier landing inside an earlier clip's own record window turns the
+    /// ring while that clip is being filmed, which can evict the bullet holes
+    /// the firefight is putting up — decals vanishing mid-shot, the exact
+    /// artefact this feature exists to remove.
+    pub burst_frames_inside_clip: usize,
     pub flush_coord: Option<[f32; 3]>,
     pub flush_source: Option<FlushSource>,
     pub flush_texture_index: Option<u8>,
@@ -629,6 +649,61 @@ pub(super) fn frame_ordinals(demo: &dem::types::Demo) -> Vec<(usize, usize, i32)
 
 pub(super) fn in_window(ordinal: i32, keep_windows: &[(i32, i32)]) -> bool {
     keep_windows.iter().any(|&(s, e)| ordinal >= s && ordinal <= e)
+}
+
+/// How long before a clip the sweep should finish, in seconds of demo time.
+///
+/// Two seconds rather than the ~0.6 the old flat frame count worked out to. It
+/// is comfortably more margin than the value that passed in game, comfortably
+/// inside a default pre-roll so the burst cannot reach back into an earlier
+/// clip, and it gives the engine room to ingest a maximum sweep's 4,112 decals
+/// before the first recorded frame rather than finishing just in time.
+pub const DEFAULT_LEAD_SECONDS: f32 = 2.0;
+
+/// When the timestamps cannot answer, fall back to the frame count this used to
+/// be — the same shape of fallback `builder::find_tick_backwards` uses when
+/// `frame_times` is truncated. Never worse than the behaviour that shipped.
+const FALLBACK_LEAD_FRAMES: i32 = 300;
+
+/// The frame ordinal that sits `lead_seconds` of demo time before `window_start`.
+///
+/// Walks the frames' own timestamps rather than dividing by an average rate.
+/// Confined to the directory entry the window starts in, because times restart
+/// per entry — a LOADING entry's near-zero timestamps would otherwise satisfy
+/// any target and drag the deadline to the front of the demo.
+///
+/// `None` when the entry's timestamps cannot answer, leaving the caller to fall
+/// back to a frame count.
+fn deadline_before(
+    window_start: i32,
+    lead_seconds: f32,
+    frames: &[(usize, usize, i32)],
+    times: &[f32],
+) -> Option<i32> {
+    if lead_seconds <= 0.0 {
+        return Some(window_start);
+    }
+    let anchor_slot = frames.iter().position(|&(_, _, ord)| ord == window_start)?;
+    let (anchor_entry, _, _) = frames[anchor_slot];
+    let anchor_time = *times.get(anchor_slot)?;
+    if !anchor_time.is_finite() {
+        return None;
+    }
+    let target = anchor_time - lead_seconds;
+
+    // Walk back to the last frame at or before the target, in this entry only.
+    let mut slot = anchor_slot;
+    while slot > 0 {
+        slot -= 1;
+        let (entry, _, ord) = frames[slot];
+        if entry != anchor_entry {
+            return None;
+        }
+        if times[slot] <= target {
+            return Some(ord);
+        }
+    }
+    None
 }
 
 pub(super) fn survey(
@@ -1493,8 +1568,24 @@ pub fn clean_demo_decals(
             // small enough that a handful of extra 9-byte messages cannot push
             // the packet near the engine's buffer ceiling. Built across every
             // entry at once so a window is never confined to one entry's frames.
-            let eligible: Vec<(usize, usize, i32)> = frame_ordinals(&demo)
-                .into_iter()
+            // Every frame with its ordinal and its own timestamp, so the burst
+            // deadline can be a duration walked through real times rather than
+            // a frame count standing in for one.
+            let all_frames = frame_ordinals(&demo);
+            let all_times: Vec<f32> = all_frames
+                .iter()
+                .map(|&(entry_idx, frame_idx, _)| {
+                    demo.directory.entries[entry_idx]
+                        .frames
+                        .get(frame_idx)
+                        .map(|f| f.time)
+                        .unwrap_or(f32::NAN)
+                })
+                .collect();
+
+            let eligible: Vec<(usize, usize, i32)> = all_frames
+                .iter()
+                .copied()
                 .filter(|&(entry_idx, frame_idx, _)| {
                     demo.directory.entries[entry_idx]
                         .frames
@@ -1515,7 +1606,9 @@ pub fn clean_demo_decals(
             let mut plan: Vec<(usize, usize, usize)> = Vec::new();
 
             for &(window_start, _) in keep_windows {
-                let deadline = window_start - opts.lead_ticks;
+                let deadline =
+                    deadline_before(window_start, opts.lead_seconds, &all_frames, &all_times)
+                        .unwrap_or(window_start - FALLBACK_LEAD_FRAMES);
                 let mut remaining = burst_count;
 
                 // Walk backwards from the deadline so the sweep finishes as
@@ -1532,9 +1625,12 @@ pub fn clean_demo_decals(
                     if remaining == 0 {
                         break;
                     }
-                    let (entry_idx, frame_idx, _) = eligible[slot];
+                    let (entry_idx, frame_idx, ordinal) = eligible[slot];
                     if !used.insert((entry_idx, frame_idx)) {
                         continue;
+                    }
+                    if in_window(ordinal, keep_windows) {
+                        stats.burst_frames_inside_clip += 1;
                     }
                     let take = remaining.min(opts.max_per_frame);
                     plan.push((entry_idx, frame_idx, take));
@@ -2372,6 +2468,80 @@ mod tests {
         std::fs::create_dir_all(dir).unwrap();
         std::fs::write(dir.join(format!("{}.bsp", name)), &bytes).unwrap();
         crate::patch::bsp::map_checksum(&bytes).unwrap()
+    }
+
+    // ── Burst deadline ──────────────────────────────────────────────────────
+    //
+    // A frame count is not a duration. Records are not evenly spaced and there
+    // are several per rendered frame, so `seconds * fps` drifts — the mistake
+    // `docs/bugs.md` records as "All injected commands collapse to Tick 0".
+
+    /// `(entry, frame, ordinal)` plus the matching timestamps, the two arrays
+    /// `deadline_before` walks.
+    fn frames_at(times: &[(usize, f32)]) -> (Vec<(usize, usize, i32)>, Vec<f32>) {
+        let mut frames = Vec::new();
+        let mut stamps = Vec::new();
+        let mut per_entry = std::collections::HashMap::new();
+        for (i, &(entry, time)) in times.iter().enumerate() {
+            let idx = per_entry.entry(entry).or_insert(0usize);
+            frames.push((entry, *idx, i as i32 + 1));
+            *idx += 1;
+            stamps.push(time);
+        }
+        (frames, stamps)
+    }
+
+    #[test]
+    fn the_deadline_is_walked_through_real_timestamps_not_divided_by_a_rate() {
+        // Deliberately uneven spacing: a rate-based answer would land in the
+        // wrong place precisely because the gaps differ.
+        let (frames, times) = frames_at(&[
+            (1, 0.0),
+            (1, 0.1),
+            (1, 5.0),
+            (1, 5.05),
+            (1, 5.1),
+            (1, 5.9),
+            (1, 6.0),
+        ]);
+
+        // 1s before the frame at t=6.0 means target 5.0, and the last frame at
+        // or before that is ordinal 3 (t=5.0).
+        assert_eq!(deadline_before(7, 1.0, &frames, &times), Some(3));
+        // Shave the lead and the deadline moves later, across the tight cluster
+        // rather than proportionally — which is the whole point of walking.
+        assert_eq!(deadline_before(7, 0.95, &frames, &times), Some(4));
+        // A lead longer than the entry's whole history cannot be answered.
+        assert_eq!(deadline_before(7, 30.0, &frames, &times), None);
+    }
+
+    #[test]
+    fn the_walk_stops_at_the_entry_boundary() {
+        // Timestamps restart per directory entry: a LOADING entry's near-zero
+        // stamps satisfy any target and would drag the deadline to the front of
+        // the demo. Better to answer None and let the caller fall back.
+        let (frames, times) = frames_at(&[(0, 0.0), (0, 0.01), (1, 0.0), (1, 0.5), (1, 1.0)]);
+
+        // A lead the entry can satisfy on its own is answered from the entry.
+        assert_eq!(deadline_before(5, 0.9, &frames, &times), Some(3));
+        assert_eq!(deadline_before(5, 0.4, &frames, &times), Some(4));
+
+        // One it cannot gives up rather than crossing: the frames before are a
+        // different entry whose clock restarted, and their near-zero stamps
+        // would satisfy any target and drag the deadline to the demo's front.
+        assert_eq!(
+            deadline_before(5, 2.0, &frames, &times),
+            None,
+            "must not reach into the previous entry"
+        );
+    }
+
+    #[test]
+    fn a_zero_lead_is_the_window_itself_and_an_unknown_anchor_is_none() {
+        let (frames, times) = frames_at(&[(1, 0.0), (1, 1.0)]);
+
+        assert_eq!(deadline_before(2, 0.0, &frames, &times), Some(2));
+        assert_eq!(deadline_before(99, 1.0, &frames, &times), None);
     }
 
     #[test]

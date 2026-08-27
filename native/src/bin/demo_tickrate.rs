@@ -12,13 +12,16 @@
 //! second. Reading the header gives a figure that is right about nothing the
 //! pipeline does. See `docs/goldsrc_dod_quirks.md`.
 //!
-//! `DecalCleanOptions::lead_ticks` is a flat frame count, so the wall-clock
-//! margin between the flush finishing and recording starting is
-//! `lead_ticks / tickrate` — which shrinks as recording fps rises.
+//! The tickrate is also what makes a flat frame count useless as a margin: the
+//! flush's lead was once a flat 300 frames, worth ~3s at 100 records/sec and
+//! ~0.6s at 500. It is `DecalCleanOptions::lead_seconds` now, resolved by
+//! walking the frames' own timestamps — this tool reports what that flat count
+//! *would* have been worth, which is how the problem was found.
 
 use native::patch::scanner::scan_demo_for_highlights;
 
-/// Matches `DecalCleanOptions::lead_ticks`.
+/// The flat frame count the flush lead used to be, kept here so the tool can
+/// show what it was worth per demo.
 const LEAD_TICKS: f32 = 300.0;
 
 fn main() {

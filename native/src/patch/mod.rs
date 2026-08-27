@@ -95,6 +95,7 @@ pub use highlevel::patch_demo_highlights;
 #[cfg(not(target_arch = "wasm32"))]
 pub use decal_strip::{
     capture_fov, clean_demo_decals, on_screen_half_angle, prepare_flushed_source,
+    DEFAULT_LEAD_SECONDS,
     proven_world_coordinates, ring_limit, ring_limit_from_init, strip_decals_outside_windows,
     CleanedSource, DecalCleanOptions, DecalCleanStats, FlushSource, VisibilityBasis,
     DECALS_PER_POSITION, MAX_OVERLAP_DECALS,

@@ -14,7 +14,7 @@
 //!   `FLUSH_ATLAS_DIR`  coordinate store to use (default: none, so no store)
 //!   `FLUSH_MAPS_DIR`   map directory (default: derived from the demo's folder)
 //!   `FLUSH_FOV`        capture FOV (default 90)
-//!   `FLUSH_LEAD`       frames the sweep must finish before a clip (default 300)
+//!   `FLUSH_LEAD_SECONDS` seconds the sweep must finish before a clip (default 2.0)
 //!
 //! Columns: label, demo, status, clips, positions, positions wanted, tiles,
 //! camera-safe tiles, source, on-camera frames, harvested decals, atlas size,
@@ -104,14 +104,11 @@ fn main() {
         .and_then(|s| s.parse().ok())
         .unwrap_or(256);
 
-    // How far ahead of a clip the sweep must finish, in frames. Overridable so
-    // a time-based lead can be measured before anyone commits to one: the
-    // default is a flat 300 frames, which is ~3s only at ~100 records/sec and
-    // is worth ~0.6s on most of this library. See `demo_tickrate`.
-    let lead: i32 = std::env::var("FLUSH_LEAD")
+    // How far ahead of a clip the sweep must finish, in seconds of demo time.
+    let lead: f32 = std::env::var("FLUSH_LEAD_SECONDS")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(DecalCleanOptions::default().lead_ticks);
+        .unwrap_or(DecalCleanOptions::default().lead_seconds);
 
     let opts = DecalCleanOptions {
         inject_r_decals_command: false,
@@ -120,7 +117,7 @@ fn main() {
             .map(std::path::PathBuf::from),
         maps_dir,
         ring_limit: ring,
-        lead_ticks: lead,
+        lead_seconds: lead,
         visibility_cone_degrees: on_screen_half_angle(fov, 1920, 1080),
         ..Default::default()
     };
@@ -147,7 +144,7 @@ fn main() {
                 VisibilityBasis::ConeOnly => "cone",
             };
             println!(
-                "{}\t{}\tOK\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                "{}\t{}\tOK\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
                 label,
                 name,
                 windows.len(),
@@ -166,6 +163,7 @@ fn main() {
                 // sweep is reachable at all.
                 s.bursts_short.len(),
                 s.bursts_placed,
+                s.burst_frames_inside_clip,
             );
         }
         Err(e) => println!("{}\t{}\tSKIP\tclean failed: {}", label, name, e),
