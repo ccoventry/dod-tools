@@ -217,6 +217,23 @@ pub fn final_init_commands(config: &PatcherConfig) -> Vec<String> {
     out
 }
 
+/// Whether a scheduled command lands while playback is still fast-forwarding.
+///
+/// A block runs at `host_framerate 0.05` until the pre-roll drops it back to
+/// real time at `speed_drop_tick`, and resumes fast-forwarding once the
+/// post-roll ends at `post_roll_end_tick`. Outside that window a command still
+/// executes — it just executes with the engine racing through frames and its
+/// audio buffers unflushed, so anything touching sound, timing or rendering
+/// does something other than what it reads as, with nothing in the captured
+/// video to explain it.
+pub fn runs_during_fast_forward(
+    target_tick: i32,
+    speed_drop_tick: i32,
+    post_roll_end_tick: i32,
+) -> bool {
+    target_tick < speed_drop_tick || target_tick > post_roll_end_tick
+}
+
 pub fn blocks_merge(prev_end: i32, next_start: i32, lead_ticks: i32, trail_ticks: i32) -> bool {
     (next_start - lead_ticks).max(0) <= prev_end + trail_ticks
 }
@@ -740,6 +757,47 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
                 let cmd_len = custom.command.len();
                 if cmd_len > crate::patch::CUSTOM_CMD_WARN_LIMIT {
                     crate::log_markdown(&format!("⚠️ **WARNING:** Custom command exceeds 60 bytes and will likely be dropped by the GoldSrc Cbuf: {}", custom.command));
+                }
+
+                // Playback runs at `host_framerate 0.05` until the pre-roll
+                // drops it back to real time at `s_speed_tick`, and resumes
+                // fast-forwarding once the post-roll ends at `s_end`. A command
+                // landing outside that window still executes, but it executes
+                // while the engine is racing through frames with its audio
+                // buffers in a bad state — so anything about sound, timing or
+                // rendering does something other than what it looks like it
+                // does, and nothing in the captured video explains why.
+                if runs_during_fast_forward(target_tick, s_speed_tick, s_end) {
+                    let (where_, fix) = if target_tick < s_speed_tick {
+                        (
+                            "before playback drops back to real time",
+                            format!(
+                                "keep the offset under the {:.1}s pre-roll, or raise the pre-roll",
+                                config.pre_roll_seconds
+                            ),
+                        )
+                    } else {
+                        (
+                            "after the post-roll ends and fast-forward resumes",
+                            format!(
+                                "keep the offset under the {:.1}s post-roll, or raise the post-roll",
+                                config.post_roll_seconds
+                            ),
+                        )
+                    };
+                    crate::log_markdown(&format!(
+                        "⚠️ **Scheduled command runs during fast-forward** — `{}` is set {} {:.1}s \
+                         {} the highlight, which lands at tick {}, {}. The engine is at \
+                         `host_framerate 0.05` there with its audio buffers unflushed. To have it \
+                         run at normal speed, {}.",
+                        custom.command,
+                        relation_str.to_lowercase(),
+                        custom.offset,
+                        if matches!(custom.relation, CommandRelation::Before) { "before" } else { "after" },
+                        target_tick,
+                        where_,
+                        fix
+                    ));
                 }
                 scheduled_commands.push((target_tick, custom.command.clone()));
             }
@@ -1404,6 +1462,19 @@ mod tests {
         config.game_path = temp_game_path.to_string_lossy().to_string();
         config.primary_media_dir = Some(temp_game_path);
         config
+    }
+
+    #[test]
+    fn a_command_outside_the_real_time_window_is_flagged() {
+        // Real time runs from the speed drop (pre-roll) to the end of the
+        // post-roll. Either side of that the engine is at host_framerate 0.05.
+        let (speed_drop, post_roll_end) = (1000, 2000);
+
+        assert!(runs_during_fast_forward(999, speed_drop, post_roll_end), "before the speed drop");
+        assert!(runs_during_fast_forward(2001, speed_drop, post_roll_end), "after the post-roll");
+        assert!(!runs_during_fast_forward(1000, speed_drop, post_roll_end), "the drop itself");
+        assert!(!runs_during_fast_forward(1500, speed_drop, post_roll_end), "mid-clip");
+        assert!(!runs_during_fast_forward(2000, speed_drop, post_roll_end), "the last post-roll tick");
     }
 
     #[test]
