@@ -171,6 +171,34 @@ This is an **upper bound**: it is what the map holds before any camera has looke
 survives the in-clip camera test is the number that decides a sweep, and it needs a demo to
 measure.
 
+### What it is worth in a capture
+
+A/B over a 64-demo sample spread across the library, at **ring 4096 with no coordinate store** —
+which is the new-map case, and the only configuration where the proven sources are stretched:
+
+| | before | after |
+|---|---|---|
+| demos reaching a full 1,028-position sweep | 57 / 60 | **60 / 60** |
+| smallest sweep any demo got | **293** | **1,028** |
+| demos with a position on camera | 0 | **0** |
+| demos where the map source fired | — | 16 / 60 |
+| camera-safe map candidates when it did | — | mean 7,210, min **4,832** |
+
+The three demos that fell short before are the shape of the problem the source was built for.
+`monday-wsod25_r07_m3_h1.dem` laid **55** tiles and kept 20 of them, and the map carried it from 293
+positions to a full 1,028. `probe_fine_in.dem` kept **zero** of its 76 tiles — every one in shot —
+and the map supplied 8,895 camera-safe candidates on its own.
+
+Note what the "map fired" row does *not* say. It fired on 16 demos but only 3 of those were short
+without it; on the other 13 the proven sources were merely a few positions from the target and the
+map closed a gap that the floor-path source would otherwise have closed with spots under the
+player's own feet. That is a quality improvement rather than a count one, and the count cannot show
+it.
+
+At ring 256 the change is invisible on this library: **60/60 demos reach a full 68-position sweep
+before and after**, so the map source is never reached. That is the intended shape — headroom, not
+a dependency — and it is also why `DOD_FLUSH_MAP_GEOMETRY_ONLY` exists.
+
 ## The second prize: real occlusion
 
 Everything above treats the BSP as a supply of coordinates. It is also the only thing that can

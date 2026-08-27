@@ -81,6 +81,15 @@
   least 6,561 candidates (mean 11,835) against the 1,028 a 4096 ring needs, 100% projection hit
   rate, ~15 ms to scan. Measure it with `native/src/bin/probe_map_candidates`.
 
+  **What it is worth in a capture.** A/B over a 64-demo sample at **ring 4096 with no coordinate
+  store** — the new-map case, and the only configuration that stretches the proven sources: full
+  sweeps went **57/60 → 60/60**, and the smallest sweep any demo got went **293 → 1,028**, with
+  zero positions on camera either way. The map source fired on 16 of 60, supplying a mean of 7,210
+  camera-safe candidates (min 4,832) against the 1,028 needed. `monday-wsod25_r07_m3_h1.dem` laid
+  55 tiles and kept 20; `probe_fine_in.dem` kept **zero** of its 76 — every one in shot — and the
+  map carried both to a full sweep on its own. **At ring 256 the change is invisible** (60/60
+  before and after), which is the intended shape.
+
   Wired as a **fallback**, reached only when the demo's own decals and the coordinate store
   together cannot fill a sweep, so a mature map pays nothing for it and the validated ordering is
   untouched. `DOD_FLUSH_MAP_GEOMETRY_ONLY=1` forces it — the only way to put the new source in
