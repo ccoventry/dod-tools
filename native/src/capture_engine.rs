@@ -224,6 +224,15 @@ pub fn spawn_capture_engine(
             }
 
             let mut pool_junctions: Vec<std::path::PathBuf> = Vec::new();
+            // `build_batch_queue` creates a `_route_N` junction beside hl.exe for
+            // every drive it routes blocks to. It has no way to clean them up —
+            // it returns long before the capture ends — so they are listed here
+            // by the same indices and unlinked with everything else. Indices this
+            // batch never routed to simply are not there, which `remove_dir`
+            // reports as NotFound and the guard ignores.
+            let route_junctions: Vec<std::path::PathBuf> = (0..config.capture_directories.len())
+                .map(|idx| hl_exe_parent.join(format!("_route_{}", idx)))
+                .collect();
             for (idx, target_dir) in config.capture_directories.iter().enumerate() {
                 let junction_path = hl_exe_parent.join(format!("dod_pool_{}", idx));
                 let _ = std::fs::remove_dir(&junction_path);
@@ -265,6 +274,7 @@ pub fn spawn_capture_engine(
                 session_junction: session_junction.clone(),
                 exit_trigger: exit_trigger.clone(),
                 pool_junctions: pool_junctions.clone(),
+                route_junctions: route_junctions.clone(),
                 auto_clear_logs: config.auto_clear_logs,
                 auto_clear_temp_demos: config.auto_clear_temp_demos,
                 auto_clear_previews: config.auto_clear_previews,

@@ -1077,6 +1077,14 @@ pub struct WorkspaceGuard {
     pub session_junction: std::path::PathBuf,
     pub exit_trigger: std::path::PathBuf,
     pub pool_junctions: Vec<std::path::PathBuf>,
+    /// The `_route_N` junctions `build_batch_queue` creates beside `hl.exe`, one
+    /// per drive a batch routes blocks to.
+    ///
+    /// These were created but never unlinked: the only thing that removed one
+    /// was the *next* batch reusing that index, so a `_route_0` sat in the game
+    /// folder indefinitely after a capture. Tracked here so they go the same way
+    /// as the pool junctions — when the batch ends, not when another begins.
+    pub route_junctions: Vec<std::path::PathBuf>,
     pub auto_clear_logs: bool,
     pub auto_clear_temp_demos: bool,
     pub auto_clear_previews: bool,
@@ -1091,8 +1099,10 @@ impl Drop for WorkspaceGuard {
                 log::warn!("[WorkspaceGuard::drop] Failed to remove session_junction {:?}: {}", self.session_junction, e);
             }
         }
-        // Unlink every dod_pool_N junction created for the failover pool.
-        for junction in &self.pool_junctions {
+        // Unlink every dod_pool_N and _route_N junction. `remove_dir` unlinks a
+        // junction without touching what it points at, and NotFound is expected
+        // for any index this batch did not route to.
+        for junction in self.pool_junctions.iter().chain(self.route_junctions.iter()) {
             if let Err(e) = std::fs::remove_dir(junction) {
                 if e.kind() != std::io::ErrorKind::NotFound {
                     log::warn!("[WorkspaceGuard::drop] Failed to remove pool junction {:?}: {}", junction, e);
