@@ -311,9 +311,14 @@ pub fn roll_floors(config: &PatcherConfig) -> RollFloors {
 /// real time at `speed_drop_tick`, and resumes fast-forwarding once the
 /// post-roll ends at `post_roll_end_tick`. Outside that window a command still
 /// executes — it just executes with the engine racing through frames and its
-/// audio buffers unflushed, so anything touching sound, timing or rendering
-/// does something other than what it reads as, with nothing in the captured
-/// video to explain it.
+/// audio buffers unflushed.
+///
+/// Whether that matters depends entirely on the command, so this reports rather
+/// than warns. Setting a cvar early is usually harmless: `hud_deathnotice_time`
+/// ten seconds before a clip simply takes effect ten seconds before the clip.
+/// What misbehaves is anything that depends on playback running at real speed —
+/// sound, recording start/stop, rendering. Phrasing this as a hazard would cry
+/// wolf on the common, correct case, which is how a warning gets ignored.
 pub fn runs_during_fast_forward(
     target_tick: i32,
     speed_drop_tick: i32,
@@ -900,10 +905,13 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
                         )
                     };
                     crate::log_markdown(&format!(
-                        "⚠️ **Scheduled command runs during fast-forward** — `{}` is set {} {:.1}s \
-                         {} the highlight, which lands at tick {}, {}. The engine is at \
-                         `host_framerate 0.05` there with its audio buffers unflushed. To have it \
-                         run at normal speed, {}.",
+                        "ℹ️ **Scheduled command runs during fast-forward** — `{}` is set {} {:.1}s \
+                         {} the highlight, which lands at tick {}, {}. Setting a cvar there is \
+                         usually fine — it simply takes effect early. It is worth checking only \
+                         for commands that depend on playback running at real speed: anything \
+                         touching sound, recording, or rendering, since the engine is at \
+                         `host_framerate 0.05` with its audio buffers unflushed. To have it run \
+                         at normal speed instead, {}.",
                         custom.command,
                         relation_str.to_lowercase(),
                         custom.offset,
