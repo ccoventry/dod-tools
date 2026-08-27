@@ -82,6 +82,25 @@ fn write_director_event_payload(
     Ok(total_bytes as i32)
 }
 
+/// Parked R&D, deliberately kept: forcing the spectator view into one player's
+/// eyes by injecting `DRC_CMD_INEYE`.
+///
+/// **Unused, and not dead.** It exists for the HLTV case, which is still open.
+/// An HLTV demo carries every player's highlights and the app offers all of
+/// them, but there is no reliable way yet to put the camera on the one a clip
+/// is about — today that means left/right-clicking through spectator targets by
+/// hand. This is the attempt at doing it from the stream instead.
+///
+/// It is NOT about first-person demos. Those already record the only camera
+/// they have, and the Highlights table filters a POV demo down to the recording
+/// player (`isVisibleStreak`, `detail_pane.js`), so nothing there needs a view
+/// hijack. Other players' streaks are scanned out of a POV demo only so the
+/// Demo Analyzer can build a scoreboard from them.
+///
+/// Anything reasoning about where the capture camera is — the decal flush's
+/// visibility test most of all — reads the demo's recorded `refparams`, which
+/// is correct exactly while this stays unused. Switching it on moves the camera
+/// away from what those samples describe, and the flush would have to follow.
 #[allow(dead_code)]
 fn write_ineye_hijack_payload(
     writer: &mut std::io::BufWriter<std::fs::File>,
