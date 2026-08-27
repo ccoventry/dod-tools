@@ -59,7 +59,10 @@
   **Library sweeps, 2026-08-27, all 427 demos in the Steam folder** (not the earlier 85-demo sample):
   - **ring 256, final code: 427/427 full 68-position sweeps, zero on-camera, all geometry.** The shipped default is unaffected by any of the above.
   - **ring 1024: 427/427 full 260-position sweeps, zero on-camera, all geometry.** Every demo reached exactly 260.
+  - **ring 4096: 427/427 full 1028-position sweeps, zero on-camera, all geometry.** Every demo reached exactly 1028, and only one needed anything beyond the tiled source to get there (tiled-safe minimum 861, median 10,403).
   - ring 2048: 27/27 when the run was stopped to free the machine.
+
+  **Caveat on the 4096 result: it was measured against a mature coordinate store.** A map the store has never seen starts sparse, and the achievable ring rises as captures harvest it. That is not a hidden failure — the partial-sweep warning already names the shortfall and recommends the ring a demo can actually turn — but "4096 works" is a statement about this library's 17 populated maps, not about a fresh install or a new map.
 
   **The coordinate store is what decides how high the ring can go, and running the surveys filled it.** `dod_lennon2` went from 2,592 coordinates to ~14,127 and the store went from 4 maps to 17, because a survey harvests exactly as a capture does. On the demo above that turned a 736-of-1028 shortfall at ring 4096 into a **full 1028-position sweep, zero inside solid, zero drawn faces in shot** — so stage 3 is no longer a prerequisite for a maximum ring, and the earlier "needs BSP-derived coordinates first" reading was supply, not structure. It also means tonight's surveys are **not independent of each other**: each ran against a richer store than the last, so supply figures are not comparable across runs. The safety figures are unaffected.
 
