@@ -14,6 +14,7 @@
 //!   `FLUSH_ATLAS_DIR`  coordinate store to use (default: none, so no store)
 //!   `FLUSH_MAPS_DIR`   map directory (default: derived from the demo's folder)
 //!   `FLUSH_FOV`        capture FOV (default 90)
+//!   `FLUSH_LEAD`       frames the sweep must finish before a clip (default 300)
 //!
 //! Columns: label, demo, status, clips, positions, positions wanted, tiles,
 //! camera-safe tiles, source, on-camera frames, harvested decals, atlas size,
@@ -103,6 +104,15 @@ fn main() {
         .and_then(|s| s.parse().ok())
         .unwrap_or(256);
 
+    // How far ahead of a clip the sweep must finish, in frames. Overridable so
+    // a time-based lead can be measured before anyone commits to one: the
+    // default is a flat 300 frames, which is ~3s only at ~100 records/sec and
+    // is worth ~0.6s on most of this library. See `demo_tickrate`.
+    let lead: i32 = std::env::var("FLUSH_LEAD")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(DecalCleanOptions::default().lead_ticks);
+
     let opts = DecalCleanOptions {
         inject_r_decals_command: false,
         atlas_dir: std::env::var("FLUSH_ATLAS_DIR")
@@ -110,6 +120,7 @@ fn main() {
             .map(std::path::PathBuf::from),
         maps_dir,
         ring_limit: ring,
+        lead_ticks: lead,
         visibility_cone_degrees: on_screen_half_angle(fov, 1920, 1080),
         ..Default::default()
     };
