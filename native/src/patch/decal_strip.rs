@@ -193,6 +193,9 @@ pub struct DecalCleanOptions {
     /// Beyond this range a single decal is not readable on screen, so the
     /// line-of-sight test stops caring.
     pub visibility_max_distance: f32,
+    /// Keep every camera sample rather than the usual stride, and hand back
+    /// the chosen positions with them. Diagnostics only — off in the pipeline.
+    pub collect_diagnostics: bool,
 }
 
 impl Default for DecalCleanOptions {
@@ -215,6 +218,7 @@ impl Default for DecalCleanOptions {
             min_camera_clearance: 900.0,
             visibility_cone_degrees: 40.0,
             visibility_max_distance: 1800.0,
+            collect_diagnostics: false,
         }
     }
 }
@@ -283,6 +287,10 @@ pub struct DecalCleanStats {
     /// these two close together means the demo offers little surface; a
     /// shortfall with a wide gap means the surface it has is all in shot.
     pub tiled_camera_safe: usize,
+    /// The chosen positions and the in-clip camera samples they were judged
+    /// against, populated only when `collect_diagnostics` is set.
+    pub diagnostic_positions: Vec<[f32; 3]>,
+    pub diagnostic_cameras: Vec<([f32; 3], [f32; 3])>,
 }
 
 fn decode_coord(b: &[u8]) -> f32 {
@@ -800,7 +808,7 @@ pub(super) fn survey(
                     // so a stride costs no meaningful accuracy.
                     if in_window(ordinal, keep_windows) {
                         camera_stride += 1;
-                        if camera_stride % 4 == 0 {
+                        if opts.collect_diagnostics || camera_stride % 4 == 0 {
                             let fwd = &rp.forward;
                             if fwd.len() >= 3 {
                                 out.window_cameras.push((pos, [fwd[0], fwd[1], fwd[2]]));
@@ -1552,6 +1560,11 @@ pub fn clean_demo_decals(
         stats.flush_on_camera_frames =
             visibility.on_camera_frames(&flush_positions, &survey.window_cameras);
         stats.pvs_agrees_hidden = visibility.pvs_agreement(&flush_positions);
+
+        if opts.collect_diagnostics {
+            stats.diagnostic_positions = flush_positions.clone();
+            stats.diagnostic_cameras = survey.window_cameras.clone();
+        }
     }
 
     // ── Pass 1: strip decal messages outside the capture windows ─────────────

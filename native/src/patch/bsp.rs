@@ -602,6 +602,12 @@ impl Bsp {
         (-1 - node) as usize
     }
 
+    /// Contents of a leaf, or `CONTENTS_SOLID` for an index the tree should
+    /// not have produced — the same conservative reading `leaf_blocks` takes.
+    pub fn leaf_contents(&self, leaf: usize) -> i32 {
+        self.leaves.get(leaf).map(|l| l.contents).unwrap_or(CONTENTS_SOLID)
+    }
+
     fn leaf_blocks(&self, leaf: usize) -> bool {
         match self.leaves.get(leaf) {
             Some(l) => l.contents == CONTENTS_SOLID || l.contents == CONTENTS_SKY,
