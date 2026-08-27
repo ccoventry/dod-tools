@@ -65,6 +65,16 @@ export async function mapDownloadUrl(mapName) {
 
 // Read-only scan of the game's config files for cvars the pipeline depends on.
 // Nothing in this app writes to a config file; this only reports.
+// What the pre-roll and post-roll have to cover. Quiet on failure: a timing
+// hint that cannot be computed is not worth interrupting anyone over.
+export async function getRollFloors(preRoll, postRoll, decalFlush, customCommands = []) {
+  return invoke("roll_floors", { preRoll, postRoll, decalFlush, customCommands })
+    .catch((err) => {
+      console.error("IPC Execution Error (roll_floors):", err);
+      return null;
+    });
+}
+
 export async function scanGameConfigs(
   gamePath,
   initCommands = [],

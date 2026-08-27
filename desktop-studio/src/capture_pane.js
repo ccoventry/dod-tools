@@ -5,6 +5,7 @@ import { showToast } from './toast.js';
 import { requestProcessGuardedLaunch } from './detail_pane.js';
 import { createListEditor } from './list_editor.js';
 import { refreshCfgWarnings } from './cfg_warnings.js';
+import { refreshRollFloors } from './roll_floors.js';
 import { streakUid, recordTake } from './take_index.js';
 import { STRINGS } from './strings.js';
 
@@ -564,6 +565,9 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
       // These run last of all — after the configs and after the init commands —
       // and are the only place a cvar changes partway through a capture.
       refreshInitCommandWarnings();
+      // A Scheduled Command offset is one of the terms the roll floors are
+      // built from, so moving one can move the floor.
+      refreshRollFloors();
     },
   });
 

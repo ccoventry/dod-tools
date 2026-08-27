@@ -209,6 +209,10 @@
 
             <!-- Tab Content: Timing Options -->
             <div id="tab-timing-options" class="config-tab-content" style="display: none;">
+              <!-- Populated by roll_floors.js when a roll is shorter than the
+                   audio resync, the sound flush, the decal sweep's lead or a
+                   Scheduled Command's offset needs. -->
+              <div id="roll-floor-banner" hidden></div>
               <div class="grid-controls">
                 <div class="control-group">
                   <label for="config-pre-roll" data-str="CAPTURE_CONFIG.PRE_ROLL_LABEL">Pre-roll (s):</label>

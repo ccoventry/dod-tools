@@ -13,6 +13,7 @@ import {
 } from './ipc_bridge.js';
 import { renderMasterList, initMasterPane } from './master_pane.js';
 import { initMapWarnings, refreshMapWarnings, resetMapWarnings } from './map_warnings.js';
+import { initRollFloors } from './roll_floors.js';
 
 import { renderDetailView, initDetailPane } from './detail_pane.js';
 import { initCaptureUI, getCommandsState, hydrateCommandsState, refreshLaunchGuard, refreshInitCommandWarnings } from './capture_pane.js';
@@ -1171,6 +1172,9 @@ window.addEventListener("DOMContentLoaded", async () => {
   // Read at click time, not captured: the hl.exe path can be set after a scan
   // has already run and left the banner up.
   initMapWarnings(() => document.querySelector('#hl-path-input')?.value?.trim() || '');
+  // capture_pane.js owns the Scheduled Command list, so the floor check reads
+  // it from there rather than keeping a second copy.
+  initRollFloors(() => getCommandsState().custom_commands);
   // Scanned once the persisted hl.exe path is in the DOM, and again whenever it
   // changes — a config file the app cannot see is exactly what this warns about.
   const hlPathInput = document.querySelector('#hl-path-input');

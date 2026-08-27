@@ -421,6 +421,7 @@ pub fn run() {
             map_manager::download_map,
             map_manager::map_download_url,
             map_manager::scan_game_configs,
+            map_manager::roll_floors,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -217,6 +217,94 @@ pub fn final_init_commands(config: &PatcherConfig) -> Vec<String> {
     out
 }
 
+/// The shortest real-time run-up the engine will tolerate before recording.
+///
+/// `docs/goldsrc_dod_quirks.md`: fast-forwarding breaks the engine's audio
+/// buffers, and the speed must return to real time "2 to 4 seconds prior to
+/// injecting `mirv_recordmovie_start`" to flush and resync. This is the lower
+/// end of that range — the floor, not the recommendation.
+pub const AUDIO_RESYNC_SECONDS: f32 = 2.0;
+
+/// What the pre-roll and post-roll have to cover, and which requirement is
+/// currently setting the bar.
+///
+/// The rolls stopped being a matter of taste once other things started being
+/// measured against them: the audio resync, the sound flush, the decal sweep's
+/// lead, and any Scheduled Command's offset. Each is knowable, so the app can
+/// say when a roll is too short instead of leaving it to be discovered in a
+/// capture that looks almost right.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RollFloors {
+    pub pre_roll: f32,
+    /// Which term set `pre_roll`.
+    pub pre_roll_binding: &'static str,
+    pub post_roll: f32,
+    pub post_roll_binding: &'static str,
+    pub audio_resync: f32,
+    pub sound_flush: f32,
+    /// The decal sweep's lead, or 0 when the flush is off.
+    pub flush_lead: f32,
+    /// Largest "Before" offset among the Scheduled Commands.
+    pub scheduled_before: f32,
+    /// Largest "After" offset among them.
+    pub scheduled_after: f32,
+}
+
+/// Compute the floors for a configuration.
+///
+/// Deliberately does NOT fold in the burst's own span. At a 4,096 ring that
+/// spans several seconds and would demand an enormous pre-roll — but the burst
+/// is network messages in the demo stream rather than console commands, so
+/// whether it needs real-time playback at all is unverified. Guessing a floor
+/// from an unknown would be worse than leaving it out and saying so.
+pub fn roll_floors(config: &PatcherConfig) -> RollFloors {
+    let flush_lead = if config.decal_flush {
+        crate::patch::DEFAULT_LEAD_SECONDS
+    } else {
+        0.0
+    };
+    let offset_for = |want_after: bool| {
+        config
+            .custom_commands
+            .iter()
+            .filter(|c| matches!(c.relation, CommandRelation::After) == want_after)
+            .map(|c| c.offset)
+            .fold(0.0f32, f32::max)
+    };
+    let scheduled_before = offset_for(false);
+    let scheduled_after = offset_for(true);
+
+    // Highest wins, and the label names it so the message can be acted on.
+    let pre_terms = [
+        (AUDIO_RESYNC_SECONDS, "the audio resync after fast-forward"),
+        (SOUND_FLUSH_LEAD_SECONDS, "the stopsound flush"),
+        (flush_lead, "the decal flush's lead"),
+        (scheduled_before, "a Scheduled Command set before the highlight"),
+    ];
+    let (pre_roll, pre_roll_binding) = pre_terms
+        .iter()
+        .copied()
+        .fold((0.0f32, "nothing"), |acc, t| if t.0 > acc.0 { t } else { acc });
+
+    let (post_roll, post_roll_binding) = if scheduled_after > 0.0 {
+        (scheduled_after, "a Scheduled Command set after the highlight")
+    } else {
+        (0.0, "nothing")
+    };
+
+    RollFloors {
+        pre_roll,
+        pre_roll_binding,
+        post_roll,
+        post_roll_binding,
+        audio_resync: AUDIO_RESYNC_SECONDS,
+        sound_flush: SOUND_FLUSH_LEAD_SECONDS,
+        flush_lead,
+        scheduled_before,
+        scheduled_after,
+    }
+}
+
 /// Whether a scheduled command lands while playback is still fast-forwarding.
 ///
 /// A block runs at `host_framerate 0.05` until the pre-roll drops it back to
@@ -324,6 +412,32 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
     let mut grouped: std::collections::HashMap<(&str, Option<&str>), Vec<(usize, &CaptureStreak)>> = std::collections::HashMap::new();
     for (idx, streak) in raw_streaks.iter().enumerate() {
         grouped.entry((streak.source_demo.as_str(), streak.target_player.as_deref())).or_default().push((idx, streak));
+    }
+
+    // The rolls are load-bearing now — the audio resync, the sound flush, the
+    // decal sweep's lead and any Scheduled Command's offset all measure against
+    // them — so say when one is too short rather than leaving it to be found in
+    // a capture that looks almost right.
+    let floors = roll_floors(config);
+    if config.pre_roll_seconds < floors.pre_roll {
+        crate::log_markdown(&format!(
+            "⚠️ **Pre-roll is shorter than this capture needs** — {:.1}s, against a {:.1}s floor \
+             set by {}. Playback returns to real time {:.1}s before recording, which is not enough \
+             for it: the engine's audio buffers are left unflushed by the fast-forward. Raise the \
+             pre-roll to at least {:.1}s.",
+            config.pre_roll_seconds,
+            floors.pre_roll,
+            floors.pre_roll_binding,
+            config.pre_roll_seconds,
+            floors.pre_roll
+        ));
+    }
+    if config.post_roll_seconds < floors.post_roll {
+        crate::log_markdown(&format!(
+            "⚠️ **Post-roll is shorter than this capture needs** — {:.1}s, against a {:.1}s floor \
+             set by {}. Anything past the post-roll fires while playback is fast-forwarding again.",
+            config.post_roll_seconds, floors.post_roll, floors.post_roll_binding
+        ));
     }
 
     // Sort grouped chronologically by the start_tick of their first streak
@@ -1462,6 +1576,51 @@ mod tests {
         config.game_path = temp_game_path.to_string_lossy().to_string();
         config.primary_media_dir = Some(temp_game_path);
         config
+    }
+
+    #[test]
+    fn the_pre_roll_floor_names_whichever_requirement_is_binding() {
+        // With nothing else configured the audio resync sets the bar, since it
+        // is the longest of the fixed terms.
+        let mut config = mock_config();
+        config.custom_commands.clear();
+        let f = roll_floors(&config);
+        assert_eq!(f.pre_roll, AUDIO_RESYNC_SECONDS);
+        assert!(f.pre_roll_binding.contains("audio"), "{}", f.pre_roll_binding);
+        assert_eq!(f.post_roll, 0.0, "nothing needs post-roll on its own");
+
+        // A Scheduled Command further out than that takes over, because
+        // anything beyond the pre-roll fires during fast-forward.
+        config.custom_commands = vec![crate::patch::CustomCommand {
+            command: "mirv_movie_fps 500".to_string(),
+            offset: 8.0,
+            relation: CommandRelation::Before,
+        }];
+        let f = roll_floors(&config);
+        assert_eq!(f.pre_roll, 8.0);
+        assert!(f.pre_roll_binding.contains("Scheduled"), "{}", f.pre_roll_binding);
+
+        // And an "After" command is the only thing that asks for post-roll.
+        config.custom_commands = vec![crate::patch::CustomCommand {
+            command: "echo done".to_string(),
+            offset: 3.0,
+            relation: CommandRelation::After,
+        }];
+        let f = roll_floors(&config);
+        assert_eq!(f.post_roll, 3.0);
+        assert_eq!(f.pre_roll, AUDIO_RESYNC_SECONDS, "an After command asks nothing of pre-roll");
+    }
+
+    #[test]
+    fn turning_the_flush_off_drops_its_term_from_the_floor() {
+        let mut config = mock_config();
+        config.custom_commands.clear();
+
+        config.decal_flush = true;
+        assert_eq!(roll_floors(&config).flush_lead, crate::patch::DEFAULT_LEAD_SECONDS);
+
+        config.decal_flush = false;
+        assert_eq!(roll_floors(&config).flush_lead, 0.0);
     }
 
     #[test]

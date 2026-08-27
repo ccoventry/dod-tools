@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use native::patch::map_check::{self, MapStatus};
+use crate::capture_manager::CustomCommandPayload;
 use native::patch::map_fetch;
 use serde::{Deserialize, Serialize};
 
@@ -349,6 +350,73 @@ pub struct MapFetchResult {
     /// Where an existing file was moved to, when one was in the way. Nothing is
     /// ever overwritten in place.
     pub replaced_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RollFloorReport {
+    pub pre_roll: f32,
+    pub pre_roll_floor: f32,
+    pub pre_roll_binding: String,
+    pub post_roll: f32,
+    pub post_roll_floor: f32,
+    pub post_roll_binding: String,
+    pub audio_resync: f32,
+    pub sound_flush: f32,
+    pub flush_lead: f32,
+    pub scheduled_before: f32,
+    pub scheduled_after: f32,
+}
+
+/// What the pre-roll and post-roll have to cover for this configuration.
+///
+/// The rolls stopped being a matter of taste once the audio resync, the sound
+/// flush, the decal sweep's lead and the Scheduled Command offsets all started
+/// measuring against them. Reported rather than enforced: the terms are
+/// knowable, the engine's audio guidance is a 2-4s range rather than a
+/// constant, and whether the decal burst itself needs real-time playback is
+/// still unverified — so the number is advice, not a clamp.
+#[tauri::command]
+pub fn roll_floors(
+    pre_roll: f32,
+    post_roll: f32,
+    decal_flush: Option<bool>,
+    custom_commands: Vec<CustomCommandPayload>,
+) -> RollFloorReport {
+    let mut cfg = native::patch::PatcherConfig {
+        pre_roll_seconds: pre_roll,
+        post_roll_seconds: post_roll,
+        ..Default::default()
+    };
+    if let Some(v) = decal_flush {
+        cfg.decal_flush = v;
+    }
+    cfg.custom_commands = custom_commands
+        .iter()
+        .map(|c| native::patch::CustomCommand {
+            command: c.command.clone(),
+            offset: c.offset_seconds,
+            relation: match c.relation.as_str() {
+                "After" => native::patch::CommandRelation::After,
+                _ => native::patch::CommandRelation::Before,
+            },
+        })
+        .collect();
+
+    let f = native::patch::builder::roll_floors(&cfg);
+    RollFloorReport {
+        pre_roll,
+        pre_roll_floor: f.pre_roll,
+        pre_roll_binding: f.pre_roll_binding.to_string(),
+        post_roll,
+        post_roll_floor: f.post_roll,
+        post_roll_binding: f.post_roll_binding.to_string(),
+        audio_resync: f.audio_resync,
+        sound_flush: f.sound_flush,
+        flush_lead: f.flush_lead,
+        scheduled_before: f.scheduled_before,
+        scheduled_after: f.scheduled_after,
+    }
 }
 
 /// The URL a map would be fetched from, so a prompt can show it before anything

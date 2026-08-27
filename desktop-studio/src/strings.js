@@ -669,6 +669,17 @@ export const STRINGS = {
       `${cvar} ${initValue} replaces ${cfgValue} from ${file}, line ${line}`,
   },
 
+  // Pre-roll and post-roll are load-bearing: playback returns to real time one
+  // pre-roll before recording, so everything that must happen at normal speed
+  // has to fit inside it.
+  ROLLS: {
+    BANNER_TITLE: 'These timings are shorter than this capture needs:',
+    ADVICE:
+      'Playback only returns to real time one pre-roll before recording starts. Anything that has to happen at normal speed — the engine flushing its audio buffers after the fast-forward, the decal sweep, a Scheduled Command — has to fit inside that window, or it happens while the engine is still racing through frames.',
+    tooShort: (name, have, need, binding) =>
+      `<code>${name} ${have.toFixed(1)}s</code> — needs at least <code>${need.toFixed(1)}s</code> for ${binding}`,
+  },
+
   MAIN: {
     SELECT_CAPTURE_OUTPUT_DIR_TITLE: 'Select Capture Output Directory',
     SELECT_RENDER_DIR_TITLE: 'Select Render Directory',
