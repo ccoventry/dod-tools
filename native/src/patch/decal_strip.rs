@@ -190,8 +190,18 @@ pub struct DecalCleanOptions {
     /// the updater, kept separate so an update can replace it wholesale without
     /// touching what the user's own captures have harvested.
     pub atlas_seed_dirs: Vec<std::path::PathBuf>,
-    /// Beyond this range a single decal is not readable on screen, so the
-    /// line-of-sight test stops caring.
+    /// Range past which the on-screen test stops caring. `INFINITY` by default,
+    /// i.e. it always cares.
+    ///
+    /// This was 1800 units, on the reasoning that a single decal that far away
+    /// is not readable on screen. The flush does not place single decals: it
+    /// places a grid of them, four to a position, and a grid reads at distances
+    /// one dot does not. Anything past the cutoff was not merely untested — it
+    /// was scored SAFE, because the test returned "not on screen" for it.
+    /// Removing the escape cost no candidates on the demo that exposed the
+    /// projection bug (a full 1028-position sweep either way) and about six
+    /// seconds of tracing, which is not a trade worth making for the one defect
+    /// this pass must never introduce.
     pub visibility_max_distance: f32,
     /// Keep every camera sample rather than the usual stride, and hand back
     /// the chosen positions with them. Diagnostics only — off in the pipeline.
@@ -217,7 +227,7 @@ impl Default for DecalCleanOptions {
             atlas_seed_dirs: Vec::new(),
             min_camera_clearance: 900.0,
             visibility_cone_degrees: 40.0,
-            visibility_max_distance: 1800.0,
+            visibility_max_distance: f32::INFINITY,
             collect_diagnostics: false,
         }
     }
