@@ -1181,4 +1181,38 @@ mod tests {
         let bsp = synthetic_bsp();
         assert!(bsp.decal_draw_point(&[98.0, 500.0, 32.0], 4.0, 1.0).is_none());
     }
+
+    /// The whole bug in one assertion.
+    ///
+    /// `synthetic_bsp` puts solid in front of the plane, so its face normal
+    /// points into the wall. Flipping `side` gives the real-map arrangement —
+    /// normal facing the room — which is what makes the difference visible: a
+    /// coordinate buried in the wall traces as blocked from anywhere in the
+    /// room, while the point the decal is actually drawn at traces clear.
+    #[test]
+    fn a_coordinate_inside_a_wall_is_blocked_but_the_decal_on_it_is_not() {
+        let mut bsp = synthetic_bsp();
+        bsp.faces[0].side = 1;
+        assert_eq!(bsp.face_normal(0), Some([-1.0, 0.0, 0.0]), "normal must face the room");
+
+        let eye = [50.0, 32.0, 32.0];
+        let buried = [101.0, 32.0, 32.0];
+
+        // What the old test asked, and why it always said "safe": the wall the
+        // decal renders on is itself the thing standing in the way.
+        assert!(
+            bsp.line_blocked(&eye, &buried),
+            "a coordinate inside solid is occluded from everywhere, by construction"
+        );
+
+        // What the engine actually draws, and what the camera actually sees.
+        let drawn = bsp
+            .decal_draw_point(&buried, 4.0, 1.0)
+            .expect("one unit inside a wall is well within reach of its face");
+        assert!((drawn[0] - 99.0).abs() < 1e-3, "drawn on the room side: {:?}", drawn);
+        assert!(
+            !bsp.line_blocked(&eye, &drawn),
+            "nothing stands between the room and the face it is looking at"
+        );
+    }
 }
