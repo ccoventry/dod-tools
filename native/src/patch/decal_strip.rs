@@ -2503,24 +2503,45 @@ fn report(
     if let Some(map) = &stats.atlas_map {
         crate::log_markdown(&format!(
             "🗺️ **Map coordinate store** for `{}`: {} coordinate(s) already known, {} added by \
-             this demo, {} now available to the flush.",
-            map, stats.atlas.known, stats.atlas.added, stats.atlas.total
+             this demo, {} now held{}.",
+            map,
+            stats.atlas.known,
+            stats.atlas.added,
+            stats.atlas.total,
+            // The harvest still runs under the gate — refusing the store as a
+            // *source* is not a reason to stop feeding it — but saying those
+            // coordinates were "available to the flush" would be untrue.
+            if opts.map_geometry_only {
+                " (the experiment gate refused them as a source for this run)"
+            } else {
+                " and available to the flush"
+            }
         ));
     }
 
     // The map's own faces, reached only when everything proven fell short.
-    // Worth saying out loud: it means this demo's own decals and the store
-    // between them could not fill a sweep, and the map covered the difference.
-    // On a map nothing has been harvested from yet that is the expected path,
-    // not a warning.
+    // Worth saying out loud: normally it means this demo's own decals and the
+    // store between them could not fill a sweep, and the map covered the
+    // difference. On a map nothing has been harvested from yet that is the
+    // expected path, not a warning.
+    //
+    // Under the experiment gate the same line would state a reason that is
+    // false — the proven sources did not fall short, they were never asked —
+    // and a log that misreports why a source was used is worse than one that
+    // says nothing, because it is the log someone reads back months later as
+    // evidence.
     if stats.map_candidates > 0 {
+        let why = if opts.map_geometry_only {
+            "every source drawn from the match was refused by the experiment gate"
+        } else {
+            "the demo's decals and the coordinate store together could not fill a sweep"
+        };
         crate::log_markdown(&format!(
-            "🧱 **Fell back to the map's own geometry** — the demo's decals and the coordinate \
-             store together could not fill a sweep, so {} point(s) were sampled off the map's \
-             world faces and {} of those stayed clear of every in-clip camera. This source owes \
-             nothing to where anyone shot or walked, which is what lets it cover a map the store \
-             has never seen.",
-            stats.map_candidates, stats.map_camera_safe
+            "🧱 **Placed from the map's own geometry** — {}, so {} point(s) were sampled off the \
+             map's world faces and {} of those stayed clear of every in-clip camera. This source \
+             owes nothing to where anyone shot or walked, which is what lets it cover a map the \
+             store has never seen.",
+            why, stats.map_candidates, stats.map_camera_safe
         ));
     }
 

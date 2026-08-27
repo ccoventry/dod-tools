@@ -218,6 +218,32 @@ camera. That is the structural half of the claim; the half it cannot make is wha
 like on screen, which is what the in-game gate run is for — see the masked-texture caveat above for
 the specific artefact to watch.
 
+### Verified in game, 2026-08-27
+
+Run under `DOD_FLUSH_MAP_GEOMETRY_ONLY` on `wsod25-po_r2_qf-m00cat_clinic_m2_lenn_h2.dem`, 15
+highlights, ring 256 — the same demo and configuration as the two runs already watched, so the only
+variable is where the coordinates came from.
+
+| | |
+|---|---|
+| positions | **68 of 68**, every one from the map's own faces |
+| candidates sampled / camera-safe | 12,000 / 5,365 |
+| decals injected | 4,080 across 15 bursts |
+| takes | 15/15 on disk, 15 renderable |
+| playback | 429.8s |
+| decal grids seen on camera | **none** |
+| `SZ_GetSpace` | 8 — identical to both prior runs |
+| `svc_bad`, engine errors | 0 |
+
+**No clearance notice fired.** The two earlier runs both logged positions closer to the camera than
+the 900-unit preference (267 and 203 units); this one had none — map-derived spots sit further from
+the lens than harvested ones do, which is what you would expect from a source that is not drawn from
+where people fought. That is the first evidence the map source is not merely *adequate* but
+*better-placed* than the ones it backs up.
+
+The masked-texture artefact did not appear. That is one map and one camera path, so it remains a
+live caveat rather than a closed one.
+
 ## The second prize: real occlusion
 
 Everything above treats the BSP as a supply of coordinates. It is also the only thing that can

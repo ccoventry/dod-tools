@@ -99,6 +99,14 @@
   the map, zero on camera**, mean 8,428 camera-safe candidates (min 4,832). So the gate run is
   worth the seven minutes, and what it adds is the only thing measurement cannot — what the decals
   look like on screen.
+  **Verified in game 2026-08-27**: same demo, same 15 highlights, ring 256, gate confirmed active
+  in the log before the run got far. **68/68 positions all from the map's own faces** (12,000
+  sampled, 5,365 camera-safe), 4,080 decals, 15/15 takes renderable, 429.8s, **no decal grids
+  seen**, 8 `SZ_GetSpace` and no `svc_bad` — identical to both prior runs. Notably **no clearance
+  notice fired**: the two earlier runs logged nearest approaches of 267 and 203 units against the
+  900-unit preference and this one had none, so map-derived spots sit further from the lens than
+  harvested ones. First evidence the source is better-placed, not merely adequate.
+
   **The artefact to watch for on that run is a grid of decals visible *through* something**: the
   hull trace treats a fence or grate brush as solid while it renders see-through, and the map
   source is the first one that deliberately reaches behind them. Pre-existing mechanism, higher
