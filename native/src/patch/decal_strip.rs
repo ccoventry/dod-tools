@@ -1586,6 +1586,15 @@ pub fn clean_demo_decals(
             let eligible: Vec<(usize, usize, i32)> = all_frames
                 .iter()
                 .copied()
+                // Never inside a clip being recorded. The sweep's whole job is
+                // to turn the decal ring in the gap BEFORE a clip; a carrier
+                // landing inside one turns the ring while that clip is being
+                // filmed, which can unlink the bullet holes the firefight is
+                // putting up — decals disappearing mid-shot, the exact artefact
+                // this feature removes. At a 256 ring the burst is 68 frames
+                // and never reached that far; at the 4,096 maximum it is 1,028
+                // and reached into an earlier clip on 10 of 85 demos.
+                .filter(|&(_, _, ordinal)| !in_window(ordinal, keep_windows))
                 .filter(|&(entry_idx, frame_idx, _)| {
                     demo.directory.entries[entry_idx]
                         .frames
