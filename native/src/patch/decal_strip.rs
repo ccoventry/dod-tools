@@ -498,6 +498,27 @@ const TILE_MAX_EXTENT: f32 = 200.0;
 /// creates no decal allocates no pool slot — so the sweep silently comes up
 /// short rather than failing. Dilating the proven decals by this much is the
 /// compromise between that risk and the position count the ring needs.
+/// How far from a coordinate to look for the surface the engine will draw on.
+///
+/// Deliberately generous. This is not a claim about where `R_DecalShoot` will
+/// place a decal — it is the radius within which a face has to be CLEARED as
+/// not-in-shot before the candidate is trusted. Erring long costs candidates;
+/// erring short is how a decal lands on a face nobody tested. The fine sweep
+/// measured the engine accepting positions ~3 units off a face, so this is
+/// that with a little margin.
+///
+/// It does double duty. A candidate with no face inside it is not a decal spot
+/// at all — tiling lays a grid across a fitted plane, and a plane runs on past
+/// the brush that proved it, so some tiles land in open air where no decal can
+/// appear. Those are dropped here rather than counted into a sweep that then
+/// turns fewer ring slots than it reports.
+const DECAL_PROJECTION_REACH: f32 = 4.0;
+
+/// How far off the face the drawn point is placed for testing. The decal is
+/// visible from this side, and a trace ending here is not stopped by the face
+/// it sits on — comfortably clear of the tree's own 0.03125 plane epsilon.
+const DECAL_SURFACE_LIFT: f32 = 1.0;
+
 const TILE_REACH: f32 = 64.0;
 
 /// Ceiling on tiles generated per patch.
@@ -1111,6 +1132,26 @@ impl<'a> Visibility<'a> {
         }
     }
 
+    /// Where a decal aimed at this candidate is actually drawn, or `None` when
+    /// no surface is close enough for one to land on — which disqualifies the
+    /// candidate rather than making it safe. Without a map there is nothing to
+    /// project onto and the coordinate stands in for itself, as it always did.
+    fn draw_point(&self, pos: &[f32; 3]) -> Option<[f32; 3]> {
+        let Some(b) = self.bsp else {
+            return Some(*pos);
+        };
+        // A coordinate inside solid is not a surface spot at all. The engine
+        // still draws something for it — on whichever face its walk reaches,
+        // which can be the one facing the camera — so these are dropped rather
+        // than reasoned about. They are also exactly what the old point test
+        // scored as safest, being occluded from everywhere by construction.
+        let contents = b.leaf_contents(b.leaf_at(pos));
+        if contents == bsp::CONTENTS_SOLID || contents == bsp::CONTENTS_SKY {
+            return None;
+        }
+        b.decal_draw_point(pos, DECAL_PROJECTION_REACH, DECAL_SURFACE_LIFT)
+    }
+
     fn hidden(&self, pos: &[f32; 3], cameras: &[([f32; 3], [f32; 3])]) -> bool {
         // Deliberately the trace alone, not PVS.
         //
@@ -1131,9 +1172,15 @@ impl<'a> Visibility<'a> {
         // `camera_pvs` is kept because it is the thing to re-examine when the
         // in-game check happens: if the traces prove right, this is where the
         // speed goes back.
+        // The candidate is a coordinate; the engine draws somewhere else. Judge
+        // the place it draws, or the test certifies a wall in plain view as
+        // hidden because the coordinate behind it is.
+        let Some(draw) = self.draw_point(pos) else {
+            return false;
+        };
         !cameras
             .iter()
-            .any(|(eye, fwd)| self.on_screen_from(pos, eye, fwd))
+            .any(|(eye, fwd)| self.on_screen_from(&draw, eye, fwd))
     }
 
     /// Whether leaf visibility also considers a position unrenderable, or
@@ -1166,10 +1213,14 @@ impl<'a> Visibility<'a> {
         positions: &[[f32; 3]],
         cameras: &[([f32; 3], [f32; 3])],
     ) -> usize {
+        // Measured on the drawn surface, the same rule the selection applied.
+        // Counting the coordinates instead reports zero for a sweep that covers
+        // a wall the camera is looking straight at.
+        let drawn: Vec<[f32; 3]> = positions.iter().filter_map(|p| self.draw_point(p)).collect();
         cameras
             .iter()
             .filter(|(eye, fwd)| {
-                positions
+                drawn
                     .iter()
                     .any(|p| self.on_screen_from(p, eye, fwd))
             })

@@ -189,10 +189,10 @@ using job for player {:?}", job.target_player);
         let mut face_visible = 0usize;
         let mut face_resolved = 0usize;
         for p in positions {
-            let Some((face, _)) = b.nearest_face(p, 64.0) else { continue };
-            let Some(n) = b.face_normal(face) else { continue };
+            // The engine projects onto the face; lifting the raw coordinate does
+            // not, and would leave a buried point buried.
+            let Some(surf) = b.decal_draw_point(p, 64.0, 1.0) else { continue };
             face_resolved += 1;
-            let surf = [p[0] + n[0] * 2.0, p[1] + n[1] * 2.0, p[2] + n[2] * 2.0];
             let seen = cameras.iter().any(|(eye, fwd)| {
                 let v = [surf[0] - eye[0], surf[1] - eye[1], surf[2] - eye[2]];
                 let d = (v[0]*v[0] + v[1]*v[1] + v[2]*v[2]).sqrt();

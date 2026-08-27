@@ -425,6 +425,33 @@ impl Bsp {
         }
     }
 
+    /// Where the engine will actually draw a decal aimed at this point, or
+    /// `None` when there is no surface close enough for it to land on.
+    ///
+    /// `R_DecalShoot` does not draw at the coordinate it is given: it finds the
+    /// surface nearest that coordinate and projects onto it. So a coordinate
+    /// buried in a wall is not invisible — it is drawn on one of that wall's
+    /// faces, and which face that is decides whether a camera sees it. Testing
+    /// the coordinate instead of this point is how a sweep can be certified
+    /// hidden and still cover a wall in plain view: a point inside solid is
+    /// occluded from everywhere, always, by the very surface it renders on.
+    ///
+    /// The result is lifted `lift` units onto the face's front side, both
+    /// because that is the side the decal is visible from and so a trace to it
+    /// is not stopped by the face itself.
+    pub fn decal_draw_point(&self, p: &[f32; 3], reach: f32, lift: f32) -> Option<[f32; 3]> {
+        let (face, _) = self.nearest_face(p, reach)?;
+        let normal = self.face_normal(face)?;
+        let vertex = *self.face_polygon(face).first()?;
+        // Project onto the face plane, then step off it along the normal.
+        let offset = dot(&normal, p) - dot(&normal, &vertex);
+        Some([
+            p[0] - normal[0] * offset + normal[0] * lift,
+            p[1] - normal[1] * offset + normal[1] * lift,
+            p[2] - normal[2] * offset + normal[2] * lift,
+        ])
+    }
+
     /// The nearest world face a point sits on, within `tolerance`.
     ///
     /// This is the parser's own test. Every harvested decal is a coordinate the
@@ -1119,5 +1146,39 @@ mod tests {
         assert!(Bsp::pvs_contains(&union, 1), "from leaf 1");
         assert!(Bsp::pvs_contains(&union, 2), "from leaf 2");
         assert!(!Bsp::pvs_contains(&union, 3));
+    }
+
+    /// The defect this exists for: the engine draws on the surface, not at the
+    /// coordinate, so the coordinate is not what a camera test may judge.
+    #[test]
+    fn decal_draw_point_projects_onto_the_face_and_steps_off_it() {
+        let bsp = synthetic_bsp();
+        // Two units off the plane, well inside the face's own square.
+        let drawn = bsp
+            .decal_draw_point(&[98.0, 32.0, 32.0], 4.0, 1.0)
+            .expect("a face two units away is within reach");
+        // Projected back onto x = 100, then lifted one unit along the normal.
+        assert!((drawn[0] - 101.0).abs() < 1e-3, "{:?}", drawn);
+        assert!((drawn[1] - 32.0).abs() < 1e-3, "{:?}", drawn);
+        assert!((drawn[2] - 32.0).abs() < 1e-3, "{:?}", drawn);
+    }
+
+    /// Tiling lays a grid across a fitted plane, and the plane runs on past the
+    /// brush that proved it. Tiles landing in open air are not decal spots and
+    /// must resolve to nothing rather than to some distant face.
+    #[test]
+    fn decal_draw_point_gives_up_beyond_its_reach() {
+        let bsp = synthetic_bsp();
+        assert!(bsp.decal_draw_point(&[80.0, 32.0, 32.0], 4.0, 1.0).is_none());
+        // The same point is answerable if the reach is widened to cover it,
+        // which is what makes the constant the thing that decides, not the map.
+        assert!(bsp.decal_draw_point(&[80.0, 32.0, 32.0], 32.0, 1.0).is_some());
+    }
+
+    /// Off the end of the face: on the plane, but there is no surface there.
+    #[test]
+    fn decal_draw_point_needs_the_face_not_just_its_plane() {
+        let bsp = synthetic_bsp();
+        assert!(bsp.decal_draw_point(&[98.0, 500.0, 32.0], 4.0, 1.0).is_none());
     }
 }
