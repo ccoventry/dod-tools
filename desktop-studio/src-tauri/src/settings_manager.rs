@@ -53,6 +53,35 @@ pub struct AppSettings {
     /// default instead of failing the whole file.
     #[serde(default = "default_capture_codec")]
     pub ffmpeg_capture_codec: String,
+    /// How this batch records: `frame_sequence`, `direct_to_video` or `obs`.
+    ///
+    /// Stored as the string id for the same reason the codec is — a settings
+    /// file naming a mode this build does not know loads and degrades to the
+    /// path that always works, rather than failing the whole file.
+    ///
+    /// A file written before this existed has no value here and only
+    /// `ffmpeg_capture`; `PatcherConfig::normalise_capture_mode` promotes that,
+    /// so an upgrade keeps whatever the user had selected.
+    #[serde(default = "default_capture_mode")]
+    pub capture_mode: String,
+    /// obs-websocket host, when `capture_mode` is `obs`.
+    #[serde(default = "default_obs_host")]
+    pub obs_host: String,
+    #[serde(default = "default_obs_port")]
+    pub obs_port: u16,
+    /// The user's obs-websocket password. Empty when OBS has authentication
+    /// switched off. Never logged — see `ObsConfig::redacted`.
+    #[serde(default)]
+    pub obs_password: String,
+    /// Scene to switch to for a batch, and restore afterwards. Empty means
+    /// "use whatever is active and change nothing".
+    #[serde(default)]
+    pub obs_scene: String,
+    /// The collection `obs_scene` belongs to. Scene names are scoped to a
+    /// collection, so a remembered name alone can resolve to something
+    /// unrelated after the user switches.
+    #[serde(default)]
+    pub obs_scene_collection: String,
     #[serde(default = "default_add_condebug")]
     pub add_condebug: bool,
     #[serde(default)]
@@ -110,6 +139,11 @@ fn default_decal_flush() -> bool { true }
 fn default_capture_codec() -> String {
     native::patch::CaptureCodec::default().to_str_id().to_string()
 }
+fn default_capture_mode() -> String {
+    native::patch::CaptureMode::default().to_str_id().to_string()
+}
+fn default_obs_host() -> String { "127.0.0.1".to_string() }
+fn default_obs_port() -> u16 { 4455 }
 fn default_studio_mode() -> String { "quick-clip".to_string() }
 
 impl Default for AppSettings {
@@ -132,6 +166,12 @@ impl Default for AppSettings {
             decal_flush: default_decal_flush(),
             ffmpeg_capture: false,
             ffmpeg_capture_codec: default_capture_codec(),
+            capture_mode: default_capture_mode(),
+            obs_host: default_obs_host(),
+            obs_port: default_obs_port(),
+            obs_password: String::new(),
+            obs_scene: String::new(),
+            obs_scene_collection: String::new(),
             add_condebug: default_add_condebug(),
             auto_clear_logs: false,
             auto_clear_previews: false,

@@ -44,6 +44,21 @@ pub struct CapturePayload {
     /// default rather than failing the batch.
     #[serde(default)]
     pub ffmpeg_capture_codec: String,
+    /// `frame_sequence`, `direct_to_video` or `obs`. Absent on payloads from a
+    /// frontend predating the selector, in which case `ffmpeg_capture` above
+    /// still decides — see `PatcherConfig::normalise_capture_mode`.
+    #[serde(default)]
+    pub capture_mode: String,
+    #[serde(default)]
+    pub obs_host: String,
+    #[serde(default)]
+    pub obs_port: u16,
+    #[serde(default)]
+    pub obs_password: String,
+    #[serde(default)]
+    pub obs_scene: String,
+    #[serde(default)]
+    pub obs_scene_collection: String,
     #[serde(default)]
     pub save_local_patched_copy: bool,
     #[serde(default = "default_add_condebug")]
@@ -220,6 +235,16 @@ fn config_from_payload(payload: &CapturePayload) -> PatcherConfig {
     cfg.separate_hud = payload.separate_hud;
     cfg.ffmpeg_capture = payload.ffmpeg_capture;
     cfg.ffmpeg_capture_codec = native::patch::CaptureCodec::from_str_id(&payload.ffmpeg_capture_codec);
+    if !payload.capture_mode.is_empty() {
+        cfg.capture_mode = native::patch::CaptureMode::from_str_id(&payload.capture_mode);
+    }
+    cfg.obs = native::patch::ObsConfig {
+        host: if payload.obs_host.is_empty() { "127.0.0.1".to_string() } else { payload.obs_host.clone() },
+        port: if payload.obs_port == 0 { 4455 } else { payload.obs_port },
+        password: payload.obs_password.clone(),
+        scene: payload.obs_scene.clone(),
+        scene_collection: payload.obs_scene_collection.clone(),
+    };
     cfg.save_local_patched_copy = payload.save_local_patched_copy;
     cfg.add_condebug = payload.add_condebug;
     cfg.auto_clear_logs = payload.auto_clear_logs;
@@ -244,7 +269,114 @@ fn config_from_payload(payload: &CapturePayload) -> PatcherConfig {
     // Capture Output is the sole (required) source of output directories —
     // the frontend already blocks the batch if `drives` is empty.
     cfg.primary_media_dir = payload.drives.first().map(std::path::PathBuf::from);
+    // Last, so it sees every field the payload set: reconciles the capture mode
+    // with the legacy `ffmpeg_capture` flag and applies what the mode implies.
+    // Everything downstream branches on `capture_mode`, so this must run before
+    // any of it does.
+    cfg.normalise_capture_mode();
     cfg
+}
+
+// ── OBS ────────────────────────────────────────────────────────────────────────
+
+/// What the settings panel shows after a connection test.
+///
+/// Flattens `ObsPreflight` plus the scene list into one round trip, because the
+/// panel needs all of it at once and a second `invoke` would be a second chance
+/// to fail.
+#[derive(Debug, Serialize)]
+pub struct ObsConnectionReport {
+    pub connected: bool,
+    /// Populated when `connected` is false. Already phrased for the user —
+    /// `ObsError`'s `Display` distinguishes a wrong password from a version
+    /// problem, and the two want different actions.
+    pub error: Option<String>,
+    pub obs_version: String,
+    pub websocket_version: String,
+    pub missing_requests: Vec<String>,
+    pub recording: bool,
+    pub streaming: bool,
+    pub record_directory: String,
+    pub canvas: String,
+    pub output: String,
+    pub fps: f64,
+    pub current_scene: String,
+    pub scene_collection: String,
+    pub scenes: Vec<String>,
+    pub warnings: Vec<String>,
+}
+
+impl ObsConnectionReport {
+    fn failed(e: impl std::fmt::Display) -> Self {
+        Self {
+            connected: false,
+            error: Some(e.to_string()),
+            obs_version: String::new(),
+            websocket_version: String::new(),
+            missing_requests: Vec::new(),
+            recording: false,
+            streaming: false,
+            record_directory: String::new(),
+            canvas: String::new(),
+            output: String::new(),
+            fps: 0.0,
+            current_scene: String::new(),
+            scene_collection: String::new(),
+            scenes: Vec::new(),
+            warnings: Vec::new(),
+        }
+    }
+}
+
+/// Tests the OBS connection and reports everything the settings panel shows.
+///
+/// Read-only. Nothing about the user's OBS is changed by asking — no scene
+/// switch, no settings write — so this is safe to call whenever the panel is
+/// opened.
+///
+/// `game_width`/`game_height` are passed in so the report can flag the canvas
+/// mismatch that silently costs the most quality: a canvas larger than the game
+/// means the capture is scaled up onto it and the whole canvas scaled back
+/// down, discarding most of the pixels before the encoder sees them.
+#[tauri::command]
+pub async fn obs_test_connection(
+    host: String,
+    port: u16,
+    password: String,
+    game_width: i32,
+    game_height: i32,
+) -> Result<ObsConnectionReport, String> {
+    let url = format!("ws://{}:{}", if host.is_empty() { "127.0.0.1".into() } else { host }, if port == 0 { 4455 } else { port });
+    tokio::task::spawn_blocking(move || {
+        let mut client = match native::obs::ObsClient::connect(&url, &password) {
+            Ok(c) => c,
+            Err(e) => return ObsConnectionReport::failed(e),
+        };
+        let preflight = match client.preflight(game_width, game_height) {
+            Ok(p) => p,
+            Err(e) => return ObsConnectionReport::failed(e),
+        };
+        let scenes = client.scene_names().unwrap_or_default();
+        ObsConnectionReport {
+            connected: true,
+            error: None,
+            obs_version: preflight.obs_version,
+            websocket_version: preflight.websocket_version,
+            missing_requests: preflight.missing_requests,
+            recording: preflight.recording,
+            streaming: preflight.streaming,
+            record_directory: preflight.record_directory,
+            canvas: format!("{}x{}", preflight.canvas_width, preflight.canvas_height),
+            output: format!("{}x{}", preflight.output_width, preflight.output_height),
+            fps: preflight.fps,
+            current_scene: preflight.current_scene,
+            scene_collection: preflight.scene_collection,
+            scenes,
+            warnings: preflight.warnings,
+        }
+    })
+    .await
+    .map_err(|e| format!("OBS connection test failed to run: {e}"))
 }
 
 // ── Take verification ──────────────────────────────────────────────────────────
@@ -494,6 +626,15 @@ pub async fn start_capture_batch_impl(
             }
         };
 
+        // Built from the same flattened walk as the manifest, deliberately
+        // adjacent to it. In OBS mode the engine consumes these positionally as
+        // each block's AUDIO_SYNC marker arrives, so the two orders have to
+        // agree — computing them apart is how they would come to disagree.
+        let obs_take_folders: Vec<std::path::PathBuf> = patch_jobs
+            .iter()
+            .flat_map(|j| j.blocks.iter().map(|b| b.take_folder.clone()))
+            .collect();
+
         {
             let manifest = CaptureManifest {
                 session_id: patcher_config.session_id.clone(),
@@ -676,6 +817,7 @@ pub async fn start_capture_batch_impl(
             cancel_token_arc,
             patcher_config,
             drive_headroom,
+            obs_take_folders,
         );
     });
 
@@ -1290,6 +1432,12 @@ mod tests {
             separate_hud: true,
             ffmpeg_capture: false,
             ffmpeg_capture_codec: String::new(),
+            capture_mode: String::new(),
+            obs_host: String::new(),
+            obs_port: 0,
+            obs_password: String::new(),
+            obs_scene: String::new(),
+            obs_scene_collection: String::new(),
             save_local_patched_copy: false,
             add_condebug: true,
             streaks: Vec::new(),

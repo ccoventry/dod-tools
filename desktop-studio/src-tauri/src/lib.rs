@@ -537,6 +537,7 @@ pub fn run() {
             start_capture_batch,
             launch_demo_preview,
             generate_all_previews,
+            capture_manager::obs_test_connection,
             launch_standalone_game,
             check_engine_processes,
             kill_engine_processes,
