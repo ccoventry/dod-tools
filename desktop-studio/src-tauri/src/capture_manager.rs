@@ -269,8 +269,16 @@ pub struct VerifiedBlock {
 }
 
 fn take_folder_has_content(path: &Path) -> bool {
+    // Our own metadata does not count as captured output. It is written into
+    // this folder after verification, so it cannot affect the batch that made
+    // it — but a re-verification of an older session would otherwise report a
+    // capture that never happened.
     std::fs::read_dir(path)
-        .map(|mut entries| entries.next().is_some())
+        .map(|entries| {
+            entries
+                .flatten()
+                .any(|e| !native::hlcr::take_meta::is_metadata(&e.file_name()))
+        })
         .unwrap_or(false)
 }
 
@@ -312,17 +320,18 @@ fn verify_capture_takes(manifest: &CaptureManifest) -> Vec<VerifiedBlock> {
     verified
 }
 
-/// Records what the batch was captured at, beside the takes it produced.
+/// Records what each take was captured at, in the take's own block folder.
 ///
-/// Runs **after** verification, and only for blocks that actually landed:
-/// `take_folder_has_content` decides a take was captured by asking whether its
-/// folder is non-empty, so a file written before that check — or into a block
-/// folder that produced nothing — would make a failed take look successful.
-/// The file goes in the session folder one level up, which the take scanner
-/// skips because it only descends into directories.
+/// Per take rather than per session so the record travels with the take. Two
+/// batches at different rates already land in different session folders, so a
+/// session-level file would be right for that — until somebody moves a take,
+/// at which point it would silently inherit the settings of wherever it landed.
 ///
-/// A batch can be routed across several drives, so there is one session folder
-/// per drive the batch touched, and each needs its own copy.
+/// Runs **after** verification and only for blocks that actually landed. A
+/// metadata file in a block that produced nothing would be misleading on its
+/// own, and `take_folder_has_content` decides a take was captured by asking
+/// whether its folder is non-empty — that check now skips our own file, so the
+/// ordering here is belt-and-braces rather than the only thing holding it up.
 ///
 /// Best-effort throughout: a capture that succeeded must never be reported as
 /// failed because a metadata file could not be written.
@@ -335,19 +344,13 @@ fn record_capture_settings(manifest: &CaptureManifest, blocks: &[VerifiedBlock])
         manifest.capture_fps,
     );
 
-    let mut written: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
     for block in blocks.iter().filter(|b| b.captured) {
-        let Some(session_folder) = Path::new(&block.take_folder).parent() else {
-            continue;
-        };
-        if !written.insert(session_folder.to_path_buf()) {
-            continue;
-        }
-        if let Err(e) = native::hlcr::take_meta::write(session_folder, &meta) {
+        let folder = Path::new(&block.take_folder);
+        if let Err(e) = native::hlcr::take_meta::write(folder, &meta) {
             log_markdown(&format!(
                 "[take-verify] could not record capture settings at {} — {}. Render Studio will \
-                 not be able to warn about an FPS mismatch for these takes.",
-                session_folder.display(),
+                 not be able to warn about an FPS mismatch for this take.",
+                folder.display(),
                 e
             ));
         }
