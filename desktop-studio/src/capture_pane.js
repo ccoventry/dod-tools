@@ -174,7 +174,15 @@ export async function refreshLaunchGuard(state) {
   // capture reports success and so does the render; only the finished clip is
   // wrong, and nothing downstream can detect it. So the combination is refused
   // here rather than allowed to produce a black rectangle.
-  const separateHudVideoConflict = separateHudVal && ffmpegCaptureVal;
+  // TEMPORARILY LIFTED to re-test. The blank-hudcolor measurement this guard
+  // is based on was taken before -afxForceAlpha8 1 was being sent, i.e. with
+  // the alpha buffer broken. The BMP writer dumps the colour buffer straight
+  // out, but the FFmpeg path converts frames before piping them — if that
+  // conversion is alpha-aware, a degenerate all-opaque alpha could collapse
+  // hudcolor to black while leaving `all` (no alpha involved) untouched, which
+  // is exactly the pattern that was observed. Restore this to
+  // `separateHudVal && ffmpegCaptureVal` if the re-test still comes back blank.
+  const separateHudVideoConflict = false && separateHudVal && ffmpegCaptureVal;
 
   const requiredBytes = computeRequiredCaptureBytes(resolvedState.currentScannedDemos, {
     preRollSeconds: preRollVal,

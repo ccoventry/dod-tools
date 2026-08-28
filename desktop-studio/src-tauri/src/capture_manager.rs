@@ -358,7 +358,13 @@ pub async fn start_capture_batch_impl(
     //
     // Rejected before the running flag is claimed, so a refused batch does not
     // leave the manager wedged.
-    if payload.separate_hud && payload.ffmpeg_capture {
+    // TEMPORARILY LIFTED — see the matching note in capture_pane.js. The
+    // measurement behind this guard was taken before `-afxForceAlpha8 1` was
+    // sent, so it may have been the broken alpha buffer collapsing hudcolor
+    // rather than the FFmpeg path itself. Restore the `if` body if the re-test
+    // still produces blank HUD frames.
+    const GUARD_ACTIVE: bool = false;
+    if GUARD_ACTIVE && payload.separate_hud && payload.ffmpeg_capture {
         return Err(SEPARATE_HUD_VIDEO_CONFLICT.to_string());
     }
 
