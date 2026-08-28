@@ -312,10 +312,53 @@ cost of requiring the window to stay unoccluded. Display Capture is the last res
 **On the scene itself: detect and state, never mutate.** This is the same discipline `cfg_scan`
 applies to the game's own `.cfg` files and the direct-to-video work applies to HLAE's `ffmpeg.ini` —
 someone's OBS scene collection is their streaming setup, not our scratch space. Creating a scene, or
-repointing an existing source, could break a livestream to fix a capture. The preflight should report
-what it found and what is missing, in the app, and stop there. The same rule covers the recording
-format, encoder, keyframe interval and file-splitting settings: read them, report anything that will
-produce a bad result, change nothing.
+repointing an existing source, could break a livestream to fix a capture. The same rule covers the
+recording format, encoder, keyframe interval and file-splitting settings: read them, report anything
+that will produce a bad result, change nothing.
+
+### The scene picker
+
+"Detect and state" does not have to mean making the user describe their OBS setup by hand. Everything
+needed to populate **a dropdown of their actual scenes** is a read:
+
+| request | what it gives the picker |
+|---|---|
+| `GetSceneCollectionList` | the active collection, and that there are others |
+| `GetSceneList` | the dropdown's contents |
+| `GetSceneItemList` | what each scene actually contains |
+| `GetInputList` | each source's `inputKind` — `game_capture`, `window_capture`, `monitor_capture`, `wasapi_output_capture`, `wasapi_process_output_capture` |
+| `GetInputSettings` | which window a capture source is pointed at |
+
+So the picker can do better than list names: it can badge each scene with whether it holds a capture
+source aimed at `hl.exe`, which kind (and therefore whether it is the one that might collide with
+`AfxHookGoldSrc`), and whether any audio source is present at all — the failure that otherwise
+produces a perfectly valid silent clip. That turns the preflight from a list of complaints into a
+choice with the consequences written next to it.
+
+**Scene names are scoped to a scene collection.** A remembered scene name is not meaningful on its
+own: switch collections and it either vanishes or, worse, resolves to something unrelated. Store the
+collection alongside the name and re-validate at dispatch.
+
+`SetCurrentProgramScene` — switching to the chosen scene when a batch starts — is worth calling out
+as a *third* category, between reading and editing. It changes live state, so it is a mutation; but
+it is reversible, destroys nothing, and is exactly what a user picking a scene is asking for.
+Restore the previously-active scene when the batch ends, and say so in the UI.
+
+### Building a scene (low priority)
+
+`CreateScene`, `CreateInput`, `SetInputSettings` and `CreateSceneItem` make an offered "set one up
+for me" feasible, and the recommended configuration is non-obvious enough to be worth automating:
+a capture source targeting the `hl.exe` window, an Application Audio Capture on the same process
+rather than Desktop Audio, and a canvas matching the pipeline's own `-w`/`-h`.
+
+The discipline that makes this acceptable is that it is **purely additive**: create a *new* scene,
+never touch an existing one. That is a different act from repointing a source someone is streaming
+with. It must still be explicitly invoked, never run as part of a preflight, and it should say what
+it is about to create before creating it.
+
+Worth having, worth doing last. The picker is what makes the feature usable; scene creation only
+makes first-time setup nicer, and it is the part most likely to age badly as OBS's input kinds and
+settings change under it.
 
 ---
 
