@@ -824,6 +824,16 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
         let separate_hud_str = if config.separate_hud { "1" } else { "0" };
         final_init_commands.push(format!("mirv_movie_separate_hud {}", separate_hud_str));
 
+        // Diagnostic, separate-HUD only: prints the command line the hook
+        // itself parsed into the console log. The HUD alpha stream captures
+        // fully opaque and the launch flags meant to fix it are being inferred
+        // from HLAE's string table rather than observed, so this is the one
+        // way to confirm the hook actually receives them instead of assuming
+        // it does. Remove once the alpha is working.
+        if config.separate_hud {
+            final_init_commands.push("mirv_debug_cmdline".to_string());
+        }
+
         jobs.push(PatchJob {
             source_demo: source_demo.to_string(),
             output_demo,
