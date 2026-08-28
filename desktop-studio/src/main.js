@@ -589,8 +589,27 @@ window.addEventListener("DOMContentLoaded", async () => {
         document.querySelector('#ffmpeg-override-path-input')?.value?.trim() || "ffmpeg";
       hlaeFfmpegLinkBtn.disabled = true;
       try {
-        const ini = await linkHlaeFfmpeg(hlaePath, ffmpegPath);
-        showToast(STRINGS.CAPTURE_CONFIG.HLAE_FFMPEG_LINKED_OK(ini), 'success');
+        let result = await linkHlaeFfmpeg(hlaePath, ffmpegPath);
+
+        // HLAE can live anywhere — zip or installer — so a protected location
+        // like Program Files is a real possibility rather than a rare one. Ask
+        // before raising the UAC prompt, so the prompt is never a surprise, and
+        // say what it is for.
+        if (result?.needs_elevation) {
+          const agreed = await confirm(
+            STRINGS.CAPTURE_CONFIG.HLAE_FFMPEG_ELEVATE_PROMPT(result.ini),
+            {
+              title: STRINGS.CAPTURE_CONFIG.HLAE_FFMPEG_ELEVATE_TITLE,
+              okLabel: STRINGS.CAPTURE_CONFIG.HLAE_FFMPEG_ELEVATE_CONFIRM
+            }
+          );
+          if (!agreed) return;
+          result = await linkHlaeFfmpeg(hlaePath, ffmpegPath, true);
+        }
+
+        if (result?.ini && !result.needs_elevation) {
+          showToast(STRINGS.CAPTURE_CONFIG.HLAE_FFMPEG_LINKED_OK(result.ini), 'success');
+        }
       } catch {
         // The bridge already toasted the reason, which for a refusal is the
         // point — an existing ini is reported, never replaced.

@@ -84,6 +84,13 @@ pub enum LinkError {
     AlreadyBundled { path: PathBuf },
     /// The FFmpeg offered is not a file that exists.
     NoSuchFfmpeg { path: PathBuf },
+    /// HLAE's folder is not writable by this process. HLAE ships as a zip as
+    /// well as an installer, so it can live anywhere and how often this happens
+    /// is not known — but a protected location is a real enough possibility to
+    /// route through rather than report as a raw OS error. See `link_elevated`.
+    NeedsElevation { ini: PathBuf },
+    /// The elevated write was declined at the UAC prompt, or failed.
+    ElevationRefused,
     Io(std::io::Error),
 }
 
@@ -104,6 +111,14 @@ impl std::fmt::Display for LinkError {
             ),
             LinkError::NoSuchFfmpeg { path } => {
                 write!(f, "no FFmpeg at {}", path.display())
+            }
+            LinkError::NeedsElevation { ini } => write!(
+                f,
+                "{} is not writable without administrator rights",
+                ini.display()
+            ),
+            LinkError::ElevationRefused => {
+                write!(f, "the administrator prompt was declined or failed")
             }
             LinkError::Io(e) => write!(f, "{}", e),
         }
@@ -172,20 +187,127 @@ pub fn link(hlae_exe: &Path, ffmpeg_exe: &Path) -> Result<PathBuf, LinkError> {
     }
 
     let folder = ffmpeg_dir(hlae_exe).ok_or(LinkError::NoInstall)?;
-    std::fs::create_dir_all(&folder).map_err(LinkError::Io)?;
     let ini = folder.join(INI_NAME);
+    let body = ini_body(ffmpeg_exe);
 
-    // The readme's own format. The comment is for whoever opens this months
-    // from now wondering where it came from.
-    let body = format!(
+    if let Err(e) = std::fs::create_dir_all(&folder).and_then(|_| std::fs::write(&ini, &body)) {
+        // HLAE can live anywhere — it ships as a zip as well as an installer —
+        // so a protected location is one real possibility among several rather
+        // than a known majority. Reported as its own case either way, so the
+        // caller can offer the elevated route instead of showing somebody an
+        // "Access is denied. (os error 5)" and leaving them there.
+        if e.kind() == std::io::ErrorKind::PermissionDenied {
+            return Err(LinkError::NeedsElevation { ini });
+        }
+        return Err(LinkError::Io(e));
+    }
+    Ok(ini)
+}
+
+/// The readme's own format. The comment is for whoever opens this months from
+/// now wondering where it came from.
+fn ini_body(ffmpeg_exe: &Path) -> String {
+    format!(
         "; Written by dod-tools so HLAE's mirv_movie_ffmpeg can find FFmpeg.\n\
          ; Delete this file to undo it; dod-tools will never overwrite it.\n\
          [Ffmpeg]\n\
          Path={}\n",
         ffmpeg_exe.display()
-    );
-    std::fs::write(&ini, body).map_err(LinkError::Io)?;
+    )
+}
+
+/// The same write, through a UAC prompt.
+///
+/// Only for the `NeedsElevation` case. Every refusal `link` makes is re-checked
+/// here first, so elevation can never be used to get around the never-overwrite
+/// rule — it buys permission to write, not permission to clobber.
+///
+/// The paths are baked into a script file rather than passed as arguments.
+/// `Start-Process -ArgumentList` re-quotes what it is given, and these are
+/// user-supplied paths that routinely contain spaces and can contain quotes, so
+/// argument-passing is where this would break or worse. A script with no
+/// arguments has nothing to re-quote.
+#[cfg(windows)]
+pub fn link_elevated(hlae_exe: &Path, ffmpeg_exe: &Path) -> Result<PathBuf, LinkError> {
+    use std::os::windows::process::CommandExt;
+
+    if !ffmpeg_exe.is_file() {
+        return Err(LinkError::NoSuchFfmpeg {
+            path: ffmpeg_exe.to_path_buf(),
+        });
+    }
+    match detect(hlae_exe) {
+        HlaeFfmpeg::NoInstall => return Err(LinkError::NoInstall),
+        HlaeFfmpeg::Bundled { path } => return Err(LinkError::AlreadyBundled { path }),
+        HlaeFfmpeg::Linked { ini, target, .. } => {
+            return Err(LinkError::AlreadyLinked { ini, target })
+        }
+        HlaeFfmpeg::Missing { .. } => {}
+    }
+
+    let ini = ffmpeg_dir(hlae_exe).ok_or(LinkError::NoInstall)?.join(INI_NAME);
+
+    let scratch = std::env::temp_dir().join("dodtools_hlae_ffmpeg");
+    std::fs::create_dir_all(&scratch).map_err(LinkError::Io)?;
+    let staged = scratch.join(INI_NAME);
+    std::fs::write(&staged, ini_body(ffmpeg_exe)).map_err(LinkError::Io)?;
+
+    let script = scratch.join("link.ps1");
+    std::fs::write(
+        &script,
+        format!(
+            "$ErrorActionPreference = 'Stop'\n\
+             New-Item -ItemType Directory -Force -Path {} | Out-Null\n\
+             Copy-Item -LiteralPath {} -Destination {} -Force\n",
+            ps_literal(ini.parent().unwrap_or(&scratch)),
+            ps_literal(&staged),
+            ps_literal(&ini),
+        ),
+    )
+    .map_err(LinkError::Io)?;
+
+    let status = std::process::Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            &format!(
+                "Start-Process -FilePath 'powershell' -Verb RunAs -Wait -WindowStyle Hidden \
+                 -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',{})",
+                ps_literal(&script)
+            ),
+        ])
+        .creation_flags(0x08000000) // CREATE_NO_WINDOW
+        .status()
+        .map_err(LinkError::Io)?;
+
+    // Both checks are load-bearing, and measured rather than assumed:
+    //
+    //   - A declined UAC prompt makes `Start-Process` itself fail to launch,
+    //     and that does surface — the outer PowerShell exits 1.
+    //   - A failure *inside* the elevated script does NOT. `-Wait` waits for
+    //     the process without propagating its exit code, so a script that
+    //     throws still leaves the outer PowerShell exiting 0.
+    //
+    // So the exit code alone would report success for a copy that failed. The
+    // file landing is the only thing worth trusting, and it is what decides.
+    if !status.success() || !ini.is_file() {
+        return Err(LinkError::ElevationRefused);
+    }
     Ok(ini)
+}
+
+#[cfg(not(windows))]
+pub fn link_elevated(_hlae_exe: &Path, _ffmpeg_exe: &Path) -> Result<PathBuf, LinkError> {
+    Err(LinkError::ElevationRefused)
+}
+
+/// A path as a single-quoted PowerShell string literal. Inside single quotes
+/// PowerShell expands nothing at all, so doubling the quote character is the
+/// whole escape.
+fn ps_literal(path: &Path) -> String {
+    format!("'{}'", path.display().to_string().replace('\'', "''"))
 }
 
 /// An absolute path for the FFmpeg the app itself would use.
@@ -440,5 +562,41 @@ mod tests {
         // than the one Render Studio was told to use.
         assert_eq!(resolve_absolute("C:/nowhere/at/all/ffmpeg.exe"), None);
         assert_eq!(resolve_absolute("   "), None);
+    }
+
+    #[test]
+    fn a_path_is_quoted_so_powershell_expands_nothing_in_it() {
+        // These end up inside a script this code generates, and they are
+        // user-supplied paths. Single quotes stop PowerShell expanding `$`,
+        // backticks or anything else, and doubling is the only escape needed.
+        assert_eq!(ps_literal(Path::new(r"C:\Program Files (x86)\HLAE")), r"'C:\Program Files (x86)\HLAE'");
+        assert_eq!(ps_literal(Path::new(r"C:\it's\$env:PATH")), r"'C:\it''s\$env:PATH'");
+    }
+
+    #[test]
+    fn elevation_still_refuses_everything_a_plain_link_refuses() {
+        // Elevation buys permission to write, not permission to clobber. If it
+        // skipped these checks, the never-overwrite rule would have a hole in
+        // it that only opens on the machines where the button is most useful.
+        let hlae = install("elevated_refuse");
+        let folder = hlae.parent().unwrap().join(FFMPEG_DIR);
+        let original = "[Ffmpeg]\nPath=D:\\someone-elses\\ffmpeg.exe\n";
+        std::fs::write(folder.join(INI_NAME), original).expect("ini");
+        let ffmpeg = a_real_ffmpeg(hlae.parent().unwrap());
+
+        let err = link_elevated(&hlae, &ffmpeg).expect_err("must refuse");
+        assert!(matches!(err, LinkError::AlreadyLinked { .. }), "{:?}", err);
+        assert_eq!(
+            std::fs::read_to_string(folder.join(INI_NAME)).unwrap(),
+            original
+        );
+    }
+
+    #[test]
+    fn elevation_refuses_an_ffmpeg_that_is_not_there_before_prompting() {
+        // No point raising a UAC prompt to copy a file that does not exist.
+        let hlae = install("elevated_no_ffmpeg");
+        let err = link_elevated(&hlae, Path::new("C:/nowhere/ffmpeg.exe")).expect_err("refuse");
+        assert!(matches!(err, LinkError::NoSuchFfmpeg { .. }), "{:?}", err);
     }
 }

@@ -64,8 +64,8 @@ export async function checkHlaeFfmpeg(hlaePath) {
  * Writes HLAE's `ffmpeg.ini` so it can find the FFmpeg the app already uses.
  * Never overwrites an existing one — the backend refuses and says why.
  */
-export async function linkHlaeFfmpeg(hlaePath, ffmpegPath) {
-  return await invoke('link_hlae_ffmpeg', { hlaePath, ffmpegPath })
+export async function linkHlaeFfmpeg(hlaePath, ffmpegPath, elevated = false) {
+  return await invoke('link_hlae_ffmpeg', { hlaePath, ffmpegPath, elevated })
     .catch((err) => {
       console.error("IPC Execution Error (link_hlae_ffmpeg):", err);
       showToast(STRINGS.CAPTURE_CONFIG.HLAE_FFMPEG_LINK_FAILED(err), 'error');

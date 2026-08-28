@@ -304,9 +304,18 @@ async fn check_hlae_ffmpeg(hlae_path: String) -> Result<serde_json::Value, Strin
 /// Never overwrites an existing ini: HLAE installs are shared with Source work
 /// and other projects, so silently repointing one would break somebody else's
 /// setup to fix ours. `link` refuses in that case and the error says so.
+/// `elevated` retries the same write through a UAC prompt. The HLAE installer
+/// puts the target under `Program Files`, so an unelevated write fails for most
+/// people — the frontend asks first, then calls back with this set.
 #[tauri::command]
-async fn link_hlae_ffmpeg(hlae_path: String, ffmpeg_path: String) -> Result<String, String> {
-    let ffmpeg = native::shared::hlae_ffmpeg::resolve_absolute(&ffmpeg_path).ok_or_else(|| {
+async fn link_hlae_ffmpeg(
+    hlae_path: String,
+    ffmpeg_path: String,
+    elevated: Option<bool>,
+) -> Result<serde_json::Value, String> {
+    use native::shared::hlae_ffmpeg::{self, LinkError};
+
+    let ffmpeg = hlae_ffmpeg::resolve_absolute(&ffmpeg_path).ok_or_else(|| {
         format!(
             "Could not resolve an FFmpeg from \"{}\". Set Render Studio's FFmpeg path to a real \
              ffmpeg.exe first — HLAE's ini needs an absolute path and cannot use a bare command \
@@ -315,7 +324,14 @@ async fn link_hlae_ffmpeg(hlae_path: String, ffmpeg_path: String) -> Result<Stri
         )
     })?;
 
-    match native::shared::hlae_ffmpeg::link(std::path::Path::new(&hlae_path), &ffmpeg) {
+    let hlae = std::path::Path::new(&hlae_path);
+    let result = if elevated.unwrap_or(false) {
+        hlae_ffmpeg::link_elevated(hlae, &ffmpeg)
+    } else {
+        hlae_ffmpeg::link(hlae, &ffmpeg)
+    };
+
+    match result {
         Ok(ini) => {
             native::log_markdown(&format!(
                 "[hlae-ffmpeg] wrote {} pointing at {} — HLAE can now spawn FFmpeg for \
@@ -323,8 +339,15 @@ async fn link_hlae_ffmpeg(hlae_path: String, ffmpeg_path: String) -> Result<Stri
                 ini.display(),
                 ffmpeg.display()
             ));
-            Ok(ini.to_string_lossy().into_owned())
+            Ok(serde_json::json!({ "ini": ini.to_string_lossy() }))
         }
+        // Reported as data, not an error string: the frontend has to tell this
+        // apart from a real failure so it can offer the prompt rather than show
+        // somebody "Access is denied. (os error 5)" and leave them there.
+        Err(LinkError::NeedsElevation { ini }) => Ok(serde_json::json!({
+            "needs_elevation": true,
+            "ini": ini.to_string_lossy(),
+        })),
         Err(e) => Err(e.to_string()),
     }
 }

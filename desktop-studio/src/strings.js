@@ -156,6 +156,14 @@ export const STRINGS = {
         "HLAE has no FFmpeg of its own, so direct-to-video capture would run and produce no video. This is separate from Render Studio's FFmpeg.",
     HLAE_FFMPEG_LINKED_OK: (ini) => `Wrote ${ini}. HLAE can now find FFmpeg.`,
     HLAE_FFMPEG_LINK_FAILED: (err) => `Could not point HLAE at FFmpeg: ${err}`,
+    // HLAE can live anywhere — it ships as a zip as well as an installer — so a
+    // protected location like Program Files is one real possibility among
+    // several, and needs a route through rather than a raw OS error.
+    HLAE_FFMPEG_ELEVATE_TITLE: 'Administrator rights needed',
+    HLAE_FFMPEG_ELEVATE_PROMPT: (ini) =>
+        `${ini} is inside a protected folder, so Windows won't let dod-tools write there directly.\n\nContinue and Windows will ask for permission, then write a two-line file pointing HLAE at your FFmpeg. Nothing else is changed, and an existing ffmpeg.ini is never replaced.`,
+    HLAE_FFMPEG_ELEVATE_CONFIRM: 'Ask Windows for permission',
+    HLAE_FFMPEG_ELEVATE_REFUSED: 'Permission was declined, so nothing was written.',
     FFMPEG_OVERRIDE_LABEL: 'FFmpeg Override Path:',
     FFMPEG_OVERRIDE_PLACEHOLDER: 'Optional path to ffmpeg.exe',
     BROWSE_BUTTON: 'Browse',
