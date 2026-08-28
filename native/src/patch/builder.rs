@@ -345,6 +345,43 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
     helper_cfg_content.push_str("alias sys_record_stop \"mirv_recordmovie_stop\"\n");
     helper_cfg_content.push_str("alias sys_capture_done_path \"mirv_movie_filename DOD_TOOLS_EXIT_TRIGGER; mirv_recordmovie_start; mirv_recordmovie_stop\"\n");
 
+    // Direct-to-video, stage 1 of docs/direct_to_video_capture.md — a probe, off
+    // unless DOD_FFMPEG_CAPTURE is set. Four things need answering and none can
+    // be reasoned out of the bytes: where {AFX_STREAM_PATH} resolves to, whether
+    // it follows mirv_movie_filename (and so keeps the _route_N junction routing
+    // working), whether takes are still auto-numbered into take0000, and whether
+    // sound.wav still lands beside the video.
+    //
+    // Set here, once, at load — never as an injected ConsoleCommand frame. The
+    // options string is several times GoldSrc's 64-byte Cbuf_AddTextToBuffer
+    // limit with no staggering available (one argument to one command), and an
+    // injected frame would shift every later frame ordinal by +1 and desync the
+    // scheduled capture commands. Same rule r_decals follows.
+    //
+    // Not inside an alias either: GoldSrc cannot parse nested quotes in one, and
+    // this argument has to carry them. As a plain command in an exec'd cfg it is
+    // ordinary syntax. {QUOTE} is HLAE's own token for a literal quote, which is
+    // what keeps the inner path quoting away from the engine's parser entirely.
+    //
+    // rawvideo deliberately: it is about as large as the BMP sequence it
+    // replaces and is useless as a default, but it is the least clever thing
+    // that can answer the four questions above. Codec choice comes after.
+    if std::env::var("DOD_FFMPEG_CAPTURE").is_ok() {
+        helper_cfg_content.push_str("\n# EXPERIMENT: DOD_FFMPEG_CAPTURE — direct-to-video probe\n");
+        helper_cfg_content.push_str("mirv_movie_ffmpeg all enabled 1\n");
+        helper_cfg_content.push_str(
+            "mirv_movie_ffmpeg all options \"-c:v rawvideo {QUOTE}{AFX_STREAM_PATH}\\video.avi{QUOTE}\"\n",
+        );
+        crate::log_markdown(
+            "🧪 **EXPERIMENT: `DOD_FFMPEG_CAPTURE` is set.** `mirv_movie_ffmpeg` was written into \
+             `dodtools_helper.cfg`, so HLAE pipes frames to FFmpeg instead of writing a BMP \
+             sequence. This is the probe for where `{AFX_STREAM_PATH}` resolves to and whether it \
+             follows `mirv_movie_filename` — see `docs/direct_to_video_capture.md`. Output is \
+             `-c:v rawvideo`, which is about as large as the bitmaps it replaces. Unset the \
+             variable for a normal capture.",
+        );
+    }
+
 
 
     // 1. Primer Job
