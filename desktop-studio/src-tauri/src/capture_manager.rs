@@ -39,6 +39,8 @@ pub struct CapturePayload {
     #[serde(default)]
     pub separate_hud: bool,
     #[serde(default)]
+    pub ffmpeg_capture: bool,
+    #[serde(default)]
     pub save_local_patched_copy: bool,
     #[serde(default = "default_add_condebug")]
     pub add_condebug: bool,
@@ -204,6 +206,7 @@ fn config_from_payload(payload: &CapturePayload) -> PatcherConfig {
     cfg.resolution_width = payload.resolution_width;
     cfg.resolution_height = payload.resolution_height;
     cfg.separate_hud = payload.separate_hud;
+    cfg.ffmpeg_capture = payload.ffmpeg_capture;
     cfg.save_local_patched_copy = payload.save_local_patched_copy;
     cfg.add_condebug = payload.add_condebug;
     cfg.auto_clear_logs = payload.auto_clear_logs;
@@ -1002,6 +1005,7 @@ pub async fn launch_standalone_game(app: tauri::AppHandle) -> Result<(), String>
             resolution_width: settings.resolution_width,
             resolution_height: settings.resolution_height,
             separate_hud: settings.separate_hud,
+            ffmpeg_capture: settings.ffmpeg_capture,
             ..PatcherConfig::default()
         };
 
@@ -1203,6 +1207,7 @@ mod tests {
             resolution_width: 1920,
             resolution_height: 1080,
             separate_hud: true,
+            ffmpeg_capture: false,
             save_local_patched_copy: false,
             add_condebug: true,
             streaks: Vec::new(),

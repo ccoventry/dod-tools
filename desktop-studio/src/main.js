@@ -119,6 +119,16 @@ async function refreshHlaeFfmpegStatus() {
     return;
   }
 
+  // The toggle is on and HLAE has nothing to pipe to. Worth saying more
+  // sharply than the generic "no FFmpeg" line below, because this is the
+  // combination that produces a capture which runs to completion and records
+  // no video at all.
+  if (document.querySelector('#config-ffmpeg-capture')?.checked && !result.usable) {
+    statusEl.textContent = STRINGS.CAPTURE_CONFIG.FFMPEG_CAPTURE_UNAVAILABLE;
+    linkBtn.style.display = result?.can_link ? '' : 'none';
+    return;
+  }
+
   switch (s.state) {
     case 'bundled':
       statusEl.textContent = STRINGS.CAPTURE_CONFIG.HLAE_FFMPEG_BUNDLED(s.path);
@@ -321,6 +331,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     const resWidth = parseInt(document.querySelector('#config-res-width')?.value, 10) || 1280;
     const resHeight = parseInt(document.querySelector('#config-res-height')?.value, 10) || 720;
     const separateHud = document.querySelector('#config-separate-hud')?.checked || false;
+    const ffmpegCapture = document.querySelector('#config-ffmpeg-capture')?.checked || false;
     const addCondebug = document.querySelector('#config-add-condebug')?.checked || false;
 
     const autoClearLogs = document.querySelector('#config-auto-clear-logs')?.checked || false;
@@ -355,6 +366,7 @@ window.addEventListener("DOMContentLoaded", async () => {
       resolution_width: resWidth,
       resolution_height: resHeight,
       separate_hud: separateHud,
+      ffmpeg_capture: ffmpegCapture,
       add_condebug: addCondebug,
       auto_clear_logs: autoClearLogs,
       auto_clear_previews: autoClearPreviews,
@@ -423,6 +435,8 @@ window.addEventListener("DOMContentLoaded", async () => {
       }
       const separateHudEl = document.querySelector('#config-separate-hud');
       if (separateHudEl) separateHudEl.checked = !!settings.separate_hud;
+      const ffmpegCaptureEl = document.querySelector('#config-ffmpeg-capture');
+      if (ffmpegCaptureEl) ffmpegCaptureEl.checked = !!settings.ffmpeg_capture;
       const addCondebugEl = document.querySelector('#config-add-condebug');
       if (addCondebugEl) addCondebugEl.checked = !!settings.add_condebug;
       const autoClearLogsEl = document.querySelector('#config-auto-clear-logs');
@@ -662,6 +676,12 @@ window.addEventListener("DOMContentLoaded", async () => {
       ?.addEventListener('change', () => { refreshPathWarnings(); });
   }
   refreshPathWarnings();
+
+  // Toggling capture-to-video changes what the row above needs to say: with it
+  // on, "HLAE has no FFmpeg" stops being a note about an unused feature and
+  // becomes the reason the next batch will record nothing.
+  document.querySelector('#config-ffmpeg-capture')
+    ?.addEventListener('change', () => { refreshHlaeFfmpegStatus(); });
 
   const hlaeFfmpegLinkBtn = document.querySelector('#hlae-ffmpeg-link-btn');
   if (hlaeFfmpegLinkBtn) {

@@ -151,6 +151,14 @@ export const STRINGS = {
     // Shown under the field that caused it, so a typo is obvious while you are
     // still looking at the box you typed it into. Nothing is blocked — Start
     // Capture Batch has its own guard.
+    FFMPEG_CAPTURE_LABEL: 'Capture to video',
+    FFMPEG_CAPTURE_TITLE:
+        "HLAE pipes frames straight to FFmpeg as one lossless video per take, instead of writing thousands of bitmaps. Same picture, roughly half the disk. Needs the HLAE FFmpeg row above to be set.",
+    // Turning it on without HLAE having an FFmpeg produces a capture that runs
+    // and records nothing, so it is worth saying before the batch rather than
+    // after it.
+    FFMPEG_CAPTURE_UNAVAILABLE:
+        "Capture to video is on, but HLAE has no FFmpeg — the capture would run and produce no video. Sort the HLAE FFmpeg row above first.",
     PATH_NOT_FOUND: "There's no file at this path — check it for a typo.",
     PATH_IS_A_FOLDER: "That's a folder, not the program itself. Pick the .exe inside it.",
     HLAE_FFMPEG_BUNDLED: (path) => `Installed in HLAE's own folder (${path}).`,

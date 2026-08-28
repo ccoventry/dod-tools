@@ -710,6 +710,11 @@ pub fn recover_render_batch(state: tauri::State<'_, RenderManager>) -> Result<Ve
                 base_name: rj.name.clone(),
                 frame_count: 0,
                 date: String::new(),
+                // The autosave snapshot stores take_folder/name/status only, so
+                // this reconstruction cannot know which kind of take it was —
+                // the same reason `img_folder` is empty here. A re-scan is what
+                // fills either of them in.
+                video_file: None,
             },
             status,
             speed: String::new(),

@@ -556,7 +556,7 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
   // action (e.g. browsing for hlae.exe) happened to save afterward.
   // Start-lead/stop-trail belong in this list too: they define the recorded
   // window, so they change the disk estimate the guard is built on.
-  ['#config-res-width', '#config-res-height', '#config-separate-hud',
+  ['#config-res-width', '#config-res-height', '#config-separate-hud', '#config-ffmpeg-capture',
    '#config-pre-roll', '#config-post-roll', '#config-capture-fps',
    '#config-record-start-lead', '#config-record-stop-trail'].forEach(selector => {
     const el = document.querySelector(selector);
@@ -738,6 +738,7 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
     const resWidthVal = parseInt(document.querySelector("#config-res-width")?.value, 10) || 1280;
     const resHeightVal = parseInt(document.querySelector("#config-res-height")?.value, 10) || 720;
     const separateHudVal = document.querySelector("#config-separate-hud")?.checked || false;
+    const ffmpegCaptureVal = document.querySelector("#config-ffmpeg-capture")?.checked || false;
     const saveLocalPatchedCopyVal = document.querySelector("#config-save-local-patched")?.checked || false;
     const addCondebugVal = document.querySelector("#config-add-condebug")?.checked || false;
 
@@ -782,6 +783,7 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
       resolution_width: resWidthVal,
       resolution_height: resHeightVal,
       separate_hud: separateHudVal,
+      ffmpeg_capture: ffmpegCaptureVal,
       save_local_patched_copy: saveLocalPatchedCopyVal,
       add_condebug: addCondebugVal,
       streaks: selectedStreaks,

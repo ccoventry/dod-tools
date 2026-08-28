@@ -73,6 +73,18 @@ const LOG_TAG: &str = "[dod-tools]";
 /// pre-roll is shorter, so it never lands while still fast-forwarding.
 const SOUND_FLUSH_LEAD_SECONDS: f32 = 1.0;
 
+/// What `mirv_movie_ffmpeg` encodes to when direct-to-video capture is on.
+///
+/// Lossless, and chosen for speed rather than ratio: HLAE pipes frames to
+/// FFmpeg *live*, so an encoder that cannot keep up slows the capture down.
+/// `utvideo` exists for that job. Measured on real footage (3s at 1280x720,
+/// 120fps): `rawvideo` and the BMP sequence it replaces are both ~995 MB,
+/// `utvideo` 486 MB, `ffv1` 420 MB, `libx264 -qp 0` 267 MB. The smaller two are
+/// tempting and neither is built for real-time, which is a trade to make with
+/// capture-time measurements rather than file sizes — see
+/// `docs/direct_to_video_capture.md`.
+const FFMPEG_CAPTURE_CODEC: &str = "-c:v utvideo";
+
 /// Minimum breathing room between one take's `mirv_recordmovie_stop` and the
 /// next one's start. Two highlights closer than this are merged into a single
 /// take rather than risking a stop/start cycle that tight.
@@ -366,20 +378,21 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
     // rawvideo deliberately: it is about as large as the BMP sequence it
     // replaces and is useless as a default, but it is the least clever thing
     // that can answer the four questions above. Codec choice comes after.
-    if std::env::var("DOD_FFMPEG_CAPTURE").is_ok() {
-        helper_cfg_content.push_str("\n# EXPERIMENT: DOD_FFMPEG_CAPTURE — direct-to-video probe\n");
+    if config.ffmpeg_capture {
+        helper_cfg_content.push_str("\n# Direct-to-video capture\n");
         helper_cfg_content.push_str("mirv_movie_ffmpeg all enabled 1\n");
-        helper_cfg_content.push_str(
-            "mirv_movie_ffmpeg all options \"-c:v rawvideo {QUOTE}{AFX_STREAM_PATH}\\video.avi{QUOTE}\"\n",
-        );
-        crate::log_markdown(
-            "🧪 **EXPERIMENT: `DOD_FFMPEG_CAPTURE` is set.** `mirv_movie_ffmpeg` was written into \
-             `dodtools_helper.cfg`, so HLAE pipes frames to FFmpeg instead of writing a BMP \
-             sequence. This is the probe for where `{AFX_STREAM_PATH}` resolves to and whether it \
-             follows `mirv_movie_filename` — see `docs/direct_to_video_capture.md`. Output is \
-             `-c:v rawvideo`, which is about as large as the bitmaps it replaces. Unset the \
-             variable for a normal capture.",
-        );
+        helper_cfg_content.push_str(&format!(
+            "mirv_movie_ffmpeg all options \"{} {{QUOTE}}{{AFX_STREAM_PATH}}\\{}{{QUOTE}}\"\n",
+            FFMPEG_CAPTURE_CODEC,
+            crate::hlcr::scanner::VIDEO_FILE,
+        ));
+        crate::log_markdown(&format!(
+            "🎬 **Direct-to-video capture** — HLAE pipes frames to FFmpeg (`{}`) instead of \
+             writing a BMP sequence, one `{}` per stream folder. Render Studio reads these the \
+             same way it reads frame sequences.",
+            FFMPEG_CAPTURE_CODEC,
+            crate::hlcr::scanner::VIDEO_FILE,
+        ));
     }
 
 

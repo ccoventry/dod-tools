@@ -34,6 +34,8 @@ pub struct AppSettings {
     pub resolution_height: i32,
     #[serde(default)]
     pub separate_hud: bool,
+    #[serde(default)]
+    pub ffmpeg_capture: bool,
     #[serde(default = "default_add_condebug")]
     pub add_condebug: bool,
     #[serde(default)]
@@ -106,6 +108,7 @@ impl Default for AppSettings {
             resolution_width: default_resolution_width(),
             resolution_height: default_resolution_height(),
             separate_hud: false,
+            ffmpeg_capture: false,
             add_condebug: default_add_condebug(),
             auto_clear_logs: false,
             auto_clear_previews: false,

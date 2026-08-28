@@ -171,6 +171,9 @@ pub struct PatcherConfig {
     pub tickrate: f32,
     pub capture_directories: Vec<std::path::PathBuf>,
     pub separate_hud: bool,
+    /// Capture straight to video through `mirv_movie_ffmpeg` instead of writing
+    /// a BMP frame sequence. See `docs/direct_to_video_capture.md`.
+    pub ffmpeg_capture: bool,
     pub resolution_width: i32,
     pub resolution_height: i32,
     pub primary_media_dir: Option<std::path::PathBuf>,
@@ -248,6 +251,7 @@ impl Default for PatcherConfig {
             tickrate: 100.0,
             capture_directories: Vec::new(),
             separate_hud: false,
+            ffmpeg_capture: false,
             resolution_width: 1280,
             resolution_height: 720,
             primary_media_dir: None,

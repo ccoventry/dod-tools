@@ -14,7 +14,20 @@ pub struct ClipData {
     pub base_name: String,
     pub frame_count: usize,
     pub date: String,
+    /// The video file inside `img_folder`, when the take was captured through
+    /// `mirv_movie_ffmpeg` instead of as a frame sequence. `None` is a BMP take.
+    ///
+    /// `#[serde(default)]` because render autosaves written before this existed
+    /// have to keep loading — a recovered batch must not fail on a field that
+    /// was not there when it was saved.
+    #[serde(default)]
+    pub video_file: Option<String>,
 }
+
+/// The file `mirv_movie_ffmpeg` is told to write, per stream. Also what the
+/// scanner looks for to tell a video take from a frame sequence, so the two
+/// cannot drift apart.
+pub const VIDEO_FILE: &str = "video.avi";
 
 /// `.wav` files sitting directly in a take folder, sorted case-insensitively
 /// so take selection is deterministic.
@@ -40,20 +53,37 @@ fn collect_wav_files(take_folder: &Path) -> Vec<String> {
     wav_files
 }
 
-/// Immediate subdirectories of a take folder that hold an HLAE frame sequence,
-/// identified by a `00000.bmp` first frame.
+/// Immediate subdirectories of a take folder that hold one capture stream —
+/// either an HLAE frame sequence, identified by its `00000.bmp` first frame, or
+/// a single video written by `mirv_movie_ffmpeg`.
+///
+/// Both land in the same place: `<take0000>/<stream>/`, where `<stream>` is
+/// `all`, `hudcolor`, `hudalpha` and so on. Measured against a real capture —
+/// FFmpeg mode changes what is inside the stream folder and nothing else about
+/// the layout.
 fn collect_image_folders(take_folder: &Path) -> Vec<PathBuf> {
     let mut image_folders = Vec::new();
     if let Ok(read_dir) = std::fs::read_dir(take_folder) {
         for sub_entry in read_dir.flatten() {
             if let Ok(file_type) = sub_entry.file_type() {
-                if file_type.is_dir() && sub_entry.path().join("00000.bmp").exists() {
-                    image_folders.push(sub_entry.path());
+                let path = sub_entry.path();
+                if file_type.is_dir()
+                    && (path.join("00000.bmp").exists() || path.join(VIDEO_FILE).exists())
+                {
+                    image_folders.push(path);
                 }
             }
         }
     }
     image_folders
+}
+
+/// The video inside a stream folder, when that is what it holds.
+fn stream_video(folder: &Path) -> Option<String> {
+    folder
+        .join(VIDEO_FILE)
+        .is_file()
+        .then(|| VIDEO_FILE.to_string())
 }
 
 /// Whether Render Studio's scanner would admit this folder as a renderable take.
@@ -170,6 +200,7 @@ pub fn scan_folder_background(
                     base_name: base_name.clone(),
                     frame_count,
                     date: date.clone(),
+                    video_file: stream_video(all_folder),
                 };
                 accumulated_clips.push(clip_all);
 
@@ -181,6 +212,10 @@ pub fn scan_folder_background(
                     base_name: base_name.clone(),
                     frame_count,
                     date: date.clone(),
+                    // The HUD pair renders from hudcolor and hudalpha together;
+                    // this names the colour half and the renderer derives its
+                    // partner exactly as it already does for the BMP sequences.
+                    video_file: folder_names.get("hudcolor").and_then(|p| stream_video(p)),
                 };
                 accumulated_clips.push(clip_hud);
 
@@ -204,6 +239,7 @@ pub fn scan_folder_background(
                     base_name: base_name.clone(),
                     frame_count,
                     date,
+                    video_file: stream_video(&img_folder),
                 };
                 accumulated_clips.push(clip);
             }
