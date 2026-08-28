@@ -170,6 +170,15 @@ export const STRINGS = {
     CAPTURE_MODE_OBS: 'OBS (real time)',
     CAPTURE_MODE_OBS_TITLE:
         'OBS records the game window while dod-tools tells it when each clip starts and stops. HLAE records nothing. Output is a finished, playable file with audio already in it — but capture runs at real time, so frames drop if the machine cannot keep up, and high capture rates are not possible. Separate HUD is not available on this path.',
+    // Applies to every capture mode, which is why it sits with the mode
+    // selector rather than in the OBS panel. The throttle is the engine's:
+    // GoldSrc slows its frame loop when the window is not focused, and
+    // `host_framerate` fast-forward stops with it, so the gaps between clips
+    // play out in real time. Nothing is lost and no HLAE flag defeats it —
+    // `engine_no_focus_sleep` is Source 2 only. See
+    // docs/goldsrc_dod_quirks.md.
+    FOCUS_HINT:
+        'Leave Day of Defeat focused for the whole batch. GoldSrc stops fast-forwarding when its window loses focus, so alt-tabbing away makes the gaps between clips play out in real time and the batch takes far longer.',
     // ── OBS connection ──────────────────────────────────────────────────────
     OBS_SECTION_TITLE: 'OBS Connection',
     OBS_HOST_LABEL: 'Host:',
@@ -186,12 +195,6 @@ export const STRINGS = {
     OBS_TESTING: 'Connecting…',
     OBS_ENABLE_HINT:
         'OBS Studio 28+ has obs-websocket built in. Enable it under Tools → WebSocket Server Settings — the checkbox at the top of that dialog is the switch, not the Connect Info panel.',
-    // Measured, not folklore: GoldSrc throttles its frame loop when the window
-    // is not focused, and `host_framerate` fast-forward stops with it. It costs
-    // nothing on this path but wall-clock time — recording blocks run at real
-    // time regardless — but it can turn a short batch into a very long one.
-    OBS_FOCUS_HINT:
-        'Leave Day of Defeat focused for the whole batch. GoldSrc stops fast-forwarding when its window loses focus, so alt-tabbing away makes the gaps between clips play out in real time and the batch takes far longer.',
     // ── Orphaned recording left by a previous run ───────────────────────────
     OBS_ORPHAN_TITLE: 'OBS is still recording',
     obsOrphanPrompt: (directory) =>
