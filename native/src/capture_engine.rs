@@ -404,35 +404,32 @@ pub fn spawn_capture_engine(
             // sees it. The `-forceAlpha true` passed to HLAE.exe below is a
             // Launcher-mode switch and does not reach the hook from here.
             //
-            // `-afxForceAlpha8` alone was measured to do nothing: the hudAlpha
-            // bitmaps captured with and without it were byte-for-byte identical
-            // (SHA-256 match), still pal8 with a single palette index 255. The
-            // flag parses — the string is in AfxHookGoldSrc.dll — it just has
-            // nothing to act on.
+            // `-afxForceAlpha8` TAKES A VALUE. From HLAE's own Launcher.cs, the
+            // dialog builds it as:
             //
-            // So this now reproduces the whole set HLAE's own Launch GoldSrc
-            // dialog builds, reconstructed from its string table and from the
-            // <Launcher> block of hlaeconfig.xml (GfxBpp 32, RenderMode 0 =
-            // standard, ForceAlpha true) — the configuration that is reported
-            // to have worked when driven through that dialog. Under
-            // `-customLoader` we compose the game command line ourselves, so
-            // none of it was ever being passed.
+            //     " -afxForceAlpha8 " + (cfg.ForceAlpha ? 1 : 0).ToString()
             //
-            // `-32bpp` is the one with an obvious mechanism: a framebuffer that
-            // is not 32-bit has no alpha bits for `-afxForceAlpha8` to force,
-            // which is exactly a flag that parses cleanly and changes nothing.
+            // Passing it bare — which is what two earlier attempts did — makes
+            // the hook read the following token as its argument, find something
+            // that is not `1`, and leave the alpha channel off. That is exactly
+            // the observed behaviour: the flag parses, and the captured hudAlpha
+            // bitmaps come out byte-for-byte identical to a run without it.
             //
-            // Deliberately the whole set rather than one at a time — the point
-            // is to reach a configuration known to work, and it can be bisected
-            // afterwards to find the minimum. `-afxOptimizeCaptureVis` is left
-            // out: it is a visibility optimisation, unrelated to alpha, and
-            // would be one more variable over the capture itself.
+            // `-afxRenderMode` takes one of standard|fBO|memoryDC the same way.
+            // Under `-customLoader` HLAE composes nothing for us — the dialog is
+            // what normally assembles these — so the whole set has to be built
+            // here, values included.
+            //
+            // `-32bpp` because a framebuffer that is not 32-bit has no alpha
+            // bits to force in the first place. `-afxOptimizeCaptureVis` is left
+            // out: it is a visibility optimisation unrelated to alpha, and would
+            // be one more variable over the capture itself.
             //
             // Gated on separate_hud deliberately: only the HUD pair needs the
             // alpha buffer, and the single-stream `all` capture is a known-good
             // path not worth perturbing to fix something it does not use.
             let alpha_flags = if config.separate_hud {
-                "-gl -32bpp -afxRenderMode standard -afxForceAlpha8 "
+                "-gl -32bpp -afxRenderMode standard -afxForceAlpha8 1 "
             } else {
                 ""
             };
