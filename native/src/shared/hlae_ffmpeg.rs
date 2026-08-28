@@ -17,11 +17,23 @@
 //! Render Studio uses; they drift, and then the two halves of the pipeline
 //! encode with different builds.
 //!
-//! **An existing ini is never overwritten.** HLAE is shared with Source work and
-//! other projects, so silently repointing it would break somebody else's
+//! **Somebody else's ini is never overwritten.** HLAE is shared with Source work
+//! and other projects, so silently repointing it would break someone else's
 //! workflow to fix ours. Where one exists and disagrees, that is reported and
 //! left alone — the same discipline `patch::cfg_scan` applies to the game's own
-//! `.cfg` files. See `docs/direct_to_video_capture.md`.
+//! `.cfg` files.
+//!
+//! What is protected is a *configuration*, not a filename. An ini with no
+//! `Path=` in it — empty, or comments only — states nothing, holds no data to
+//! lose, and is written over. Refusing there would strand someone behind a file
+//! that does nothing, in a folder they usually cannot edit without
+//! administrator rights.
+//!
+//! A file *this app* wrote is a different matter, and is rewritten on request.
+//! Treating those as untouchable too would make the first link permanent: change
+//! the app's FFmpeg afterwards and HLAE stays pointed at the old one, with no
+//! way back through the UI and a folder that usually needs administrator rights
+//! to edit by hand. See `docs/direct_to_video_capture.md`.
 
 #![cfg(not(target_arch = "wasm32"))]
 
@@ -30,6 +42,9 @@ use std::path::{Path, PathBuf};
 const FFMPEG_DIR: &str = "ffmpeg";
 const INI_NAME: &str = "ffmpeg.ini";
 const BUNDLED_RELATIVE: &str = "bin/ffmpeg.exe";
+
+/// The header `link` writes, and the marker `authored_by_us` looks for.
+const AUTHORED_MARKER: &str = "Written by dod-tools";
 
 /// What HLAE would find if it looked right now.
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -42,10 +57,18 @@ pub enum HlaeFfmpeg {
     /// because a stale ini pointing at a moved FFmpeg looks configured and is
     /// not — exactly the case a "configured / not configured" boolean would
     /// hide.
+    ///
+    /// `ours` is whether this file carries the header `link` writes. The
+    /// never-overwrite rule protects somebody *else's* configuration; a file
+    /// this app wrote is a file it may correct. Without that distinction the
+    /// first successful link is permanent, and changing the app's own FFmpeg
+    /// afterwards leaves HLAE pointed at the old one with no way back through
+    /// the UI — the folder needs administrator rights to delete from, too.
     Linked {
         ini: PathBuf,
         target: PathBuf,
         target_exists: bool,
+        ours: bool,
     },
     /// HLAE's ffmpeg folder exists but holds neither. `mirv_movie_ffmpeg` will
     /// produce nothing.
@@ -67,10 +90,17 @@ impl HlaeFfmpeg {
     }
 
     /// Whether offering to link would make sense. False when a binary is
-    /// already bundled, when an ini already exists (never overwritten), and
-    /// when there is no install to write into.
+    /// already bundled (an ini would be ignored anyway), when somebody else's
+    /// ini is already there, and when there is no install to write into.
     pub fn can_link(&self) -> bool {
-        matches!(self, HlaeFfmpeg::Missing { .. })
+        match self {
+            HlaeFfmpeg::Missing { .. } => true,
+            // Ours to correct — see the `ours` field. This is also the only
+            // route back when the app's own FFmpeg changes, since the folder
+            // usually needs administrator rights to delete from by hand.
+            HlaeFfmpeg::Linked { ours, .. } => *ours,
+            _ => false,
+        }
     }
 }
 
@@ -154,16 +184,31 @@ pub fn detect(hlae_exe: &Path) -> HlaeFfmpeg {
     }
 
     let ini = folder.join(INI_NAME);
-    if let Some(target) = std::fs::read_to_string(&ini).ok().as_deref().and_then(parse_ini_path) {
-        let target_exists = target.is_file();
-        return HlaeFfmpeg::Linked {
-            ini,
-            target,
-            target_exists,
-        };
+    if let Ok(body) = std::fs::read_to_string(&ini) {
+        if let Some(target) = parse_ini_path(&body) {
+            let target_exists = target.is_file();
+            return HlaeFfmpeg::Linked {
+                ini,
+                target,
+                target_exists,
+                ours: authored_by_us(&body),
+            };
+        }
     }
 
     HlaeFfmpeg::Missing { folder }
+}
+
+/// Whether this `ffmpeg.ini` is one `link` wrote.
+///
+/// A header match is the whole test, and it is deliberately not proof: somebody
+/// can edit the path under our header and we would then treat their edit as
+/// ours to replace. That is why replacing is never silent — the caller reports
+/// what the old target was. The alternative, treating every existing file as
+/// untouchable, makes the first link permanent and leaves no way to re-point
+/// HLAE after changing the app's FFmpeg.
+fn authored_by_us(body: &str) -> bool {
+    body.contains(AUTHORED_MARKER)
 }
 
 /// Points HLAE at `ffmpeg_exe` by writing `ffmpeg.ini`.
@@ -180,10 +225,13 @@ pub fn link(hlae_exe: &Path, ffmpeg_exe: &Path) -> Result<PathBuf, LinkError> {
     match detect(hlae_exe) {
         HlaeFfmpeg::NoInstall => return Err(LinkError::NoInstall),
         HlaeFfmpeg::Bundled { path } => return Err(LinkError::AlreadyBundled { path }),
-        HlaeFfmpeg::Linked { ini, target, .. } => {
+        // Somebody else wrote it: left alone. Ours: replaced, since the
+        // alternative is that the first link is permanent and the folder
+        // usually cannot be edited by hand without administrator rights.
+        HlaeFfmpeg::Linked { ini, target, ours, .. } if !ours => {
             return Err(LinkError::AlreadyLinked { ini, target })
         }
-        HlaeFfmpeg::Missing { .. } => {}
+        HlaeFfmpeg::Linked { .. } | HlaeFfmpeg::Missing { .. } => {}
     }
 
     let folder = ffmpeg_dir(hlae_exe).ok_or(LinkError::NoInstall)?;
@@ -209,7 +257,8 @@ pub fn link(hlae_exe: &Path, ffmpeg_exe: &Path) -> Result<PathBuf, LinkError> {
 fn ini_body(ffmpeg_exe: &Path) -> String {
     format!(
         "; Written by dod-tools so HLAE's mirv_movie_ffmpeg can find FFmpeg.\n\
-         ; Delete this file to undo it; dod-tools will never overwrite it.\n\
+         ; Delete this file to undo it. dod-tools may rewrite a file carrying\n\
+         ; this header, and will never touch one that does not.\n\
          [Ffmpeg]\n\
          Path={}\n",
         ffmpeg_exe.display()
@@ -239,10 +288,13 @@ pub fn link_elevated(hlae_exe: &Path, ffmpeg_exe: &Path) -> Result<PathBuf, Link
     match detect(hlae_exe) {
         HlaeFfmpeg::NoInstall => return Err(LinkError::NoInstall),
         HlaeFfmpeg::Bundled { path } => return Err(LinkError::AlreadyBundled { path }),
-        HlaeFfmpeg::Linked { ini, target, .. } => {
+        // Somebody else wrote it: left alone. Ours: replaced, since the
+        // alternative is that the first link is permanent and the folder
+        // usually cannot be edited by hand without administrator rights.
+        HlaeFfmpeg::Linked { ini, target, ours, .. } if !ours => {
             return Err(LinkError::AlreadyLinked { ini, target })
         }
-        HlaeFfmpeg::Missing { .. } => {}
+        HlaeFfmpeg::Linked { .. } | HlaeFfmpeg::Missing { .. } => {}
     }
 
     let ini = ffmpeg_dir(hlae_exe).ok_or(LinkError::NoInstall)?.join(INI_NAME);
@@ -323,7 +375,12 @@ pub fn resolve_absolute(configured: &str) -> Option<PathBuf> {
 
     let direct = Path::new(trimmed);
     if direct.is_file() {
-        return std::fs::canonicalize(direct).ok().or_else(|| Some(direct.to_path_buf()));
+        return Some(
+            std::fs::canonicalize(direct)
+                .ok()
+                .map(|p| strip_extended_prefix(&p))
+                .unwrap_or_else(|| direct.to_path_buf()),
+        );
     }
     if direct.components().count() > 1 {
         // A path was given and it is not there. Searching PATH for its file
@@ -345,11 +402,38 @@ fn search_path(name: &str) -> Option<PathBuf> {
         for candidate in &candidates {
             let full = dir.join(candidate);
             if full.is_file() {
-                return std::fs::canonicalize(&full).ok().or(Some(full));
+                return Some(
+                    std::fs::canonicalize(&full)
+                        .ok()
+                        .map(|p| strip_extended_prefix(&p))
+                        .unwrap_or(full),
+                );
             }
         }
     }
     None
+}
+
+/// Drops Windows' `\\?\` extended-length prefix.
+///
+/// `std::fs::canonicalize` always adds it, and the result is a path that is
+/// correct, ugly, and not universally accepted — it turns off the path
+/// normalisation a lot of software assumes, so the programs that choke on it do
+/// so at the point of use rather than when the path is stored. This value is
+/// handed to HLAE to spawn a process with, and HLAE's own readme documents a
+/// plain `C:\...\ffmpeg.exe`, so there is nothing to gain by keeping it and a
+/// silent launch failure to lose.
+///
+/// `\\?\UNC\server\share` is the network form and maps back to `\\server\share`.
+fn strip_extended_prefix(path: &Path) -> PathBuf {
+    let text = path.to_string_lossy();
+    match text.strip_prefix(r"\\?\") {
+        Some(rest) => match rest.strip_prefix("UNC\\") {
+            Some(unc) => PathBuf::from(format!(r"\\{}", unc)),
+            None => PathBuf::from(rest),
+        },
+        None => path.to_path_buf(),
+    }
 }
 
 /// The `Path=` value from an `ffmpeg.ini`, if there is one.
@@ -598,5 +682,118 @@ mod tests {
         let hlae = install("elevated_no_ffmpeg");
         let err = link_elevated(&hlae, Path::new("C:/nowhere/ffmpeg.exe")).expect_err("refuse");
         assert!(matches!(err, LinkError::NoSuchFfmpeg { .. }), "{:?}", err);
+    }
+
+    #[test]
+    fn a_canonical_path_loses_the_extended_length_prefix() {
+        // `canonicalize` always adds `\\?\`. It is a correct path and not a
+        // universally accepted one — it turns off the normalisation a lot of
+        // software assumes — and this value gets handed to HLAE to spawn a
+        // process with, so keeping it risks a silent launch failure.
+        assert_eq!(
+            strip_extended_prefix(Path::new(r"\\?\C:\Program Files (x86)\FFmpeg\ffmpeg.exe")),
+            PathBuf::from(r"C:\Program Files (x86)\FFmpeg\ffmpeg.exe")
+        );
+        // The network form maps back to a plain UNC path.
+        assert_eq!(
+            strip_extended_prefix(Path::new(r"\\?\UNC\server\share\ffmpeg.exe")),
+            PathBuf::from(r"\\server\share\ffmpeg.exe")
+        );
+        // Anything else is left exactly as it is.
+        assert_eq!(
+            strip_extended_prefix(Path::new(r"C:\plain\ffmpeg.exe")),
+            PathBuf::from(r"C:\plain\ffmpeg.exe")
+        );
+    }
+
+    #[test]
+    fn resolving_never_hands_back_an_extended_length_path() {
+        // The end-to-end version of the above: whatever `canonicalize` does,
+        // what reaches the ini has to be a path HLAE will accept.
+        let dir = scratch("resolve_prefix");
+        let ffmpeg = a_real_ffmpeg(&dir);
+        let got = resolve_absolute(&ffmpeg.to_string_lossy()).expect("resolve");
+        assert!(
+            !got.to_string_lossy().starts_with(r"\?\"),
+            "{} still carries the prefix",
+            got.display()
+        );
+    }
+
+    #[test]
+    fn our_own_ini_is_rewritten_rather_than_treated_as_untouchable() {
+        // Without this the first link is permanent: change the app's FFmpeg and
+        // HLAE stays pointed at the old one, with no way back through the UI and
+        // a folder that usually needs administrator rights to edit by hand.
+        let hlae = install("relink");
+        let first = a_real_ffmpeg(hlae.parent().unwrap());
+        link(&hlae, &first).expect("first link");
+        assert!(detect(&hlae).can_link(), "our own file must stay correctable");
+
+        let second_dir = hlae.parent().unwrap().join("other");
+        std::fs::create_dir_all(&second_dir).expect("dir");
+        let second = a_real_ffmpeg(&second_dir);
+        link(&hlae, &second).expect("relink");
+
+        match detect(&hlae) {
+            HlaeFfmpeg::Linked { target, ours, .. } => {
+                assert_eq!(target, second);
+                assert!(ours);
+            }
+            other => panic!("{:?}", other),
+        }
+    }
+
+    #[test]
+    fn an_empty_or_contentless_ini_is_replaced_rather_than_protected() {
+        // The rule protects a *configuration*, not a filename. A file with no
+        // `Path=` in it expresses nothing, so refusing to write would strand
+        // somebody behind a file that does nothing — and there is no data in it
+        // to lose. A zero-length file is the case that actually turns up, from
+        // an interrupted write or a hand-created placeholder.
+        for body in ["", "\n\n", "; notes to self\n", "[Ffmpeg]\n"] {
+            let hlae = install("contentless");
+            let folder = hlae.parent().unwrap().join(FFMPEG_DIR);
+            std::fs::write(folder.join(INI_NAME), body).expect("ini");
+
+            assert!(
+                detect(&hlae).can_link(),
+                "an ini containing {:?} should not be treated as somebody's setup",
+                body
+            );
+            let ffmpeg = a_real_ffmpeg(hlae.parent().unwrap());
+            link(&hlae, &ffmpeg).expect("should write over a file with nothing in it");
+            assert_eq!(read_target(&hlae), Some(ffmpeg));
+        }
+    }
+
+    fn read_target(hlae: &Path) -> Option<PathBuf> {
+        match detect(hlae) {
+            HlaeFfmpeg::Linked { target, .. } => Some(target),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn a_file_without_our_header_is_still_untouchable() {
+        // The distinction the rewrite rule rests on. Somebody else's file is
+        // left alone however much we would like to correct it.
+        let hlae = install("not_ours");
+        let folder = hlae.parent().unwrap().join(FFMPEG_DIR);
+        let theirs = "[Ffmpeg]\nPath=D:\\theirs\\ffmpeg.exe\n";
+        std::fs::write(folder.join(INI_NAME), theirs).expect("ini");
+
+        match detect(&hlae) {
+            HlaeFfmpeg::Linked { ours, .. } => assert!(!ours),
+            other => panic!("{:?}", other),
+        }
+        assert!(!detect(&hlae).can_link());
+
+        let ffmpeg = a_real_ffmpeg(hlae.parent().unwrap());
+        assert!(matches!(
+            link(&hlae, &ffmpeg).expect_err("must refuse"),
+            LinkError::AlreadyLinked { .. }
+        ));
+        assert_eq!(std::fs::read_to_string(folder.join(INI_NAME)).unwrap(), theirs);
     }
 }

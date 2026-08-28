@@ -603,7 +603,12 @@ window.addEventListener("DOMContentLoaded", async () => {
               okLabel: STRINGS.CAPTURE_CONFIG.HLAE_FFMPEG_ELEVATE_CONFIRM
             }
           );
-          if (!agreed) return;
+          // Say so rather than going quiet. Declining is a choice, but a button
+          // that does nothing visible reads as a button that failed.
+          if (!agreed) {
+            showToast(STRINGS.CAPTURE_CONFIG.HLAE_FFMPEG_ELEVATE_REFUSED, 'info');
+            return;
+          }
           result = await linkHlaeFfmpeg(hlaePath, ffmpegPath, true);
         }
 
