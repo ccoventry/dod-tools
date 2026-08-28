@@ -1,6 +1,8 @@
 # Direct-to-Video Capture (`mirv_movie_ffmpeg`)
 
-> **Status 2026-08-27 — scoped, not started.** Tracks [#42](https://github.com/ccoventry/dod-tools/issues/42).
+> **Status 2026-08-27 — stage 1 probe run in game; every unknown answered favourably.**
+> Tracks [#42](https://github.com/ccoventry/dod-tools/issues/42). Stage 2 (FFmpeg availability) is
+> built. Stages 3-6 remain.
 > Read `docs/goldsrc_dod_quirks.md` and `docs/hlae_protocols.md` first — the engine and HLAE facts
 > this rests on are recorded there and must not be re-derived.
 >
@@ -57,7 +59,66 @@ Two facts are already settled by evidence rather than assumption:
 - **Sound export is on by default.** The pipeline never sets `mirv_movie_export_sound`, and every
   take in the library contains a `sound.wav`. That is the default answering for itself.
 
-Everything below needs one real capture to settle, and none of it can be reasoned out of the bytes:
+### Answered by the probe, 2026-08-27
+
+Two clips captured with `DOD_FFMPEG_CAPTURE` set. **Every answer is the favourable one**: the
+output layout is byte-for-byte the shape the BMP pipeline already produces, with the frame sequence
+replaced by a single file.
+
+    session_20260827_220151/
+      chain_01_b0/
+        take0000/
+          all/
+            video.avi      ← was all/00000.bmp, 00001.bmp, ...
+          sound.wav        ← unchanged, same place as always
+
+1. **`{AFX_STREAM_PATH}` resolves to the per-stream folder** — `take0000/all/`, exactly where the
+   BMP sequence goes. `all` is the stream name, which is why `ClipData::img_folder` already holds
+   that string.
+2. **It follows `mirv_movie_filename`.** The take landed under the routed session folder, so the
+   `_route_N` junction routing keeps working untouched. This was the load-bearing unknown and it
+   came out the right way — no long-path problem, no options-string surgery.
+3. **Takes are still auto-numbered** into `take0000`, so `hlcr::scanner`'s trailing-`take*` handling
+   and `shared::paths::take_key` are unaffected.
+4. **`sound.wav` still lands** in the take folder, one level above the stream folder, as before.
+
+The file is valid and correctly formed: `rawvideo`, `bgr24`, 1280x720, **120 fps**, 11.50s. That
+duration matches `sound.wav` exactly — `(1014348 - 44) / 88200 = 11.500s` — so audio and video came
+out the same length, which is the cross-check `docs/hlae_protocols.md` recommends and the thing the
+FPS-mismatch bug used to break.
+
+**`take-verify` reported `2/2 captured, 0 renderable`, and that is correct rather than a fault.**
+`is_renderable_take` requires a subfolder containing `00000.bmp`; a video take has no such thing.
+The predicate is shared with Render Studio's own admission check precisely so the two cannot
+silently disagree, and here it is doing its job — saying, accurately, that Render Studio cannot yet
+consume what was captured. Teaching it the new shape is stage 4, and both sides change together.
+
+### What a codec choice is worth
+
+Three seconds of the captured footage, re-encoded (a BMP frame at this resolution is ~2.76 MB, so
+`rawvideo` stands in for the size of the sequence being replaced):
+
+| encoding | 3s of footage | vs the BMP sequence |
+|---|---|---|
+| `rawvideo` (and the BMP sequence) | 995 MB | 1.00x |
+| `utvideo` | 486 MB | 0.49x |
+| `ffv1 -level 3` | 420 MB | 0.42x |
+| `libx264 -qp 0` | 267 MB | **0.27x** |
+
+So a **lossless** intermediate is already a ~2-4x saving with no quality cost at all, which is the
+headline: this does not require accepting worse output. Anything lossy is far smaller again, and is
+the trade the people in [#65](https://github.com/ccoventry/dod-tools/issues/65) are already making
+deliberately.
+
+**These are transcode sizes, not capture-time measurements.** HLAE pipes frames to FFmpeg live, so
+the encoder has to keep up with capture — `utvideo` is built for exactly that and `ffv1` is not
+especially fast. Which of these is viable *during* a capture is a separate question this probe did
+not ask.
+
+---
+
+Everything below needed one real capture to settle, and none of it could be reasoned out of the
+bytes. Kept as written because the questions are what the probe was designed around:
 
 1. **What `{AFX_STREAM_PATH}` resolves to.** The take folder, or a per-stream subfolder inside it?
    This decides the output layout, whether the video lands as a sibling of `sound.wav`, and how much
