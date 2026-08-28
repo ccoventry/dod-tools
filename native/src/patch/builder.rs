@@ -73,6 +73,18 @@ const LOG_TAG: &str = "[dod-tools]";
 /// pre-roll is shorter, so it never lands while still fast-forwarding.
 const SOUND_FLUSH_LEAD_SECONDS: f32 = 1.0;
 
+/// What `mirv_movie_ffmpeg` encodes to when direct-to-video capture is on.
+///
+/// Lossless, and chosen for speed rather than ratio: HLAE pipes frames to
+/// FFmpeg *live*, so an encoder that cannot keep up slows the capture down.
+/// `utvideo` exists for that job. Measured on real footage (3s at 1280x720,
+/// 120fps): `rawvideo` and the BMP sequence it replaces are both ~995 MB,
+/// `utvideo` 486 MB, `ffv1` 420 MB, `libx264 -qp 0` 267 MB. The smaller two are
+/// tempting and neither is built for real-time, which is a trade to make with
+/// capture-time measurements rather than file sizes — see
+/// `docs/direct_to_video_capture.md`.
+const FFMPEG_CAPTURE_CODEC: &str = "-c:v utvideo";
+
 /// Minimum breathing room between one take's `mirv_recordmovie_stop` and the
 /// next one's start. Two highlights closer than this are merged into a single
 /// take rather than risking a stop/start cycle that tight.
@@ -541,6 +553,50 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
     helper_cfg_content.push_str("alias sys_record_start \"mirv_recordmovie_start; stopsound\"\n");
     helper_cfg_content.push_str("alias sys_record_stop \"mirv_recordmovie_stop\"\n");
     helper_cfg_content.push_str("alias sys_capture_done_path \"mirv_movie_filename DOD_TOOLS_EXIT_TRIGGER; mirv_recordmovie_start; mirv_recordmovie_stop\"\n");
+
+    // Direct-to-video (docs/direct_to_video_capture.md), driven by the capture-
+    // mode toggle. The probe that introduced this settled all four of its open
+    // questions against a real capture: {AFX_STREAM_PATH} resolves to the
+    // per-stream folder, it follows mirv_movie_filename (so the _route_N
+    // junction routing keeps working), takes are still auto-numbered into
+    // take0000, and sound.wav still lands beside the video.
+    //
+    // `all` here is HLAE's stream *group*, not the folder name it happens to
+    // share with the composited stream. Measured with mirv_movie_separate_hud
+    // on: the group does reach hudColor and hudAlpha, so all three streams get
+    // a video and no per-stream enabled/options lines are needed. The folders
+    // HLAE writes are lowercase (`hudcolor`/`hudalpha`) even though the command
+    // names those streams in camelCase.
+    //
+    // Set here, once, at load — never as an injected ConsoleCommand frame. The
+    // options string is several times GoldSrc's 64-byte Cbuf_AddTextToBuffer
+    // limit with no staggering available (one argument to one command), and an
+    // injected frame would shift every later frame ordinal by +1 and desync the
+    // scheduled capture commands. Same rule r_decals follows.
+    //
+    // Not inside an alias either: GoldSrc cannot parse nested quotes in one, and
+    // this argument has to carry them. As a plain command in an exec'd cfg it is
+    // ordinary syntax. {QUOTE} is HLAE's own token for a literal quote, which is
+    // what keeps the inner path quoting away from the engine's parser entirely.
+    //
+    // The codec is FFMPEG_CAPTURE_CODEC — see its own note for why it is
+    // lossless and why the size ranking there is not the viability ranking.
+    if config.ffmpeg_capture {
+        helper_cfg_content.push_str("\n# Direct-to-video capture\n");
+        helper_cfg_content.push_str("mirv_movie_ffmpeg all enabled 1\n");
+        helper_cfg_content.push_str(&format!(
+            "mirv_movie_ffmpeg all options \"{} {{QUOTE}}{{AFX_STREAM_PATH}}\\{}{{QUOTE}}\"\n",
+            FFMPEG_CAPTURE_CODEC,
+            crate::hlcr::scanner::VIDEO_FILE,
+        ));
+        crate::log_markdown(&format!(
+            "🎬 **Direct-to-video capture** — HLAE pipes frames to FFmpeg (`{}`) instead of \
+             writing a BMP sequence, one `{}` per stream folder. Render Studio reads these the \
+             same way it reads frame sequences.",
+            FFMPEG_CAPTURE_CODEC,
+            crate::hlcr::scanner::VIDEO_FILE,
+        ));
+    }
 
 
 

@@ -9,7 +9,10 @@ import {
   getSettings,
   saveSettings,
   logFrontendEvent,
-  openActivityLog
+  openActivityLog,
+  checkHlaeFfmpeg,
+  linkHlaeFfmpeg,
+  diagnoseExecutablePaths
 } from './ipc_bridge.js';
 import { renderMasterList, initMasterPane } from './master_pane.js';
 import { initMapWarnings, refreshMapWarnings, resetMapWarnings } from './map_warnings.js';
@@ -33,6 +36,144 @@ import { applyStaticStrings } from './apply_strings.js';
 // from the earliest possible moment, not just once the app's own init
 // logic gets around to it.
 initErrorReporter();
+
+// ── Path Routing: does each configured path point at a real file? ────────────
+// These fields accepted anything. `validate_paths` only ran at capture launch,
+// so a typo sat there looking correct until a batch failed minutes later — and
+// the FFmpeg override was never checked at all. The complaint goes under the
+// field that caused it rather than into a banner elsewhere, so it is visible
+// while you are still looking at the box you typed into.
+const PATH_FIELDS = [
+  ['#hl-path-input', '#hl-path-warning'],
+  ['#hlae-path-input', '#hlae-path-warning'],
+  ['#ffmpeg-override-path-input', '#ffmpeg-path-warning'],
+];
+
+async function refreshPathWarnings() {
+  const rows = PATH_FIELDS
+    .map(([input, warning]) => ({
+      input: document.querySelector(input),
+      warning: document.querySelector(warning),
+    }))
+    .filter((r) => r.input && r.warning);
+  if (!rows.length) return;
+
+  let states;
+  try {
+    states = await diagnoseExecutablePaths(rows.map((r) => r.input.value?.trim() || ""));
+  } catch {
+    // Already logged by the bridge. Clear rather than leave a stale complaint
+    // standing next to a path it may no longer describe.
+    rows.forEach((r) => { r.warning.style.display = 'none'; });
+    return;
+  }
+
+  rows.forEach((row, i) => {
+    let message = "";
+    if (states[i] === 'not_found') message = STRINGS.CAPTURE_CONFIG.PATH_NOT_FOUND;
+    else if (states[i] === 'not_a_file') message = STRINGS.CAPTURE_CONFIG.PATH_IS_A_FOLDER;
+    // 'empty' says nothing on purpose: these are legitimately blank before they
+    // are filled in, and the FFmpeg override is optional entirely.
+    row.warning.textContent = message;
+    row.warning.style.display = message ? '' : 'none';
+  });
+}
+
+/** Highlights whichever side of the capture-mode toggle is currently in force. */
+function applyCaptureModeUI() {
+  const video = document.querySelector('#config-ffmpeg-capture')?.checked || false;
+  document.querySelectorAll('.setting-label[data-capture-mode]').forEach((label) => {
+    label.classList.toggle('active', (label.dataset.captureMode === 'video') === video);
+  });
+}
+
+// ── HLAE's own FFmpeg ─────────────────────────────────────────────────────────
+// `mirv_movie_ffmpeg` makes HLAE spawn FFmpeg itself, and it does not consult
+// the app's FFmpeg setting — it looks only in its own folder or at an ffmpeg.ini
+// beside it. With neither present, direct-to-video capture runs to completion
+// and produces no video, so the state is surfaced here rather than discovered
+// after a batch. See docs/direct_to_video_capture.md.
+async function refreshHlaeFfmpegStatus() {
+  const statusEl = document.querySelector('#hlae-ffmpeg-status');
+  const linkBtn = document.querySelector('#hlae-ffmpeg-link-btn');
+  if (!statusEl || !linkBtn) return;
+
+  const hlaePath = document.querySelector('#hlae-path-input')?.value?.trim() || "";
+  const unknown = () => {
+    statusEl.textContent = STRINGS.CAPTURE_CONFIG.HLAE_FFMPEG_UNKNOWN;
+    linkBtn.style.display = 'none';
+  };
+  if (!hlaePath) return unknown();
+
+  // Passed in so the check can say whether HLAE and Render Studio agree, not
+  // just whether HLAE has an answer at all.
+  const ffmpegPath =
+    document.querySelector('#ffmpeg-override-path-input')?.value?.trim() || "ffmpeg";
+
+  let result;
+  try {
+    result = await checkHlaeFfmpeg(hlaePath, ffmpegPath);
+  } catch {
+    // Already logged by the bridge. Say nothing rather than assert a state.
+    return unknown();
+  }
+
+  const s = result?.state || {};
+  // Outranks every message below it, because it questions the thing they are
+  // all about: if the hook DLL is not there, capture cannot work regardless of
+  // what HLAE's ffmpeg folder contains. Still only a note — an unusual layout
+  // should not stop someone who knows their install works.
+  if (result.missing_hook_dll) {
+    statusEl.textContent =
+      STRINGS.CAPTURE_CONFIG.HLAE_FFMPEG_NO_HOOK_DLL(result.missing_hook_dll);
+    linkBtn.style.display = result?.can_link ? '' : 'none';
+    return;
+  }
+
+  // The toggle is on and HLAE has nothing to pipe to. Worth saying more
+  // sharply than the generic "no FFmpeg" line below, because this is the
+  // combination that produces a capture which runs to completion and records
+  // no video at all.
+  if (document.querySelector('#config-ffmpeg-capture')?.checked && !result.usable) {
+    statusEl.textContent = STRINGS.CAPTURE_CONFIG.FFMPEG_CAPTURE_UNAVAILABLE;
+    linkBtn.style.display = result?.can_link ? '' : 'none';
+    return;
+  }
+
+  switch (s.state) {
+    case 'bundled':
+      statusEl.textContent = STRINGS.CAPTURE_CONFIG.HLAE_FFMPEG_BUNDLED(s.path);
+      break;
+    case 'linked':
+      // Outranks everything below: if the override is not FFmpeg, saying the
+      // two "disagree" describes a real difference and hides the actual
+      // problem, and the button would only write the wrong program in.
+      if (result.app_ffmpeg_problem) {
+        statusEl.textContent =
+          STRINGS.CAPTURE_CONFIG.HLAE_FFMPEG_BAD_OVERRIDE(result.app_ffmpeg_problem);
+      } else if (!s.target_exists) {
+        // A stale pointer outranks a disagreement: it is not pointed at
+        // anything at all, so which build it disagrees with is moot.
+        statusEl.textContent = STRINGS.CAPTURE_CONFIG.HLAE_FFMPEG_STALE(s.target);
+      } else if (result.agrees_with_app === false && result.app_ffmpeg) {
+        statusEl.textContent =
+          STRINGS.CAPTURE_CONFIG.HLAE_FFMPEG_DIVERGED(s.target, result.app_ffmpeg);
+      } else {
+        statusEl.textContent = STRINGS.CAPTURE_CONFIG.HLAE_FFMPEG_LINKED(s.target);
+      }
+      break;
+    case 'missing':
+      statusEl.textContent = result.app_ffmpeg_problem
+        ? STRINGS.CAPTURE_CONFIG.HLAE_FFMPEG_BAD_OVERRIDE(result.app_ffmpeg_problem)
+        : STRINGS.CAPTURE_CONFIG.HLAE_FFMPEG_MISSING;
+      break;
+    default:
+      return unknown();
+  }
+  // Offered only where it can actually be acted on: never over a bundled
+  // binary, and never over an existing ini, which is left alone on purpose.
+  linkBtn.style.display = result?.can_link ? '' : 'none';
+}
 
 window.addEventListener("DOMContentLoaded", async () => {
   // Applies every [data-str]/[data-str-title]/[data-str-placeholder]/
@@ -204,6 +345,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     // Defaults on when the element is missing, matching the backend default —
     // `?? true` rather than `|| false`, which would silently disable it.
     const decalFlush = document.querySelector('#config-decal-flush')?.checked ?? true;
+    const ffmpegCapture = document.querySelector('#config-ffmpeg-capture')?.checked || false;
     const addCondebug = document.querySelector('#config-add-condebug')?.checked || false;
 
     const autoClearLogs = document.querySelector('#config-auto-clear-logs')?.checked || false;
@@ -239,6 +381,7 @@ window.addEventListener("DOMContentLoaded", async () => {
       resolution_height: resHeight,
       separate_hud: separateHud,
       decal_flush: decalFlush,
+      ffmpeg_capture: ffmpegCapture,
       add_condebug: addCondebug,
       auto_clear_logs: autoClearLogs,
       auto_clear_previews: autoClearPreviews,
@@ -272,6 +415,10 @@ window.addEventListener("DOMContentLoaded", async () => {
       if (settings.hlae_path) {
         const inputEl = document.querySelector('#hlae-path-input');
         if (inputEl) inputEl.value = settings.hlae_path;
+        // Not awaited: it is a status line, and blocking startup on a
+        // filesystem check of somebody else's install directory would trade a
+        // real cost for a cosmetic one.
+        refreshHlaeFfmpegStatus();
       }
       if (settings.hl_path) {
         const inputEl = document.querySelector('#hl-path-input');
@@ -309,6 +456,9 @@ window.addEventListener("DOMContentLoaded", async () => {
       if (separateHudEl) separateHudEl.checked = !!settings.separate_hud;
       const decalFlushEl = document.querySelector('#config-decal-flush');
       if (decalFlushEl) decalFlushEl.checked = settings.decal_flush !== false;
+      const ffmpegCaptureEl = document.querySelector('#config-ffmpeg-capture');
+      if (ffmpegCaptureEl) ffmpegCaptureEl.checked = !!settings.ffmpeg_capture;
+      applyCaptureModeUI();
       const addCondebugEl = document.querySelector('#config-add-condebug');
       if (addCondebugEl) addCondebugEl.checked = !!settings.add_condebug;
       const autoClearLogsEl = document.querySelector('#config-auto-clear-logs');
@@ -527,9 +677,99 @@ window.addEventListener("DOMContentLoaded", async () => {
           const inputEl = document.querySelector('#hlae-path-input');
           if (inputEl) inputEl.value = path;
           await persistAppSettings();
+          await refreshHlaeFfmpegStatus();
+          await refreshPathWarnings();
         }
       } catch (err) {
         console.error("Error selecting HLAE executable:", err);
+      }
+    });
+  }
+
+  // Typing a path by hand is the other way in, so re-check on blur/Enter as
+  // well as after the picker. The FFmpeg override matters too: it does not
+  // change what HLAE points at, which is exactly why a change there can leave
+  // the two pointed at different builds without anything saying so.
+  for (const id of ['#hlae-path-input', '#ffmpeg-override-path-input']) {
+    document.querySelector(id)
+      ?.addEventListener('change', () => { refreshHlaeFfmpegStatus(); });
+  }
+  // Every path field, including Half-Life, which the row above says nothing
+  // about.
+  for (const [input] of PATH_FIELDS) {
+    document.querySelector(input)
+      ?.addEventListener('change', () => { refreshPathWarnings(); });
+  }
+  refreshPathWarnings();
+
+  // Toggling capture-to-video changes what the row above needs to say: with it
+  // on, "HLAE has no FFmpeg" stops being a note about an unused feature and
+  // becomes the reason the next batch will record nothing.
+  document.querySelector('#config-ffmpeg-capture')
+    ?.addEventListener('change', () => {
+      applyCaptureModeUI();
+      refreshHlaeFfmpegStatus();
+    });
+  // Clicking either label flips the switch, matching the Quick-Clip/Workspace
+  // toggle this borrows its look from.
+  document.querySelectorAll('.setting-label[data-capture-mode]').forEach((label) => {
+    label.addEventListener('click', () => {
+      const input = document.querySelector('#config-ffmpeg-capture');
+      if (!input) return;
+      const wanted = label.dataset.captureMode === 'video';
+      if (input.checked === wanted) return;
+      input.checked = wanted;
+      // Assigning .checked does not fire 'change', and persistence and the
+      // status row both hang off that event.
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+  });
+  applyCaptureModeUI();
+
+  const hlaeFfmpegLinkBtn = document.querySelector('#hlae-ffmpeg-link-btn');
+  if (hlaeFfmpegLinkBtn) {
+    hlaeFfmpegLinkBtn.addEventListener('click', async () => {
+      const hlaePath = document.querySelector('#hlae-path-input')?.value?.trim() || "";
+      // Whatever Render Studio was told to use, so both halves of the pipeline
+      // encode with the same build. Empty means "system ffmpeg", which the
+      // backend resolves to an absolute path — HLAE's ini cannot take a bare
+      // command name.
+      const ffmpegPath =
+        document.querySelector('#ffmpeg-override-path-input')?.value?.trim() || "ffmpeg";
+      hlaeFfmpegLinkBtn.disabled = true;
+      try {
+        let result = await linkHlaeFfmpeg(hlaePath, ffmpegPath);
+
+        // HLAE can live anywhere — zip or installer — so a protected location
+        // like Program Files is a real possibility rather than a rare one. Ask
+        // before raising the UAC prompt, so the prompt is never a surprise, and
+        // say what it is for.
+        if (result?.needs_elevation) {
+          const agreed = await confirm(
+            STRINGS.CAPTURE_CONFIG.HLAE_FFMPEG_ELEVATE_PROMPT(result.ini),
+            {
+              title: STRINGS.CAPTURE_CONFIG.HLAE_FFMPEG_ELEVATE_TITLE,
+              okLabel: STRINGS.CAPTURE_CONFIG.HLAE_FFMPEG_ELEVATE_CONFIRM
+            }
+          );
+          // Say so rather than going quiet. Declining is a choice, but a button
+          // that does nothing visible reads as a button that failed.
+          if (!agreed) {
+            showToast(STRINGS.CAPTURE_CONFIG.HLAE_FFMPEG_ELEVATE_REFUSED, 'info');
+            return;
+          }
+          result = await linkHlaeFfmpeg(hlaePath, ffmpegPath, true);
+        }
+
+        if (result?.ini && !result.needs_elevation) {
+          showToast(STRINGS.CAPTURE_CONFIG.HLAE_FFMPEG_LINKED_OK(result.ini), 'success');
+        }
+      } catch {
+        // The bridge already toasted the reason, which for a refusal is the
+        // point — an existing ini is reported, never replaced.
+      } finally {
+        hlaeFfmpegLinkBtn.disabled = false;
+        await refreshHlaeFfmpegStatus();
       }
     });
   }
@@ -548,6 +788,7 @@ window.addEventListener("DOMContentLoaded", async () => {
           const inputEl = document.querySelector('#hl-path-input');
           if (inputEl) inputEl.value = path;
           await persistAppSettings();
+          await refreshPathWarnings();
         }
       } catch (err) {
         console.error("Error selecting Half-Life executable:", err);
@@ -569,6 +810,11 @@ window.addEventListener("DOMContentLoaded", async () => {
           const inputEl = document.querySelector('#ffmpeg-override-path-input');
           if (inputEl) inputEl.value = path;
           await persistAppSettings();
+          // Picking a different FFmpeg does not move what HLAE points at, which
+          // is precisely why the row below has to be re-checked: that is how
+          // the two end up on different builds without anything saying so.
+          await refreshHlaeFfmpegStatus();
+          await refreshPathWarnings();
         }
       } catch (err) {
         console.error("Error selecting FFmpeg executable:", err);

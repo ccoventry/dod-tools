@@ -283,6 +283,157 @@ async fn validate_paths(hlae_path: String, hl_path: String) -> Result<bool, Stri
     Ok(true)
 }
 
+/// Whether HLAE can reach an FFmpeg of its own, which is a different question
+/// from whether Render Studio can.
+///
+/// `mirv_movie_ffmpeg` makes HLAE spawn FFmpeg itself and it does not consult
+/// the app's resolution chain, so this has to be reported before a batch rather
+/// than discovered after one — the failure is a capture that runs to completion
+/// and produces no video. See `native::shared::hlae_ffmpeg`.
+#[tauri::command]
+async fn check_hlae_ffmpeg(
+    hlae_path: String,
+    ffmpeg_path: Option<String>,
+) -> Result<serde_json::Value, String> {
+    use native::shared::hlae_ffmpeg as hf;
+
+    let state = hf::detect(std::path::Path::new(&hlae_path));
+
+    // "HLAE is pointed somewhere" and "HLAE is pointed at the same FFmpeg
+    // Render Studio uses" are different questions, and only the second keeps
+    // both halves of the pipeline encoding with the same build — which was the
+    // stated reason for writing an ini instead of copying the binary. Nothing
+    // was checking it stayed true, so changing the app's FFmpeg silently left
+    // HLAE on the old one.
+    let app_ffmpeg = hf::resolve_absolute(ffmpeg_path.as_deref().unwrap_or("ffmpeg"));
+    let agrees_with_app = match (&state, &app_ffmpeg) {
+        (hf::HlaeFfmpeg::Linked { target, .. }, Some(app)) => Some(hf::same_file(target, app)),
+        // A bundled binary is HLAE's own and is meant to differ; with nothing
+        // linked there is nothing to disagree with.
+        _ => None,
+    };
+
+    // "It exists" was the only test the picker applied, and ffplay.exe and
+    // ffprobe.exe sit in the same folder as ffmpeg.exe. Checking here as well as
+    // at link time means the row says so before the button is pressed, instead
+    // of reporting a disagreement between two paths one of which cannot record.
+    //
+    // Chaining this off `app_ffmpeg` was a hole: a path that does not resolve
+    // produces `None`, so the check never ran and a typo'd override said
+    // nothing at all. Failing to resolve is itself the problem worth reporting.
+    let configured = ffmpeg_path.as_deref().unwrap_or("").trim().to_string();
+    let app_ffmpeg_problem = match &app_ffmpeg {
+        Some(p) => hf::verify_is_ffmpeg(p).err(),
+        None if configured.is_empty() => {
+            Some("no ffmpeg.exe was found on PATH, and no override is set".to_string())
+        }
+        None => Some(format!("there is no file at \"{}\"", configured)),
+    };
+
+    // Whether the HLAE Executable above is a working HLAE install, answered by
+    // the file the pipeline actually consumes rather than by what the exe calls
+    // itself: `build_hlae_process` passes this DLL as `-hookDllPath`, so its
+    // absence means a capture cannot work whatever the exe is named. Advisory —
+    // reported, never enforced.
+    let missing_hook_dll = hf::missing_hook_dll(std::path::Path::new(&hlae_path))
+        .map(|p| p.to_string_lossy().into_owned());
+
+    Ok(serde_json::json!({
+        "state": state,
+        "usable": state.is_usable(),
+        "can_link": state.can_link(),
+        "app_ffmpeg": app_ffmpeg.map(|p| p.to_string_lossy().into_owned()),
+        "agrees_with_app": agrees_with_app,
+        "app_ffmpeg_problem": app_ffmpeg_problem,
+        "missing_hook_dll": missing_hook_dll,
+    }))
+}
+
+/// Whether each configured executable path actually points at a file.
+///
+/// The Path Routing fields accepted anything: `validate_paths` only ran at
+/// capture launch, so a typo sat there looking fine until a batch failed
+/// minutes later. Returns a state per path rather than a message, so the
+/// wording stays in `strings.js` with every other user-facing string.
+#[tauri::command]
+async fn diagnose_executable_paths(paths: Vec<String>) -> Result<Vec<String>, String> {
+    Ok(paths
+        .iter()
+        .map(|raw| {
+            let path = raw.trim();
+            if path.is_empty() {
+                // Not a complaint: these fields are legitimately blank before
+                // they are filled in, and the FFmpeg override is optional.
+                return "empty";
+            }
+            let p = std::path::Path::new(path);
+            if p.is_file() {
+                "ok"
+            } else if p.is_dir() {
+                // The classic mistake these fields invite — the folder rather
+                // than the executable inside it.
+                "not_a_file"
+            } else {
+                "not_found"
+            }
+        })
+        .map(str::to_string)
+        .collect())
+}
+
+/// Points HLAE at an FFmpeg by writing `ffmpeg.ini`, on request only.
+///
+/// Never overwrites an existing ini: HLAE installs are shared with Source work
+/// and other projects, so silently repointing one would break somebody else's
+/// setup to fix ours. `link` refuses in that case and the error says so.
+/// `elevated` retries the same write through a UAC prompt. The HLAE installer
+/// puts the target under `Program Files`, so an unelevated write fails for most
+/// people — the frontend asks first, then calls back with this set.
+#[tauri::command]
+async fn link_hlae_ffmpeg(
+    hlae_path: String,
+    ffmpeg_path: String,
+    elevated: Option<bool>,
+) -> Result<serde_json::Value, String> {
+    use native::shared::hlae_ffmpeg::{self, LinkError};
+
+    let ffmpeg = hlae_ffmpeg::resolve_absolute(&ffmpeg_path).ok_or_else(|| {
+        format!(
+            "Could not resolve an FFmpeg from \"{}\". Set Render Studio's FFmpeg path to a real \
+             ffmpeg.exe first — HLAE's ini needs an absolute path and cannot use a bare command \
+             name.",
+            ffmpeg_path
+        )
+    })?;
+
+    let hlae = std::path::Path::new(&hlae_path);
+    let result = if elevated.unwrap_or(false) {
+        hlae_ffmpeg::link_elevated(hlae, &ffmpeg)
+    } else {
+        hlae_ffmpeg::link(hlae, &ffmpeg)
+    };
+
+    match result {
+        Ok(ini) => {
+            native::log_markdown(&format!(
+                "[hlae-ffmpeg] wrote {} pointing at {} — HLAE can now spawn FFmpeg for \
+                 `mirv_movie_ffmpeg`.",
+                ini.display(),
+                ffmpeg.display()
+            ));
+            Ok(serde_json::json!({ "ini": ini.to_string_lossy() }))
+        }
+        // Reported as data, not an error string: the frontend has to tell this
+        // apart from a real failure so it can offer the prompt rather than show
+        // somebody "Access is denied. (os error 5)" and leave them there.
+        Err(LinkError::NeedsElevation { ini }) => Ok(serde_json::json!({
+            "needs_elevation": true,
+            "ini": ini.to_string_lossy(),
+        })),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
 // ── Full-fidelity analysis payload for the standalone Demo Analyzer tab ─────────
 // Passes the typed `analysis::DemoInfo`/`AnalyzerState` straight through so the frontend can
 // reconstruct every report sub-view (Summary/Scoreboard/Player Details/Team
@@ -379,6 +530,9 @@ pub fn run() {
             log_frontend_event,
             get_activity_log_path,
             validate_paths,
+            check_hlae_ffmpeg,
+            diagnose_executable_paths,
+            link_hlae_ffmpeg,
             analyze_demo_full,
             start_capture_batch,
             launch_demo_preview,

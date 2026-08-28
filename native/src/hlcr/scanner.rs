@@ -14,7 +14,34 @@ pub struct ClipData {
     pub base_name: String,
     pub frame_count: usize,
     pub date: String,
+    /// The video file inside `img_folder`, when the take was captured through
+    /// `mirv_movie_ffmpeg` instead of as a frame sequence. `None` is a BMP take.
+    ///
+    /// `#[serde(default)]` because render autosaves written before this existed
+    /// have to keep loading — a recovered batch must not fail on a field that
+    /// was not there when it was saved.
+    #[serde(default)]
+    pub video_file: Option<String>,
+    /// For a `hud_only` clip, the stream folder holding the alpha half of the
+    /// pair — `img_folder` is the colour half. `None` on every other clip type.
+    ///
+    /// The renderer used to derive this by appending the literal `hudalpha`,
+    /// which only works while HLAE spells the folder exactly that way. Carrying
+    /// the name the scanner actually saw on disk means the renderer is told its
+    /// partner rather than guessing it, and is the one piece of the standalone
+    /// HLCR's design (see `docs/render_studio_hlcr_parity.md`) that does not
+    /// depend on frame counts.
+    ///
+    /// `#[serde(default)]` for the same reason as `video_file`: autosaves
+    /// written before this field existed must keep loading.
+    #[serde(default)]
+    pub alpha_folder: Option<String>,
 }
+
+/// The file `mirv_movie_ffmpeg` is told to write, per stream. Also what the
+/// scanner looks for to tell a video take from a frame sequence, so the two
+/// cannot drift apart.
+pub const VIDEO_FILE: &str = "video.avi";
 
 /// `.wav` files sitting directly in a take folder, sorted case-insensitively
 /// so take selection is deterministic.
@@ -40,20 +67,142 @@ fn collect_wav_files(take_folder: &Path) -> Vec<String> {
     wav_files
 }
 
-/// Immediate subdirectories of a take folder that hold an HLAE frame sequence,
-/// identified by a `00000.bmp` first frame.
+/// Immediate subdirectories of a take folder that hold one capture stream —
+/// either an HLAE frame sequence, identified by its `00000.bmp` first frame, or
+/// a single video written by `mirv_movie_ffmpeg`.
+///
+/// Both land in the same place: `<take0000>/<stream>/`, where `<stream>` is
+/// `all`, `hudcolor`, `hudalpha` and so on. Measured against a real capture —
+/// FFmpeg mode changes what is inside the stream folder and nothing else about
+/// the layout.
 fn collect_image_folders(take_folder: &Path) -> Vec<PathBuf> {
     let mut image_folders = Vec::new();
     if let Ok(read_dir) = std::fs::read_dir(take_folder) {
         for sub_entry in read_dir.flatten() {
             if let Ok(file_type) = sub_entry.file_type() {
-                if file_type.is_dir() && sub_entry.path().join("00000.bmp").exists() {
-                    image_folders.push(sub_entry.path());
+                let path = sub_entry.path();
+                if file_type.is_dir()
+                    && (path.join("00000.bmp").exists() || path.join(VIDEO_FILE).exists())
+                {
+                    image_folders.push(path);
                 }
             }
         }
     }
     image_folders
+}
+
+/// A stream folder's name exactly as it appears on disk. Paths on the clip are
+/// resolved relative to the take folder, so the case only has to survive to
+/// keep the record honest — but a name the scanner saw beats one reconstructed
+/// from a literal, especially with two spellings in play.
+fn on_disk_name(folder: &Path) -> String {
+    folder
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned()
+}
+
+/// How much of an AVI to read looking for its header. The `hdrl` list sits at
+/// the very front of the file, so this never has to grow — and it must not, as
+/// the videos themselves run to gigabytes.
+const AVI_HEADER_SCAN_BYTES: usize = 64 * 1024;
+
+/// Frame count read out of an AVI's own header, without decoding it.
+///
+/// The take's frame count drives the render progress percentage, and it used to
+/// come from counting `.bmp` files — which returns 0 for a video take and left
+/// video renders showing no progress at all. The count is in the header, so
+/// this costs one bounded read rather than a decode pass or an ffprobe spawn
+/// per take.
+///
+/// **The video stream's `strh.dwLength` is the authority, not
+/// `avih.dwTotalFrames`.** AVI's legacy RIFF chunk tops out around 1 GiB, so
+/// FFmpeg's muxer continues past that into OpenDML `AVIX` segments — and
+/// `avih.dwTotalFrames` then counts only the frames in the *first* chunk, while
+/// `strh.dwLength` carries the true total.
+///
+/// Measured across one capture, which shows the split exactly: the ~1.2 GB and
+/// ~1.5 GB `all` streams read 1067/1218 and 859/1229 (avih/strh), and in both
+/// cases the first chunk works out to almost exactly 1 GiB of the file. The
+/// 135 MB HUD streams fit in a single chunk and agree with themselves. So the
+/// error only appears on long or high-fps takes — the ones where an accurate
+/// progress bar actually matters. `avih` is kept only as a fallback for a file
+/// with no video `strh` at all.
+///
+/// Zero from both means the file was never finalised — a capture killed
+/// mid-write — which is worth surfacing rather than papering over.
+fn avi_frame_count(path: &Path) -> Option<usize> {
+    use std::io::Read;
+
+    let mut file = std::fs::File::open(path).ok()?;
+    // Heap-allocated and explicitly bounded: these files are gigabytes.
+    let mut buf = vec![0u8; AVI_HEADER_SCAN_BYTES];
+    let read = file.read(&mut buf).ok()?;
+    buf.truncate(read);
+
+    if buf.len() < 12 || &buf[0..4] != b"RIFF" || &buf[8..12] != b"AVI " {
+        return None;
+    }
+
+    let u32_at = |b: &[u8], at: usize| -> Option<u32> {
+        b.get(at..at + 4)
+            .map(|s| u32::from_le_bytes([s[0], s[1], s[2], s[3]]))
+    };
+
+    // Walk the chunks inside the RIFF body. `hdrl` is a LIST, so descend into
+    // it rather than skipping past; everything wanted lives inside it.
+    let mut pos = 12usize;
+    let mut total_frames = 0u32;
+    let mut stream_length = 0u32;
+    while pos + 8 <= buf.len() {
+        let id = &buf[pos..pos + 4];
+        let size = u32_at(&buf, pos + 4)? as usize;
+        let body = pos + 8;
+
+        match id {
+            b"LIST" => {
+                // Step inside: body starts with the list type, then chunks.
+                pos = body + 4;
+                continue;
+            }
+            b"avih" => {
+                total_frames = u32_at(&buf, body + 16).unwrap_or(0);
+            }
+            b"strh" => {
+                // Only the video stream's length is meaningful here; an audio
+                // stream's dwLength counts samples or blocks, not frames.
+                if buf.get(body..body + 4) == Some(b"vids") && stream_length == 0 {
+                    stream_length = u32_at(&buf, body + 32).unwrap_or(0);
+                }
+            }
+            _ => {}
+        }
+
+        // Chunks are word-aligned: an odd size is followed by a pad byte.
+        pos = body + size + (size & 1);
+    }
+
+    let frames = if stream_length > 0 { stream_length } else { total_frames };
+    Some(frames as usize)
+}
+
+/// Frames in a stream folder, whichever shape it was captured in.
+fn stream_frame_count(folder: &Path) -> usize {
+    let video = folder.join(VIDEO_FILE);
+    if video.is_file() {
+        return avi_frame_count(&video).unwrap_or(0);
+    }
+    count_bmps(folder)
+}
+
+/// The video inside a stream folder, when that is what it holds.
+fn stream_video(folder: &Path) -> Option<String> {
+    folder
+        .join(VIDEO_FILE)
+        .is_file()
+        .then(|| VIDEO_FILE.to_string())
 }
 
 /// Whether Render Studio's scanner would admit this folder as a renderable take.
@@ -152,48 +301,77 @@ pub fn scan_folder_background(
                 wav_stem.clone()
             };
 
+            // Keyed lowercase. The BMP path produces `all`/`hudcolor`/`hudalpha`,
+            // but HLAE names those same streams `hudColor`/`hudAlpha` in the
+            // `mirv_movie_ffmpeg` command, and nothing here has proven which
+            // spelling FFmpeg mode uses for the folder. An exact-case lookup
+            // that guessed wrong would not error — it would quietly skip the
+            // HUD bundling and emit two unrelated clips instead of one merged
+            // render, which is the kind of wrong output this pipeline is bad at
+            // noticing. Windows resolves the paths case-insensitively either
+            // way, so only this lookup was ever at risk.
+            //
+            // `docs/render_studio_hlcr_parity.md` notes the standalone HLCR
+            // pairs folders generically instead — any `alpha`/`mask` folder with
+            // a same-frame-count `color`/`rgb` one — which is more robust than
+            // literal names and remains the better long-term shape.
             let folder_names: HashMap<String, PathBuf> = image_folders.iter()
-                .map(|p| (p.file_name().unwrap_or_default().to_string_lossy().into_owned(), p.clone()))
+                .map(|p| {
+                    let name = p.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
+                    (name, p.clone())
+                })
                 .collect();
 
             // Bundle HLAE split streams if "all", "hudcolor", and "hudalpha" exist
             if folder_names.contains_key("all") && folder_names.contains_key("hudcolor") && folder_names.contains_key("hudalpha") {
                 let all_folder = folder_names.get("all").unwrap();
-                let frame_count = count_bmps(all_folder);
+                let hud_color_folder = folder_names.get("hudcolor").unwrap();
+                let hud_alpha_folder = folder_names.get("hudalpha").unwrap();
+                let frame_count = stream_frame_count(all_folder);
                 let date = get_clip_date(all_folder);
 
                 let clip_all = ClipData {
                     take_folder: take_folder.to_string_lossy().into_owned(),
                     clip_type: "single".to_string(),
-                    img_folder: "all".to_string(),
+                    img_folder: on_disk_name(all_folder),
                     wav_file: wav_to_use.clone(),
                     base_name: base_name.clone(),
                     frame_count,
                     date: date.clone(),
+                    video_file: stream_video(all_folder),
+                    alpha_folder: None,
                 };
                 accumulated_clips.push(clip_all);
 
                 let clip_hud = ClipData {
                     take_folder: take_folder.to_string_lossy().into_owned(),
                     clip_type: "hud_only".to_string(),
-                    img_folder: "hudcolor".to_string(),
+                    // Both halves of the pair are named from what is actually on
+                    // disk, so the renderer never has to reconstruct either one
+                    // from a literal. The lookup keys above are lowercased for
+                    // matching only — HLAE writes `hudColor`/`hudAlpha` in the
+                    // `mirv_movie_ffmpeg` command, and these carry whichever
+                    // spelling the capture produced.
+                    img_folder: on_disk_name(hud_color_folder),
                     wav_file: wav_to_use.clone(),
                     base_name: base_name.clone(),
                     frame_count,
                     date: date.clone(),
+                    video_file: stream_video(hud_color_folder),
+                    alpha_folder: Some(on_disk_name(hud_alpha_folder)),
                 };
                 accumulated_clips.push(clip_hud);
 
                 // Remove bundled folders from list to avoid double-processing
                 image_folders.retain(|p| {
-                    let name = p.file_name().unwrap_or_default().to_string_lossy();
+                    let name = p.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
                     name != "all" && name != "hudcolor" && name != "hudalpha"
                 });
             }
 
             // Process remaining folders
             for img_folder in image_folders {
-                let frame_count = count_bmps(&img_folder);
+                let frame_count = stream_frame_count(&img_folder);
                 let folder_name = img_folder.file_name().unwrap_or_default().to_string_lossy().into_owned();
                 let date = get_clip_date(&img_folder);
                 let clip = ClipData {
@@ -204,6 +382,8 @@ pub fn scan_folder_background(
                     base_name: base_name.clone(),
                     frame_count,
                     date,
+                    video_file: stream_video(&img_folder),
+                    alpha_folder: None,
                 };
                 accumulated_clips.push(clip);
             }
@@ -311,6 +491,187 @@ mod tests {
         let missing = std::env::temp_dir().join("dod_scanner_test_does_not_exist");
         let _ = std::fs::remove_dir_all(&missing);
         assert!(!is_renderable_take(&missing));
+    }
+
+    /// A minimal but structurally real AVI header: RIFF/hdrl/avih plus an
+    /// optional strl/strh video stream header. Only the two frame-count fields
+    /// carry meaningful values; the rest is zero padding of the right width.
+    fn build_avi(avih_total_frames: u32, vids_stream_length: Option<u32>) -> Vec<u8> {
+        fn chunk(id: &[u8; 4], body: &[u8]) -> Vec<u8> {
+            let mut out = Vec::new();
+            out.extend_from_slice(id);
+            out.extend_from_slice(&(body.len() as u32).to_le_bytes());
+            out.extend_from_slice(body);
+            if body.len() % 2 == 1 {
+                out.push(0); // chunks are word-aligned
+            }
+            out
+        }
+
+        let mut avih = vec![0u8; 56];
+        avih[16..20].copy_from_slice(&avih_total_frames.to_le_bytes());
+
+        let mut hdrl = b"hdrl".to_vec();
+        hdrl.extend_from_slice(&chunk(b"avih", &avih));
+
+        if let Some(len) = vids_stream_length {
+            let mut strh = vec![0u8; 56];
+            strh[0..4].copy_from_slice(b"vids");
+            strh[32..36].copy_from_slice(&len.to_le_bytes());
+            let mut strl = b"strl".to_vec();
+            strl.extend_from_slice(&chunk(b"strh", &strh));
+            hdrl.extend_from_slice(&chunk(b"LIST", &strl));
+        }
+
+        let mut body = b"AVI ".to_vec();
+        body.extend_from_slice(&chunk(b"LIST", &hdrl));
+        chunk(b"RIFF", &body)
+    }
+
+    fn write_video(take: &Path, stream: &str, avi: &[u8]) {
+        let folder = take.join(stream);
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join(VIDEO_FILE), avi).unwrap();
+    }
+
+    #[test]
+    fn test_stream_header_length_wins_over_avih_total_frames() {
+        // Measured on a real capture: FFmpeg's AVI muxer wrote 1067 into
+        // avih.dwTotalFrames while the video strh.dwLength read 1218, and 1218
+        // is what ffprobe and the file's own 10.15s-at-120fps duration agree
+        // on. Preferring avih would silently under-report render progress.
+        let avi = build_avi(1067, Some(1218));
+        let dir = scratch_dir("avi_disagreement");
+        let path = dir.join(VIDEO_FILE);
+        std::fs::write(&path, &avi).unwrap();
+        assert_eq!(avi_frame_count(&path), Some(1218));
+    }
+
+    #[test]
+    fn test_avih_used_when_there_is_no_video_stream_header() {
+        let avi = build_avi(900, None);
+        let dir = scratch_dir("avi_no_strh");
+        let path = dir.join(VIDEO_FILE);
+        std::fs::write(&path, &avi).unwrap();
+        assert_eq!(avi_frame_count(&path), Some(900));
+    }
+
+    #[test]
+    fn test_unfinalised_avi_reports_zero_rather_than_guessing() {
+        // A capture killed mid-write leaves both counts at 0. Zero is the
+        // honest answer — the renderer already treats it as "no percentage".
+        let avi = build_avi(0, Some(0));
+        let dir = scratch_dir("avi_unfinalised");
+        let path = dir.join(VIDEO_FILE);
+        std::fs::write(&path, &avi).unwrap();
+        assert_eq!(avi_frame_count(&path), Some(0));
+    }
+
+    #[test]
+    fn test_non_avi_file_is_not_parsed_as_one() {
+        let dir = scratch_dir("avi_garbage");
+        let path = dir.join(VIDEO_FILE);
+        std::fs::write(&path, b"this is not a RIFF file at all").unwrap();
+        assert_eq!(avi_frame_count(&path), None);
+    }
+
+    #[test]
+    fn test_video_take_reports_frames_from_the_container() {
+        // The end-to-end shape: a video take used to scan as 0 frames, which
+        // left Render Studio showing no progress percentage for it.
+        let take = scratch_dir("video_frame_count");
+        std::fs::write(take.join("sound.wav"), b"wav").unwrap();
+        write_video(&take, "all", &build_avi(0, Some(1218)));
+
+        let clips = scan(&take);
+        assert_eq!(clips.len(), 1);
+        assert_eq!(clips[0].frame_count, 1218);
+        assert_eq!(clips[0].video_file.as_deref(), Some(VIDEO_FILE));
+    }
+
+    #[test]
+    fn test_bmp_take_still_counts_bitmaps() {
+        let take = scratch_dir("bmp_frame_count");
+        std::fs::write(take.join("sound.wav"), b"wav").unwrap();
+        let folder = take.join("all");
+        std::fs::create_dir_all(&folder).unwrap();
+        for i in 0..3 {
+            std::fs::write(folder.join(format!("{:05}.bmp", i)), b"bmp").unwrap();
+        }
+
+        let clips = scan(&take);
+        assert_eq!(clips[0].frame_count, 3);
+    }
+
+    /// Collect what `scan_folder_background` emits for a scratch tree.
+    fn scan(root: &Path) -> Vec<ClipData> {
+        let (tx, rx) = mpsc::channel();
+        let (status_tx, _status_rx) = mpsc::channel();
+        scan_folder_background(vec![root.to_path_buf()], tx, status_tx);
+        rx.into_iter().collect()
+    }
+
+    #[test]
+    fn test_hud_pair_carries_both_folder_names_as_written() {
+        // HLAE names these streams `hudColor`/`hudAlpha` in the
+        // `mirv_movie_ffmpeg` command. The pair must still be recognised (the
+        // lookup keys are lowercased), and both halves must be reported with
+        // the spelling that is actually on disk rather than a literal.
+        let take = scratch_dir("hud_pair_case");
+        std::fs::write(take.join("sound.wav"), b"wav").unwrap();
+        write_frames(&take, "all");
+        write_frames(&take, "hudColor");
+        write_frames(&take, "hudAlpha");
+
+        let clips = scan(&take);
+        let hud = clips
+            .iter()
+            .find(|c| c.clip_type == "hud_only")
+            .expect("hud pair was not bundled");
+        assert_eq!(hud.img_folder, "hudColor");
+        assert_eq!(hud.alpha_folder.as_deref(), Some("hudAlpha"));
+
+        // Bundling consumed all three folders, so nothing is emitted twice.
+        assert_eq!(clips.len(), 2, "expected exactly the all + hud pair");
+        let all = clips
+            .iter()
+            .find(|c| c.clip_type == "single")
+            .expect("all stream missing");
+        assert_eq!(all.img_folder, "all");
+        assert_eq!(all.alpha_folder, None);
+    }
+
+    #[test]
+    fn test_video_take_hud_pair_names_the_video_in_both_halves() {
+        // The FFmpeg-capture shape: one video per stream folder instead of a
+        // numbered sequence. `alpha_folder` is what lets the renderer find the
+        // second video without reconstructing the folder name.
+        let take = scratch_dir("hud_pair_video");
+        std::fs::write(take.join("sound.wav"), b"wav").unwrap();
+        for stream in ["all", "hudcolor", "hudalpha"] {
+            let folder = take.join(stream);
+            std::fs::create_dir_all(&folder).unwrap();
+            std::fs::write(folder.join(VIDEO_FILE), b"avi").unwrap();
+        }
+
+        let clips = scan(&take);
+        let hud = clips
+            .iter()
+            .find(|c| c.clip_type == "hud_only")
+            .expect("hud pair was not bundled");
+        assert_eq!(hud.video_file.as_deref(), Some(VIDEO_FILE));
+        assert_eq!(hud.alpha_folder.as_deref(), Some("hudalpha"));
+    }
+
+    #[test]
+    fn test_non_hud_clip_has_no_alpha_partner() {
+        let take = scratch_dir("solo_stream");
+        std::fs::write(take.join("sound.wav"), b"wav").unwrap();
+        write_frames(&take, "all");
+
+        let clips = scan(&take);
+        assert_eq!(clips.len(), 1);
+        assert_eq!(clips[0].alpha_folder, None);
     }
 
     #[test]

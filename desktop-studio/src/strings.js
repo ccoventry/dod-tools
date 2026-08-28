@@ -149,6 +149,59 @@ export const STRINGS = {
     HLAE_EXEC_PLACEHOLDER: 'Path to hlae.exe',
     HL_EXEC_LABEL: 'Half-Life Executable:',
     HL_EXEC_PLACEHOLDER: 'Path to hl.exe',
+    // HLAE spawns its own FFmpeg for `mirv_movie_ffmpeg` and does not consult
+    // the app's FFmpeg setting, so this is reported separately from it.
+    HLAE_FFMPEG_LABEL: 'HLAE FFmpeg:',
+    HLAE_FFMPEG_LINK_BUTTON: 'Point HLAE at FFmpeg',
+    HLAE_FFMPEG_UNKNOWN: 'Set the HLAE executable above to check.',
+    // Shown under the field that caused it, so a typo is obvious while you are
+    // still looking at the box you typed it into. Nothing is blocked — Start
+    // Capture Batch has its own guard.
+    CAPTURE_MODE_FRAMES: 'Frame sequence',
+    CAPTURE_MODE_FRAMES_TITLE:
+        'HLAE writes every frame as its own bitmap. What this pipeline has always done, and what Render Studio was built around.',
+    CAPTURE_MODE_VIDEO: 'Video',
+    CAPTURE_MODE_VIDEO_TITLE:
+        'HLAE pipes frames straight to FFmpeg as one lossless video per take. Same picture, roughly half the disk, and far fewer files. Needs the HLAE FFmpeg row above to be set.',
+    CAPTURE_MODE_SWITCH_TITLE: 'Switch between capturing a bitmap frame sequence and a video file',
+    // Turning it on without HLAE having an FFmpeg produces a capture that runs
+    // and records nothing, so it is worth saying before the batch rather than
+    // after it.
+    FFMPEG_CAPTURE_UNAVAILABLE:
+        "Capture to video is on, but HLAE has no FFmpeg — the capture would run and produce no video. Sort the HLAE FFmpeg row above first.",
+    PATH_NOT_FOUND: "There's no file at this path — check it for a typo.",
+    PATH_IS_A_FOLDER: "That's a folder, not the program itself. Pick the .exe inside it.",
+    HLAE_FFMPEG_BUNDLED: (path) => `Installed in HLAE's own folder (${path}).`,
+    HLAE_FFMPEG_LINKED: (target) => `Pointed at ${target}.`,
+    // Both halves of the pipeline encoding with the same FFmpeg build was the
+    // whole reason for writing an ini instead of copying the binary, so a
+    // divergence is worth stating rather than leaving to be discovered.
+    HLAE_FFMPEG_DIVERGED: (target, app) =>
+        `Pointed at ${target}, but Render Studio uses ${app}. Capture and render would use different FFmpeg builds — re-point HLAE unless that's deliberate.`,
+    // ffplay.exe and ffprobe.exe live beside ffmpeg.exe and are one misclick
+    // apart in a file picker, so this is worth naming rather than letting it
+    // through to a capture that records nothing.
+    // Checks the file the capture pipeline actually passes as -hookDllPath,
+    // rather than what the exe calls itself. Advisory: nothing is blocked, since
+    // an unusual install layout should not stop someone who knows it works.
+    HLAE_FFMPEG_NO_HOOK_DLL: (dll) =>
+        `AfxHookGoldSrc.dll isn't beside the HLAE Executable above (expected ${dll}). Capture needs that file — either the path isn't HLAE, or the DLL is missing or quarantined by antivirus.`,
+    HLAE_FFMPEG_BAD_OVERRIDE: (why) =>
+        `The FFmpeg Override Path above isn't FFmpeg: ${why}. Pick ffmpeg.exe — HLAE can't record with anything else.`,
+    HLAE_FFMPEG_STALE: (target) =>
+        `HLAE's ffmpeg.ini points at ${target}, which isn't there. Direct-to-video capture will produce no video until that path is fixed or the ini is deleted.`,
+    HLAE_FFMPEG_MISSING:
+        "HLAE has no FFmpeg of its own, so direct-to-video capture would run and produce no video. This is separate from Render Studio's FFmpeg.",
+    HLAE_FFMPEG_LINKED_OK: (ini) => `Wrote ${ini}. HLAE can now find FFmpeg.`,
+    HLAE_FFMPEG_LINK_FAILED: (err) => `Could not point HLAE at FFmpeg: ${err}`,
+    // HLAE can live anywhere — it ships as a zip as well as an installer — so a
+    // protected location like Program Files is one real possibility among
+    // several, and needs a route through rather than a raw OS error.
+    HLAE_FFMPEG_ELEVATE_TITLE: 'Administrator rights needed',
+    HLAE_FFMPEG_ELEVATE_PROMPT: (ini) =>
+        `${ini} is inside a protected folder, so Windows won't let dod-tools write there directly.\n\nContinue and Windows will ask for permission, then write a two-line file pointing HLAE at your FFmpeg. Nothing else is changed, and an existing ffmpeg.ini is never replaced.`,
+    HLAE_FFMPEG_ELEVATE_CONFIRM: 'Ask Windows for permission',
+    HLAE_FFMPEG_ELEVATE_REFUSED: 'Permission was declined, so nothing was written.',
     FFMPEG_OVERRIDE_LABEL: 'FFmpeg Override Path:',
     FFMPEG_OVERRIDE_PLACEHOLDER: 'Optional path to ffmpeg.exe',
     BROWSE_BUTTON: 'Browse',
@@ -208,6 +261,9 @@ export const STRINGS = {
     },
     andNMore: (n) => `...and ${n} more`,
     NO_DRIVES_CONFIGURED_WARNING: 'No Capture Output directories configured — add at least one with free space before starting a capture.',
+    // Measured 2026-08-28, see docs/direct_to_video_capture.md. Spelled out
+    // because both halves report success and the broken output only shows up
+    // after rendering — the user has no other way to find out.
     noUsableSpaceProblem: (desc) => `Capture Output problem:\n${desc}`,
     NO_USABLE_SPACE_WARNING: 'None of the configured Capture Output directories have any free space.',
     insufficientSpaceWarning: (required, available) => `Insufficient disk space: capture needs ~${required} GB, only ${available} GB available across the export pool.`,

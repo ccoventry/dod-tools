@@ -39,6 +39,8 @@ pub struct CapturePayload {
     #[serde(default)]
     pub separate_hud: bool,
     #[serde(default)]
+    pub ffmpeg_capture: bool,
+    #[serde(default)]
     pub save_local_patched_copy: bool,
     #[serde(default = "default_add_condebug")]
     pub add_condebug: bool,
@@ -212,6 +214,7 @@ fn config_from_payload(payload: &CapturePayload) -> PatcherConfig {
     cfg.resolution_width = payload.resolution_width;
     cfg.resolution_height = payload.resolution_height;
     cfg.separate_hud = payload.separate_hud;
+    cfg.ffmpeg_capture = payload.ffmpeg_capture;
     cfg.save_local_patched_copy = payload.save_local_patched_copy;
     cfg.add_condebug = payload.add_condebug;
     cfg.auto_clear_logs = payload.auto_clear_logs;
@@ -403,6 +406,15 @@ pub async fn start_capture_batch_impl(
     manager: &CaptureManager,
     payload: CapturePayload,
 ) -> Result<(), String> {
+    // ── Guard: separate HUD cannot be captured through mirv_movie_ffmpeg ──────
+    // HLAE writes blank frames to the HUD stream on the FFmpeg path — measured
+    // both ways against one demo, see docs/direct_to_video_capture.md. Capture
+    // and render both report success and the clip is a black rectangle, so
+    // nothing downstream can catch it. Checked here as well as in the launch
+    // guard because the frontend check is only as good as the frontend.
+    //
+    // Rejected before the running flag is claimed, so a refused batch does not
+    // leave the manager wedged.
     // ── Guard: reject concurrent batches ──────────────────────────────────────
     {
         let mut running = manager
@@ -1068,6 +1080,7 @@ pub async fn launch_standalone_game(app: tauri::AppHandle) -> Result<(), String>
             resolution_width: settings.resolution_width,
             resolution_height: settings.resolution_height,
             separate_hud: settings.separate_hud,
+            ffmpeg_capture: settings.ffmpeg_capture,
             ..PatcherConfig::default()
         };
 
@@ -1269,6 +1282,7 @@ mod tests {
             resolution_width: 1920,
             resolution_height: 1080,
             separate_hud: true,
+            ffmpeg_capture: false,
             save_local_patched_copy: false,
             add_condebug: true,
             streaks: Vec::new(),
@@ -1293,6 +1307,23 @@ mod tests {
             decal_flush: None,
             decal_ring_limit: None,
         }
+    }
+
+    /// Separate HUD and direct-to-video are both carried through to the patcher
+    /// config, and the two together are a supported combination. They were
+    /// briefly refused as a pair while the HUD streams captured blank; that
+    /// turned out to be the alpha buffer, not the FFmpeg path, and is fixed in
+    /// capture_engine's launch flags. This asserts the pairing survives the
+    /// mapping so the block cannot creep back in unnoticed.
+    #[test]
+    fn test_separate_hud_and_video_capture_survive_together() {
+        let mut payload = sample_payload();
+        payload.separate_hud = true;
+        payload.ffmpeg_capture = true;
+
+        let cfg = config_from_payload(&payload);
+        assert!(cfg.separate_hud);
+        assert!(cfg.ffmpeg_capture);
     }
 
     #[test]

@@ -188,16 +188,55 @@ pub async fn run_render_job(
         Err(_) => 2,
     };
 
+    // The alpha half of a HUD pair, as the scanner recorded it. Older autosaves
+    // predate the field, so fall back to the literal the renderer used to
+    // hardcode — that is exactly what those takes were scanned as.
+    let alpha_folder = clip.alpha_folder.as_deref().unwrap_or("hudalpha");
+
     let mut cmd_args = vec!["-y", "-hide_banner"];
     let img_input: String;
+    // Inputs for a take captured through `mirv_movie_ffmpeg`: one video per
+    // stream folder instead of a numbered frame sequence.
+    let video_input: String;
+    // Shared by both HUD branches — one holds a video path, the other a BMP
+    // sequence pattern, and the branches are mutually exclusive.
+    let hud_color_input: String;
+    let hud_alpha_input: String;
 
-    if clip_type == "hud_only" {
+    // `-framerate` is deliberately absent for these. It tells FFmpeg how to
+    // interpret an untimed image sequence; a video carries its own timing, and
+    // forcing a rate onto it would re-time the clip. That also means a video
+    // take cannot suffer the FPS mismatch that BMP takes can — there is no
+    // second number to disagree with.
+    if let Some(video) = clip.video_file.as_deref() {
+        if clip_type == "hud_only" {
+            hud_color_input = format!("{}/{}", clip.img_folder, video);
+            hud_alpha_input = format!("{}/{}", alpha_folder, video);
+            cmd_args.extend(vec![
+                "-i", &hud_color_input,
+                "-i", &hud_alpha_input,
+                "-thread_queue_size", "512",
+                "-i", &clip.wav_file,
+                "-filter_complex", "[1:v]extractplanes=r[alpha];[0:v][alpha]alphamerge[hud]",
+                "-map", "[hud]", "-map", "2:a",
+            ]);
+        } else {
+            video_input = format!("{}/{}", clip.img_folder, video);
+            cmd_args.extend(vec![
+                "-i", &video_input,
+                "-thread_queue_size", "512",
+                "-i", &clip.wav_file,
+            ]);
+        }
+    } else if clip_type == "hud_only" {
+        hud_color_input = format!("{}/%05d.bmp", clip.img_folder);
+        hud_alpha_input = format!("{}/%05d.bmp", alpha_folder);
         cmd_args.extend(vec![
             // Skip probe/analyze on known BMP sequences; add read-ahead buffering.
             "-probesize", "32", "-analyzeduration", "0", "-thread_queue_size", "512",
-            "-framerate", &fps, "-i", "hudcolor/%05d.bmp",
+            "-framerate", &fps, "-i", &hud_color_input,
             "-probesize", "32", "-analyzeduration", "0", "-thread_queue_size", "512",
-            "-framerate", &fps, "-i", "hudalpha/%05d.bmp",
+            "-framerate", &fps, "-i", &hud_alpha_input,
             "-thread_queue_size", "512",
             "-i", &clip.wav_file,
             "-filter_complex", "[1:v]extractplanes=r[alpha];[0:v][alpha]alphamerge[hud]",

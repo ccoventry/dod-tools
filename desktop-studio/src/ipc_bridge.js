@@ -104,6 +104,48 @@ export async function validatePaths(hlaePath, hlPath) {
     });
 }
 
+/**
+ * Whether HLAE can reach an FFmpeg of its own.
+ *
+ * A different question from Render Studio's FFmpeg: `mirv_movie_ffmpeg` makes
+ * HLAE spawn one itself and it does not consult the app's resolution chain, so
+ * a missing one is only discovered as a capture that finishes and produces no
+ * video. See `docs/direct_to_video_capture.md`.
+ */
+/**
+ * Whether each configured executable path points at a file. Returns a state per
+ * path ("ok" | "empty" | "not_found" | "not_a_file"), not a message — the
+ * wording lives in strings.js with everything else the user reads.
+ */
+export async function diagnoseExecutablePaths(paths) {
+  return await invoke('diagnose_executable_paths', { paths })
+    .catch((err) => {
+      console.error("IPC Execution Error (diagnose_executable_paths):", err);
+      throw err;
+    });
+}
+
+export async function checkHlaeFfmpeg(hlaePath, ffmpegPath) {
+  return await invoke('check_hlae_ffmpeg', { hlaePath, ffmpegPath })
+    .catch((err) => {
+      console.error("IPC Execution Error (check_hlae_ffmpeg):", err);
+      throw err;
+    });
+}
+
+/**
+ * Writes HLAE's `ffmpeg.ini` so it can find the FFmpeg the app already uses.
+ * Never overwrites an existing one — the backend refuses and says why.
+ */
+export async function linkHlaeFfmpeg(hlaePath, ffmpegPath, elevated = false) {
+  return await invoke('link_hlae_ffmpeg', { hlaePath, ffmpegPath, elevated })
+    .catch((err) => {
+      console.error("IPC Execution Error (link_hlae_ffmpeg):", err);
+      showToast(STRINGS.CAPTURE_CONFIG.HLAE_FFMPEG_LINK_FAILED(err), 'error');
+      throw err;
+    });
+}
+
 export async function analyzeDemoFull(demoPath) {
   return await invoke('analyze_demo_full', { demoPath })
     .catch((err) => {

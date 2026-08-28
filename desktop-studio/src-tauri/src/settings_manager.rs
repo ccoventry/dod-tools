@@ -44,6 +44,9 @@ pub struct AppSettings {
     /// Defaults on, including for settings files written before it existed.
     #[serde(default = "default_decal_flush")]
     pub decal_flush: bool,
+    /// Whether HLAE pipes frames to FFmpeg instead of writing a BMP sequence.
+    #[serde(default)]
+    pub ffmpeg_capture: bool,
     #[serde(default = "default_add_condebug")]
     pub add_condebug: bool,
     #[serde(default)]
@@ -118,6 +121,7 @@ impl Default for AppSettings {
             resolution_height: default_resolution_height(),
             separate_hud: false,
             decal_flush: default_decal_flush(),
+            ffmpeg_capture: false,
             add_condebug: default_add_condebug(),
             auto_clear_logs: false,
             auto_clear_previews: false,

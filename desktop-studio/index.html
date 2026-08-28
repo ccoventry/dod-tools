@@ -163,27 +163,42 @@
 
             <!-- Tab Content: Path Routing -->
             <div id="tab-path-routing" class="config-tab-content active-tab" style="display: block;">
-              <div class="input-row">
-                <label data-str="CAPTURE_CONFIG.HLAE_EXEC_LABEL">HLAE Executable:</label>
-                <input type="text" id="hlae-path-input" data-str-placeholder="CAPTURE_CONFIG.HLAE_EXEC_PLACEHOLDER" placeholder="Path to hlae.exe" style="flex: 1;" />
-                <button id="hlae-browse-btn" data-str="CAPTURE_CONFIG.BROWSE_BUTTON">Browse</button>
-              </div>
+              <!-- The three things you set, then the one thing that follows
+                   from them. HLAE FFmpeg is a status rather than an input: HLAE
+                   spawns its own FFmpeg for mirv_movie_ffmpeg and does not
+                   consult the app's setting, so what it is pointed at is a
+                   consequence of the two rows above and belongs after them. -->
               <div class="input-row">
                 <label data-str="CAPTURE_CONFIG.HL_EXEC_LABEL">Half-Life Executable:</label>
                 <input type="text" id="hl-path-input" data-str-placeholder="CAPTURE_CONFIG.HL_EXEC_PLACEHOLDER" placeholder="Path to hl.exe" style="flex: 1;" />
                 <button id="hl-browse-btn" data-str="CAPTURE_CONFIG.BROWSE_BUTTON">Browse</button>
               </div>
+              <div id="hl-path-warning" class="path-warning" style="display: none;"></div>
+              <div class="input-row">
+                <label data-str="CAPTURE_CONFIG.HLAE_EXEC_LABEL">HLAE Executable:</label>
+                <input type="text" id="hlae-path-input" data-str-placeholder="CAPTURE_CONFIG.HLAE_EXEC_PLACEHOLDER" placeholder="Path to hlae.exe" style="flex: 1;" />
+                <button id="hlae-browse-btn" data-str="CAPTURE_CONFIG.BROWSE_BUTTON">Browse</button>
+              </div>
+              <div id="hlae-path-warning" class="path-warning" style="display: none;"></div>
               <div class="input-row">
                 <label data-str="CAPTURE_CONFIG.FFMPEG_OVERRIDE_LABEL">FFmpeg Override Path:</label>
                 <input type="text" id="ffmpeg-override-path-input" data-str-placeholder="CAPTURE_CONFIG.FFMPEG_OVERRIDE_PLACEHOLDER" placeholder="Optional path to ffmpeg.exe" style="flex: 1;" />
                 <button id="ffmpeg-browse-btn" data-str="CAPTURE_CONFIG.BROWSE_BUTTON">Browse</button>
+              </div>
+              <div id="ffmpeg-path-warning" class="path-warning" style="display: none;"></div>
+              <div class="input-row">
+                <label data-str="CAPTURE_CONFIG.HLAE_FFMPEG_LABEL">HLAE FFmpeg:</label>
+                <span id="hlae-ffmpeg-status" style="flex: 1; font-size: 0.85em; opacity: 0.85;"></span>
+                <button id="hlae-ffmpeg-link-btn" data-str="CAPTURE_CONFIG.HLAE_FFMPEG_LINK_BUTTON" style="display: none;">Point HLAE at FFmpeg</button>
               </div>
             </div>
 
             <!-- Tab Content: Output Format — what the recorded video IS.
                  Resolution and FPS live together because they are the two
                  halves of that, they are multiplied together in the disk
-                 estimator, and both become `mirv_movie_*` init commands. -->
+                 estimator, and both become `mirv_movie_*` init commands.
+                 Capture mode belongs here too: it decides whether that output
+                 is a frame sequence or a video file. -->
             <div id="tab-output-format" class="config-tab-content" style="display: none;">
               <div class="inline-controls">
                 <div class="control-group">
@@ -201,6 +216,26 @@
                 <div class="control-group">
                   <input type="checkbox" id="config-separate-hud" />
                   <label for="config-separate-hud" data-str="CAPTURE_CONFIG.SEPARATE_HUD_LABEL">Separate HUD</label>
+                </div>
+                <!-- A two-state choice rather than an option you switch on:
+                     the alternative to video is not "no capture", it is a BMP
+                     frame sequence. Naming both sides says that; a checkbox
+                     labelled "Capture to video" implies the other state is off.
+                     Save Local Patched Copy and Add Condebug used to sit beside
+                     this; they now live in the Pipeline tab and must not be
+                     duplicated here — two elements sharing an id would leave
+                     querySelector wired to only the first one. -->
+                <div class="control-group setting-toggle">
+                  <span class="setting-label" id="capture-mode-label-frames" data-capture-mode="frames"
+                        data-str="CAPTURE_CONFIG.CAPTURE_MODE_FRAMES"
+                        data-str-title="CAPTURE_CONFIG.CAPTURE_MODE_FRAMES_TITLE">Frame sequence</span>
+                  <label class="setting-switch" data-str-title="CAPTURE_CONFIG.CAPTURE_MODE_SWITCH_TITLE">
+                    <input type="checkbox" id="config-ffmpeg-capture" />
+                    <span class="setting-switch-slider"></span>
+                  </label>
+                  <span class="setting-label" id="capture-mode-label-video" data-capture-mode="video"
+                        data-str="CAPTURE_CONFIG.CAPTURE_MODE_VIDEO"
+                        data-str-title="CAPTURE_CONFIG.CAPTURE_MODE_VIDEO_TITLE">Video</span>
                 </div>
               </div>
             </div>

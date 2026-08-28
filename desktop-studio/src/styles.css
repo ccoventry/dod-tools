@@ -157,13 +157,15 @@ body {
   white-space: nowrap;
 }
 
-.studio-mode-toggle {
+.studio-mode-toggle,
+.setting-toggle {
   display: flex;
   align-items: center;
   gap: 6px;
 }
 
-.studio-mode-label {
+.studio-mode-label,
+.setting-label {
   font-size: 11px;
   color: var(--text-muted);
   cursor: pointer;
@@ -171,12 +173,14 @@ body {
   white-space: nowrap;
 }
 
-.studio-mode-label.active {
+.studio-mode-label.active,
+.setting-label.active {
   color: #ffffff;
   font-weight: 600;
 }
 
-.studio-mode-switch {
+.studio-mode-switch,
+.setting-switch {
   position: relative;
   display: inline-block;
   width: 32px;
@@ -185,13 +189,15 @@ body {
   flex-shrink: 0;
 }
 
-.studio-mode-switch input {
+.studio-mode-switch input,
+.setting-switch input {
   opacity: 0;
   width: 0;
   height: 0;
 }
 
-.studio-mode-switch-slider {
+.studio-mode-switch-slider,
+.setting-switch-slider {
   position: absolute;
   inset: 0;
   background: #444444;
@@ -199,7 +205,8 @@ body {
   transition: background 0.15s;
 }
 
-.studio-mode-switch-slider::before {
+.studio-mode-switch-slider::before,
+.setting-switch-slider::before {
   content: "";
   position: absolute;
   width: 13px;
@@ -211,11 +218,13 @@ body {
   transition: transform 0.15s;
 }
 
-.studio-mode-switch input:checked + .studio-mode-switch-slider {
+.studio-mode-switch input:checked + .studio-mode-switch-slider,
+.setting-switch input:checked + .setting-switch-slider {
   background: var(--primary-accent);
 }
 
-.studio-mode-switch input:checked + .studio-mode-switch-slider::before {
+.studio-mode-switch input:checked + .studio-mode-switch-slider::before,
+.setting-switch input:checked + .setting-switch-slider::before {
   transform: translateX(15px);
 }
 
@@ -1385,4 +1394,14 @@ tr.keyboard-selected {
   outline: 1px solid #4a90e2;
   outline-offset: -1px;
   background-color: rgba(74, 144, 226, 0.1) !important;
+}
+
+/* Per-path problems in Path Routing. A quiet line under the row that caused it,
+   rather than a banner elsewhere: the point is to sit next to the field you are
+   editing, so a typo is obvious while you are still looking at it. */
+.path-warning {
+  margin: -4px 0 6px 0;
+  padding-left: 2px;
+  font-size: 0.85em;
+  color: #ffa726;
 }

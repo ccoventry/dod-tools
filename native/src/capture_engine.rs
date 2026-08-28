@@ -406,7 +406,47 @@ pub fn spawn_capture_engine(
             }
 
             let condebug_flag = if config.add_condebug { "-condebug " } else { "" };
-            let extra_args = format!("{}+exec dodtools_helper.cfg +playdemo primer", condebug_flag);
+            // `-afxForceAlpha8` is read by AfxHookGoldSrc.dll off the *game's*
+            // command line, not by HLAE.exe. HLAE's own Launch GoldSrc dialog
+            // appends it when its alpha box is ticked — but that dialog is the
+            // path we do not use. Under `-customLoader` we build the game
+            // command line ourselves, so nothing appends it and the hook never
+            // sees it. The `-forceAlpha true` passed to HLAE.exe below is a
+            // Launcher-mode switch and does not reach the hook from here.
+            //
+            // `-afxForceAlpha8` TAKES A VALUE. From HLAE's own Launcher.cs, the
+            // dialog builds it as:
+            //
+            //     " -afxForceAlpha8 " + (cfg.ForceAlpha ? 1 : 0).ToString()
+            //
+            // Passing it bare — which is what two earlier attempts did — makes
+            // the hook read the following token as its argument, find something
+            // that is not `1`, and leave the alpha channel off. That is exactly
+            // the observed behaviour: the flag parses, and the captured hudAlpha
+            // bitmaps come out byte-for-byte identical to a run without it.
+            //
+            // `-afxRenderMode` takes one of standard|fBO|memoryDC the same way.
+            // Under `-customLoader` HLAE composes nothing for us — the dialog is
+            // what normally assembles these — so the whole set has to be built
+            // here, values included.
+            //
+            // `-32bpp` because a framebuffer that is not 32-bit has no alpha
+            // bits to force in the first place. `-afxOptimizeCaptureVis` is left
+            // out: it is a visibility optimisation unrelated to alpha, and would
+            // be one more variable over the capture itself.
+            //
+            // Gated on separate_hud deliberately: only the HUD pair needs the
+            // alpha buffer, and the single-stream `all` capture is a known-good
+            // path not worth perturbing to fix something it does not use.
+            let alpha_flags = if config.separate_hud {
+                "-gl -32bpp -afxRenderMode standard -afxForceAlpha8 1 "
+            } else {
+                ""
+            };
+            let extra_args = format!(
+                "{}{}+exec dodtools_helper.cfg +playdemo primer",
+                condebug_flag, alpha_flags
+            );
 
             let dummy_path = active_export_dir.join("DOD_BATCH_DONE");
             let _ = std::fs::remove_dir_all(&dummy_path);
