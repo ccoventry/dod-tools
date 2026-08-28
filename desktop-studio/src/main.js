@@ -70,7 +70,13 @@ async function refreshHlaeFfmpegStatus() {
       statusEl.textContent = STRINGS.CAPTURE_CONFIG.HLAE_FFMPEG_BUNDLED(s.path);
       break;
     case 'linked':
-      if (!s.target_exists) {
+      // Outranks everything below: if the override is not FFmpeg, saying the
+      // two "disagree" describes a real difference and hides the actual
+      // problem, and the button would only write the wrong program in.
+      if (result.app_ffmpeg_problem) {
+        statusEl.textContent =
+          STRINGS.CAPTURE_CONFIG.HLAE_FFMPEG_BAD_OVERRIDE(result.app_ffmpeg_problem);
+      } else if (!s.target_exists) {
         // A stale pointer outranks a disagreement: it is not pointed at
         // anything at all, so which build it disagrees with is moot.
         statusEl.textContent = STRINGS.CAPTURE_CONFIG.HLAE_FFMPEG_STALE(s.target);
@@ -82,7 +88,9 @@ async function refreshHlaeFfmpegStatus() {
       }
       break;
     case 'missing':
-      statusEl.textContent = STRINGS.CAPTURE_CONFIG.HLAE_FFMPEG_MISSING;
+      statusEl.textContent = result.app_ffmpeg_problem
+        ? STRINGS.CAPTURE_CONFIG.HLAE_FFMPEG_BAD_OVERRIDE(result.app_ffmpeg_problem)
+        : STRINGS.CAPTURE_CONFIG.HLAE_FFMPEG_MISSING;
       break;
     default:
       return unknown();

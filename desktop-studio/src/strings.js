@@ -155,6 +155,11 @@ export const STRINGS = {
     // divergence is worth stating rather than leaving to be discovered.
     HLAE_FFMPEG_DIVERGED: (target, app) =>
         `Pointed at ${target}, but Render Studio uses ${app}. Capture and render would use different FFmpeg builds — re-point HLAE unless that's deliberate.`,
+    // ffplay.exe and ffprobe.exe live beside ffmpeg.exe and are one misclick
+    // apart in a file picker, so this is worth naming rather than letting it
+    // through to a capture that records nothing.
+    HLAE_FFMPEG_BAD_OVERRIDE: (why) =>
+        `The FFmpeg Override Path above isn't FFmpeg: ${why}. Pick ffmpeg.exe — HLAE can't record with anything else.`,
     HLAE_FFMPEG_STALE: (target) =>
         `HLAE's ffmpeg.ini points at ${target}, which isn't there. Direct-to-video capture will produce no video until that path is fixed or the ini is deleted.`,
     HLAE_FFMPEG_MISSING:

@@ -312,12 +312,21 @@ async fn check_hlae_ffmpeg(
         _ => None,
     };
 
+    // "It exists" was the only test the picker applied, and ffplay.exe and
+    // ffprobe.exe sit in the same folder as ffmpeg.exe. Checking here as well as
+    // at link time means the row says so before the button is pressed, instead
+    // of reporting a disagreement between two paths one of which cannot record.
+    let app_ffmpeg_problem = app_ffmpeg
+        .as_deref()
+        .and_then(|p| hf::verify_is_ffmpeg(p).err());
+
     Ok(serde_json::json!({
         "state": state,
         "usable": state.is_usable(),
         "can_link": state.can_link(),
         "app_ffmpeg": app_ffmpeg.map(|p| p.to_string_lossy().into_owned()),
         "agrees_with_app": agrees_with_app,
+        "app_ffmpeg_problem": app_ffmpeg_problem,
     }))
 }
 
