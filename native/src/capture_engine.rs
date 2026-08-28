@@ -404,10 +404,18 @@ pub fn spawn_capture_engine(
             // sees it. The `-forceAlpha true` passed to HLAE.exe below is a
             // Launcher-mode switch and does not reach the hook from here.
             //
-            // Without it the hudAlpha stream captures fully opaque (every plane
-            // 255), so extractplanes=r yields an all-opaque mask and the HUD
-            // composite has no transparency — measured in both BMP and video
-            // capture, see docs/direct_to_video_capture.md.
+            // NOT SUFFICIENT ON ITS OWN — measured. Adding it changed nothing:
+            // the hudAlpha bitmaps captured with and without it are byte-for-
+            // byte identical (SHA-256 match on the same frame of the same
+            // clip), still pal8 with a single palette index 255 across every
+            // pixel. So the alpha buffer is still opaque and the HUD composite
+            // still has no transparency.
+            //
+            // Kept because it is plausibly necessary but not sufficient: the
+            // hook also parses `-afxRenderMode standard|fBO|memoryDC`, which
+            // this pipeline never sets, and an alpha channel has to survive the
+            // capture path as well as exist. `standard` may simply not carry
+            // one. That is the next thing to try and is untested.
             //
             // Gated on separate_hud deliberately: only the HUD pair needs the
             // alpha buffer, and the single-stream `all` capture is a known-good
