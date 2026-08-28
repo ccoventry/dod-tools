@@ -414,6 +414,25 @@ fn search_path(name: &str) -> Option<PathBuf> {
     None
 }
 
+/// Whether two paths name the same executable.
+///
+/// Exists because "HLAE is pointed somewhere" and "HLAE is pointed at the same
+/// FFmpeg Render Studio uses" are different questions, and only the second one
+/// keeps both halves of the pipeline encoding with the same build. That was the
+/// stated reason for writing an ini instead of copying the binary, so it is
+/// worth actually checking rather than assuming it stays true.
+///
+/// Compared case-insensitively: Windows paths are, and a link written from a
+/// differently-cased spelling of the same file is not a disagreement.
+pub fn same_file(a: &Path, b: &Path) -> bool {
+    let normal = |p: &Path| {
+        strip_extended_prefix(&std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf()))
+            .to_string_lossy()
+            .to_lowercase()
+    };
+    normal(a) == normal(b)
+}
+
 /// Drops Windows' `\\?\` extended-length prefix.
 ///
 /// `std::fs::canonicalize` always adds it, and the result is a path that is

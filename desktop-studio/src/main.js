@@ -51,9 +51,14 @@ async function refreshHlaeFfmpegStatus() {
   };
   if (!hlaePath) return unknown();
 
+  // Passed in so the check can say whether HLAE and Render Studio agree, not
+  // just whether HLAE has an answer at all.
+  const ffmpegPath =
+    document.querySelector('#ffmpeg-override-path-input')?.value?.trim() || "ffmpeg";
+
   let result;
   try {
-    result = await checkHlaeFfmpeg(hlaePath);
+    result = await checkHlaeFfmpeg(hlaePath, ffmpegPath);
   } catch {
     // Already logged by the bridge. Say nothing rather than assert a state.
     return unknown();
@@ -65,9 +70,16 @@ async function refreshHlaeFfmpegStatus() {
       statusEl.textContent = STRINGS.CAPTURE_CONFIG.HLAE_FFMPEG_BUNDLED(s.path);
       break;
     case 'linked':
-      statusEl.textContent = s.target_exists
-        ? STRINGS.CAPTURE_CONFIG.HLAE_FFMPEG_LINKED(s.target)
-        : STRINGS.CAPTURE_CONFIG.HLAE_FFMPEG_STALE(s.target);
+      if (!s.target_exists) {
+        // A stale pointer outranks a disagreement: it is not pointed at
+        // anything at all, so which build it disagrees with is moot.
+        statusEl.textContent = STRINGS.CAPTURE_CONFIG.HLAE_FFMPEG_STALE(s.target);
+      } else if (result.agrees_with_app === false && result.app_ffmpeg) {
+        statusEl.textContent =
+          STRINGS.CAPTURE_CONFIG.HLAE_FFMPEG_DIVERGED(s.target, result.app_ffmpeg);
+      } else {
+        statusEl.textContent = STRINGS.CAPTURE_CONFIG.HLAE_FFMPEG_LINKED(s.target);
+      }
       break;
     case 'missing':
       statusEl.textContent = STRINGS.CAPTURE_CONFIG.HLAE_FFMPEG_MISSING;
@@ -573,9 +585,13 @@ window.addEventListener("DOMContentLoaded", async () => {
   }
 
   // Typing a path by hand is the other way in, so re-check on blur/Enter as
-  // well as after the picker.
-  document.querySelector('#hlae-path-input')
-    ?.addEventListener('change', () => { refreshHlaeFfmpegStatus(); });
+  // well as after the picker. The FFmpeg override matters too: it does not
+  // change what HLAE points at, which is exactly why a change there can leave
+  // the two pointed at different builds without anything saying so.
+  for (const id of ['#hlae-path-input', '#ffmpeg-override-path-input']) {
+    document.querySelector(id)
+      ?.addEventListener('change', () => { refreshHlaeFfmpegStatus(); });
+  }
 
   const hlaeFfmpegLinkBtn = document.querySelector('#hlae-ffmpeg-link-btn');
   if (hlaeFfmpegLinkBtn) {
@@ -660,6 +676,10 @@ window.addEventListener("DOMContentLoaded", async () => {
           const inputEl = document.querySelector('#ffmpeg-override-path-input');
           if (inputEl) inputEl.value = path;
           await persistAppSettings();
+          // Picking a different FFmpeg does not move what HLAE points at, which
+          // is precisely why the row below has to be re-checked: that is how
+          // the two end up on different builds without anything saying so.
+          await refreshHlaeFfmpegStatus();
         }
       } catch (err) {
         console.error("Error selecting FFmpeg executable:", err);

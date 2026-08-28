@@ -290,12 +290,34 @@ async fn validate_paths(hlae_path: String, hl_path: String) -> Result<bool, Stri
 /// than discovered after one — the failure is a capture that runs to completion
 /// and produces no video. See `native::shared::hlae_ffmpeg`.
 #[tauri::command]
-async fn check_hlae_ffmpeg(hlae_path: String) -> Result<serde_json::Value, String> {
-    let state = native::shared::hlae_ffmpeg::detect(std::path::Path::new(&hlae_path));
+async fn check_hlae_ffmpeg(
+    hlae_path: String,
+    ffmpeg_path: Option<String>,
+) -> Result<serde_json::Value, String> {
+    use native::shared::hlae_ffmpeg as hf;
+
+    let state = hf::detect(std::path::Path::new(&hlae_path));
+
+    // "HLAE is pointed somewhere" and "HLAE is pointed at the same FFmpeg
+    // Render Studio uses" are different questions, and only the second keeps
+    // both halves of the pipeline encoding with the same build — which was the
+    // stated reason for writing an ini instead of copying the binary. Nothing
+    // was checking it stayed true, so changing the app's FFmpeg silently left
+    // HLAE on the old one.
+    let app_ffmpeg = hf::resolve_absolute(ffmpeg_path.as_deref().unwrap_or("ffmpeg"));
+    let agrees_with_app = match (&state, &app_ffmpeg) {
+        (hf::HlaeFfmpeg::Linked { target, .. }, Some(app)) => Some(hf::same_file(target, app)),
+        // A bundled binary is HLAE's own and is meant to differ; with nothing
+        // linked there is nothing to disagree with.
+        _ => None,
+    };
+
     Ok(serde_json::json!({
         "state": state,
         "usable": state.is_usable(),
         "can_link": state.can_link(),
+        "app_ffmpeg": app_ffmpeg.map(|p| p.to_string_lossy().into_owned()),
+        "agrees_with_app": agrees_with_app,
     }))
 }
 

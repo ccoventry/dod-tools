@@ -52,8 +52,8 @@ export async function validatePaths(hlaePath, hlPath) {
  * a missing one is only discovered as a capture that finishes and produces no
  * video. See `docs/direct_to_video_capture.md`.
  */
-export async function checkHlaeFfmpeg(hlaePath) {
-  return await invoke('check_hlae_ffmpeg', { hlaePath })
+export async function checkHlaeFfmpeg(hlaePath, ffmpegPath) {
+  return await invoke('check_hlae_ffmpeg', { hlaePath, ffmpegPath })
     .catch((err) => {
       console.error("IPC Execution Error (check_hlae_ffmpeg):", err);
       throw err;
