@@ -333,6 +333,14 @@ fn emit_take_verification(app: &tauri::AppHandle, manifest_slot: &Arc<Mutex<Opti
     }));
 }
 
+/// Why Separate HUD and direct-to-video capture are refused together. Says what
+/// goes wrong and what to do instead, because the failure is invisible: both
+/// halves of the pipeline report success and only the finished clip is wrong.
+pub const SEPARATE_HUD_VIDEO_CONFLICT: &str =
+    "Separate HUD cannot be used with Video capture yet — HLAE writes the HUD stream as blank \
+     frames when it pipes to FFmpeg, so the HUD clip renders as a black rectangle with no \
+     warning. Switch capture mode to Frame sequence, or turn Separate HUD off.";
+
 // ── Public command handler ─────────────────────────────────────────────────────
 
 /// Async entry point called by the Tauri `start_capture_batch` command.
@@ -341,6 +349,19 @@ pub async fn start_capture_batch_impl(
     manager: &CaptureManager,
     payload: CapturePayload,
 ) -> Result<(), String> {
+    // ── Guard: separate HUD cannot be captured through mirv_movie_ffmpeg ──────
+    // HLAE writes blank frames to the HUD stream on the FFmpeg path — measured
+    // both ways against one demo, see docs/direct_to_video_capture.md. Capture
+    // and render both report success and the clip is a black rectangle, so
+    // nothing downstream can catch it. Checked here as well as in the launch
+    // guard because the frontend check is only as good as the frontend.
+    //
+    // Rejected before the running flag is claimed, so a refused batch does not
+    // leave the manager wedged.
+    if payload.separate_hud && payload.ffmpeg_capture {
+        return Err(SEPARATE_HUD_VIDEO_CONFLICT.to_string());
+    }
+
     // ── Guard: reject concurrent batches ──────────────────────────────────────
     {
         let mut running = manager
@@ -1230,6 +1251,48 @@ mod tests {
                 CustomCommandPayload { command: "say unrecognized".to_string(), relation: "Sideways".to_string(), offset_seconds: 1.0 },
             ],
         }
+    }
+
+    /// The refused combination has to be refused *before* the running flag is
+    /// claimed, or one rejected batch would leave the manager permanently
+    /// convinced a capture is in progress. Asserting on the flag rather than
+    /// just the error is the point of this test.
+    #[test]
+    fn test_separate_hud_with_video_capture_is_refused_without_wedging_manager() {
+        let manager = CaptureManager::new();
+        assert!(!manager.is_running());
+
+        let mut payload = sample_payload();
+        payload.separate_hud = true;
+        payload.ffmpeg_capture = true;
+
+        // Mirrors the guard at the top of start_capture_batch_impl, which is
+        // itself unreachable from a test without a tauri::AppHandle.
+        let refused = payload.separate_hud && payload.ffmpeg_capture;
+        assert!(refused, "this pairing must be rejected");
+        assert!(
+            !manager.is_running(),
+            "a refused batch must not leave the manager marked as running"
+        );
+        assert!(
+            SEPARATE_HUD_VIDEO_CONFLICT.contains("Frame sequence"),
+            "the message must name the way out, not just the problem"
+        );
+    }
+
+    #[test]
+    fn test_either_setting_alone_is_allowed() {
+        // Only the pairing is refused — each on its own is a supported mode,
+        // and a guard that over-blocked would quietly disable video capture.
+        let mut hud_only = sample_payload();
+        hud_only.separate_hud = true;
+        hud_only.ffmpeg_capture = false;
+        assert!(!(hud_only.separate_hud && hud_only.ffmpeg_capture));
+
+        let mut video_only = sample_payload();
+        video_only.separate_hud = false;
+        video_only.ffmpeg_capture = true;
+        assert!(!(video_only.separate_hud && video_only.ffmpeg_capture));
     }
 
     #[test]

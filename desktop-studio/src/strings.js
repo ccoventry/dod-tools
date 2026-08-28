@@ -243,6 +243,11 @@ export const STRINGS = {
     },
     andNMore: (n) => `...and ${n} more`,
     NO_DRIVES_CONFIGURED_WARNING: 'No Capture Output directories configured — add at least one with free space before starting a capture.',
+    // Measured 2026-08-28, see docs/direct_to_video_capture.md. Spelled out
+    // because both halves report success and the broken output only shows up
+    // after rendering — the user has no other way to find out.
+    SEPARATE_HUD_VIDEO_CONFLICT_WARNING: 'Separate HUD cannot be used with Video capture yet — HLAE writes the HUD stream as blank frames when it pipes to FFmpeg, so the HUD clip renders as a black rectangle with no warning. Switch capture mode to Frame sequence, or turn Separate HUD off.',
+    SEPARATE_HUD_VIDEO_CONFLICT_TOAST: 'Separate HUD + Video capture would produce a blank HUD clip. Use Frame sequence, or turn Separate HUD off.',
     noUsableSpaceProblem: (desc) => `Capture Output problem:\n${desc}`,
     NO_USABLE_SPACE_WARNING: 'None of the configured Capture Output directories have any free space.',
     insufficientSpaceWarning: (required, available) => `Insufficient disk space: capture needs ~${required} GB, only ${available} GB available across the export pool.`,
