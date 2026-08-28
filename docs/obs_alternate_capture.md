@@ -154,13 +154,32 @@ A 17-block batch at `capture_fps` 120, 1280x720, with Separate HUD on (three BMP
 **309s of demo time in 413s of wall-clock — 1.34x real time**. OBS is fixed at 1.0x by definition,
 so it would have saved about 104s out of the 569s the whole capture phase took: **roughly 18%**.
 
-Worse for the pitch: HLAE's wall-clock cost is `capture_fps / achieved render fps`, and that machine
-achieved ~90 fps *while writing three BMP streams*. So at `capture_fps` 60 HLAE would run at ~0.67x
-real time — **faster than OBS could ever be**, since OBS cannot capture quicker than the clip plays.
+HLAE's wall-clock cost is `capture_fps / achieved render fps`, and that machine achieved **~90 fps
+while writing three BMP streams** at 720p. So on *that* machine, at `capture_fps` 60, HLAE would run
+at ~0.67x real time — faster than OBS could ever be, since OBS cannot capture quicker than the clip
+plays.
 
-> **OBS is only faster than HLAE when `capture_fps` exceeds what the machine renders in real time —
-> which is exactly the case where OBS cannot produce the output being asked for.** Below that
-> break-even, the existing path already wins on wall-clock.
+> **The break-even is `capture_fps` = achieved render fps, and it moves with the machine.**
+
+**Which is the part that generalises, and the 1.34x figure is not.** The machine measured here is
+high-end; 1.34x is close to the best case for HLAE, so **that measurement is a lower bound on OBS's
+wall-clock advantage, not a typical one**. Work the formula for a weaker machine and it inverts:
+
+| achieved render fps | HLAE at `capture_fps` 60 | HLAE at `capture_fps` 120 |
+|---|---|---|
+| ~90 (measured here) | 0.67x — HLAE wins | 1.34x — OBS saves ~25% |
+| ~45 | 1.33x — OBS saves ~25% | 2.7x — OBS saves ~63% |
+| ~30 | 2.0x — OBS saves ~50% | 4.0x — OBS saves ~75% |
+
+So the speed pitch is real, just not for the person who measured it. **OBS saves the most time
+exactly for the users with the least capable hardware** — which is plausibly the same audience that
+wants the convenience option in the first place.
+
+**And that cuts the other way too, which is the tension worth stating plainly.** A weak machine is
+also the one that cannot render 60 fps in real time, so OBS drops frames there. The machines where
+OBS saves the most wall-clock are the machines where OBS produces the worst output. That sharpens
+the dropped-frames open question below from a nicety into the thing that decides whether this path
+is usable for the people it most helps.
 
 The durable advantages are elsewhere, and they are large:
 
@@ -172,7 +191,22 @@ The durable advantages are elsewhere, and they are large:
   clip ends.
 - **Hardware encoding for free**, concurrent with capture rather than after it.
 
-That is still a real pitch — it is just a disk-and-simplicity pitch, not a speed one.
+That is still a real pitch. On a strong machine it is a disk-and-simplicity pitch; on a weak one it
+is a speed pitch as well, with a quality cost attached.
+
+### The app can measure this for the user, with what it already reads
+
+`achieved render fps` is not a number anyone can be expected to know, and it is the only input the
+break-even needs. But the console-log tailer built for the start signal **already measures it**: the
+breadcrumb and stage markers carry demo ticks and arrival times, so the ratio of demo time to
+wall-clock during a recorded window falls straight out of the same stream — that is exactly how the
+1.34x above was obtained, after the fact, from a log.
+
+So after one batch the app knows this machine's capture ratio, and can say something useful and
+specific rather than generic: whether OBS would be faster *here*, at *this* `capture_fps`, and
+whether the machine can sustain the OBS output rate without dropping frames. That is a far better
+answer than a settings tooltip guessing on the user's behalf, and it costs nothing extra to compute
+once the tailer exists.
 
 **What it costs** beyond quality, and what a user has to be told: capture becomes sensitive to
 everything else on the machine. An alt-tab, a stutter on map load, a notification sound landing in
@@ -736,10 +770,12 @@ tractable piece of work.
   a choice rather than an unknown: MP4 needs a second frame-count reader beside `avi_frame_count`,
   while Custom Output writing `utvideo` into an AVI reuses the existing one untouched.
 - **Is `stopsound` still wanted in the record window** once nothing is being time-warped through it?
-- **What happens when the machine cannot keep up.** Dropped frames are invisible in the output file's
-  metadata — the duration is right and the frames are missing. `GetRecordStatus` does not report
-  skipped frames; OBS's own stats do. Whether that is reachable over the WebSocket, and whether a
-  batch should warn, is unanswered.
+- **What happens when the machine cannot keep up.** Promoted from a nicety to the question that
+  decides who this path is usable for — see the break-even table above: the machines where OBS saves
+  the most wall-clock are the machines where OBS drops the most frames. Dropped frames are invisible
+  in the output file's metadata: the duration is right and the frames are simply missing.
+  `GetRecordStatus` does not report skipped frames; OBS's own stats do. Whether that is reachable
+  over the WebSocket, and whether a batch should warn or refuse, is unanswered.
 - **Whether OBS should be driven at all when it is already streaming.** `GetRecordStatus` says whether
   it is recording; it does not make refusing to touch a live stream automatic. Leaning toward: detect
   an active stream and refuse, loudly.
