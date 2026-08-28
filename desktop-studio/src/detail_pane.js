@@ -63,10 +63,35 @@ function hideProcessDetectorModal() {
 /** Parks a launch intent behind the Half-Life Preview Detector modal —
  *  `runFn` is invoked (no args) once the user picks "Force Relaunch" and any
  *  prior hl.exe/hlae.exe instance has been killed. Exported so other panes
- *  can reuse the same guarded-launch flow instead of duplicating it. */
-export function requestProcessGuardedLaunch(runFn) {
+ *  can reuse the same guarded-launch flow instead of duplicating it.
+ *
+ *  Pass `{ forBatch: true }` for a capture batch, which fails for a different
+ *  reason and has nothing to copy a view command for. */
+export function requestProcessGuardedLaunch(runFn, options = {}) {
   pendingLaunch = { run: runFn };
+  applyProcessModalCopy(options.forBatch === true);
   showProcessDetectorModal();
+}
+
+// The modal is shared, so its wording has to match whichever intent parked the
+// launch. A preview corrupts a session quietly; a batch is refused outright by
+// the engine, and only after every demo has already been patched. "Copy View
+// Command" has nothing to copy in the batch case.
+function applyProcessModalCopy(forBatch) {
+  const parts = [
+    ['#process-modal-title', forBatch ? 'TITLE_BATCH' : 'TITLE'],
+    ['#process-modal-body', forBatch ? 'BODY_BATCH' : 'BODY'],
+  ];
+  for (const [selector, key] of parts) {
+    const el = document.querySelector(selector);
+    if (!el) continue;
+    // Both the attribute and the text: the text is what is on screen now, the
+    // attribute is what a later language switch re-reads.
+    el.dataset.str = `PROCESS_DETECTOR_MODAL.${key}`;
+    el.textContent = STRINGS.PROCESS_DETECTOR_MODAL[key];
+  }
+  const copyBtn = document.querySelector('#process-modal-copy-command-btn');
+  if (copyBtn) copyBtn.style.display = forBatch ? 'none' : '';
 }
 
 /** Reflects current selection state onto the Launch Preview (per-demo) and

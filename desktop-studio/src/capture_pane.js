@@ -941,11 +941,40 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
         return;
       }
 
-      showToast(STRINGS.CAPTURE.INITIALIZING_CAPTURE_BATCH, "info");
-      startBtn.disabled = true;
-      if (cancelBtn) cancelBtn.disabled = false;
+      // Day of Defeat allows one instance, and the batch does not find that out
+      // until after it has patched every demo in the queue — the engine's own
+      // "Only one instance of this game can be run at a time" box appears at
+      // the end of all that work, with nothing captured. The preview and
+      // standalone launches have been guarded against this all along; the batch
+      // was the one path that went straight through. Observed 2026-08-28.
+      let engineAlreadyRunning = false;
+      try {
+        engineAlreadyRunning = await checkEngineProcesses();
+      } catch (err) {
+        // Already toasted by ipc_bridge.js — fail open rather than blocking a
+        // legitimate batch because the detector itself errored.
+      }
 
-      startCaptureBatch(activePayload)
+      const runBatch = () => {
+        showToast(STRINGS.CAPTURE.INITIALIZING_CAPTURE_BATCH, "info");
+        startBtn.disabled = true;
+        if (cancelBtn) cancelBtn.disabled = false;
+        return startBatchWithPayload(activePayload, state);
+      };
+
+      if (engineAlreadyRunning) {
+        requestProcessGuardedLaunch(runBatch, { forBatch: true });
+        return;
+      }
+
+      runBatch();
+    });
+  }
+
+  // Split out of the click handler so the process-conflict modal can park it
+  // and run it later unchanged.
+  function startBatchWithPayload(activePayload, state) {
+    return startCaptureBatch(activePayload)
         .then(() => {
           showToast(STRINGS.CAPTURE.BATCH_QUEUED_TOAST, "success");
           setBatchRunning(true);
@@ -960,7 +989,6 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
           setBatchRunning(false);
           refreshLaunchGuard(state);
         });
-    });
   }
 
   if (cancelBtn) {
