@@ -104,6 +104,99 @@ fn on_disk_name(folder: &Path) -> String {
         .into_owned()
 }
 
+/// How much of an AVI to read looking for its header. The `hdrl` list sits at
+/// the very front of the file, so this never has to grow — and it must not, as
+/// the videos themselves run to gigabytes.
+const AVI_HEADER_SCAN_BYTES: usize = 64 * 1024;
+
+/// Frame count read out of an AVI's own header, without decoding it.
+///
+/// The take's frame count drives the render progress percentage, and it used to
+/// come from counting `.bmp` files — which returns 0 for a video take and left
+/// video renders showing no progress at all. The count is in the header, so
+/// this costs one bounded read rather than a decode pass or an ffprobe spawn
+/// per take.
+///
+/// **The video stream's `strh.dwLength` is the authority, not
+/// `avih.dwTotalFrames`.** AVI's legacy RIFF chunk tops out around 1 GiB, so
+/// FFmpeg's muxer continues past that into OpenDML `AVIX` segments — and
+/// `avih.dwTotalFrames` then counts only the frames in the *first* chunk, while
+/// `strh.dwLength` carries the true total.
+///
+/// Measured across one capture, which shows the split exactly: the ~1.2 GB and
+/// ~1.5 GB `all` streams read 1067/1218 and 859/1229 (avih/strh), and in both
+/// cases the first chunk works out to almost exactly 1 GiB of the file. The
+/// 135 MB HUD streams fit in a single chunk and agree with themselves. So the
+/// error only appears on long or high-fps takes — the ones where an accurate
+/// progress bar actually matters. `avih` is kept only as a fallback for a file
+/// with no video `strh` at all.
+///
+/// Zero from both means the file was never finalised — a capture killed
+/// mid-write — which is worth surfacing rather than papering over.
+fn avi_frame_count(path: &Path) -> Option<usize> {
+    use std::io::Read;
+
+    let mut file = std::fs::File::open(path).ok()?;
+    // Heap-allocated and explicitly bounded: these files are gigabytes.
+    let mut buf = vec![0u8; AVI_HEADER_SCAN_BYTES];
+    let read = file.read(&mut buf).ok()?;
+    buf.truncate(read);
+
+    if buf.len() < 12 || &buf[0..4] != b"RIFF" || &buf[8..12] != b"AVI " {
+        return None;
+    }
+
+    let u32_at = |b: &[u8], at: usize| -> Option<u32> {
+        b.get(at..at + 4)
+            .map(|s| u32::from_le_bytes([s[0], s[1], s[2], s[3]]))
+    };
+
+    // Walk the chunks inside the RIFF body. `hdrl` is a LIST, so descend into
+    // it rather than skipping past; everything wanted lives inside it.
+    let mut pos = 12usize;
+    let mut total_frames = 0u32;
+    let mut stream_length = 0u32;
+    while pos + 8 <= buf.len() {
+        let id = &buf[pos..pos + 4];
+        let size = u32_at(&buf, pos + 4)? as usize;
+        let body = pos + 8;
+
+        match id {
+            b"LIST" => {
+                // Step inside: body starts with the list type, then chunks.
+                pos = body + 4;
+                continue;
+            }
+            b"avih" => {
+                total_frames = u32_at(&buf, body + 16).unwrap_or(0);
+            }
+            b"strh" => {
+                // Only the video stream's length is meaningful here; an audio
+                // stream's dwLength counts samples or blocks, not frames.
+                if buf.get(body..body + 4) == Some(b"vids") && stream_length == 0 {
+                    stream_length = u32_at(&buf, body + 32).unwrap_or(0);
+                }
+            }
+            _ => {}
+        }
+
+        // Chunks are word-aligned: an odd size is followed by a pad byte.
+        pos = body + size + (size & 1);
+    }
+
+    let frames = if stream_length > 0 { stream_length } else { total_frames };
+    Some(frames as usize)
+}
+
+/// Frames in a stream folder, whichever shape it was captured in.
+fn stream_frame_count(folder: &Path) -> usize {
+    let video = folder.join(VIDEO_FILE);
+    if video.is_file() {
+        return avi_frame_count(&video).unwrap_or(0);
+    }
+    count_bmps(folder)
+}
+
 /// The video inside a stream folder, when that is what it holds.
 fn stream_video(folder: &Path) -> Option<String> {
     folder
@@ -234,7 +327,7 @@ pub fn scan_folder_background(
                 let all_folder = folder_names.get("all").unwrap();
                 let hud_color_folder = folder_names.get("hudcolor").unwrap();
                 let hud_alpha_folder = folder_names.get("hudalpha").unwrap();
-                let frame_count = count_bmps(all_folder);
+                let frame_count = stream_frame_count(all_folder);
                 let date = get_clip_date(all_folder);
 
                 let clip_all = ClipData {
@@ -278,7 +371,7 @@ pub fn scan_folder_background(
 
             // Process remaining folders
             for img_folder in image_folders {
-                let frame_count = count_bmps(&img_folder);
+                let frame_count = stream_frame_count(&img_folder);
                 let folder_name = img_folder.file_name().unwrap_or_default().to_string_lossy().into_owned();
                 let date = get_clip_date(&img_folder);
                 let clip = ClipData {
@@ -398,6 +491,116 @@ mod tests {
         let missing = std::env::temp_dir().join("dod_scanner_test_does_not_exist");
         let _ = std::fs::remove_dir_all(&missing);
         assert!(!is_renderable_take(&missing));
+    }
+
+    /// A minimal but structurally real AVI header: RIFF/hdrl/avih plus an
+    /// optional strl/strh video stream header. Only the two frame-count fields
+    /// carry meaningful values; the rest is zero padding of the right width.
+    fn build_avi(avih_total_frames: u32, vids_stream_length: Option<u32>) -> Vec<u8> {
+        fn chunk(id: &[u8; 4], body: &[u8]) -> Vec<u8> {
+            let mut out = Vec::new();
+            out.extend_from_slice(id);
+            out.extend_from_slice(&(body.len() as u32).to_le_bytes());
+            out.extend_from_slice(body);
+            if body.len() % 2 == 1 {
+                out.push(0); // chunks are word-aligned
+            }
+            out
+        }
+
+        let mut avih = vec![0u8; 56];
+        avih[16..20].copy_from_slice(&avih_total_frames.to_le_bytes());
+
+        let mut hdrl = b"hdrl".to_vec();
+        hdrl.extend_from_slice(&chunk(b"avih", &avih));
+
+        if let Some(len) = vids_stream_length {
+            let mut strh = vec![0u8; 56];
+            strh[0..4].copy_from_slice(b"vids");
+            strh[32..36].copy_from_slice(&len.to_le_bytes());
+            let mut strl = b"strl".to_vec();
+            strl.extend_from_slice(&chunk(b"strh", &strh));
+            hdrl.extend_from_slice(&chunk(b"LIST", &strl));
+        }
+
+        let mut body = b"AVI ".to_vec();
+        body.extend_from_slice(&chunk(b"LIST", &hdrl));
+        chunk(b"RIFF", &body)
+    }
+
+    fn write_video(take: &Path, stream: &str, avi: &[u8]) {
+        let folder = take.join(stream);
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join(VIDEO_FILE), avi).unwrap();
+    }
+
+    #[test]
+    fn test_stream_header_length_wins_over_avih_total_frames() {
+        // Measured on a real capture: FFmpeg's AVI muxer wrote 1067 into
+        // avih.dwTotalFrames while the video strh.dwLength read 1218, and 1218
+        // is what ffprobe and the file's own 10.15s-at-120fps duration agree
+        // on. Preferring avih would silently under-report render progress.
+        let avi = build_avi(1067, Some(1218));
+        let dir = scratch_dir("avi_disagreement");
+        let path = dir.join(VIDEO_FILE);
+        std::fs::write(&path, &avi).unwrap();
+        assert_eq!(avi_frame_count(&path), Some(1218));
+    }
+
+    #[test]
+    fn test_avih_used_when_there_is_no_video_stream_header() {
+        let avi = build_avi(900, None);
+        let dir = scratch_dir("avi_no_strh");
+        let path = dir.join(VIDEO_FILE);
+        std::fs::write(&path, &avi).unwrap();
+        assert_eq!(avi_frame_count(&path), Some(900));
+    }
+
+    #[test]
+    fn test_unfinalised_avi_reports_zero_rather_than_guessing() {
+        // A capture killed mid-write leaves both counts at 0. Zero is the
+        // honest answer — the renderer already treats it as "no percentage".
+        let avi = build_avi(0, Some(0));
+        let dir = scratch_dir("avi_unfinalised");
+        let path = dir.join(VIDEO_FILE);
+        std::fs::write(&path, &avi).unwrap();
+        assert_eq!(avi_frame_count(&path), Some(0));
+    }
+
+    #[test]
+    fn test_non_avi_file_is_not_parsed_as_one() {
+        let dir = scratch_dir("avi_garbage");
+        let path = dir.join(VIDEO_FILE);
+        std::fs::write(&path, b"this is not a RIFF file at all").unwrap();
+        assert_eq!(avi_frame_count(&path), None);
+    }
+
+    #[test]
+    fn test_video_take_reports_frames_from_the_container() {
+        // The end-to-end shape: a video take used to scan as 0 frames, which
+        // left Render Studio showing no progress percentage for it.
+        let take = scratch_dir("video_frame_count");
+        std::fs::write(take.join("sound.wav"), b"wav").unwrap();
+        write_video(&take, "all", &build_avi(0, Some(1218)));
+
+        let clips = scan(&take);
+        assert_eq!(clips.len(), 1);
+        assert_eq!(clips[0].frame_count, 1218);
+        assert_eq!(clips[0].video_file.as_deref(), Some(VIDEO_FILE));
+    }
+
+    #[test]
+    fn test_bmp_take_still_counts_bitmaps() {
+        let take = scratch_dir("bmp_frame_count");
+        std::fs::write(take.join("sound.wav"), b"wav").unwrap();
+        let folder = take.join("all");
+        std::fs::create_dir_all(&folder).unwrap();
+        for i in 0..3 {
+            std::fs::write(folder.join(format!("{:05}.bmp", i)), b"bmp").unwrap();
+        }
+
+        let clips = scan(&take);
+        assert_eq!(clips[0].frame_count, 3);
     }
 
     /// Collect what `scan_folder_background` emits for a scratch tree.
