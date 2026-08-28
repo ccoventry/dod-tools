@@ -357,12 +357,18 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
     helper_cfg_content.push_str("alias sys_record_stop \"mirv_recordmovie_stop\"\n");
     helper_cfg_content.push_str("alias sys_capture_done_path \"mirv_movie_filename DOD_TOOLS_EXIT_TRIGGER; mirv_recordmovie_start; mirv_recordmovie_stop\"\n");
 
-    // Direct-to-video, stage 1 of docs/direct_to_video_capture.md — a probe, off
-    // unless DOD_FFMPEG_CAPTURE is set. Four things need answering and none can
-    // be reasoned out of the bytes: where {AFX_STREAM_PATH} resolves to, whether
-    // it follows mirv_movie_filename (and so keeps the _route_N junction routing
-    // working), whether takes are still auto-numbered into take0000, and whether
-    // sound.wav still lands beside the video.
+    // Direct-to-video (docs/direct_to_video_capture.md), driven by the capture-
+    // mode toggle. The probe that introduced this settled all four of its open
+    // questions against a real capture: {AFX_STREAM_PATH} resolves to the
+    // per-stream folder, it follows mirv_movie_filename (so the _route_N
+    // junction routing keeps working), takes are still auto-numbered into
+    // take0000, and sound.wav still lands beside the video.
+    //
+    // `all` here is HLAE's stream *group*, not the folder name it happens to
+    // share with the composited stream. Whether that group reaches hudColor and
+    // hudAlpha under mirv_movie_separate_hud is not yet observed — if it does
+    // not, those two streams fall back to BMP sequences and need their own
+    // enabled/options lines. Both outcomes are visible in the take folder.
     //
     // Set here, once, at load — never as an injected ConsoleCommand frame. The
     // options string is several times GoldSrc's 64-byte Cbuf_AddTextToBuffer
@@ -375,9 +381,8 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
     // ordinary syntax. {QUOTE} is HLAE's own token for a literal quote, which is
     // what keeps the inner path quoting away from the engine's parser entirely.
     //
-    // rawvideo deliberately: it is about as large as the BMP sequence it
-    // replaces and is useless as a default, but it is the least clever thing
-    // that can answer the four questions above. Codec choice comes after.
+    // The codec is FFMPEG_CAPTURE_CODEC — see its own note for why it is
+    // lossless and why the size ranking there is not the viability ranking.
     if config.ffmpeg_capture {
         helper_cfg_content.push_str("\n# Direct-to-video capture\n");
         helper_cfg_content.push_str("mirv_movie_ffmpeg all enabled 1\n");
