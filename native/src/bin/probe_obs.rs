@@ -48,11 +48,21 @@ use std::time::{Duration, Instant};
 /// measured would manufacture the very buffering this is looking for.
 const LOG_POLL: Duration = Duration::from_millis(16);
 
-/// Lines arriving closer together than this are treated as one burst — i.e. as
-/// having been flushed together rather than as they were echoed. The engine
-/// echoes stage boundaries at least a tick apart, so anything this tight did
-/// not come off the wire when it was written.
-const BURST_WINDOW: Duration = Duration::from_millis(40);
+/// How far apart in *demo ticks* two markers must be before arriving in the
+/// same read counts as buffering.
+///
+/// The first version of this flagged any two lines under 40ms apart, which was
+/// wrong and said so loudly across a whole 17-block batch: the pipeline
+/// deliberately schedules commands one tick apart (`SPEED_FLUSH` right after
+/// `CUSTOM_CMD1_BEFORE`, `CUSTOM_CMD2_AFTER` right after `STOP_RECORD`), and
+/// one tick at ~474 demo fps is ~2ms. Those pairs *should* arrive together;
+/// flagging them as buffering hid the thing actually being looked for.
+///
+/// Buffering means markers separated by real demo time landing in one read. A
+/// hundred ticks is a fifth of a second at the rate above — comfortably longer
+/// than any legitimately adjacent pair, comfortably shorter than the gaps
+/// between stage boundaries.
+const BURST_TICK_GAP: i64 = 100;
 
 const MARKER: &str = "[dod-tools]";
 
@@ -182,11 +192,14 @@ fn tail_log(path: &Path) {
             let prev = markers.last();
             let delta = prev.map(|p| at.saturating_sub(p.at));
             let same_read = prev.map(|p| p.read_seq == read_seq).unwrap_or(false);
-            let burst = same_read || delta.map(|d| d < BURST_WINDOW).unwrap_or(false);
             let tick_delta = match (prev.and_then(|p| p.tick), tick) {
                 (Some(a), Some(b)) => Some(b - a),
                 _ => None,
             };
+            // Buffering is markers separated by real demo time arriving in one
+            // read — not merely arriving close together, which adjacent
+            // scheduled commands are supposed to do.
+            let burst = same_read && tick_delta.map(|t| t.abs() > BURST_TICK_GAP).unwrap_or(false);
 
             println!(
                 "  +{:>8.3}s  {:<44} {:>9}{:>12}{}",
