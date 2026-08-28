@@ -3,9 +3,15 @@
 > **Status 2026-08-28 — design, plus a probe and one round of live measurement. No feature code.**
 > Tracks [#65](https://github.com/ccoventry/dod-tools/issues/65).
 >
-> **The load-bearing question is answered: OBS Game Capture captures the HLAE-injected `hl.exe`.**
-> Verified against a real frame, not inferred. See "Measured against a live OBS". The remaining gate
-> is the console-log signal latency, which needs a running batch rather than OBS.
+> **Every gate is cleared. This is ready to build.**
+>
+> - OBS Game Capture captures the HLAE-injected `hl.exe` — verified against a real frame.
+> - `qconsole.log` carries the per-block signal at **21–40 ms**, measured over a 17-block batch under
+>   the heaviest I/O configuration the pipeline has.
+> - Every obs-websocket request the design needs exists on the install tested.
+>
+> See "Measured against a live OBS". **One claim was refuted rather than confirmed:** the wall-clock
+> saving is small — the real prize is disk. See "What OBS actually buys".
 >
 > **Scope, set by the user 2026-08-28**, narrowing the issue's own title:
 >
@@ -55,6 +61,40 @@ was derived for HLAE and must be raised for this path.
 **The container was MP4**, not the MKV this document assumed OBS defaults to. Both need handling, or
 the setting needs pinning — see the open question on containers.
 
+### The console log carries the signal — measured over a 17-block batch
+
+Run with `probe_obs log` against a real capture: `capture_fps` 120, 1280x720, `ffmpeg_capture` off
+and **Separate HUD on**, so HLAE was writing three BMP sequences throughout. That is the heaviest
+I/O configuration the pipeline has, which makes it the right test rather than a lucky one.
+
+**Markers reach `qconsole.log` with per-frame granularity.** Commands the pipeline schedules one tick
+apart — `SPEED_FLUSH` after `CUSTOM_CMD1_BEFORE`, `CUSTOM_CMD2_AFTER` after `STOP_RECORD` — arrived
+**21–40 ms** apart in all 17 blocks. Nothing accumulated, nothing flushed late, and no marker was
+ever missing. **`qconsole.log` is a viable signalling channel and the `screenshot` fallback is not
+needed.**
+
+The three speed regimes separate cleanly, which is the control that says the numbers are real:
+
+| phase | measured rate |
+|---|---|
+| fast-forward (`host_framerate 0.05`) | ~5,400 ticks/s |
+| pre-roll, settled (`host_framerate 0`) | ~474 ticks/s — real time |
+| recorded window (`mirv_recordmovie`) | ~355 ticks/s |
+
+The demo ran at **474 ticks per second**, confirmed independently: `pre_roll_seconds` was 5.0 and
+`SPEED_FLUSH`→`START_RECORD` measured 2370 ticks in every block, which is exactly 5.0 x 474.
+
+**Demo time tracks wall clock at `host_framerate 0`, with jitter.** The `AUDIO_SYNC`→`START_RECORD`
+span is 1.0s of demo time by construction; across the 15 blocks that got a full lead it measured a
+**mean of 1.010s wall-clock, σ ≈ 0.14s, range 0.866–1.194s**. No systematic bias — an earlier
+single-sample reading of "13% short" was simply one draw from that spread — but the jitter is real,
+and it is why the stop is now driven by an echo rather than a timer.
+
+**The early pre-roll is not yet real time.** `SPEED_FLUSH`→`AUDIO_SYNC` is 4.0s of demo time and
+consistently measured shorter in wall-clock (~2.8–3.7s). Whatever the mechanism, the engine has not
+settled immediately after leaving fast-forward, and it has by `AUDIO_SYNC`. That is what decides the
+trigger point in Option A.
+
 ### The hook question: answered, both halves
 
 With the HLAE-launched game running, `hl.exe` had **both** hooks loaded at once:
@@ -99,7 +139,7 @@ That single difference decides the shape of the whole feature:
 | | HLAE (`mirv_recordmovie`) | OBS |
 |---|---|---|
 | engine timing during a clip | `host_framerate` pinned to `1/fps` | `host_framerate 0` — real time |
-| wall-clock per clip | minutes for a 40s clip at 120fps | **exactly the clip's duration** |
+| wall-clock per clip | `capture_fps / achieved render fps` — **measured 1.34x real time** at 120fps | exactly the clip's duration, always |
 | high FPS / slow motion | the point of the path | not possible |
 | dropped frames | impossible by construction | whatever the machine drops |
 | determinism | byte-identical reruns | no |
@@ -107,10 +147,32 @@ That single difference decides the shape of the whole feature:
 | output | thousands of BMPs, or one lossless video | one finished, playable file |
 | render pass | required | optional (see below) |
 
-**What OBS actually buys:** wall-clock. A 15-clip session that takes an hour of capture becomes
-roughly the length of the clips plus the fast-forward between them, with a hardware encoder doing
-the compression for free and a finished file at the end. That is the whole pitch, and it is a real
-one for someone who wants their clips today at 60 fps rather than tomorrow at 300.
+**What OBS actually buys — corrected 2026-08-28 by measuring a real batch.** The original claim here
+was wall-clock, and that is mostly wrong.
+
+A 17-block batch at `capture_fps` 120, 1280x720, with Separate HUD on (three BMP streams), recorded
+**309s of demo time in 413s of wall-clock — 1.34x real time**. OBS is fixed at 1.0x by definition,
+so it would have saved about 104s out of the 569s the whole capture phase took: **roughly 18%**.
+
+Worse for the pitch: HLAE's wall-clock cost is `capture_fps / achieved render fps`, and that machine
+achieved ~90 fps *while writing three BMP streams*. So at `capture_fps` 60 HLAE would run at ~0.67x
+real time — **faster than OBS could ever be**, since OBS cannot capture quicker than the clip plays.
+
+> **OBS is only faster than HLAE when `capture_fps` exceeds what the machine renders in real time —
+> which is exactly the case where OBS cannot produce the output being asked for.** Below that
+> break-even, the existing path already wins on wall-clock.
+
+The durable advantages are elsewhere, and they are large:
+
+- **Disk.** That same batch wrote on the order of **300 GB** of bitmaps (309s x 120fps x 3 streams x
+  2.76 MB). The OBS equivalent is a few hundred megabytes. This is the reason `build_batch_queue`
+  bin-packs across a pool of drives at all, and it is the difference between needing that machinery
+  and not.
+- **No render pass.** Audio is already muxed, so a finished, playable file exists the moment the
+  clip ends.
+- **Hardware encoding for free**, concurrent with capture rather than after it.
+
+That is still a real pitch — it is just a disk-and-simplicity pitch, not a speed one.
 
 **What it costs** beyond quality, and what a user has to be told: capture becomes sensitive to
 everything else on the machine. An alt-tab, a stutter on map load, a notification sound landing in
@@ -196,32 +258,41 @@ works, but should be rejected here: it starts a real HLAE recording for an insta
 `host_framerate` to `1/mirv_movie_fps` and back. That is a visible hitch landing *precisely* at the
 first frame of the clip, and under direct-to-video it also spawns an FFmpeg process per block.
 
-*(Unverified: `qconsole.log`'s flush cadence. GoldSrc's debug log is believed to write and flush per
-line, which would put latency in the millisecond range — but this must be measured **during a live
-capture**, with a tailer running and timestamping each line's arrival. A saved log is no use: it
-cannot show when its lines were flushed, only that they eventually were. No OBS required, though.)*
+**Measured, and the answer is good: 21–40 ms per marker**, across 17 blocks, with HLAE writing three
+BMP streams at 120fps throughout. GoldSrc's debug log does flush per line. See "The console log
+carries the signal" above.
 
-**If the log turns out to be buffered**, the fallback is a console command with a filesystem side
-effect that is not a recording. `screenshot` is the candidate: comfortably under the 64-byte Cbuf
-limit, writes a numbered file into `dod/` that a watcher can map to a block, and costs one frame
-rather than a `host_framerate` yank. It litters the game folder, so it would need the same cleanup
-treatment the other signal dirs get in `CaptureCleanupGuard`.
+*(A `screenshot`-based marker was the fallback had the log turned out to be buffered — a console
+command with a filesystem side effect, under the 64-byte Cbuf limit, costing one frame rather than a
+`host_framerate` yank. It is not needed and is recorded here only so the option is not re-derived.)*
 
-### Option A (recommended): one signal per block, stop by timer
+### Option A (recommended): drive both ends off the echoes
 
-1. Tail `qconsole.log`. On `SPEED_FLUSH` (or `AUDIO_SYNC`) for block *i*, send `StartRecord`.
+**Revised 2026-08-28 after measuring a real 17-block batch.** The original plan was to signal the
+start and compute the stop by timer, because the log's latency was unknown and a timer avoided
+depending on it twice. The measurement removed the reason: markers reach `qconsole.log` in
+**21–40 ms**, so there is nothing to avoid.
+
+1. Tail `qconsole.log`. On **`AUDIO_SYNC`** for block *i*, send `StartRecord`.
 2. Wait for `RecordStateChanged: STARTED`.
-3. Stop after `pre-roll remaining + clip duration + post-roll` has elapsed — a **number the builder
-   already computed**, and one that is exact because of the real-time property established above.
+3. On **`STOP_RECORD`** for block *i*, send `StopRecord`.
 4. `StopRecord` returns `outputPath`.
 
-Three properties make this work:
+Three properties make this work, and two of them are now measured rather than argued:
 
-- **OBS's start latency is absorbed by the pre-roll**, the same way the issue predicted the
-  filesystem-watch latency would be. The pre-roll is at minimum `AUDIO_RESYNC_SECONDS` = 2.0s of real
-  time, which is a very large budget for an encoder start.
-- **Only the start needs a signal.** The stop is arithmetic. That halves the exposure to log latency
-  and means clip duration is exact rather than jittering with whatever the watcher happened to see.
+- **OBS's start latency fits the lead many times over.** `AUDIO_SYNC` fires
+  `SOUND_FLUSH_LEAD_SECONDS` = 1.0s of demo time before the record start, measured at **1.010s mean
+  wall-clock across 15 blocks**. OBS starts frames in **59–85 ms**. That is a ~14x margin.
+- **`AUDIO_SYNC`, not `SPEED_FLUSH`, is the right trigger.** The full pre-roll was 5.0s in the
+  measured batch, but its *early* portion does not run at real time — the engine is still settling
+  out of fast-forward, and that span consistently measured shorter in wall-clock than its demo
+  duration. By `AUDIO_SYNC` it has settled. Triggering there also means only ~1s of pre-roll head
+  ends up in the file instead of five, so there is less to trim.
+- **Stopping on the echo removes the design's one shaky assumption.** The timer needed demo time to
+  track wall clock exactly. It does in the mean, but with **σ ≈ 0.14s** on a 1.0s span — and not
+  every block gets the full lead (two of seventeen were clamped, at 454 and 81 ticks, where blocks
+  chained or highlights merged). An echo-driven stop is self-correcting and needs none of that. Keep
+  the computed duration as a **fallback timeout** for a missing echo, not as the primary mechanism.
 - **Each clip is its own recording, so each clip can be routed independently.** With
   `SetRecordDirectory` between blocks, the multi-drive export pool the pipeline already bin-packs
   across keeps working on this path. Nothing else in this design preserves that.
@@ -636,11 +707,11 @@ tractable piece of work.
    `tools/ffmpeg.exe -i <file> -vf blackdetect=d=0.05:pic_th=0.98 -an -f null -`, then extract one
    frame and look at it — a valid-but-empty recording is the failure mode here, and only the second
    step catches it.
-2. **Tail the console log.** No OBS involved. Prove `qconsole.log` reports `START_RECORD` promptly
-   enough, measured during a live capture (a saved log cannot answer this). If it is slow or
-   buffered, the `screenshot` fallback above applies. `probe_obs log <qconsole.log>`.
-3. **Wire one block end to end.** Log tail → `StartRecord` → timed stop → move into the take folder.
-   Verify against the demo that the clip contains what it should.
+2. ~~**Tail the console log.**~~ **Done 2026-08-28.** 21–40 ms marker latency across 17 blocks under
+   the heaviest I/O configuration. The channel works; the `screenshot` fallback is not needed.
+3. **Wire one block end to end.** Log tail → `StartRecord` on `AUDIO_SYNC` → `StopRecord` on
+   `STOP_RECORD` → move into the take folder. Verify against the demo that the clip contains what it
+   should. **Every gate is now cleared, so this is the next thing to build.**
 4. **The predicate**, both sides at once, plus the duration assertion in `VerifiedBlock`.
 5. **Preflight, cancel and crash paths.** Not optional, and not last in practice — a half-wired
    version that leaves OBS recording after a cancel is worse than no version. Raising
