@@ -320,6 +320,14 @@ async fn check_hlae_ffmpeg(
         .as_deref()
         .and_then(|p| hf::verify_is_ffmpeg(p).err());
 
+    // Whether the HLAE Executable above is a working HLAE install, answered by
+    // the file the pipeline actually consumes rather than by what the exe calls
+    // itself: `build_hlae_process` passes this DLL as `-hookDllPath`, so its
+    // absence means a capture cannot work whatever the exe is named. Advisory —
+    // reported, never enforced.
+    let missing_hook_dll = hf::missing_hook_dll(std::path::Path::new(&hlae_path))
+        .map(|p| p.to_string_lossy().into_owned());
+
     Ok(serde_json::json!({
         "state": state,
         "usable": state.is_usable(),
@@ -327,6 +335,7 @@ async fn check_hlae_ffmpeg(
         "app_ffmpeg": app_ffmpeg.map(|p| p.to_string_lossy().into_owned()),
         "agrees_with_app": agrees_with_app,
         "app_ffmpeg_problem": app_ffmpeg_problem,
+        "missing_hook_dll": missing_hook_dll,
     }))
 }
 

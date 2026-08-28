@@ -65,6 +65,17 @@ async function refreshHlaeFfmpegStatus() {
   }
 
   const s = result?.state || {};
+  // Outranks every message below it, because it questions the thing they are
+  // all about: if the hook DLL is not there, capture cannot work regardless of
+  // what HLAE's ffmpeg folder contains. Still only a note — an unusual layout
+  // should not stop someone who knows their install works.
+  if (result.missing_hook_dll) {
+    statusEl.textContent =
+      STRINGS.CAPTURE_CONFIG.HLAE_FFMPEG_NO_HOOK_DLL(result.missing_hook_dll);
+    linkBtn.style.display = result?.can_link ? '' : 'none';
+    return;
+  }
+
   switch (s.state) {
     case 'bundled':
       statusEl.textContent = STRINGS.CAPTURE_CONFIG.HLAE_FFMPEG_BUNDLED(s.path);

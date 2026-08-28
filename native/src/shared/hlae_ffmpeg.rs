@@ -43,6 +43,10 @@ const FFMPEG_DIR: &str = "ffmpeg";
 const INI_NAME: &str = "ffmpeg.ini";
 const BUNDLED_RELATIVE: &str = "bin/ffmpeg.exe";
 
+/// The GoldSrc hook DLL a real HLAE install carries beside its executable, and
+/// which `PatcherConfig::build_hlae_process` passes as `-hookDllPath`.
+const HOOK_DLL: &str = "AfxHookGoldSrc.dll";
+
 /// The header `link` writes, and the marker `authored_by_us` looks for.
 const AUTHORED_MARKER: &str = "Written by dod-tools";
 
@@ -173,6 +177,38 @@ pub fn ffmpeg_dir(hlae_exe: &Path) -> Option<PathBuf> {
         return None;
     }
     Some(hlae_exe.parent()?.join(FFMPEG_DIR))
+}
+
+/// The hook DLL the capture pipeline passes as `-hookDllPath`, when it is not
+/// beside the chosen executable.
+///
+/// This is how "is that really HLAE?" gets answered, and it is a better question
+/// than it first looks. The obvious alternative is reading the executable's
+/// embedded version metadata — HLAE's says `OriginalFilename: hlae.exe` — but
+/// that only confirms what the *file* calls itself, and it needs `unsafe` FFI
+/// into `version.dll` to read. This checks what the pipeline actually consumes:
+/// `PatcherConfig::build_hlae_process` derives exactly this path and hands it to
+/// HLAE, so if the DLL is not here, a capture cannot work no matter what the exe
+/// is named.
+///
+/// It also catches a case metadata cannot: a genuine `HLAE.exe` whose
+/// `AfxHookGoldSrc.dll` has been deleted or quarantined by antivirus. Metadata
+/// would approve that install and the capture would fail anyway.
+///
+/// The one thing it misses is a renamed `hlae.exe` sitting in a real HLAE folder
+/// — which is harmless, because everything the pipeline needs is still there.
+///
+/// Advisory. `None` means "nothing to say", and a result is reported rather than
+/// enforced.
+pub fn missing_hook_dll(hlae_exe: &Path) -> Option<PathBuf> {
+    // Derived the same way `PatcherConfig::build_hlae_process` derives it, so
+    // this cannot pass while the launch argument points somewhere else.
+    let dll = hlae_exe.parent()?.join(HOOK_DLL);
+    if dll.is_file() {
+        None
+    } else {
+        Some(dll)
+    }
 }
 
 pub fn detect(hlae_exe: &Path) -> HlaeFfmpeg {
@@ -974,5 +1010,36 @@ mod tests {
             "the message should name what it actually found: {}",
             why
         );
+    }
+
+    #[test]
+    fn an_install_carrying_the_hook_dll_has_nothing_to_say() {
+        let hlae = install("hook_present");
+        std::fs::write(hlae.parent().unwrap().join(HOOK_DLL), b"").expect("dll");
+        assert_eq!(missing_hook_dll(&hlae), None);
+    }
+
+    #[test]
+    fn an_executable_with_no_hook_dll_beside_it_is_reported() {
+        // The wrong exe picked in a file dialog, or a folder that is not an
+        // HLAE install at all.
+        let hlae = install("hook_absent");
+        let missing = missing_hook_dll(&hlae).expect("nothing beside it");
+        assert!(missing.ends_with(HOOK_DLL), "{}", missing.display());
+    }
+
+    #[test]
+    fn a_real_hlae_missing_its_dll_is_still_reported() {
+        // What metadata could not catch: the executable is genuine and the
+        // install is broken anyway, because antivirus quarantined the DLL or
+        // somebody deleted it. The capture would fail either way, so the check
+        // that matters is whether the file the pipeline passes is there.
+        let hlae = install("hook_quarantined");
+        let dll = hlae.parent().unwrap().join(HOOK_DLL);
+        std::fs::write(&dll, b"").expect("dll");
+        assert_eq!(missing_hook_dll(&hlae), None);
+
+        std::fs::remove_file(&dll).expect("quarantine it");
+        assert_eq!(missing_hook_dll(&hlae), Some(dll));
     }
 }

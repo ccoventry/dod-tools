@@ -158,6 +158,11 @@ export const STRINGS = {
     // ffplay.exe and ffprobe.exe live beside ffmpeg.exe and are one misclick
     // apart in a file picker, so this is worth naming rather than letting it
     // through to a capture that records nothing.
+    // Checks the file the capture pipeline actually passes as -hookDllPath,
+    // rather than what the exe calls itself. Advisory: nothing is blocked, since
+    // an unusual install layout should not stop someone who knows it works.
+    HLAE_FFMPEG_NO_HOOK_DLL: (dll) =>
+        `AfxHookGoldSrc.dll isn't beside the HLAE Executable above (expected ${dll}). Capture needs that file — either the path isn't HLAE, or the DLL is missing or quarantined by antivirus.`,
     HLAE_FFMPEG_BAD_OVERRIDE: (why) =>
         `The FFmpeg Override Path above isn't FFmpeg: ${why}. Pick ffmpeg.exe — HLAE can't record with anything else.`,
     HLAE_FFMPEG_STALE: (target) =>
