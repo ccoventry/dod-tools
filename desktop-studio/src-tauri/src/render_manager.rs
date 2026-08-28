@@ -715,6 +715,7 @@ pub fn recover_render_batch(state: tauri::State<'_, RenderManager>) -> Result<Ve
                 // the same reason `img_folder` is empty here. A re-scan is what
                 // fills either of them in.
                 video_file: None,
+                alpha_folder: None,
             },
             status,
             speed: String::new(),

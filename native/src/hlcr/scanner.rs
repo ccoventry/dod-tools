@@ -22,6 +22,20 @@ pub struct ClipData {
     /// was not there when it was saved.
     #[serde(default)]
     pub video_file: Option<String>,
+    /// For a `hud_only` clip, the stream folder holding the alpha half of the
+    /// pair — `img_folder` is the colour half. `None` on every other clip type.
+    ///
+    /// The renderer used to derive this by appending the literal `hudalpha`,
+    /// which only works while HLAE spells the folder exactly that way. Carrying
+    /// the name the scanner actually saw on disk means the renderer is told its
+    /// partner rather than guessing it, and is the one piece of the standalone
+    /// HLCR's design (see `docs/render_studio_hlcr_parity.md`) that does not
+    /// depend on frame counts.
+    ///
+    /// `#[serde(default)]` for the same reason as `video_file`: autosaves
+    /// written before this field existed must keep loading.
+    #[serde(default)]
+    pub alpha_folder: Option<String>,
 }
 
 /// The file `mirv_movie_ffmpeg` is told to write, per stream. Also what the
@@ -76,6 +90,18 @@ fn collect_image_folders(take_folder: &Path) -> Vec<PathBuf> {
         }
     }
     image_folders
+}
+
+/// A stream folder's name exactly as it appears on disk. Paths on the clip are
+/// resolved relative to the take folder, so the case only has to survive to
+/// keep the record honest — but a name the scanner saw beats one reconstructed
+/// from a literal, especially with two spellings in play.
+fn on_disk_name(folder: &Path) -> String {
+    folder
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned()
 }
 
 /// The video inside a stream folder, when that is what it holds.
@@ -206,33 +232,40 @@ pub fn scan_folder_background(
             // Bundle HLAE split streams if "all", "hudcolor", and "hudalpha" exist
             if folder_names.contains_key("all") && folder_names.contains_key("hudcolor") && folder_names.contains_key("hudalpha") {
                 let all_folder = folder_names.get("all").unwrap();
+                let hud_color_folder = folder_names.get("hudcolor").unwrap();
+                let hud_alpha_folder = folder_names.get("hudalpha").unwrap();
                 let frame_count = count_bmps(all_folder);
                 let date = get_clip_date(all_folder);
 
                 let clip_all = ClipData {
                     take_folder: take_folder.to_string_lossy().into_owned(),
                     clip_type: "single".to_string(),
-                    img_folder: "all".to_string(),
+                    img_folder: on_disk_name(all_folder),
                     wav_file: wav_to_use.clone(),
                     base_name: base_name.clone(),
                     frame_count,
                     date: date.clone(),
                     video_file: stream_video(all_folder),
+                    alpha_folder: None,
                 };
                 accumulated_clips.push(clip_all);
 
                 let clip_hud = ClipData {
                     take_folder: take_folder.to_string_lossy().into_owned(),
                     clip_type: "hud_only".to_string(),
-                    img_folder: "hudcolor".to_string(),
+                    // Both halves of the pair are named from what is actually on
+                    // disk, so the renderer never has to reconstruct either one
+                    // from a literal. The lookup keys above are lowercased for
+                    // matching only — HLAE writes `hudColor`/`hudAlpha` in the
+                    // `mirv_movie_ffmpeg` command, and these carry whichever
+                    // spelling the capture produced.
+                    img_folder: on_disk_name(hud_color_folder),
                     wav_file: wav_to_use.clone(),
                     base_name: base_name.clone(),
                     frame_count,
                     date: date.clone(),
-                    // The HUD pair renders from hudcolor and hudalpha together;
-                    // this names the colour half and the renderer derives its
-                    // partner exactly as it already does for the BMP sequences.
-                    video_file: folder_names.get("hudcolor").and_then(|p| stream_video(p)),
+                    video_file: stream_video(hud_color_folder),
+                    alpha_folder: Some(on_disk_name(hud_alpha_folder)),
                 };
                 accumulated_clips.push(clip_hud);
 
@@ -257,6 +290,7 @@ pub fn scan_folder_background(
                     frame_count,
                     date,
                     video_file: stream_video(&img_folder),
+                    alpha_folder: None,
                 };
                 accumulated_clips.push(clip);
             }
@@ -364,6 +398,77 @@ mod tests {
         let missing = std::env::temp_dir().join("dod_scanner_test_does_not_exist");
         let _ = std::fs::remove_dir_all(&missing);
         assert!(!is_renderable_take(&missing));
+    }
+
+    /// Collect what `scan_folder_background` emits for a scratch tree.
+    fn scan(root: &Path) -> Vec<ClipData> {
+        let (tx, rx) = mpsc::channel();
+        let (status_tx, _status_rx) = mpsc::channel();
+        scan_folder_background(vec![root.to_path_buf()], tx, status_tx);
+        rx.into_iter().collect()
+    }
+
+    #[test]
+    fn test_hud_pair_carries_both_folder_names_as_written() {
+        // HLAE names these streams `hudColor`/`hudAlpha` in the
+        // `mirv_movie_ffmpeg` command. The pair must still be recognised (the
+        // lookup keys are lowercased), and both halves must be reported with
+        // the spelling that is actually on disk rather than a literal.
+        let take = scratch_dir("hud_pair_case");
+        std::fs::write(take.join("sound.wav"), b"wav").unwrap();
+        write_frames(&take, "all");
+        write_frames(&take, "hudColor");
+        write_frames(&take, "hudAlpha");
+
+        let clips = scan(&take);
+        let hud = clips
+            .iter()
+            .find(|c| c.clip_type == "hud_only")
+            .expect("hud pair was not bundled");
+        assert_eq!(hud.img_folder, "hudColor");
+        assert_eq!(hud.alpha_folder.as_deref(), Some("hudAlpha"));
+
+        // Bundling consumed all three folders, so nothing is emitted twice.
+        assert_eq!(clips.len(), 2, "expected exactly the all + hud pair");
+        let all = clips
+            .iter()
+            .find(|c| c.clip_type == "single")
+            .expect("all stream missing");
+        assert_eq!(all.img_folder, "all");
+        assert_eq!(all.alpha_folder, None);
+    }
+
+    #[test]
+    fn test_video_take_hud_pair_names_the_video_in_both_halves() {
+        // The FFmpeg-capture shape: one video per stream folder instead of a
+        // numbered sequence. `alpha_folder` is what lets the renderer find the
+        // second video without reconstructing the folder name.
+        let take = scratch_dir("hud_pair_video");
+        std::fs::write(take.join("sound.wav"), b"wav").unwrap();
+        for stream in ["all", "hudcolor", "hudalpha"] {
+            let folder = take.join(stream);
+            std::fs::create_dir_all(&folder).unwrap();
+            std::fs::write(folder.join(VIDEO_FILE), b"avi").unwrap();
+        }
+
+        let clips = scan(&take);
+        let hud = clips
+            .iter()
+            .find(|c| c.clip_type == "hud_only")
+            .expect("hud pair was not bundled");
+        assert_eq!(hud.video_file.as_deref(), Some(VIDEO_FILE));
+        assert_eq!(hud.alpha_folder.as_deref(), Some("hudalpha"));
+    }
+
+    #[test]
+    fn test_non_hud_clip_has_no_alpha_partner() {
+        let take = scratch_dir("solo_stream");
+        std::fs::write(take.join("sound.wav"), b"wav").unwrap();
+        write_frames(&take, "all");
+
+        let clips = scan(&take);
+        assert_eq!(clips.len(), 1);
+        assert_eq!(clips[0].alpha_folder, None);
     }
 
     #[test]
