@@ -311,14 +311,47 @@ rectangle. Two independent faults, separated by capturing the same demo both way
    crosshair correctly; the same capture through `mirv_movie_ffmpeg` writes uniformly black frames.
    `all` is identical in both modes, so `mirv_movie_separate_hud` itself is taking effect — the HUD
    is pulled out of `all` either way. Only the FFmpeg path fails to write it into its own stream.
-2. **`hudalpha` is fully opaque in *both* modes.** Every plane reads 255, so `extractplanes=r` can
-   only ever produce an opaque mask and `alphamerge` can never produce transparency. This is not a
-   direct-to-video regression — separate HUD has this problem independently of how it is captured.
+2. **`hudalpha` was fully opaque in *both* modes** — every plane 255, so `extractplanes=r` could only
+   produce an opaque mask and `alphamerge` could never produce transparency. Not a direct-to-video
+   regression; it applied however the take was captured. **Fixed — see below.**
 
-Fault 2 means the HUD pair would not composite correctly even in BMP mode, so the alpha half needs
-solving on its own terms before either path is usable. Worth noting `hudcolor` is black wherever the
-HUD is absent, which is why the standalone HLCR carries a `detect_chromakey_color` path — keying on
-black is a route that does not depend on the alpha stream at all.
+Worth noting `hudcolor` is black wherever the HUD is absent, which is why the standalone HLCR carries
+a `detect_chromakey_color` path — keying on black is a route that does not depend on the alpha stream
+at all, and remains a fallback if the alpha ever regresses.
+
+### Fault 2, solved: `-afxForceAlpha8` takes a value
+
+The HUD alpha buffer is off unless the *game's* command line carries HLAE's launch flags. Under
+`-customLoader` HLAE composes nothing for us — its Launch GoldSrc dialog is what normally assembles
+them — so none of it was ever being sent.
+
+The part that cost three captures: **`-afxForceAlpha8` takes an explicit `0`/`1` argument.** From
+HLAE's `Launcher.cs`:
+
+    " -afxForceAlpha8 " + (cfg.ForceAlpha ? 1 : 0).ToString()
+
+Passed bare, the hook reads the next token as its value, finds something that is not `1`, and leaves
+alpha off. It does not error, and the captured bitmaps come out *byte-for-byte identical* to a run
+without the flag — which is what made it look like the flag was being ignored entirely.
+
+This is invisible to static analysis: the binary's string table gives you the switch names but cannot
+tell you which ones consume an argument. Reading `Launcher.cs` is what settled it.
+
+The set now sent, gated on separate HUD:
+
+    -gl -32bpp -afxRenderMode standard -afxForceAlpha8 1
+
+Measured after the fix — `hudalpha` frame 600, same clip:
+
+| | before | after |
+|---|---|---|
+| min / avg / max | 235 / 235 / 235 | **16 / 18.3 / 235** |
+| opaque coverage | 100% | **2.8%** |
+
+A real matte: white on the kill feed, weapon icons and objective boxes, black everywhere else.
+`-afxOptimizeCaptureVis` is deliberately still not sent — a visibility optimisation, unrelated to
+alpha — and the set has not been bisected to find the minimum; `-32bpp` in particular is untested on
+its own, though a framebuffer without 32-bit colour has no alpha bits to force.
 
 Until fault 1 is fixed, **Separate HUD and direct-to-video must not be used together**: the capture
 reports success, the render reports success, and the output is silently wrong.
