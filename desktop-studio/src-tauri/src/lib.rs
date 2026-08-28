@@ -316,9 +316,18 @@ async fn check_hlae_ffmpeg(
     // ffprobe.exe sit in the same folder as ffmpeg.exe. Checking here as well as
     // at link time means the row says so before the button is pressed, instead
     // of reporting a disagreement between two paths one of which cannot record.
-    let app_ffmpeg_problem = app_ffmpeg
-        .as_deref()
-        .and_then(|p| hf::verify_is_ffmpeg(p).err());
+    //
+    // Chaining this off `app_ffmpeg` was a hole: a path that does not resolve
+    // produces `None`, so the check never ran and a typo'd override said
+    // nothing at all. Failing to resolve is itself the problem worth reporting.
+    let configured = ffmpeg_path.as_deref().unwrap_or("").trim().to_string();
+    let app_ffmpeg_problem = match &app_ffmpeg {
+        Some(p) => hf::verify_is_ffmpeg(p).err(),
+        None if configured.is_empty() => {
+            Some("no ffmpeg.exe was found on PATH, and no override is set".to_string())
+        }
+        None => Some(format!("there is no file at \"{}\"", configured)),
+    };
 
     // Whether the HLAE Executable above is a working HLAE install, answered by
     // the file the pipeline actually consumes rather than by what the exe calls
@@ -337,6 +346,38 @@ async fn check_hlae_ffmpeg(
         "app_ffmpeg_problem": app_ffmpeg_problem,
         "missing_hook_dll": missing_hook_dll,
     }))
+}
+
+/// Whether each configured executable path actually points at a file.
+///
+/// The Path Routing fields accepted anything: `validate_paths` only ran at
+/// capture launch, so a typo sat there looking fine until a batch failed
+/// minutes later. Returns a state per path rather than a message, so the
+/// wording stays in `strings.js` with every other user-facing string.
+#[tauri::command]
+async fn diagnose_executable_paths(paths: Vec<String>) -> Result<Vec<String>, String> {
+    Ok(paths
+        .iter()
+        .map(|raw| {
+            let path = raw.trim();
+            if path.is_empty() {
+                // Not a complaint: these fields are legitimately blank before
+                // they are filled in, and the FFmpeg override is optional.
+                return "empty";
+            }
+            let p = std::path::Path::new(path);
+            if p.is_file() {
+                "ok"
+            } else if p.is_dir() {
+                // The classic mistake these fields invite — the folder rather
+                // than the executable inside it.
+                "not_a_file"
+            } else {
+                "not_found"
+            }
+        })
+        .map(str::to_string)
+        .collect())
 }
 
 /// Points HLAE at an FFmpeg by writing `ffmpeg.ini`, on request only.
@@ -489,6 +530,7 @@ pub fn run() {
             get_activity_log_path,
             validate_paths,
             check_hlae_ffmpeg,
+            diagnose_executable_paths,
             link_hlae_ffmpeg,
             analyze_demo_full,
             start_capture_batch,

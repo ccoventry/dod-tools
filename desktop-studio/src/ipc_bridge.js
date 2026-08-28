@@ -52,6 +52,19 @@ export async function validatePaths(hlaePath, hlPath) {
  * a missing one is only discovered as a capture that finishes and produces no
  * video. See `docs/direct_to_video_capture.md`.
  */
+/**
+ * Whether each configured executable path points at a file. Returns a state per
+ * path ("ok" | "empty" | "not_found" | "not_a_file"), not a message — the
+ * wording lives in strings.js with everything else the user reads.
+ */
+export async function diagnoseExecutablePaths(paths) {
+  return await invoke('diagnose_executable_paths', { paths })
+    .catch((err) => {
+      console.error("IPC Execution Error (diagnose_executable_paths):", err);
+      throw err;
+    });
+}
+
 export async function checkHlaeFfmpeg(hlaePath, ffmpegPath) {
   return await invoke('check_hlae_ffmpeg', { hlaePath, ffmpegPath })
     .catch((err) => {

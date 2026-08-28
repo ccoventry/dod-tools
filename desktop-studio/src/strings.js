@@ -148,6 +148,11 @@ export const STRINGS = {
     HLAE_FFMPEG_LABEL: 'HLAE FFmpeg:',
     HLAE_FFMPEG_LINK_BUTTON: 'Point HLAE at FFmpeg',
     HLAE_FFMPEG_UNKNOWN: 'Set the HLAE executable above to check.',
+    // Shown under the field that caused it, so a typo is obvious while you are
+    // still looking at the box you typed it into. Nothing is blocked — Start
+    // Capture Batch has its own guard.
+    PATH_NOT_FOUND: "There's no file at this path — check it for a typo.",
+    PATH_IS_A_FOLDER: "That's a folder, not the program itself. Pick the .exe inside it.",
     HLAE_FFMPEG_BUNDLED: (path) => `Installed in HLAE's own folder (${path}).`,
     HLAE_FFMPEG_LINKED: (target) => `Pointed at ${target}.`,
     // Both halves of the pipeline encoding with the same FFmpeg build was the

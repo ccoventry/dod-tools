@@ -11,7 +11,8 @@ import {
   logFrontendEvent,
   openActivityLog,
   checkHlaeFfmpeg,
-  linkHlaeFfmpeg
+  linkHlaeFfmpeg,
+  diagnoseExecutablePaths
 } from './ipc_bridge.js';
 import { renderMasterList, initMasterPane } from './master_pane.js';
 import { renderDetailView, initDetailPane } from './detail_pane.js';
@@ -32,6 +33,48 @@ import { applyStaticStrings } from './apply_strings.js';
 // from the earliest possible moment, not just once the app's own init
 // logic gets around to it.
 initErrorReporter();
+
+// ── Path Routing: does each configured path point at a real file? ────────────
+// These fields accepted anything. `validate_paths` only ran at capture launch,
+// so a typo sat there looking correct until a batch failed minutes later — and
+// the FFmpeg override was never checked at all. The complaint goes under the
+// field that caused it rather than into a banner elsewhere, so it is visible
+// while you are still looking at the box you typed into.
+const PATH_FIELDS = [
+  ['#hl-path-input', '#hl-path-warning'],
+  ['#hlae-path-input', '#hlae-path-warning'],
+  ['#ffmpeg-override-path-input', '#ffmpeg-path-warning'],
+];
+
+async function refreshPathWarnings() {
+  const rows = PATH_FIELDS
+    .map(([input, warning]) => ({
+      input: document.querySelector(input),
+      warning: document.querySelector(warning),
+    }))
+    .filter((r) => r.input && r.warning);
+  if (!rows.length) return;
+
+  let states;
+  try {
+    states = await diagnoseExecutablePaths(rows.map((r) => r.input.value?.trim() || ""));
+  } catch {
+    // Already logged by the bridge. Clear rather than leave a stale complaint
+    // standing next to a path it may no longer describe.
+    rows.forEach((r) => { r.warning.style.display = 'none'; });
+    return;
+  }
+
+  rows.forEach((row, i) => {
+    let message = "";
+    if (states[i] === 'not_found') message = STRINGS.CAPTURE_CONFIG.PATH_NOT_FOUND;
+    else if (states[i] === 'not_a_file') message = STRINGS.CAPTURE_CONFIG.PATH_IS_A_FOLDER;
+    // 'empty' says nothing on purpose: these are legitimately blank before they
+    // are filled in, and the FFmpeg override is optional entirely.
+    row.warning.textContent = message;
+    row.warning.style.display = message ? '' : 'none';
+  });
+}
 
 // ── HLAE's own FFmpeg ─────────────────────────────────────────────────────────
 // `mirv_movie_ffmpeg` makes HLAE spawn FFmpeg itself, and it does not consult
@@ -596,6 +639,7 @@ window.addEventListener("DOMContentLoaded", async () => {
           if (inputEl) inputEl.value = path;
           await persistAppSettings();
           await refreshHlaeFfmpegStatus();
+          await refreshPathWarnings();
         }
       } catch (err) {
         console.error("Error selecting HLAE executable:", err);
@@ -611,6 +655,13 @@ window.addEventListener("DOMContentLoaded", async () => {
     document.querySelector(id)
       ?.addEventListener('change', () => { refreshHlaeFfmpegStatus(); });
   }
+  // Every path field, including Half-Life, which the row above says nothing
+  // about.
+  for (const [input] of PATH_FIELDS) {
+    document.querySelector(input)
+      ?.addEventListener('change', () => { refreshPathWarnings(); });
+  }
+  refreshPathWarnings();
 
   const hlaeFfmpegLinkBtn = document.querySelector('#hlae-ffmpeg-link-btn');
   if (hlaeFfmpegLinkBtn) {
@@ -674,6 +725,7 @@ window.addEventListener("DOMContentLoaded", async () => {
           const inputEl = document.querySelector('#hl-path-input');
           if (inputEl) inputEl.value = path;
           await persistAppSettings();
+          await refreshPathWarnings();
         }
       } catch (err) {
         console.error("Error selecting Half-Life executable:", err);
@@ -699,6 +751,7 @@ window.addEventListener("DOMContentLoaded", async () => {
           // is precisely why the row below has to be re-checked: that is how
           // the two end up on different builds without anything saying so.
           await refreshHlaeFfmpegStatus();
+          await refreshPathWarnings();
         }
       } catch (err) {
         console.error("Error selecting FFmpeg executable:", err);
