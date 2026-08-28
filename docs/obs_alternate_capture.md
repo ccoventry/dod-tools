@@ -353,7 +353,74 @@ Trim precision is the one real decision:
   than anywhere else in the pipeline.
 
 Recommendation: re-encode, and expose "leave the take as OBS wrote it" as the skip. Do **not** ask
-the user to change OBS's keyframe interval — see below.
+the user to change OBS's keyframe interval — see below. **Unless Custom Output is in play, in which
+case there is a better answer** — see the next section.
+
+---
+
+## Custom Output (FFmpeg): lossless capture, and exactly what it costs
+
+OBS's Advanced output mode offers a **Custom Output (FFmpeg)** recording type that exposes the
+container, video codec, audio codec and encoder arguments directly. That means OBS can be told to
+write `utvideo`, `ffv1` or `libx264 -qp 0` — the same lossless intermediates
+`docs/direct_to_video_capture.md` measured for the HLAE path.
+
+**This changes the framing of the whole feature.** The OBS route is the lower-quality option because
+capture is *real-time* — dropped frames, no 300fps, no determinism. It is **not** lower-quality
+because of compression, and the document should not imply the two are the same cost.
+
+Three consequences follow, and the middle one is the prize:
+
+1. **Lossless codecs are all-intra**, so every frame is a keyframe. The keyframe-snapping objection
+   to `-ss` with `-c copy` disappears: the Render Studio trim becomes **frame-exact and a genuine
+   stream copy**, seconds of work with no quality loss. That is strictly better than the re-encode
+   recommended above, and it is available only in this mode.
+2. **`utvideo` in an AVI makes the artefact byte-shaped like the direct-to-video one.**
+   `collect_image_folders`, `stream_video`, `avi_frame_count` and the renderer's video branch would
+   all work unchanged — the OBS path inherits #42's plumbing for free rather than needing a second
+   container taught to the scanner.
+3. **OBS states it is "provided with no safeguards".** Misconfiguration produces a broken file
+   silently, which is the exact failure class this pipeline keeps being bitten by. It makes the
+   duration assertion in `VerifiedBlock` more valuable, not less.
+
+### The cost, measured 2026-08-28
+
+**`SetRecordDirectory` does not steer Custom Output.** Tested directly, with consent, and restored
+afterwards:
+
+    AdvOut/RecType -> FFmpegOutput          [took]
+    SetRecordDirectory -> <new path>
+      GetRecordDirectory  : <new path>      [followed]
+      AdvOut/FFFilePath   : <unchanged>     [did NOT follow]
+
+Custom Output keeps its own path in `AdvOut/FFFilePath`, and the recording request only steers the
+standard output. So **out of the box, lossless capture and Option A's per-block drive routing are
+mutually exclusive** — which matters, because per-block routing across the export pool is the main
+advantage Option A has over Option B.
+
+### Which is also the argument for the dedicated profile
+
+`SetProfileParameter` **can** write `AdvOut/FFFilePath` directly — verified, since restoring it is
+exactly that write. So per-block routing in Custom Output is achievable; it is simply a *profile*
+write rather than a recording call.
+
+That is the same act this document already refuses to perform on somebody's existing profile, and
+the same act it already sanctions inside a profile we created. So the two threads converge:
+
+> **A dedicated `dod-tools` profile is not just about the canvas. It is what allows lossless capture
+> and per-clip export routing to coexist at all.**
+
+Inside our own profile, writing `FFFilePath` per block is unremarkable. Inside theirs it is not
+something to do, and in Standard mode it is not needed, because `SetRecordDirectory` works there.
+
+**So the shape is:** Standard mode works today with routing and needs no profile writes, at the cost
+of codec choice. Custom Output buys lossless, all-intra capture and a free frame-exact trim, and
+requires the dedicated profile to keep routing. Offer Standard first; treat Custom Output as the
+quality tier that comes with the profile.
+
+Measured incidentally, and it closes an open question: the live profile's Standard container is
+**`hybrid_mp4`**, which is the crash-safe MP4 variant. So the "MP4 risks an unfinalised file" worry
+does not apply to a default modern OBS.
 
 ---
 
@@ -593,9 +660,10 @@ tractable piece of work.
   moving. Whether a demo playing at `host_framerate 0` on a loaded machine produces dropped or
   duplicated frames is a different question, and it is the one that decides how good this path
   actually looks.
-- **Which container.** The live install recorded **MP4**, not the MKV assumed here. MKV is crash-safe
-  but is not what `avi_frame_count` reads; MP4 risks an unfinalised file if OBS dies, though modern
-  OBS hybrid-MP4 and remux-on-stop may cover that. Either pin the setting or teach the scanner both.
+- ~~**Which container.**~~ **Largely settled.** The live install records `hybrid_mp4`, the crash-safe
+  MP4 variant, so the unfinalised-file worry does not apply to a default modern OBS. What remains is
+  a choice rather than an unknown: MP4 needs a second frame-count reader beside `avi_frame_count`,
+  while Custom Output writing `utvideo` into an AVI reuses the existing one untouched.
 - **Is `stopsound` still wanted in the record window** once nothing is being time-warped through it?
 - **What happens when the machine cannot keep up.** Dropped frames are invisible in the output file's
   metadata — the duration is right and the frames are missing. `GetRecordStatus` does not report
