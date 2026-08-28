@@ -1,14 +1,22 @@
 # OBS as an Alternate Capture Method
 
-> **Status 2026-08-28 — design, plus a probe and one round of live measurement. No feature code.**
-> Tracks [#65](https://github.com/ccoventry/dod-tools/issues/65).
+> **Status 2026-08-28 — built and tested against a live OBS.** Tracks
+> [#65](https://github.com/ccoventry/dod-tools/issues/65), in PRs
+> [#72](https://github.com/ccoventry/dod-tools/pull/72) (this document) →
+> [#73](https://github.com/ccoventry/dod-tools/pull/73) (`probe_obs`) →
+> [#74](https://github.com/ccoventry/dod-tools/pull/74) (the feature).
 >
-> **Every gate is cleared. This is ready to build.**
+> **What has actually been run:** a full batch producing playable clips with audio; a cancel
+> mid-recording; OBS killed between blocks; OBS killed mid-recording; dod-tools killed mid-batch and
+> recovered on restart. Every failure path in the table below except the stall watchdog.
 >
 > - OBS Game Capture captures the HLAE-injected `hl.exe` — verified against a real frame.
 > - `qconsole.log` carries the per-block signal at **21–40 ms**, measured over a 17-block batch under
 >   the heaviest I/O configuration the pipeline has.
 > - Every obs-websocket request the design needs exists on the install tested.
+>
+> **Not built:** the Render Studio trim pass (staging item 6), and the wall-clock/disk comparison
+> against the existing path (item 7) — so the speed claim remains an expectation.
 >
 > See "Measured against a live OBS". **One claim was refuted rather than confirmed:** the wall-clock
 > saving is small — the real prize is disk. See "What OBS actually buys".
@@ -799,32 +807,35 @@ tractable piece of work.
    step catches it.
 2. ~~**Tail the console log.**~~ **Done 2026-08-28.** 21–40 ms marker latency across 17 blocks under
    the heaviest I/O configuration. The channel works; the `screenshot` fallback is not needed.
-3. **Wire one block end to end.** Log tail → `StartRecord` on `AUDIO_SYNC` → `StopRecord` on
-   `STOP_RECORD` → move into the take folder. Verify against the demo that the clip contains what it
-   should. **Every gate is now cleared, so this is the next thing to build.**
-4. **The predicate**, both sides at once, plus the duration assertion in `VerifiedBlock`.
-5. **Preflight, cancel and crash paths.** Not optional, and not last in practice — a half-wired
-   version that leaves OBS recording after a cancel is worse than no version. Raising
-   `MIN_TAKE_SEPARATION_SECONDS` for this path belongs here too.
-6. **The trim pass in Render Studio**, and the setting to skip it.
+3. ~~**Wire one block end to end.**~~ **Done 2026-08-28.** Log tail → `StartRecord` on `AUDIO_SYNC`
+   → `StopRecord` on `STOP_RECORD` → folded into the take folder. Verified against a real batch:
+   blocks land as `<take>/take0000/all/video.mp4`, decode clean, and carry their audio.
+4. ~~**The predicate**~~ **Done 2026-08-28.** Both sides at once, testing for the audio *stream* —
+   a muted OBS source writes a perfectly valid silent file, and admitting it would render a clip
+   with no sound and no error.
+5. ~~**Preflight, cancel and crash paths.**~~ **Done and tested live 2026-08-28.** See the failure
+   table above. `MIN_TAKE_SEPARATION_SECONDS` is mode-aware via `OBS_TAKE_SEPARATION_SECONDS`.
+6. **The trim pass in Render Studio**, and the setting to skip it. *Not built.*
 7. **Measure it.** Wall-clock and disk against a real batch, next to the same batch through the
-   existing path. The speed claim is currently an expectation.
+   existing path. The speed claim is still an expectation. *Not done.*
 
 ---
 
 ## Open questions
 
-- **`qconsole.log` flush cadence.** The only remaining gate on the recommended design: it decides
-  whether Option A's start signal is viable or whether the `screenshot` fallback is needed. Needs a
-  running batch, not just a running game.
+- ~~**`qconsole.log` flush cadence.**~~ **Answered 2026-08-28.** 21–40 ms across a real 17-block
+  batch. The `screenshot` fallback is not needed and was never built.
 - **Frame pacing under real playback.** The delivery test was taken at the menu, where nothing is
   moving. Whether a demo playing at `host_framerate 0` on a loaded machine produces dropped or
   duplicated frames is a different question, and it is the one that decides how good this path
-  actually looks.
-- ~~**Which container.**~~ **Largely settled.** The live install records `hybrid_mp4`, the crash-safe
-  MP4 variant, so the unfinalised-file worry does not apply to a default modern OBS. What remains is
-  a choice rather than an unknown: MP4 needs a second frame-count reader beside `avi_frame_count`,
-  while Custom Output writing `utvideo` into an AVI reuses the existing one untouched.
+  actually looks. **Still open** — the captured clips decode clean and run the right duration, which
+  says nothing about frames OBS silently duplicated to fill time.
+- ~~**Which container.**~~ **Settled, and the worry was overstated.** A plain MP4 from an OBS killed
+  mid-recording is *truncated, not destroyed*: measured, it played, decoded to the moment OBS died,
+  and reported only `partial file` with one broken audio frame. So the container choice is a
+  preference — MKV and the hybrid/fragmented variants lose nothing, plain MP4 loses the tail — not a
+  correctness gate. What remains is that MP4 needs a second frame-count reader beside
+  `avi_frame_count`, while Custom Output writing `utvideo` into an AVI reuses the existing one.
 - **Is `stopsound` still wanted in the record window** once nothing is being time-warped through it?
 - **What happens when the machine cannot keep up.** Promoted from a nicety to the question that
   decides who this path is usable for — see the break-even table above: the machines where OBS saves
@@ -832,6 +843,11 @@ tractable piece of work.
   in the output file's metadata: the duration is right and the frames are simply missing.
   `GetRecordStatus` does not report skipped frames; OBS's own stats do. Whether that is reachable
   over the WebSocket, and whether a batch should warn or refuse, is unanswered.
-- **Whether OBS should be driven at all when it is already streaming.** `GetRecordStatus` says whether
-  it is recording; it does not make refusing to touch a live stream automatic. Leaning toward: detect
-  an active stream and refuse, loudly.
+- ~~**Whether OBS should be driven at all when it is already streaming.**~~ **Settled: it refuses.**
+  `ObsSession::start` fails the batch on an active stream rather than warning, because the failure
+  would be visible to the user's audience rather than to them. It refuses an already-running
+  recording the same way.
+- **The stall watchdog is the one failure path never triggered live.** Everything else in the table
+  above has been tested against a real batch. Reproducing this one means a demo that fails to load
+  with hl.exe still alive, plus a five-minute wait; it did arm correctly off a real run in the
+  activity log, which is weaker evidence than the rest.
