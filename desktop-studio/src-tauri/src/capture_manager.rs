@@ -246,6 +246,10 @@ fn config_from_payload(payload: &CapturePayload) -> PatcherConfig {
 pub struct CaptureManifest {
     pub session_id: String,
     pub blocks: Vec<CaptureBlock>,
+    /// `mirv_movie_fps` this batch was captured at, recorded beside the takes
+    /// once they verify so Render Studio can tell when its own FPS setting
+    /// disagrees. See `native::hlcr::take_meta`.
+    pub capture_fps: i32,
 }
 
 /// One block's post-batch verdict, checked against what's actually on disk.
@@ -308,6 +312,48 @@ fn verify_capture_takes(manifest: &CaptureManifest) -> Vec<VerifiedBlock> {
     verified
 }
 
+/// Records what the batch was captured at, beside the takes it produced.
+///
+/// Runs **after** verification, and only for blocks that actually landed:
+/// `take_folder_has_content` decides a take was captured by asking whether its
+/// folder is non-empty, so a file written before that check — or into a block
+/// folder that produced nothing — would make a failed take look successful.
+/// The file goes in the session folder one level up, which the take scanner
+/// skips because it only descends into directories.
+///
+/// A batch can be routed across several drives, so there is one session folder
+/// per drive the batch touched, and each needs its own copy.
+///
+/// Best-effort throughout: a capture that succeeded must never be reported as
+/// failed because a metadata file could not be written.
+fn record_capture_settings(manifest: &CaptureManifest, blocks: &[VerifiedBlock]) {
+    if manifest.capture_fps <= 0 {
+        return;
+    }
+    let meta = native::hlcr::take_meta::SessionMeta::new(
+        manifest.session_id.clone(),
+        manifest.capture_fps,
+    );
+
+    let mut written: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+    for block in blocks.iter().filter(|b| b.captured) {
+        let Some(session_folder) = Path::new(&block.take_folder).parent() else {
+            continue;
+        };
+        if !written.insert(session_folder.to_path_buf()) {
+            continue;
+        }
+        if let Err(e) = native::hlcr::take_meta::write(session_folder, &meta) {
+            log_markdown(&format!(
+                "[take-verify] could not record capture settings at {} — {}. Render Studio will \
+                 not be able to warn about an FPS mismatch for these takes.",
+                session_folder.display(),
+                e
+            ));
+        }
+    }
+}
+
 /// Runs verification for the batch that just ended and reports it to the
 /// frontend. Phase 1 is observe-only — nothing consumes this to change a
 /// highlight's status yet.
@@ -334,6 +380,8 @@ fn emit_take_verification(app: &tauri::AppHandle, manifest_slot: &Arc<Mutex<Opti
             block.take_key, block.captured, block.renderable, block.take_folder
         ));
     }
+
+    record_capture_settings(&manifest, &blocks);
 
     let _ = app.emit("capture_takes_verified", serde_json::json!({
         "session_id": manifest.session_id,
@@ -430,6 +478,7 @@ pub async fn start_capture_batch_impl(
             let manifest = CaptureManifest {
                 session_id: patcher_config.session_id.clone(),
                 blocks: patch_jobs.iter().flat_map(|j| j.blocks.iter().cloned()).collect(),
+                capture_fps: patcher_config.capture_fps,
             };
             let mut slot = manifest_arc.lock().unwrap_or_else(|p| p.into_inner());
             *slot = Some(manifest);
