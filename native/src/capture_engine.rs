@@ -640,6 +640,12 @@ pub fn spawn_capture_engine(
             // `None` — the watchdog below is inert as a result.
             let mut last_marker_at: Option<std::time::Instant> = None;
             let mut longest_marker_gap = std::time::Duration::ZERO;
+            // Armed from hl.exe coming up, not from the first marker. A batch
+            // where markers never start at all — a demo that fails to load, a
+            // game sitting at the menu — would otherwise never be watched,
+            // because the deadline had nothing to count from. Seen in a real
+            // run: 398s with hl.exe alive and not one marker.
+            let mut hl_first_seen: Option<std::time::Instant> = None;
             let mut sys = {
                 use sysinfo::SystemExt;
                 sysinfo::System::new_all()
@@ -683,6 +689,7 @@ pub fn spawn_capture_engine(
                     let alive = sys.processes().values().any(|p| p.name().eq_ignore_ascii_case("hl.exe"));
                     if alive {
                         hl_seen_alive = true;
+                        hl_first_seen.get_or_insert_with(std::time::Instant::now);
                     }
                     alive
                 };
@@ -692,18 +699,32 @@ pub fn spawn_capture_engine(
                     std::process::Command::new("taskkill").args(&["/F", "/IM", "hl.exe"]).output().ok();
                     break;
                 }
-                // Only meaningful once markers have started arriving: launch,
-                // patch load and demo load produce none, and have no bounded
-                // duration to measure against.
-                if let Some(seen) = last_marker_at {
-                    if hl_alive && seen.elapsed() > marker_stall_deadline(longest_marker_gap) {
-                        log_markdown(&format!(
-                            "[HLAE] No console markers for {:.0}s with hl.exe still running — treating the batch as stalled. `disconnect` typed in the console, a demo that failed to load, and a frozen engine all look like this from out here.",
-                            seen.elapsed().as_secs_f32()
-                        ));
-                        failure_reason = Some("the batch stopped progressing while hl.exe was still running — no console markers arrived for several minutes");
-                        std::process::Command::new("taskkill").args(&["/F", "/IM", "hl.exe"]).output().ok();
-                        break;
+                // Counts from the last marker, or from hl.exe first appearing
+                // when none has arrived yet — the second case is a demo that
+                // never started playing, which produces no markers to count
+                // from at all. Both mean the same thing: the game is alive and
+                // the batch is not advancing.
+                if obs_mode {
+                    if let Some(since) = last_marker_at.or(hl_first_seen) {
+                        if hl_alive && since.elapsed() > marker_stall_deadline(longest_marker_gap) {
+                            let never_started = last_marker_at.is_none();
+                            log_markdown(&format!(
+                                "[HLAE] No console markers for {:.0}s with hl.exe still running — treating the batch as stalled. {}",
+                                since.elapsed().as_secs_f32(),
+                                if never_started {
+                                    "Playback never produced a single marker, so the demo most likely failed to load."
+                                } else {
+                                    "`disconnect` typed in the console, a demo that ended early, and a frozen engine all look like this from out here."
+                                }
+                            ));
+                            failure_reason = Some(if never_started {
+                                "the demo never started playing — hl.exe came up but produced no console markers at all"
+                            } else {
+                                "the batch stopped progressing while hl.exe was still running — no console markers arrived for several minutes"
+                            });
+                            std::process::Command::new("taskkill").args(&["/F", "/IM", "hl.exe"]).output().ok();
+                            break;
+                        }
                     }
                 }
                 // OBS gone for good, after a reconnect was already tried.

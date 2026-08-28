@@ -357,6 +357,16 @@ fn take_folder_of(dest: &Path) -> PathBuf {
         .unwrap_or_else(|| dest.to_path_buf())
 }
 
+/// How many times to retry folding a finished recording into place, and how
+/// long to wait between attempts — six seconds in total.
+///
+/// Sized against the observed failure rather than a guess: a rename four
+/// seconds after `StopRecord` returned was still refused. The cost of waiting
+/// too long is a delay on a path that is already between clips; the cost of
+/// giving up too early is a lost block.
+const FOLD_RETRY_ATTEMPTS: u32 = 60;
+const FOLD_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(100);
+
 /// Containers OBS can be configured to write. Kept in step with the scanner's
 /// `VIDEO_EXTENSIONS` — this list may be wider, never narrower, because a file
 /// salvaged under a name the scanner cannot resolve helps nobody.
@@ -414,14 +424,33 @@ pub(super) fn fold_into_take(recorded: &Path, dest: &Path) -> Result<PathBuf, St
     if target == recorded {
         return Ok(target);
     }
-    std::fs::rename(recorded, &target).map_err(|e| {
-        format!(
-            "could not move {} to {}: {e}",
-            recorded.display(),
-            target.display()
-        )
-    })?;
-    Ok(target)
+    let mut last = match std::fs::rename(recorded, &target) {
+        Ok(()) => return Ok(target),
+        Err(e) => e,
+    };
+    // OBS reporting the recording stopped is not the same event as its muxer
+    // closing the file handle, and renaming into that gap fails with a sharing
+    // violation (os error 32). Measured 2026-08-28: `StopRecord` returned, the
+    // rename went in four seconds later, and Windows still refused it — which
+    // lost the block, because a file left under OBS's timestamped name is
+    // invisible to `stream_video_path`.
+    //
+    // Retried rather than pre-waited: the delay is not a constant to guess at,
+    // and a fixed sleep would be both too long for the common case and too
+    // short for a slow disk finishing a large file.
+    for _ in 0..FOLD_RETRY_ATTEMPTS {
+        std::thread::sleep(FOLD_RETRY_DELAY);
+        match std::fs::rename(recorded, &target) {
+            Ok(()) => return Ok(target),
+            Err(e) => last = e,
+        }
+    }
+    Err(format!(
+        "could not move {} to {} after {:.1}s of retries: {last}",
+        recorded.display(),
+        target.display(),
+        (FOLD_RETRY_ATTEMPTS as f64 * FOLD_RETRY_DELAY.as_secs_f64()),
+    ))
 }
 
 #[cfg(test)]
