@@ -9,7 +9,9 @@ import {
   getSettings,
   saveSettings,
   logFrontendEvent,
-  openActivityLog
+  openActivityLog,
+  checkHlaeFfmpeg,
+  linkHlaeFfmpeg
 } from './ipc_bridge.js';
 import { renderMasterList, initMasterPane } from './master_pane.js';
 import { renderDetailView, initDetailPane } from './detail_pane.js';
@@ -30,6 +32,53 @@ import { applyStaticStrings } from './apply_strings.js';
 // from the earliest possible moment, not just once the app's own init
 // logic gets around to it.
 initErrorReporter();
+
+// ── HLAE's own FFmpeg ─────────────────────────────────────────────────────────
+// `mirv_movie_ffmpeg` makes HLAE spawn FFmpeg itself, and it does not consult
+// the app's FFmpeg setting — it looks only in its own folder or at an ffmpeg.ini
+// beside it. With neither present, direct-to-video capture runs to completion
+// and produces no video, so the state is surfaced here rather than discovered
+// after a batch. See docs/direct_to_video_capture.md.
+async function refreshHlaeFfmpegStatus() {
+  const statusEl = document.querySelector('#hlae-ffmpeg-status');
+  const linkBtn = document.querySelector('#hlae-ffmpeg-link-btn');
+  if (!statusEl || !linkBtn) return;
+
+  const hlaePath = document.querySelector('#hlae-path-input')?.value?.trim() || "";
+  const unknown = () => {
+    statusEl.textContent = STRINGS.CAPTURE_CONFIG.HLAE_FFMPEG_UNKNOWN;
+    linkBtn.style.display = 'none';
+  };
+  if (!hlaePath) return unknown();
+
+  let result;
+  try {
+    result = await checkHlaeFfmpeg(hlaePath);
+  } catch {
+    // Already logged by the bridge. Say nothing rather than assert a state.
+    return unknown();
+  }
+
+  const s = result?.state || {};
+  switch (s.state) {
+    case 'bundled':
+      statusEl.textContent = STRINGS.CAPTURE_CONFIG.HLAE_FFMPEG_BUNDLED(s.path);
+      break;
+    case 'linked':
+      statusEl.textContent = s.target_exists
+        ? STRINGS.CAPTURE_CONFIG.HLAE_FFMPEG_LINKED(s.target)
+        : STRINGS.CAPTURE_CONFIG.HLAE_FFMPEG_STALE(s.target);
+      break;
+    case 'missing':
+      statusEl.textContent = STRINGS.CAPTURE_CONFIG.HLAE_FFMPEG_MISSING;
+      break;
+    default:
+      return unknown();
+  }
+  // Offered only where it can actually be acted on: never over a bundled
+  // binary, and never over an existing ini, which is left alone on purpose.
+  linkBtn.style.display = result?.can_link ? '' : 'none';
+}
 
 window.addEventListener("DOMContentLoaded", async () => {
   // Applies every [data-str]/[data-str-title]/[data-str-placeholder]/
@@ -265,6 +314,10 @@ window.addEventListener("DOMContentLoaded", async () => {
       if (settings.hlae_path) {
         const inputEl = document.querySelector('#hlae-path-input');
         if (inputEl) inputEl.value = settings.hlae_path;
+        // Not awaited: it is a status line, and blocking startup on a
+        // filesystem check of somebody else's install directory would trade a
+        // real cost for a cosmetic one.
+        refreshHlaeFfmpegStatus();
       }
       if (settings.hl_path) {
         const inputEl = document.querySelector('#hl-path-input');
@@ -511,9 +564,39 @@ window.addEventListener("DOMContentLoaded", async () => {
           const inputEl = document.querySelector('#hlae-path-input');
           if (inputEl) inputEl.value = path;
           await persistAppSettings();
+          await refreshHlaeFfmpegStatus();
         }
       } catch (err) {
         console.error("Error selecting HLAE executable:", err);
+      }
+    });
+  }
+
+  // Typing a path by hand is the other way in, so re-check on blur/Enter as
+  // well as after the picker.
+  document.querySelector('#hlae-path-input')
+    ?.addEventListener('change', () => { refreshHlaeFfmpegStatus(); });
+
+  const hlaeFfmpegLinkBtn = document.querySelector('#hlae-ffmpeg-link-btn');
+  if (hlaeFfmpegLinkBtn) {
+    hlaeFfmpegLinkBtn.addEventListener('click', async () => {
+      const hlaePath = document.querySelector('#hlae-path-input')?.value?.trim() || "";
+      // Whatever Render Studio was told to use, so both halves of the pipeline
+      // encode with the same build. Empty means "system ffmpeg", which the
+      // backend resolves to an absolute path — HLAE's ini cannot take a bare
+      // command name.
+      const ffmpegPath =
+        document.querySelector('#ffmpeg-override-path-input')?.value?.trim() || "ffmpeg";
+      hlaeFfmpegLinkBtn.disabled = true;
+      try {
+        const ini = await linkHlaeFfmpeg(hlaePath, ffmpegPath);
+        showToast(STRINGS.CAPTURE_CONFIG.HLAE_FFMPEG_LINKED_OK(ini), 'success');
+      } catch {
+        // The bridge already toasted the reason, which for a refusal is the
+        // point — an existing ini is reported, never replaced.
+      } finally {
+        hlaeFfmpegLinkBtn.disabled = false;
+        await refreshHlaeFfmpegStatus();
       }
     });
   }

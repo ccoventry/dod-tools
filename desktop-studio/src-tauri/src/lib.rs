@@ -282,6 +282,53 @@ async fn validate_paths(hlae_path: String, hl_path: String) -> Result<bool, Stri
     Ok(true)
 }
 
+/// Whether HLAE can reach an FFmpeg of its own, which is a different question
+/// from whether Render Studio can.
+///
+/// `mirv_movie_ffmpeg` makes HLAE spawn FFmpeg itself and it does not consult
+/// the app's resolution chain, so this has to be reported before a batch rather
+/// than discovered after one — the failure is a capture that runs to completion
+/// and produces no video. See `native::shared::hlae_ffmpeg`.
+#[tauri::command]
+async fn check_hlae_ffmpeg(hlae_path: String) -> Result<serde_json::Value, String> {
+    let state = native::shared::hlae_ffmpeg::detect(std::path::Path::new(&hlae_path));
+    Ok(serde_json::json!({
+        "state": state,
+        "usable": state.is_usable(),
+        "can_link": state.can_link(),
+    }))
+}
+
+/// Points HLAE at an FFmpeg by writing `ffmpeg.ini`, on request only.
+///
+/// Never overwrites an existing ini: HLAE installs are shared with Source work
+/// and other projects, so silently repointing one would break somebody else's
+/// setup to fix ours. `link` refuses in that case and the error says so.
+#[tauri::command]
+async fn link_hlae_ffmpeg(hlae_path: String, ffmpeg_path: String) -> Result<String, String> {
+    let ffmpeg = native::shared::hlae_ffmpeg::resolve_absolute(&ffmpeg_path).ok_or_else(|| {
+        format!(
+            "Could not resolve an FFmpeg from \"{}\". Set Render Studio's FFmpeg path to a real \
+             ffmpeg.exe first — HLAE's ini needs an absolute path and cannot use a bare command \
+             name.",
+            ffmpeg_path
+        )
+    })?;
+
+    match native::shared::hlae_ffmpeg::link(std::path::Path::new(&hlae_path), &ffmpeg) {
+        Ok(ini) => {
+            native::log_markdown(&format!(
+                "[hlae-ffmpeg] wrote {} pointing at {} — HLAE can now spawn FFmpeg for \
+                 `mirv_movie_ffmpeg`.",
+                ini.display(),
+                ffmpeg.display()
+            ));
+            Ok(ini.to_string_lossy().into_owned())
+        }
+        Err(e) => Err(e.to_string()),
+    }
+}
+
 // ── Full-fidelity analysis payload for the standalone Demo Analyzer tab ─────────
 // Passes the typed `analysis::DemoInfo`/`AnalyzerState` straight through so the frontend can
 // reconstruct every report sub-view (Summary/Scoreboard/Player Details/Team
@@ -378,6 +425,8 @@ pub fn run() {
             log_frontend_event,
             get_activity_log_path,
             validate_paths,
+            check_hlae_ffmpeg,
+            link_hlae_ffmpeg,
             analyze_demo_full,
             start_capture_batch,
             launch_demo_preview,

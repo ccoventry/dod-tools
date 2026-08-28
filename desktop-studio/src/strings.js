@@ -143,6 +143,19 @@ export const STRINGS = {
     HLAE_EXEC_PLACEHOLDER: 'Path to hlae.exe',
     HL_EXEC_LABEL: 'Half-Life Executable:',
     HL_EXEC_PLACEHOLDER: 'Path to hl.exe',
+    // HLAE spawns its own FFmpeg for `mirv_movie_ffmpeg` and does not consult
+    // the app's FFmpeg setting, so this is reported separately from it.
+    HLAE_FFMPEG_LABEL: 'HLAE FFmpeg:',
+    HLAE_FFMPEG_LINK_BUTTON: 'Point HLAE at FFmpeg',
+    HLAE_FFMPEG_UNKNOWN: 'Set the HLAE executable above to check.',
+    HLAE_FFMPEG_BUNDLED: (path) => `Installed in HLAE's own folder (${path}).`,
+    HLAE_FFMPEG_LINKED: (target) => `Pointed at ${target}.`,
+    HLAE_FFMPEG_STALE: (target) =>
+        `HLAE's ffmpeg.ini points at ${target}, which isn't there. Direct-to-video capture will produce no video until that path is fixed or the ini is deleted.`,
+    HLAE_FFMPEG_MISSING:
+        "HLAE has no FFmpeg of its own, so direct-to-video capture would run and produce no video. This is separate from Render Studio's FFmpeg.",
+    HLAE_FFMPEG_LINKED_OK: (ini) => `Wrote ${ini}. HLAE can now find FFmpeg.`,
+    HLAE_FFMPEG_LINK_FAILED: (err) => `Could not point HLAE at FFmpeg: ${err}`,
     FFMPEG_OVERRIDE_LABEL: 'FFmpeg Override Path:',
     FFMPEG_OVERRIDE_PLACEHOLDER: 'Optional path to ffmpeg.exe',
     BROWSE_BUTTON: 'Browse',

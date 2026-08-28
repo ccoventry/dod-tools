@@ -162,6 +162,14 @@
                 <input type="text" id="hlae-path-input" data-str-placeholder="CAPTURE_CONFIG.HLAE_EXEC_PLACEHOLDER" placeholder="Path to hlae.exe" style="flex: 1;" />
                 <button id="hlae-browse-btn" data-str="CAPTURE_CONFIG.BROWSE_BUTTON">Browse</button>
               </div>
+              <!-- HLAE spawns its own FFmpeg for mirv_movie_ffmpeg and does not
+                   consult the app's FFmpeg setting, so its state is reported
+                   here rather than beside the Render Studio one. -->
+              <div class="input-row">
+                <label data-str="CAPTURE_CONFIG.HLAE_FFMPEG_LABEL">HLAE FFmpeg:</label>
+                <span id="hlae-ffmpeg-status" style="flex: 1; font-size: 0.85em; opacity: 0.85;"></span>
+                <button id="hlae-ffmpeg-link-btn" data-str="CAPTURE_CONFIG.HLAE_FFMPEG_LINK_BUTTON" style="display: none;">Point HLAE at FFmpeg</button>
+              </div>
               <div class="input-row">
                 <label data-str="CAPTURE_CONFIG.HL_EXEC_LABEL">Half-Life Executable:</label>
                 <input type="text" id="hl-path-input" data-str-placeholder="CAPTURE_CONFIG.HL_EXEC_PLACEHOLDER" placeholder="Path to hl.exe" style="flex: 1;" />
