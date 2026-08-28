@@ -167,23 +167,6 @@ export async function refreshLaunchGuard(state) {
   const resWidthVal = parseInt(document.querySelector("#config-res-width")?.value, 10) || 1280;
   const resHeightVal = parseInt(document.querySelector("#config-res-height")?.value, 10) || 720;
   const separateHudVal = document.querySelector("#config-separate-hud")?.checked || false;
-  const ffmpegCaptureVal = document.querySelector("#config-ffmpeg-capture")?.checked || false;
-
-  // Separate HUD through mirv_movie_ffmpeg writes blank HUD frames — measured
-  // both ways against the same demo, see docs/direct_to_video_capture.md. The
-  // capture reports success and so does the render; only the finished clip is
-  // wrong, and nothing downstream can detect it. So the combination is refused
-  // here rather than allowed to produce a black rectangle.
-  // TEMPORARILY LIFTED to re-test. The blank-hudcolor measurement this guard
-  // is based on was taken before -afxForceAlpha8 1 was being sent, i.e. with
-  // the alpha buffer broken. The BMP writer dumps the colour buffer straight
-  // out, but the FFmpeg path converts frames before piping them — if that
-  // conversion is alpha-aware, a degenerate all-opaque alpha could collapse
-  // hudcolor to black while leaving `all` (no alpha involved) untouched, which
-  // is exactly the pattern that was observed. Restore this to
-  // `separateHudVal && ffmpegCaptureVal` if the re-test still comes back blank.
-  const separateHudVideoConflict = false && separateHudVal && ffmpegCaptureVal;
-
   const requiredBytes = computeRequiredCaptureBytes(resolvedState.currentScannedDemos, {
     preRollSeconds: preRollVal,
     postRollSeconds: postRollVal,
@@ -239,22 +222,14 @@ export async function refreshLaunchGuard(state) {
   // Pool is usable overall (at least one real drive with room) but not every
   // configured entry is — worth a heads-up, not worth blocking the batch.
   const hasPartialProblems = !noDrivesConfigured && !noUsableSpace && !insufficientSpace && problemPaths.length > 0;
-  const blocked = separateHudVideoConflict || noDrivesConfigured || noUsableSpace || insufficientSpace;
+  const blocked = noDrivesConfigured || noUsableSpace || insufficientSpace;
 
   if (!capturingInFlight) {
     startBtn.disabled = blocked;
   }
 
   if (warningEl) {
-    // Ranked above the disk checks deliberately: those say "you cannot start
-    // yet", this says "this combination cannot work at all". Showing a space
-    // warning instead would send the user off to free up disk for a capture
-    // that would still come out wrong.
-    if (separateHudVideoConflict) {
-      warningEl.style.color = '#f44336';
-      warningEl.textContent = STRINGS.CAPTURE.SEPARATE_HUD_VIDEO_CONFLICT_WARNING;
-      warningEl.style.display = 'block';
-    } else if (noDrivesConfigured) {
+    if (noDrivesConfigured) {
       warningEl.style.color = '#f44336';
       warningEl.textContent = STRINGS.CAPTURE.NO_DRIVES_CONFIGURED_WARNING;
       warningEl.style.display = 'block';
@@ -296,7 +271,7 @@ export async function refreshLaunchGuard(state) {
     footerRequiredEl.style.color = insufficientSpace ? '#f44336' : '#4caf50';
   }
 
-  return { requiredBytes, availableBytes, blocked, separateHudVideoConflict };
+  return { requiredBytes, availableBytes, blocked };
 }
 
 // ── Custom Engine Commands (Init / Before-After) ──────────────────────────────
@@ -840,9 +815,7 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
       // now blocks unconditionally instead of skipping the check).
       const guard = await refreshLaunchGuard(state);
       if (guard && guard.blocked) {
-        if (guard.separateHudVideoConflict) {
-          showToast(STRINGS.CAPTURE.SEPARATE_HUD_VIDEO_CONFLICT_TOAST, 'error');
-        } else if (guard.availableBytes === 0) {
+        if (guard.availableBytes === 0) {
           showToast(STRINGS.CAPTURE.NO_CAPTURE_OUTPUT_DIR_WITH_SPACE, 'error');
         } else {
           showToast(STRINGS.CAPTURE.insufficientDiskSpaceToast((guard.requiredBytes / 1e9).toFixed(2), (guard.availableBytes / 1e9).toFixed(2)), 'error');

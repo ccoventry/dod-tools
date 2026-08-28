@@ -307,10 +307,20 @@ rectangle. Two independent faults, separated by capturing the same demo both way
 | `hudcolor` | **real HUD** — min 16 / avg 17.2 / max 222 | **blank** — min = max = 16 |
 | `hudalpha` | **pure white** — R/G/B all 255 | **pure white** — R all 255 |
 
-1. **`hudcolor` is dropped by the FFmpeg path.** BMP mode captures the kill feed, objective icons and
-   crosshair correctly; the same capture through `mirv_movie_ffmpeg` writes uniformly black frames.
-   `all` is identical in both modes, so `mirv_movie_separate_hud` itself is taking effect — the HUD
-   is pulled out of `all` either way. Only the FFmpeg path fails to write it into its own stream.
+1. ~~**`hudcolor` is dropped by the FFmpeg path.**~~ **Not a second fault — the same one.** This was
+   measured before `-afxForceAlpha8 1` was being sent, i.e. with the alpha buffer broken. Re-tested
+   after the fix below, video mode captures the HUD correctly: `hudcolor/video.avi` went from 135 MB
+   of uniformly black frames (min = max = 16) to 428 MB with real content (min 16, max 217), and
+   `hudalpha` to a real matte. All three streams are correct in video mode.
+
+   The link is plausible in hindsight: the BMP writer dumps the colour buffer straight to disk, while
+   the FFmpeg path converts frames before piping them. An alpha-aware conversion against a degenerate
+   all-opaque alpha collapses `hudcolor` to black, and leaves `all` — which involves no alpha —
+   untouched. Exactly the pattern that was observed.
+
+   **Lesson worth keeping:** two symptoms measured under the same broken precondition looked like two
+   independent faults, and the second was written up as "not a direct-to-video regression" on that
+   basis. One fix cleared both.
 2. **`hudalpha` was fully opaque in *both* modes** — every plane 255, so `extractplanes=r` could only
    produce an opaque mask and `alphamerge` could never produce transparency. Not a direct-to-video
    regression; it applied however the take was captured. **Fixed — see below.**
@@ -353,8 +363,8 @@ A real matte: white on the kill feed, weapon icons and objective boxes, black ev
 alpha — and the set has not been bisected to find the minimum; `-32bpp` in particular is untested on
 its own, though a framebuffer without 32-bit colour has no alpha bits to force.
 
-Until fault 1 is fixed, **Separate HUD and direct-to-video must not be used together**: the capture
-reports success, the render reports success, and the output is silently wrong.
+Both faults are now fixed and Separate HUD works with direct-to-video capture. The guard that blocked
+the pairing has been removed.
 
 ### Not a codec problem: one demo crashes hl.exe
 
