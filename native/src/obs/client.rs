@@ -36,17 +36,10 @@ const RECORD_STOP_TIMEOUT: Duration = Duration::from_secs(30);
 /// the read loop interruptible so an overall deadline can be enforced.
 const SOCKET_READ_TIMEOUT: Duration = Duration::from_millis(200);
 
-/// Minimum gap between one take's stop and the next one's start, for OBS.
-///
-/// `patch::builder::MIN_TAKE_SEPARATION_SECONDS` is 1.0 s and was derived for
-/// HLAE, where the risk is a take landing without its audio. OBS took **~1.06 s
-/// to finalise a file** after `StopRecord` returned, measured repeatedly — so
-/// the existing guard is, by a small margin, already too tight for this path.
-///
-/// 2.0 s rather than 1.1 s because the measured figure is one machine writing
-/// one container, the cost of being wrong is a lost take, and the cost of being
-/// generous is a second of connective footage inside a merged clip.
-pub const OBS_TAKE_SEPARATION_SECONDS: f32 = 2.0;
+/// Re-exported so callers holding an `ObsClient` do not have to reach into the
+/// patcher for it. Defined in `patch::types` because the patcher reads it on
+/// every target, including wasm32, where this module does not exist.
+pub use crate::patch::types::OBS_TAKE_SEPARATION_SECONDS;
 
 #[derive(Debug)]
 pub enum ObsError {

@@ -26,6 +26,14 @@ struct CaptureCleanupGuard {
     auto_clear_temp_demos: bool,
     auto_clear_previews: bool,
     save_local_patched_copy: bool,
+    /// OBS's connection, when this batch is driving one.
+    ///
+    /// Here rather than in the batch loop because this guard is the only thing
+    /// that runs on *every* exit path — normal completion, cancel, a mid-batch
+    /// crash, an early return, a panic. Anywhere else and a cancelled batch
+    /// leaves OBS recording indefinitely, filling the user's drive with no
+    /// indication that anything is wrong.
+    obs: Option<std::sync::Arc<std::sync::Mutex<Option<crate::obs::ObsClient>>>>,
     _wake_lock: Option<keepawake::KeepAwake>,
 }
 
@@ -56,6 +64,7 @@ impl CaptureCleanupGuard {
             auto_clear_temp_demos,
             auto_clear_previews,
             save_local_patched_copy,
+            obs: None,
             _wake_lock: keepawake::Builder::default()
                 .display(false)
                 .idle(true)
@@ -68,6 +77,19 @@ impl CaptureCleanupGuard {
 
 impl Drop for CaptureCleanupGuard {
     fn drop(&mut self) {
+        // First, before anything else can fail: OBS must not be left
+        // recording. Best-effort and silent by design — there is nobody left
+        // to report to, and a cleanup path that panics is worse than one that
+        // quietly does nothing.
+        if let Some(obs) = self.obs.take() {
+            if let Ok(mut guard) = obs.lock() {
+                if let Some(client) = guard.as_mut() {
+                    client.stop_record_quietly();
+                }
+                *guard = None;
+            }
+        }
+
         if let Err(e) = std::fs::remove_dir_all(&self.exit_trigger) {
             if e.kind() != std::io::ErrorKind::NotFound {
                 log::warn!("[GC::drop] Failed to remove exit_trigger {:?}: {}", self.exit_trigger, e);
@@ -146,6 +168,14 @@ pub fn spawn_capture_engine(
     // pre-launch check below re-validates these same numbers instead of
     // re-querying disk space itself for just the primary export dir.
     drive_headroom: Vec<(PathBuf, u64)>,
+    // Each planned block's take folder, in the order the batch will record
+    // them — the same flattened order the capture manifest uses.
+    //
+    // Only read in `CaptureMode::Obs`, where the engine has to know where a
+    // block's output belongs *before* the recording starts, so OBS can be
+    // pointed straight at it. In every other mode HLAE decides that from
+    // `mirv_movie_filename` and this is empty.
+    obs_take_folders: Vec<PathBuf>,
 ) {
     std::thread::Builder::new()
         .name("capture_engine".into())
@@ -185,7 +215,7 @@ pub fn spawn_capture_engine(
             let exit_trigger = hl_exe_parent.join("DOD_TOOLS_EXIT_TRIGGER");
             let session_junction = hl_exe_parent.join("dodtools_session");
             
-            let _cleanup_guard = CaptureCleanupGuard::new(
+            let mut _cleanup_guard = CaptureCleanupGuard::new(
                 exit_trigger.clone(),
                 session_junction.clone(),
                 config.auto_clear_logs,
@@ -405,6 +435,76 @@ pub fn spawn_capture_engine(
                 }
             }
 
+            // ── OBS capture mode ──────────────────────────────────────────────
+            // Everything here happens *before* the game is spawned, on purpose.
+            // Every failure below otherwise produces a batch that runs to
+            // completion and captures nothing — the worst outcome this path has,
+            // because it looks exactly like success until someone opens the
+            // folder.
+            let obs_mode = config.capture_mode == crate::patch::CaptureMode::Obs;
+            let mut obs_session: Option<crate::obs::ObsSession> = None;
+            let (marker_tx, marker_rx) = std::sync::mpsc::channel::<crate::obs::Marker>();
+            let tail_cancel = Arc::new(AtomicBool::new(false));
+
+            if obs_mode {
+                if !config.add_condebug {
+                    log_crash_abort!(
+                        tx,
+                        "OBS capture needs the engine's console log, which requires -condebug. \
+                         Enable \"Add condebug\" in settings, or choose another capture mode."
+                    );
+                    return;
+                }
+                if obs_take_folders.is_empty() {
+                    log_crash_abort!(tx, "OBS capture was requested but no blocks were planned");
+                    return;
+                }
+                match crate::obs::ObsSession::start(
+                    &config.obs,
+                    obs_take_folders.clone(),
+                    config.resolution_width,
+                    config.resolution_height,
+                ) {
+                    Ok((session, preflight)) => {
+                        log_markdown(&format!(
+                            "🎥 **OBS capture** — connected to OBS {} (obs-websocket {}) at {}. \
+                             Canvas {}x{} @ {:.0}fps, scene `{}`. HLAE will record nothing; OBS is \
+                             driven from the engine's own console markers.",
+                            preflight.obs_version,
+                            preflight.websocket_version,
+                            config.obs.redacted(),
+                            preflight.canvas_width,
+                            preflight.canvas_height,
+                            preflight.fps,
+                            preflight.current_scene,
+                        ));
+                        // Hand the connection to the guard first, so that from
+                        // this point on every exit path stops the recorder.
+                        _cleanup_guard.obs = Some(session.stop_handle());
+                        obs_session = Some(session);
+                    }
+                    Err(e) => {
+                        log_crash_abort!(tx, format!("OBS capture could not start — {}", e));
+                        return;
+                    }
+                }
+
+                // The log is deleted at the end of a batch, not the start, so a
+                // file left by a previous run is normal and its markers are
+                // history. `LogTailer::at_end` is what stops a stale
+                // `START_RECORD` firing a recording the moment this begins.
+                let log_path = hl_exe_parent.join("qconsole.log");
+                let tailer = crate::obs::LogTailer::at_end(&log_path);
+                let cancel = Arc::clone(&tail_cancel);
+                if let Err(e) = std::thread::Builder::new()
+                    .name("obs_log_tail".into())
+                    .spawn(move || tailer.run(marker_tx, cancel))
+                {
+                    log_crash_abort!(tx, format!("could not start the console log reader: {}", e));
+                    return;
+                }
+            }
+
             let condebug_flag = if config.add_condebug { "-condebug " } else { "" };
             // `-afxForceAlpha8` is read by AfxHookGoldSrc.dll off the *game's*
             // command line, not by HLAE.exe. HLAE's own Launch GoldSrc dialog
@@ -505,6 +605,18 @@ pub fn spawn_capture_engine(
                 sysinfo::System::new_all()
             };
             loop {
+                // Drain whatever the engine has echoed since the last pass.
+                // This is the whole synchronisation mechanism: markers reach
+                // the log 21-40 ms after the tick that emitted them, measured
+                // over a 17-block batch, so a 500 ms poll below would be far
+                // too coarse to act on them — hence the shorter sleep chosen
+                // for OBS mode at the end of this loop.
+                if let Some(session) = obs_session.as_mut() {
+                    for marker in marker_rx.try_iter() {
+                        session.on_marker(&marker);
+                    }
+                }
+
                 if !launcher_exit_logged {
                     match child.try_wait() {
                         Ok(Some(status)) => {
@@ -576,8 +688,42 @@ pub fn spawn_capture_engine(
                     failure_reason = Some("hl.exe started but crashed mid-capture (no exit trigger was ever written)");
                     break;
                 }
-                std::thread::sleep(std::time::Duration::from_millis(500));
+                // 500 ms is fine for watching a process; it is far too coarse
+                // for acting on stage markers, where the engine's own flush
+                // granularity is ~21 ms and the pre-roll budget being spent is
+                // one second. The process checks above tolerate the faster
+                // cadence — `refresh_processes` is the only real cost, and it
+                // is cheap next to a capture.
+                let poll = if obs_mode { 16 } else { 500 };
+                std::thread::sleep(std::time::Duration::from_millis(poll));
             }
+
+            // Stop anything still recording and put the scene back before the
+            // teardown below starts removing junctions.
+            if let Some(mut session) = obs_session.take() {
+                tail_cancel.store(true, Ordering::Relaxed);
+                for marker in marker_rx.try_iter() {
+                    session.on_marker(&marker);
+                }
+                session.finish();
+                log_markdown(&format!(
+                    "🎥 **OBS capture** — {} block(s) recorded, {} skipped.",
+                    session.recorded.len(),
+                    session.skipped.len()
+                ));
+                for problem in &session.skipped {
+                    log_markdown(&format!("⚠️ **OBS** — {problem}"));
+                }
+                for block in &session.recorded {
+                    log_markdown(&format!(
+                        "- [obs] {} ({:.1}s) -> {}",
+                        block.take_folder.display(),
+                        block.seconds,
+                        block.video.display()
+                    ));
+                }
+            }
+            tail_cancel.store(true, Ordering::Relaxed);
 
             if let Some(reason) = failure_reason.filter(|_| !cancel_token.load(Ordering::Relaxed)) {
                 log_crash_abort!(tx, format!("{} — see [HLAE] lines above in this log for timing.", reason));

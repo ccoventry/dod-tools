@@ -78,6 +78,8 @@ pub use types::{
     CustomCommand,
     CommandRelation,
     CaptureCodec,
+    CaptureMode,
+    ObsConfig,
     PatchOptions,
     CaptureStreak,
     CaptureBlock,

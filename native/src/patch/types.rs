@@ -300,6 +300,22 @@ impl CaptureMode {
     }
 }
 
+/// Minimum gap between one take's stop and the next one's start, for OBS.
+///
+/// `builder::MIN_TAKE_SEPARATION_SECONDS` is 1.0 s and was derived for HLAE as
+/// a deliberately conservative guess, because the demo side cannot observe how
+/// long HLAE needs to finalise a take. The OBS figure is not a guess: OBS took
+/// **~1.065 s** to finalise a file after `StopRecord` returned, measured
+/// repeatedly — so the existing guard is already too tight for this path.
+///
+/// 2.0 s rather than 1.1 s because the measurement is one machine writing one
+/// container, the cost of being wrong is a lost take, and the cost of being
+/// generous is a second of connective footage inside a merged clip.
+///
+/// Lives here rather than beside the client so the patcher can read it on every
+/// target — `patch` compiles for wasm32, `obs` does not.
+pub const OBS_TAKE_SEPARATION_SECONDS: f32 = 2.0;
+
 /// Where OBS is and how to talk to it.
 ///
 /// Only read when `capture_mode` is `Obs`. The password is the user's own

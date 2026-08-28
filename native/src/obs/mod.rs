@@ -26,9 +26,11 @@
 
 pub mod client;
 pub mod log_tail;
+pub mod session;
 
 pub use client::{ObsClient, ObsError};
 pub use log_tail::{LogTailer, Marker, MarkerKind};
+pub use session::{ObsSession, RecordedBlock};
 
 /// Stage markers the capture path acts on.
 ///
