@@ -61,6 +61,24 @@ pub async fn run_render_job(
         return;
     }
 
+    // The FPS below is fed to `-framerate` *before* the BMP input, so it is not
+    // an output preference — it is how FFmpeg is told to interpret the frame
+    // sequence's timing. A value that disagrees with the capture produces a
+    // wrong computed duration and `-shortest` then trims the audio to match, so
+    // the render succeeds and the clip is simply the wrong speed. This is
+    // advisory only: the take may have been moved or hand-assembled, and
+    // silently substituting a number found in a neighbouring file would be a
+    // worse surprise than the one it fixes. See `hlcr::take_meta`.
+    //
+    // Logged, not sent as a `Status` update: `job.status` is a state field with
+    // a fixed vocabulary ("Queued" | "Rendering" | "Finished" | "Error" |
+    // "Cancelled") that the scheduler's own transitions test against, so putting
+    // a sentence in it would show a paragraph where a status chip belongs and
+    // strand the job if anything returned before "Rendering" overwrote it.
+    if let Some(warning) = super::take_meta::fps_mismatch_warning(&take_folder, config.fps) {
+        crate::log_markdown(&format!("[render-fps-mismatch] job {} — {}", job_id, warning));
+    }
+
     let clip_type = clip.clip_type.as_str();
     let is_hud = clip_type == "hud_only";
 

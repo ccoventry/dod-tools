@@ -35,6 +35,66 @@ export async function scanDirectory(scanPaths) {
     });
 }
 
+// Map library checks. Deliberately quiet on failure: a demo whose map cannot be
+// checked is still a demo the user can work with, so this reports and returns
+// nothing rather than interrupting a scan that otherwise succeeded.
+export async function checkDemoMaps(demoPaths, gamePath) {
+  return invoke("check_demo_maps", { demoPaths, gamePath })
+    .catch((err) => {
+      console.error("IPC Execution Error (check_demo_maps):", err);
+      return [];
+    });
+}
+
+export async function downloadMap(mapName, expectedChecksum, gamePath) {
+  return invoke("download_map", { mapName, expectedChecksum, gamePath })
+    .catch((err) => {
+      console.error("IPC Execution Error (download_map):", err);
+      throw err;
+    });
+}
+
+export async function mapDownloadUrl(mapName) {
+  return invoke("map_download_url", { mapName })
+    .catch((err) => {
+      console.error("IPC Execution Error (map_download_url):", err);
+      return null;
+    });
+}
+
+
+// What the pre-roll and post-roll have to cover. Quiet on failure: a timing
+// hint that cannot be computed is not worth interrupting anyone over.
+export async function getRollFloors(preRoll, postRoll, decalFlush, customCommands = []) {
+  const recordStartLead = parseFloat(document.querySelector('#config-record-start-lead')?.value) || 0;
+  const recordStopTrail = parseFloat(document.querySelector('#config-record-stop-trail')?.value) || 0;
+  return invoke("roll_floors", { preRoll, postRoll, recordStartLead, recordStopTrail, decalFlush, customCommands })
+    .catch((err) => {
+      console.error("IPC Execution Error (roll_floors):", err);
+      return null;
+    });
+}
+
+export async function scanGameConfigs(
+  gamePath,
+  initCommands = [],
+  customCommands = [],
+  context = {}
+) {
+  return invoke("scan_game_configs", {
+    gamePath,
+    initCommands,
+    customCommands,
+    captureFps: context.captureFps ?? null,
+    separateHud: context.separateHud ?? null,
+    decalFlush: context.decalFlush ?? null,
+  })
+    .catch((err) => {
+      console.error("IPC Execution Error (scan_game_configs):", err);
+      return { unseen: [], overrides: [], shadowed: [], custom: [] };
+    });
+}
+
 export async function validatePaths(hlaePath, hlPath) {
   return await invoke('validate_paths', { hlaePath, hlPath })
     .catch((err) => {

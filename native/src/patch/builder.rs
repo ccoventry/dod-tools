@@ -185,6 +185,177 @@ fn build_safe_echos(tick: i32, message: &str) -> Vec<(i32, String)> {
 ///
 /// Public so the `find_overlaps` diagnostic can ask the same questions without
 /// running a capture, and can't drift from the real decision.
+/// Every command the engine will run at demo load: the user's own init
+/// commands, then the ones the pipeline adds for itself.
+///
+/// Extracted so it can be asked ahead of a capture as well as during one. The
+/// app's own additions override whatever the game's configs set — `capture_fps`
+/// beats a `mirv_movie_fps` in `movie.cfg`, and the decal pin beats an
+/// `r_decals` there — and a user is entitled to know that before it happens
+/// rather than by noticing the result.
+pub fn final_init_commands(config: &PatcherConfig) -> Vec<String> {
+    let mut out = config.init_commands.clone();
+    out.push("sys_autodir".to_string());
+    out.push(format!("mirv_movie_fps {}", config.capture_fps));
+    out.push(format!(
+        "mirv_movie_separate_hud {}",
+        if config.separate_hud { "1" } else { "0" }
+    ));
+
+    // The decal flush needs the ring set once, at demo load, and never again.
+    // r_decals bounds how far the rotating index may travel before it wraps; it
+    // does not evict anything, so lowering it once decals have accumulated
+    // strands every one sitting above the new limit.
+    //
+    // The sweep is sized to that same number, so there is only one number here
+    // and `r_decals` is where the engine reads it. When init_commands states it,
+    // that is the value the sweep uses and the line is already the pin —
+    // appending a second one could only overrule what was asked for, silently.
+    // When nothing states it, the engine would otherwise use whatever the user's
+    // config left behind, so it gets pinned to the configured default.
+    //
+    // Not at the maximum, though. r_decals is clamped to MAX_RENDER_DECALS, so a
+    // sweep that size turns a full revolution whatever the cvar happens to be —
+    // any smaller ring simply gets swept several times over. Pinning then buys
+    // nothing and costs the precondition the rest of this design works around:
+    // that nothing else may touch r_decals.
+    //
+    // Unless a config already touches it. "Whatever the cvar happens to be" is
+    // true for every value but zero, and `r_decals 0` in a movie.cfg is real —
+    // the sweep would be sized to the maximum, report a full revolution, and
+    // inject into a ring the engine keeps nothing in. So the pin is spent after
+    // all when a config assigns the cvar, which is also the only case where the
+    // precondition was already broken.
+    if config.decal_flush && crate::patch::ring_limit_from_init(&config.init_commands).is_none() {
+        let ring = crate::patch::ring_limit(config);
+        let below_ceiling = ring < crate::patch::MAX_RENDER_DECALS;
+        if ring > 0 && (below_ceiling || crate::patch::ring_set_by_game_config(config)) {
+            out.push(format!("r_decals {}", ring));
+        }
+    }
+
+    out
+}
+
+/// The shortest real-time run-up the engine will tolerate before recording.
+///
+/// `docs/goldsrc_dod_quirks.md`: fast-forwarding breaks the engine's audio
+/// buffers, and the speed must return to real time "2 to 4 seconds prior to
+/// injecting `mirv_recordmovie_start`" to flush and resync. This is the lower
+/// end of that range — the floor, not the recommendation.
+pub const AUDIO_RESYNC_SECONDS: f32 = 2.0;
+
+/// What the pre-roll and post-roll have to cover, and which requirement is
+/// currently setting the bar.
+///
+/// The rolls stopped being a matter of taste once other things started being
+/// measured against them: the audio resync, the sound flush, the decal sweep's
+/// lead, and any Scheduled Command's offset. Each is knowable, so the app can
+/// say when a roll is too short instead of leaving it to be discovered in a
+/// capture that looks almost right.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RollFloors {
+    pub pre_roll: f32,
+    /// Which term set `pre_roll`.
+    pub pre_roll_binding: &'static str,
+    pub post_roll: f32,
+    pub post_roll_binding: &'static str,
+    pub audio_resync: f32,
+    pub sound_flush: f32,
+    /// The decal sweep's lead, or 0 when the flush is off.
+    pub flush_lead: f32,
+    /// Largest "Before" offset among the Scheduled Commands.
+    pub scheduled_before: f32,
+    /// Largest "After" offset among them.
+    pub scheduled_after: f32,
+}
+
+/// Compute the floors for a configuration.
+///
+/// Deliberately does NOT fold in the burst's own span. At a 4,096 ring that
+/// spans several seconds and would demand an enormous pre-roll — but the burst
+/// is network messages in the demo stream rather than console commands, so
+/// whether it needs real-time playback at all is unverified. Guessing a floor
+/// from an unknown would be worse than leaving it out and saying so.
+pub fn roll_floors(config: &PatcherConfig) -> RollFloors {
+    let flush_lead = if config.decal_flush {
+        crate::patch::DEFAULT_LEAD_SECONDS
+    } else {
+        0.0
+    };
+    let offset_for = |want_after: bool| {
+        config
+            .custom_commands
+            .iter()
+            .filter(|c| matches!(c.relation, CommandRelation::After) == want_after)
+            .map(|c| c.offset)
+            .fold(0.0f32, f32::max)
+    };
+    // Scheduled offsets anchor to the KILL, not to the record start — while the
+    // speed drop sits a pre-roll before the record start, which is itself a
+    // start-lead before the kill. So the real-time window opens
+    // `record_start_lead + pre_roll` ahead of the kill, and a Before offset only
+    // needs the pre-roll to cover what the start lead does not.
+    //
+    // Comparing the raw offset against the pre-roll alone is what made this warn
+    // about a 10s command with a 5s lead and a 5s pre-roll, which lands exactly
+    // on the speed drop and is fine.
+    let scheduled_before = (offset_for(false) - config.record_start_lead).max(0.0);
+    let scheduled_after = (offset_for(true) - config.record_stop_trail).max(0.0);
+
+    // Highest wins, and the label names it so the message can be acted on.
+    let pre_terms = [
+        (AUDIO_RESYNC_SECONDS, "the audio resync after fast-forward"),
+        (SOUND_FLUSH_LEAD_SECONDS, "the stopsound flush"),
+        (flush_lead, "the decal flush's lead"),
+        (scheduled_before, "a Scheduled Command set before the highlight"),
+    ];
+    let (pre_roll, pre_roll_binding) = pre_terms
+        .iter()
+        .copied()
+        .fold((0.0f32, "nothing"), |acc, t| if t.0 > acc.0 { t } else { acc });
+
+    let (post_roll, post_roll_binding) = if scheduled_after > 0.0 {
+        (scheduled_after, "a Scheduled Command set after the highlight")
+    } else {
+        (0.0, "nothing")
+    };
+
+    RollFloors {
+        pre_roll,
+        pre_roll_binding,
+        post_roll,
+        post_roll_binding,
+        audio_resync: AUDIO_RESYNC_SECONDS,
+        sound_flush: SOUND_FLUSH_LEAD_SECONDS,
+        flush_lead,
+        scheduled_before,
+        scheduled_after,
+    }
+}
+
+/// Whether a scheduled command lands while playback is still fast-forwarding.
+///
+/// A block runs at `host_framerate 0.05` until the pre-roll drops it back to
+/// real time at `speed_drop_tick`, and resumes fast-forwarding once the
+/// post-roll ends at `post_roll_end_tick`. Outside that window a command still
+/// executes — it just executes with the engine racing through frames and its
+/// audio buffers unflushed.
+///
+/// Whether that matters depends entirely on the command, so this reports rather
+/// than warns. Setting a cvar early is usually harmless: `hud_deathnotice_time`
+/// ten seconds before a clip simply takes effect ten seconds before the clip.
+/// What misbehaves is anything that depends on playback running at real speed —
+/// sound, recording start/stop, rendering. Phrasing this as a hazard would cry
+/// wolf on the common, correct case, which is how a warning gets ignored.
+pub fn runs_during_fast_forward(
+    target_tick: i32,
+    speed_drop_tick: i32,
+    post_roll_end_tick: i32,
+) -> bool {
+    target_tick < speed_drop_tick || target_tick > post_roll_end_tick
+}
+
 pub fn blocks_merge(prev_end: i32, next_start: i32, lead_ticks: i32, trail_ticks: i32) -> bool {
     (next_start - lead_ticks).max(0) <= prev_end + trail_ticks
 }
@@ -275,6 +446,32 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
     let mut grouped: std::collections::HashMap<(&str, Option<&str>), Vec<(usize, &CaptureStreak)>> = std::collections::HashMap::new();
     for (idx, streak) in raw_streaks.iter().enumerate() {
         grouped.entry((streak.source_demo.as_str(), streak.target_player.as_deref())).or_default().push((idx, streak));
+    }
+
+    // The rolls are load-bearing now — the audio resync, the sound flush, the
+    // decal sweep's lead and any Scheduled Command's offset all measure against
+    // them — so say when one is too short rather than leaving it to be found in
+    // a capture that looks almost right.
+    let floors = roll_floors(config);
+    if config.pre_roll_seconds < floors.pre_roll {
+        crate::log_markdown(&format!(
+            "⚠️ **Pre-roll is shorter than this capture needs** — {:.1}s, against a {:.1}s floor \
+             set by {}. Playback returns to real time {:.1}s before recording, which is not enough \
+             for it: the engine's audio buffers are left unflushed by the fast-forward. Raise the \
+             pre-roll to at least {:.1}s.",
+            config.pre_roll_seconds,
+            floors.pre_roll,
+            floors.pre_roll_binding,
+            config.pre_roll_seconds,
+            floors.pre_roll
+        ));
+    }
+    if config.post_roll_seconds < floors.post_roll {
+        crate::log_markdown(&format!(
+            "⚠️ **Post-roll is shorter than this capture needs** — {:.1}s, against a {:.1}s floor \
+             set by {}. Anything past the post-roll fires while playback is fast-forwarding again.",
+            config.post_roll_seconds, floors.post_roll, floors.post_roll_binding
+        ));
     }
 
     // Sort grouped chronologically by the start_tick of their first streak
@@ -623,6 +820,11 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
                 source_streak_indices: merged_sources[block_index].clone(),
                 start_tick: streak.start_tick,
                 end_tick: streak.end_tick,
+                // Filled in by the scheduling loop below, which is where the
+                // record bounds are actually derived. Left at 0 here rather
+                // than duplicating that arithmetic.
+                record_start_tick: 0,
+                record_stop_tick: 0,
             });
         }
         blocks.sort_by_key(|b| b.block_index);
@@ -707,6 +909,17 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
                 s_end = s_end.min(exit_frame);
             }
 
+            // Hand the finished record bounds back to the block. This loop and
+            // the block-allocation loop above both walk `merged_streaks` in its
+            // original order, so `i` is the block index — matched on rather
+            // than indexed with, since allocation may reorder `blocks`.
+            // The decal flush is the consumer: it needs the frames that end up
+            // in the take, which `start_tick`/`end_tick` are not.
+            if let Some(block) = blocks.iter_mut().find(|b| b.block_index == i) {
+                block.record_start_tick = record_start_tick;
+                block.record_stop_tick = r_stop;
+            }
+
             // Custom command overrides
             for (idx, custom) in config.custom_commands.iter().enumerate() {
                 let relation_str = match custom.relation {
@@ -736,6 +949,50 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
                 let cmd_len = custom.command.len();
                 if cmd_len > crate::patch::CUSTOM_CMD_WARN_LIMIT {
                     crate::log_markdown(&format!("⚠️ **WARNING:** Custom command exceeds 60 bytes and will likely be dropped by the GoldSrc Cbuf: {}", custom.command));
+                }
+
+                // Playback runs at `host_framerate 0.05` until the pre-roll
+                // drops it back to real time at `s_speed_tick`, and resumes
+                // fast-forwarding once the post-roll ends at `s_end`. A command
+                // landing outside that window still executes, but it executes
+                // while the engine is racing through frames with its audio
+                // buffers in a bad state — so anything about sound, timing or
+                // rendering does something other than what it looks like it
+                // does, and nothing in the captured video explains why.
+                if runs_during_fast_forward(target_tick, s_speed_tick, s_end) {
+                    let (where_, fix) = if target_tick < s_speed_tick {
+                        (
+                            "before playback drops back to real time",
+                            format!(
+                                "keep the offset under the {:.1}s pre-roll, or raise the pre-roll",
+                                config.pre_roll_seconds
+                            ),
+                        )
+                    } else {
+                        (
+                            "after the post-roll ends and fast-forward resumes",
+                            format!(
+                                "keep the offset under the {:.1}s post-roll, or raise the post-roll",
+                                config.post_roll_seconds
+                            ),
+                        )
+                    };
+                    crate::log_markdown(&format!(
+                        "ℹ️ **Scheduled command runs during fast-forward** — `{}` is set {} {:.1}s \
+                         {} the highlight, which lands at tick {}, {}. Setting a cvar there is \
+                         usually fine — it simply takes effect early. It is worth checking only \
+                         for commands that depend on playback running at real speed: anything \
+                         touching sound, recording, or rendering, since the engine is at \
+                         `host_framerate 0.05` with its audio buffers unflushed. To have it run \
+                         at normal speed instead, {}.",
+                        custom.command,
+                        relation_str.to_lowercase(),
+                        custom.offset,
+                        if matches!(custom.relation, CommandRelation::Before) { "before" } else { "after" },
+                        target_tick,
+                        where_,
+                        fix
+                    ));
                 }
                 scheduled_commands.push((target_tick, custom.command.clone()));
             }
@@ -816,13 +1073,7 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
         // Sort scheduled_commands by tick
         scheduled_commands.sort_by_key(|(tick, _)| *tick);
 
-        let mut final_init_commands = config.init_commands.clone();
-        final_init_commands.push("sys_autodir".to_string());
-
-        final_init_commands.push(format!("mirv_movie_fps {}", config.capture_fps));
-
-        let separate_hud_str = if config.separate_hud { "1" } else { "0" };
-        final_init_commands.push(format!("mirv_movie_separate_hud {}", separate_hud_str));
+        let final_init_commands = final_init_commands(config);
 
         jobs.push(PatchJob {
             source_demo: source_demo.to_string(),
@@ -890,6 +1141,14 @@ pub struct WorkspaceGuard {
     pub session_junction: std::path::PathBuf,
     pub exit_trigger: std::path::PathBuf,
     pub pool_junctions: Vec<std::path::PathBuf>,
+    /// The `_route_N` junctions `build_batch_queue` creates beside `hl.exe`, one
+    /// per drive a batch routes blocks to.
+    ///
+    /// These were created but never unlinked: the only thing that removed one
+    /// was the *next* batch reusing that index, so a `_route_0` sat in the game
+    /// folder indefinitely after a capture. Tracked here so they go the same way
+    /// as the pool junctions — when the batch ends, not when another begins.
+    pub route_junctions: Vec<std::path::PathBuf>,
     pub auto_clear_logs: bool,
     pub auto_clear_temp_demos: bool,
     pub auto_clear_previews: bool,
@@ -904,8 +1163,10 @@ impl Drop for WorkspaceGuard {
                 log::warn!("[WorkspaceGuard::drop] Failed to remove session_junction {:?}: {}", self.session_junction, e);
             }
         }
-        // Unlink every dod_pool_N junction created for the failover pool.
-        for junction in &self.pool_junctions {
+        // Unlink every dod_pool_N and _route_N junction. `remove_dir` unlinks a
+        // junction without touching what it points at, and NotFound is expected
+        // for any index this batch did not route to.
+        for junction in self.pool_junctions.iter().chain(self.route_junctions.iter()) {
             if let Err(e) = std::fs::remove_dir(junction) {
                 if e.kind() != std::io::ErrorKind::NotFound {
                     log::warn!("[WorkspaceGuard::drop] Failed to remove pool junction {:?}: {}", junction, e);
@@ -923,7 +1184,7 @@ impl Drop for WorkspaceGuard {
             let dod_dir = parent.join("dod");
             
             if self.auto_clear_logs {
-                let _ = std::fs::remove_file(dod_dir.join("qconsole.log"));
+                crate::shared::paths::remove_console_log(parent);
                 let _ = std::fs::remove_file(dod_dir.join("dodtools_helper.cfg"));
                 let _ = std::fs::remove_file(dod_dir.join("dodtools_capture_done.cfg"));
                 let _ = std::fs::remove_file(dod_dir.join("dod_quit.cfg"));
@@ -1399,13 +1660,109 @@ mod tests {
         }
     }
 
+    /// A game folder of this test's own.
+    ///
+    /// One folder per call, because `build_batch_queue` writes its helper and
+    /// chain `.cfg` files into the game folder and deletes the previous run's
+    /// on the way in. A shared path meant tests running in parallel deleted
+    /// each other's files mid-write, which surfaces as a sharing violation on
+    /// Windows and an `Err` out of a call every test `unwrap`s.
+    ///
+    /// `game_path` names the executable, not the folder — the engine's content
+    /// sits beside `hl.exe` and every caller reads `game_path.parent()`. Naming
+    /// the folder here put `dod_dir` one level too high, at the temp root, so
+    /// the tests were writing to a single shared `%TEMP%/dod` regardless.
+    /// Named after the running test, which the harness puts on the thread. That
+    /// is unique per test and stable across runs, so folders are isolated
+    /// without a counter that would leave a fresh one behind every run.
     fn mock_config() -> PatcherConfig {
+        let tag = std::thread::current()
+            .name()
+            .map(|n| n.replace(|c: char| !c.is_ascii_alphanumeric(), "_"))
+            .unwrap_or_else(|| "mock".to_string());
+        mock_config_in(&tag)
+    }
+
+    fn mock_config_in(tag: &str) -> PatcherConfig {
+        let root = std::env::temp_dir().join(format!("dod_test_{}", tag));
+        std::fs::create_dir_all(root.join("dod")).expect("Failed to create dummy dod dir");
         let mut config = PatcherConfig::default();
-        let temp_game_path = std::env::temp_dir().join("dod_test_mock");
-        std::fs::create_dir_all(temp_game_path.join("dod")).expect("Failed to create dummy dod dir");
-        config.game_path = temp_game_path.to_string_lossy().to_string();
-        config.primary_media_dir = Some(temp_game_path);
+        config.game_path = root.join("hl.exe").to_string_lossy().to_string();
+        config.primary_media_dir = Some(root);
         config
+    }
+
+    #[test]
+    fn the_pre_roll_floor_names_whichever_requirement_is_binding() {
+        // With nothing else configured the audio resync sets the bar, since it
+        // is the longest of the fixed terms.
+        let mut config = mock_config();
+        config.custom_commands.clear();
+        let f = roll_floors(&config);
+        assert_eq!(f.pre_roll, AUDIO_RESYNC_SECONDS);
+        assert!(f.pre_roll_binding.contains("audio"), "{}", f.pre_roll_binding);
+        assert_eq!(f.post_roll, 0.0, "nothing needs post-roll on its own");
+
+        // A Scheduled Command further out than that takes over, because
+        // anything beyond the real-time window fires during fast-forward.
+        config.custom_commands = vec![crate::patch::CustomCommand {
+            command: "mirv_movie_fps 500".to_string(),
+            offset: 8.0,
+            relation: CommandRelation::Before,
+        }];
+        let f = roll_floors(&config);
+        assert_eq!(f.pre_roll, 8.0);
+        assert!(f.pre_roll_binding.contains("Scheduled"), "{}", f.pre_roll_binding);
+
+        // The start lead covers part of that distance, because the offset
+        // anchors to the kill and recording starts a lead before it. The real
+        // configuration this got wrong: a 10s command with a 5s start lead
+        // needs only 5s of pre-roll, and warning at 10 was a false alarm.
+        config.record_start_lead = 5.0;
+        config.custom_commands[0].offset = 10.0;
+        let f = roll_floors(&config);
+        assert_eq!(f.scheduled_before, 5.0, "10s out, 5s of it covered by the lead");
+        assert_eq!(f.pre_roll, AUDIO_RESYNC_SECONDS.max(5.0));
+
+        // And a lead longer than the offset leaves nothing for the pre-roll.
+        config.record_start_lead = 12.0;
+        let f = roll_floors(&config);
+        assert_eq!(f.scheduled_before, 0.0, "never negative");
+
+        // And an "After" command is the only thing that asks for post-roll.
+        config.custom_commands = vec![crate::patch::CustomCommand {
+            command: "echo done".to_string(),
+            offset: 3.0,
+            relation: CommandRelation::After,
+        }];
+        let f = roll_floors(&config);
+        assert_eq!(f.post_roll, 3.0);
+        assert_eq!(f.pre_roll, AUDIO_RESYNC_SECONDS, "an After command asks nothing of pre-roll");
+    }
+
+    #[test]
+    fn turning_the_flush_off_drops_its_term_from_the_floor() {
+        let mut config = mock_config();
+        config.custom_commands.clear();
+
+        config.decal_flush = true;
+        assert_eq!(roll_floors(&config).flush_lead, crate::patch::DEFAULT_LEAD_SECONDS);
+
+        config.decal_flush = false;
+        assert_eq!(roll_floors(&config).flush_lead, 0.0);
+    }
+
+    #[test]
+    fn a_command_outside_the_real_time_window_is_flagged() {
+        // Real time runs from the speed drop (pre-roll) to the end of the
+        // post-roll. Either side of that the engine is at host_framerate 0.05.
+        let (speed_drop, post_roll_end) = (1000, 2000);
+
+        assert!(runs_during_fast_forward(999, speed_drop, post_roll_end), "before the speed drop");
+        assert!(runs_during_fast_forward(2001, speed_drop, post_roll_end), "after the post-roll");
+        assert!(!runs_during_fast_forward(1000, speed_drop, post_roll_end), "the drop itself");
+        assert!(!runs_during_fast_forward(1500, speed_drop, post_roll_end), "mid-clip");
+        assert!(!runs_during_fast_forward(2000, speed_drop, post_roll_end), "the last post-roll tick");
     }
 
     #[test]
@@ -1473,6 +1830,286 @@ mod tests {
         // resumes it afterwards.
         assert_eq!(ticks_for(job, "sys_normal_speed").len(), 6, "3-frame redundancy per block");
         assert_eq!(ticks_for(job, "sys_sound").len(), 2);
+    }
+
+    #[test]
+    fn test_blocks_carry_the_record_bounds_the_decal_flush_keys_off() {
+        // A block's start_tick/end_tick are the highlight's own bounds — not
+        // the frames HLAE records between, which are computed separately in the
+        // scheduling loop. The decal flush strips every decal outside a block's
+        // recorded frames, so bounds that came back wrong (or as 0) would scrub
+        // the very clip the pass exists to protect.
+        let config = mock_config();
+        let raw_streaks = vec![
+            streak_with_kills(1000, 1200, &[1000, 1200]),
+            streak_with_kills(5000, 5200, &[5000, 5200]),
+        ];
+
+        let (jobs, _) = build_batch_queue(raw_streaks, &config, &std::collections::HashMap::new()).unwrap();
+        let job = &jobs[1];
+
+        assert_eq!(job.blocks.len(), 2);
+
+        // scheduled_commands is tick-sorted and the blocks don't overlap, so
+        // the Nth start pairs with the Nth stop.
+        let mut expected: Vec<(i32, i32)> = ticks_for(job, "sys_record_start")
+            .into_iter()
+            .zip(ticks_for(job, "sys_record_stop"))
+            .collect();
+        expected.sort_unstable();
+
+        let mut reported: Vec<(i32, i32)> = job
+            .blocks
+            .iter()
+            .map(|b| (b.record_start_tick, b.record_stop_tick))
+            .collect();
+        reported.sort_unstable();
+
+        assert_eq!(
+            reported, expected,
+            "blocks must report the same frames the capture actually records between"
+        );
+        for b in &job.blocks {
+            assert!(
+                b.record_start_tick > 0 && b.record_stop_tick >= b.record_start_tick,
+                "block {} has an unusable record window {}..{}",
+                b.block_index, b.record_start_tick, b.record_stop_tick
+            );
+        }
+    }
+
+    #[test]
+    fn test_decal_flush_pins_the_ring_once_at_demo_load_and_never_again() {
+        // r_decals bounds how far the rotating decal index may travel before it
+        // wraps; it evicts nothing. Setting it a second time, lower, strands
+        // every decal above the new limit permanently — so exactly one command
+        // may own it, and it has to land at demo load.
+        let mut config = mock_config();
+        config.decal_ring_limit = 128;
+
+        let (jobs, _) = build_batch_queue(
+            vec![streak_with_kills(1000, 1200, &[1000, 1200])],
+            &config,
+            &std::collections::HashMap::new(),
+        ).unwrap();
+        let job = &jobs[1];
+
+        assert_eq!(
+            job.init_commands.iter().filter(|c| c.starts_with("r_decals")).count(),
+            1,
+            "exactly one command may own the ring: {:?}",
+            job.init_commands
+        );
+        assert_eq!(
+            job.init_commands.last().map(String::as_str),
+            Some("r_decals 128"),
+            "and it has to land at demo load: {:?}",
+            job.init_commands
+        );
+        assert!(
+            !job.scheduled_commands.iter().any(|(_, c)| c.starts_with("r_decals")),
+            "r_decals must never be touched mid-demo — that is what strands decals"
+        );
+    }
+
+    #[test]
+    fn test_an_init_command_owns_the_ring_and_is_not_pinned_over() {
+        // The sweep is sized to the ring, so the two are one number and
+        // r_decals is where the engine reads it. Appending a second value could
+        // only overrule what was asked for, with nothing on screen to show it:
+        // the capture would run a ring the user did not choose, swept correctly
+        // for a size they did not ask for.
+        let mut config = mock_config();
+        config.decal_ring_limit = 128;
+        config.init_commands = vec!["r_decals 512".to_string()];
+
+        let (jobs, _) = build_batch_queue(
+            vec![streak_with_kills(1000, 1200, &[1000, 1200])],
+            &config,
+            &std::collections::HashMap::new(),
+        ).unwrap();
+
+        let pins: Vec<&String> = jobs[1]
+            .init_commands
+            .iter()
+            .filter(|c| c.starts_with("r_decals"))
+            .collect();
+        assert_eq!(
+            pins,
+            vec![&"r_decals 512".to_string()],
+            "the user's own line is the pin: {:?}",
+            jobs[1].init_commands
+        );
+    }
+
+    #[test]
+    fn test_decals_switched_off_entirely_is_left_alone() {
+        // r_decals 0 means no decals at all. There is no ring to turn and
+        // nothing to clear, so the flush has no work and no business pinning
+        // the cvar back up to a value that would start collecting them.
+        let mut config = mock_config();
+        config.init_commands = vec!["r_decals 0".to_string()];
+
+        let (jobs, _) = build_batch_queue(
+            vec![streak_with_kills(1000, 1200, &[1000, 1200])],
+            &config,
+            &std::collections::HashMap::new(),
+        ).unwrap();
+
+        assert_eq!(
+            jobs[1].init_commands.iter().filter(|c| c.starts_with("r_decals")).count(),
+            1,
+            "the user's r_decals 0 must survive untouched: {:?}",
+            jobs[1].init_commands
+        );
+    }
+
+    #[test]
+    fn test_decal_flush_disabled_leaves_r_decals_untouched() {
+        let mut config = mock_config();
+        config.decal_flush = false;
+
+        let (jobs, _) = build_batch_queue(
+            vec![streak_with_kills(1000, 1200, &[1000, 1200])],
+            &config,
+            &std::collections::HashMap::new(),
+        ).unwrap();
+
+        assert!(
+            !jobs[1].init_commands.iter().any(|c| c.starts_with("r_decals")),
+            "with the flush off the pipeline must not touch the cvar at all"
+        );
+    }
+
+    #[test]
+    fn test_a_maximum_ring_sweep_stops_pinning_the_cvar() {
+        // r_decals is clamped to MAX_RENDER_DECALS, so a sweep that size turns
+        // a full revolution whatever the cvar is. Pinning then buys nothing and
+        // costs the precondition the rest of the design works around — that
+        // nothing else may set r_decals.
+        let mut config = mock_config();
+        config.decal_ring_limit = crate::patch::MAX_RENDER_DECALS;
+
+        let (jobs, _) = build_batch_queue(
+            vec![streak_with_kills(1000, 1200, &[1000, 1200])],
+            &config,
+            &std::collections::HashMap::new(),
+        ).unwrap();
+
+        assert!(
+            !jobs[1].init_commands.iter().any(|c| c.starts_with("r_decals")),
+            "a maximum sweep must leave the cvar alone: {:?}",
+            jobs[1].init_commands
+        );
+    }
+
+    /// As `mock_config`, with a `config.cfg` in the game folder so the config
+    /// scan sees exactly what the test put there and nothing else.
+    ///
+    /// The tag is fixed rather than counted: scans are cached per folder, so a
+    /// case has to name its own folder to be sure of what it is reading.
+    fn mock_config_with_game_cfg(tag: &str, cfg_body: &str) -> PatcherConfig {
+        let config = mock_config_in(&format!("ring_{}", tag));
+        let cfg = std::path::Path::new(&config.game_path)
+            .parent()
+            .expect("game folder")
+            .join("dod")
+            .join("config.cfg");
+        if cfg_body.is_empty() {
+            let _ = std::fs::remove_file(&cfg);
+        } else {
+            std::fs::write(&cfg, cfg_body).expect("config.cfg");
+        }
+        config
+    }
+
+    #[test]
+    fn test_a_maximum_ring_still_pins_when_a_game_config_sets_the_cvar() {
+        // "A full revolution whatever the cvar is" holds for every value but
+        // zero. A movie.cfg setting `r_decals 0` is real — it is in the working
+        // install — and without a pin the sweep would be sized to the maximum,
+        // report a full revolution, and inject into a ring the engine keeps
+        // nothing in. Silent, and invisible in every statistic the flush logs.
+        let mut config = mock_config_with_game_cfg("zero", "r_decals 0\nfps_max 999\n");
+        config.decal_ring_limit = crate::patch::MAX_RENDER_DECALS;
+
+        let (jobs, _) = build_batch_queue(
+            vec![streak_with_kills(1000, 1200, &[1000, 1200])],
+            &config,
+            &std::collections::HashMap::new(),
+        ).unwrap();
+
+        assert!(
+            jobs[1].init_commands.iter().any(|c| c == "r_decals 4096"),
+            "a config that sets the cvar has to be answered: {:?}",
+            jobs[1].init_commands
+        );
+    }
+
+    #[test]
+    fn test_a_maximum_ring_leaves_the_cvar_alone_when_no_config_touches_it() {
+        // The other half of the rule, against a game folder proven empty rather
+        // than one that merely happens to be.
+        let mut config = mock_config_with_game_cfg("clean", "");
+        config.decal_ring_limit = crate::patch::MAX_RENDER_DECALS;
+
+        let (jobs, _) = build_batch_queue(
+            vec![streak_with_kills(1000, 1200, &[1000, 1200])],
+            &config,
+            &std::collections::HashMap::new(),
+        ).unwrap();
+
+        assert!(
+            !jobs[1].init_commands.iter().any(|c| c.starts_with("r_decals")),
+            "nothing else sets the cvar, so the pin buys nothing: {:?}",
+            jobs[1].init_commands
+        );
+    }
+
+    #[test]
+    fn test_a_config_never_overrides_what_init_commands_state() {
+        // The config only decides whether the pin is worth spending. It is
+        // never adopted as a value — `init_commands` stays the authority, and a
+        // stated maximum is still the user's own line and still the pin.
+        let mut config = mock_config_with_game_cfg("stated", "r_decals 0\n");
+        config.decal_ring_limit = 256;
+        config.init_commands = vec!["r_decals 4096".to_string()];
+
+        let (jobs, _) = build_batch_queue(
+            vec![streak_with_kills(1000, 1200, &[1000, 1200])],
+            &config,
+            &std::collections::HashMap::new(),
+        ).unwrap();
+
+        let pins: Vec<&String> = jobs[1]
+            .init_commands
+            .iter()
+            .filter(|c| c.starts_with("r_decals"))
+            .collect();
+        assert_eq!(
+            pins,
+            vec![&"r_decals 4096".to_string()],
+            "exactly the stated line, appended once"
+        );
+    }
+
+    #[test]
+    fn test_anything_below_the_maximum_still_pins() {
+        // Below the ceiling the sweep only covers the ring it was sized for, so
+        // the cvar has to be held there or the sweep under-clears.
+        let mut config = mock_config();
+        config.decal_ring_limit = crate::patch::MAX_RENDER_DECALS - 1;
+
+        let (jobs, _) = build_batch_queue(
+            vec![streak_with_kills(1000, 1200, &[1000, 1200])],
+            &config,
+            &std::collections::HashMap::new(),
+        ).unwrap();
+
+        assert_eq!(
+            jobs[1].init_commands.last().map(String::as_str),
+            Some("r_decals 4095")
+        );
     }
 
     #[test]

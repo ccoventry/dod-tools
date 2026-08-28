@@ -3,6 +3,7 @@ mod render_manager;
 mod settings_manager;
 mod audit_manager;
 mod dir_browser;
+mod map_manager;
 
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 use capture_manager::{CaptureManager, CapturePayload, launch_demo_preview, generate_all_previews, launch_standalone_game, check_engine_processes, kill_engine_processes, scan_orphaned_previews, delete_orphaned_previews};
@@ -570,6 +571,11 @@ pub fn run() {
             dir_browser::default_browse_dir,
             dir_browser::count_demo_files_in_folder,
             dir_browser::scan_demo_folders,
+            map_manager::check_demo_maps,
+            map_manager::download_map,
+            map_manager::map_download_url,
+            map_manager::scan_game_configs,
+            map_manager::roll_floors,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

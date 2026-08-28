@@ -133,6 +133,16 @@ pub struct CaptureBlock {
     pub source_streak_indices: Vec<usize>,
     pub start_tick: i32,
     pub end_tick: i32,
+    /// Frame ordinal `sys_record_start` fires on — the first frame that lands
+    /// in the take. Distinct from `start_tick`, which is the highlight's own
+    /// bound and carries neither the record lead nor the pre-roll. The decal
+    /// flush keys off these two: everything outside them is scrubbed.
+    #[serde(default)]
+    pub record_start_tick: i32,
+    /// Frame ordinal `sys_record_stop` fires on, after the record trail and
+    /// any end-of-demo clamp.
+    #[serde(default)]
+    pub record_stop_tick: i32,
 }
 
 #[derive(Debug, Clone)]
@@ -187,6 +197,39 @@ pub struct PatcherConfig {
     pub auto_clear_logs: bool,
     pub auto_clear_previews: bool,
     pub auto_clear_temp_demos: bool,
+    /// Clear accumulated wall decals ahead of every recorded clip, so the
+    /// second and later takes cut from one demo don't start dirty. Runs as a
+    /// pre-pass inside `StreamPatcher::patch` — see `patch::decal_strip`.
+    #[serde(default = "default_decal_flush")]
+    pub decal_flush: bool,
+    /// Decal ring size the flush pins `r_decals` to. A sweep costs one injected
+    /// message per slot regardless of how dirty the walls actually are, so this
+    /// trades injected bytes against how many decals a clip may accumulate
+    /// before the ring starts eating its own. NOTHING else in the pipeline may
+    /// set `r_decals` — lowering it mid-demo is precisely what strands decals.
+    #[serde(default = "default_decal_ring_limit")]
+    pub decal_ring_limit: u32,
+    /// Horizontal field of view the capture will run at, in degrees. Together
+    /// with the frame shape it decides how far off the view axis a flush
+    /// position may sit and still be in shot.
+    ///
+    /// `mirv_fov` in `init_commands` overrides this when present, since that is
+    /// the value the engine will actually use and two settings that disagree
+    /// would be worse than one.
+    #[serde(default = "default_capture_fov")]
+    pub capture_fov: f32,
+}
+
+fn default_decal_flush() -> bool {
+    true
+}
+
+fn default_decal_ring_limit() -> u32 {
+    256
+}
+
+fn default_capture_fov() -> f32 {
+    90.0
 }
 
 impl PatcherConfig {
@@ -265,6 +308,9 @@ impl Default for PatcherConfig {
             auto_clear_logs: false,
             auto_clear_previews: false,
             auto_clear_temp_demos: false,
+            decal_flush: default_decal_flush(),
+            decal_ring_limit: default_decal_ring_limit(),
+            capture_fov: default_capture_fov(),
         }
     }
 }

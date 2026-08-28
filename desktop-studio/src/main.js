@@ -15,8 +15,11 @@ import {
   diagnoseExecutablePaths
 } from './ipc_bridge.js';
 import { renderMasterList, initMasterPane } from './master_pane.js';
+import { initMapWarnings, refreshMapWarnings, resetMapWarnings } from './map_warnings.js';
+import { initRollFloors } from './roll_floors.js';
+
 import { renderDetailView, initDetailPane } from './detail_pane.js';
-import { initCaptureUI, getCommandsState, hydrateCommandsState, refreshLaunchGuard } from './capture_pane.js';
+import { initCaptureUI, getCommandsState, hydrateCommandsState, refreshLaunchGuard, refreshInitCommandWarnings } from './capture_pane.js';
 import { initRenderUI, checkRenderRecoveryOnStartup } from './render_pane.js';
 import { initAuditorPane } from './auditor_pane.js';
 import { initAnalyzerPane } from './analyzer_pane.js';
@@ -339,6 +342,9 @@ window.addEventListener("DOMContentLoaded", async () => {
     const resWidth = parseInt(document.querySelector('#config-res-width')?.value, 10) || 1280;
     const resHeight = parseInt(document.querySelector('#config-res-height')?.value, 10) || 720;
     const separateHud = document.querySelector('#config-separate-hud')?.checked || false;
+    // Defaults on when the element is missing, matching the backend default —
+    // `?? true` rather than `|| false`, which would silently disable it.
+    const decalFlush = document.querySelector('#config-decal-flush')?.checked ?? true;
     const ffmpegCapture = document.querySelector('#config-ffmpeg-capture')?.checked || false;
     const addCondebug = document.querySelector('#config-add-condebug')?.checked || false;
 
@@ -374,6 +380,7 @@ window.addEventListener("DOMContentLoaded", async () => {
       resolution_width: resWidth,
       resolution_height: resHeight,
       separate_hud: separateHud,
+      decal_flush: decalFlush,
       ffmpeg_capture: ffmpegCapture,
       add_condebug: addCondebug,
       auto_clear_logs: autoClearLogs,
@@ -416,6 +423,10 @@ window.addEventListener("DOMContentLoaded", async () => {
       if (settings.hl_path) {
         const inputEl = document.querySelector('#hl-path-input');
         if (inputEl) inputEl.value = settings.hl_path;
+        // The game folder is only known once the persisted path lands here, so
+        // this is where the config scan can first say anything useful.
+        // Deferred: the init commands hydrate later in this same load, and the
+        // warning is about how those two interact.
       }
       if (settings.ffmpeg_path) {
         const inputEl = document.querySelector('#ffmpeg-override-path-input');
@@ -443,6 +454,8 @@ window.addEventListener("DOMContentLoaded", async () => {
       }
       const separateHudEl = document.querySelector('#config-separate-hud');
       if (separateHudEl) separateHudEl.checked = !!settings.separate_hud;
+      const decalFlushEl = document.querySelector('#config-decal-flush');
+      if (decalFlushEl) decalFlushEl.checked = settings.decal_flush !== false;
       const ffmpegCaptureEl = document.querySelector('#config-ffmpeg-capture');
       if (ffmpegCaptureEl) ffmpegCaptureEl.checked = !!settings.ffmpeg_capture;
       applyCaptureModeUI();
@@ -508,6 +521,9 @@ window.addEventListener("DOMContentLoaded", async () => {
         renderExportDirsEditor.render();
       }
       hydrateCommandsState(settings.init_commands, settings.custom_commands);
+      // Both halves of the question are now in the DOM: the game path, and the
+      // commands that will run against whatever its configs set.
+      refreshInitCommandWarnings();
       if (settings.studio_mode === 'workspace' || settings.studio_mode === 'quick-clip') {
         studioMode = settings.studio_mode;
       }
@@ -935,6 +951,13 @@ window.addEventListener("DOMContentLoaded", async () => {
       if (selectedDemoIdx !== null) {
         selectDemoAndRenderDetail(currentScannedDemos[selectedDemoIdx], selectedDemoIdx);
       }
+      // Reads 544 bytes per demo and one map file per distinct map, so it runs
+      // after the scan rather than inside it. Not awaited: the queue is already
+      // usable, and a demo whose map is missing is still worth listing.
+      refreshMapWarnings(
+        newlyScanned.map((d) => d.path),
+        document.querySelector('#hl-path-input')?.value?.trim() || ''
+      );
     } catch (err) {
       console.error("Error scanning directories:", err);
       showToast(STRINGS.MAIN.scanErrorToast(err), 'error');
@@ -1185,6 +1208,9 @@ window.addEventListener("DOMContentLoaded", async () => {
     updateDemoFooter(currentScannedDemos);
     renderMasterList(currentScannedDemos, selectedDemoIdx);
     renderDetailView(selectedDemoIdx !== null ? currentScannedDemos[selectedDemoIdx] : null, selectedDemoIdx);
+    // The banner is about demos in the queue. With the queue empty there is
+    // nothing left for it to be about.
+    if (currentScannedDemos.length === 0) resetMapWarnings();
   }
 
   // One-line callout appended to Clear actions' toasts/summaries whenever an
@@ -1389,6 +1415,19 @@ window.addEventListener("DOMContentLoaded", async () => {
   }
 
   initMasterPane(onDeleteDemo, requestTrackedDeleteConfirm);
+  // Read at click time, not captured: the hl.exe path can be set after a scan
+  // has already run and left the banner up.
+  initMapWarnings(() => document.querySelector('#hl-path-input')?.value?.trim() || '');
+  // capture_pane.js owns the Scheduled Command list, so the floor check reads
+  // it from there rather than keeping a second copy.
+  initRollFloors(() => getCommandsState().custom_commands);
+  // Scanned once the persisted hl.exe path is in the DOM, and again whenever it
+  // changes — a config file the app cannot see is exactly what this warns about.
+  const hlPathInput = document.querySelector('#hl-path-input');
+  if (hlPathInput) {
+    refreshInitCommandWarnings();
+    hlPathInput.addEventListener('change', () => refreshInitCommandWarnings());
+  }
   initDetailPane(() => currentScannedDemos, () => {
     // Fired on both streak selection and status edits — selection moves
     // required capture bytes (refreshLaunchGuard) and both move the Master
