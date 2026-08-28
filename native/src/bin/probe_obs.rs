@@ -517,6 +517,14 @@ fn compact(v: &serde_json::Value) -> String {
 struct ObsClient {
     ws: tungstenite::WebSocket<std::net::TcpStream>,
     next_id: u64,
+    /// Why the server hung up, when it did.
+    ///
+    /// obs-websocket does not answer a bad `Identify` — it closes the socket
+    /// with a code, and 4009 specifically means the authentication string did
+    /// not match. Without capturing that, a wrong password and a wrong
+    /// handshake implementation produce the identical symptom of "never
+    /// Identified", which is exactly the ambiguity this probe exists to avoid.
+    last_close: Option<String>,
 }
 
 impl ObsClient {
@@ -533,7 +541,7 @@ impl ObsClient {
         )
         .map_err(|e| format!("websocket handshake: {}", e))?;
 
-        let mut client = Self { ws, next_id: 0 };
+        let mut client = Self { ws, next_id: 0, last_close: None };
 
         // op 0 Hello -> op 1 Identify -> op 2 Identified.
         let hello = client
@@ -541,6 +549,7 @@ impl ObsClient {
             .ok_or("no Hello (op 0) from OBS")?;
 
         let mut identify = serde_json::json!({ "rpcVersion": 1 });
+        let auth_required = hello["authentication"].is_object();
         if let Some(auth) = hello["authentication"].as_object() {
             let password = password.ok_or(
                 "OBS requires authentication but no --password was given",
@@ -551,9 +560,32 @@ impl ObsClient {
                 serde_json::Value::String(auth_string(password, salt, challenge));
         }
         client.send(serde_json::json!({ "op": 1, "d": identify }))?;
-        client
-            .read_op(2, Duration::from_secs(10))
-            .ok_or("never Identified — wrong password?")?;
+
+        if client.read_op(2, Duration::from_secs(10)).is_none() {
+            return Err(match client.last_close.as_deref() {
+                // 4009 is obs-websocket's own "authentication failed" code, so
+                // this is a definite answer rather than a guess.
+                Some(reason) if reason.contains("4009") => format!(
+                    "OBS rejected the password (close {}).\n\
+                     The handshake itself is fine — the server got a well-formed Identify and \
+                     disagreed with the hash, which only happens when the password differs.\n\
+                     Use the Copy button beside Server Password in OBS rather than reading it \
+                     off the screen; 1/l and 0/O are easy to mistake.",
+                    reason
+                ),
+                Some(reason) => format!(
+                    "OBS closed the connection before Identified: {}\n\
+                     (auth was {} by the server)",
+                    reason,
+                    if auth_required { "required" } else { "not required" }
+                ),
+                None => format!(
+                    "no Identified (op 2) and no close frame within 10s — auth was {} by the \
+                     server. This is not a password failure; the server said nothing at all.",
+                    if auth_required { "required" } else { "not required" }
+                ),
+            });
+        }
         Ok(client)
     }
 
@@ -594,7 +626,13 @@ impl ObsClient {
             };
             let text = match msg {
                 tungstenite::Message::Text(t) => t.to_string(),
-                tungstenite::Message::Close(_) => return None,
+                tungstenite::Message::Close(frame) => {
+                    self.last_close = Some(match frame {
+                        Some(f) => format!("code {} — {}", u16::from(f.code), f.reason),
+                        None => "no close frame detail".to_string(),
+                    });
+                    return None;
+                }
                 _ => continue,
             };
             let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&text) else {
