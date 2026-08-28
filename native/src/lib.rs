@@ -239,7 +239,34 @@ const MAX_RETAINED_ACTIVITY_LOG_DAYS: usize = 30;
 /// Directory `log_markdown` writes into.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn activity_log_dir() -> std::path::PathBuf {
-    crate::shared::paths::get_appdata_dir().join("logs")
+    redirected_log_dir().unwrap_or_else(|| crate::shared::paths::get_appdata_dir().join("logs"))
+}
+
+/// Where the activity log goes when it must not go to the user's own.
+///
+/// The activity log is this project's primary record of what a capture did —
+/// the decal flush work was reconstructed from it repeatedly. Test runs
+/// exercise real pipeline code that logs, so without this they append fixture
+/// names like `no_such_demo_should_ever_be_read.dem` into
+/// `%APPDATA%/dod-tools/logs` under their own session headers, indistinguishable
+/// from a genuine capture that failed. It also means `cargo test` silently
+/// mutates a user file outside the repo. See issue #64.
+///
+/// Two ways in. `DOD_TOOLS_LOG_DIR` redirects it for anyone who needs it —
+/// an integration test, a packaging check, someone reproducing a bug without
+/// stamping on their real record — and a `cfg(test)` build redirects itself.
+/// The env var is checked first so a test binary compiled *without* `cfg(test)`
+/// (an integration test, or another crate's tests linking this one as an
+/// ordinary dependency) can still be pointed somewhere safe.
+#[cfg(not(target_arch = "wasm32"))]
+fn redirected_log_dir() -> Option<std::path::PathBuf> {
+    if let Some(dir) = std::env::var_os("DOD_TOOLS_LOG_DIR") {
+        return Some(std::path::PathBuf::from(dir));
+    }
+    if cfg!(test) {
+        return Some(std::env::temp_dir().join("dod_tools_test_logs"));
+    }
+    None
 }
 
 /// Path `log_markdown` is currently writing to — one file per calendar day
@@ -330,5 +357,59 @@ pub fn log_markdown(msg: &str) {
     #[cfg(target_arch = "wasm32")]
     {
         log::info!("{}", msg);
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod activity_log_tests {
+    use super::*;
+
+    /// The invariant: a test run must not write outside the repo and its
+    /// scratch. This is the one that matters — everything else here just
+    /// explains how it is held.
+    #[test]
+    fn a_test_run_never_logs_into_the_users_own_activity_log() {
+        let real = crate::shared::paths::get_appdata_dir().join("logs");
+        assert_ne!(
+            activity_log_dir(),
+            real,
+            "cargo test is appending fixture sessions to the real capture record"
+        );
+        assert!(
+            !activity_log_path().starts_with(&real),
+            "the log file landed inside the user's own log directory"
+        );
+    }
+
+    #[test]
+    fn the_env_override_outranks_everything() {
+        // The override exists for the case cfg(test) cannot reach: a binary or
+        // integration test that links this crate as an ordinary dependency, so
+        // it is compiled without cfg(test) and would otherwise write to the
+        // user's real log.
+        let want = std::env::temp_dir().join("dod_tools_override_probe");
+        // SAFETY-adjacent: this test is the only one touching the variable, and
+        // it restores it, but the process is shared with other tests — so it
+        // asserts on the redirect helper rather than leaving the var set across
+        // a logging call somebody else makes.
+        let previous = std::env::var_os("DOD_TOOLS_LOG_DIR");
+        unsafe { std::env::set_var("DOD_TOOLS_LOG_DIR", &want) };
+        let got = redirected_log_dir();
+        match previous {
+            Some(p) => unsafe { std::env::set_var("DOD_TOOLS_LOG_DIR", p) },
+            None => unsafe { std::env::remove_var("DOD_TOOLS_LOG_DIR") },
+        }
+        assert_eq!(got, Some(want));
+    }
+
+    #[test]
+    fn writing_a_line_lands_in_the_redirected_directory() {
+        // Not just the path calculation — the whole write path, since
+        // `log_markdown` computes the directory itself rather than taking one.
+        log_markdown("activity log redirect probe");
+        let path = activity_log_path();
+        assert!(path.exists(), "nothing was written to {}", path.display());
+        let body = std::fs::read_to_string(&path).unwrap_or_default();
+        assert!(body.contains("activity log redirect probe"));
     }
 }

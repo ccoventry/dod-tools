@@ -39,6 +39,17 @@
 - **Data Portability:** Path resolution (Saved Path -> Project Root -> Last Used Directory -> Game Directory) must be dynamically computed in memory. Never destructively overwrite relative saved JSON paths with locally resolved absolute paths.
 - **Watermarking Pattern:** Output generated assets tracking using 1:1 sidecar files (`.dodtools_preview`) to maintain atomic cleanup and file-system renaming resilience, avoiding master list locks.
 - **`game_path` Names `hl.exe`, Not the Folder.** Every consumer reads `Path::new(&config.game_path).parent()` and joins from there, so a value pointing at the directory silently resolves one level too high — `dod_dir` becomes the game folder's *parent* plus `dod`. Nothing errors; the code just reads and writes somewhere else. This was live in the builder's own test helper, where it put every test's helper and chain `.cfg` files into a single shared `%TEMP%/dod`.
+- **A Test Run Must Not Write Outside the Repo and Its Scratch.** `log_markdown` resolved its
+  destination straight from `get_appdata_dir()`, so `cargo test` appended fixture sessions into the
+  user's live activity log — entries naming demos like `no_such_demo_should_ever_be_read.dem`, under
+  their own session headers, indistinguishable from a genuine capture that failed. That matters more
+  here than it would elsewhere: the activity log is this project's primary record of what a capture
+  did, and the whole decal-flush investigation was reconstructed from it. `activity_log_dir()` now
+  redirects through `DOD_TOOLS_LOG_DIR`, falling back to a temp scratch under `cfg(test)`. The env
+  var is checked **first**, because `cfg(test)` only covers this crate's own unit tests — an
+  integration test, a bin target, or another crate's tests linking this one as an ordinary
+  dependency all compile it without `cfg(test)` and would otherwise write to the real log. Verified
+  by running the whole workspace suite and confirming the real log's size and mtime are unchanged.
 - **A Test That Writes Into a Game Folder Needs Its Own.** `build_batch_queue` writes `dodtools_helper.cfg` and `dodtools_chain_*.cfg` into the game folder, and deletes the previous run's on the way in. Tests sharing one folder therefore delete each other's files mid-write — a sharing violation on Windows, surfacing as an `Err` from a call every test unwraps, on a random subset of tests, only under parallelism. Name the folder from `std::thread::current().name()`: unique per test, stable across runs, so temp usage stays bounded instead of growing by one folder per run.
 
 ## Architectural Non-Goals
