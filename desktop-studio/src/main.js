@@ -65,6 +65,17 @@ async function refreshHlaeFfmpegStatus() {
   }
 
   const s = result?.state || {};
+  // Outranks every message below it, because it questions the thing they are
+  // all about: if that is not HLAE, what its ffmpeg folder contains is beside
+  // the point. Still only a note — the button and everything else keep working,
+  // since only one HLAE build's metadata has actually been measured and a build
+  // that labels itself differently must not be treated as a fake.
+  if (result.hlae_identity) {
+    statusEl.textContent = STRINGS.CAPTURE_CONFIG.HLAE_FFMPEG_NOT_HLAE(result.hlae_identity);
+    linkBtn.style.display = result?.can_link ? '' : 'none';
+    return;
+  }
+
   switch (s.state) {
     case 'bundled':
       statusEl.textContent = STRINGS.CAPTURE_CONFIG.HLAE_FFMPEG_BUNDLED(s.path);

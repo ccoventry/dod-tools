@@ -320,6 +320,14 @@ async fn check_hlae_ffmpeg(
         .as_deref()
         .and_then(|p| hf::verify_is_ffmpeg(p).err());
 
+    // Whether the HLAE Executable above is HLAE. It cannot be asked the way
+    // FFmpeg is — running it launches the application — so its embedded version
+    // resource is the only thing available. Advisory: `None` covers both "looks
+    // right" and "carries no metadata to judge by", and a complaint never blocks
+    // anything.
+    let hlae_identity =
+        native::shared::win_version_info::hlae_mismatch(std::path::Path::new(&hlae_path));
+
     Ok(serde_json::json!({
         "state": state,
         "usable": state.is_usable(),
@@ -327,6 +335,7 @@ async fn check_hlae_ffmpeg(
         "app_ffmpeg": app_ffmpeg.map(|p| p.to_string_lossy().into_owned()),
         "agrees_with_app": agrees_with_app,
         "app_ffmpeg_problem": app_ffmpeg_problem,
+        "hlae_identity": hlae_identity,
     }))
 }
 

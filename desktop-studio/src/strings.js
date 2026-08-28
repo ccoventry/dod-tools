@@ -158,6 +158,11 @@ export const STRINGS = {
     // ffplay.exe and ffprobe.exe live beside ffmpeg.exe and are one misclick
     // apart in a file picker, so this is worth naming rather than letting it
     // through to a capture that records nothing.
+    // Advisory, never a block: only one HLAE build's metadata has actually been
+    // measured, so a build that labels itself differently must not be treated
+    // as a fake. Silent when a file carries no metadata at all.
+    HLAE_FFMPEG_NOT_HLAE: (declared) =>
+        `The HLAE Executable above reports itself as "${declared}", not hlae.exe. Capture may not work if that isn't HLAE — everything here still runs if you know it's right.`,
     HLAE_FFMPEG_BAD_OVERRIDE: (why) =>
         `The FFmpeg Override Path above isn't FFmpeg: ${why}. Pick ffmpeg.exe — HLAE can't record with anything else.`,
     HLAE_FFMPEG_STALE: (target) =>
