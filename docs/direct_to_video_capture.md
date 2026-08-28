@@ -22,7 +22,7 @@
 > lower-quality convenience option rather than a replacement, with **Separate HUD explicitly out**.
 > It still has to answer how a non-BMP capture artefact flows through take verification, Render
 > Studio's admission predicate and export routing — questions this document already answers for the
-> FFmpeg path, and whose answers likely transfer.
+> FFmpeg path, and whose answers likely transfer. Written up in `docs/obs_alternate_capture.md`.
 
 ---
 
