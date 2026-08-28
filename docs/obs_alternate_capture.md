@@ -150,26 +150,57 @@ treatment the other signal dirs get in `CaptureCleanupGuard`.
    already computed**, and one that is exact because of the real-time property established above.
 4. `StopRecord` returns `outputPath`.
 
-Two properties make this work:
+Three properties make this work:
 
 - **OBS's start latency is absorbed by the pre-roll**, the same way the issue predicted the
   filesystem-watch latency would be. The pre-roll is at minimum `AUDIO_RESYNC_SECONDS` = 2.0s of real
   time, which is a very large budget for an encoder start.
 - **Only the start needs a signal.** The stop is arithmetic. That halves the exposure to log latency
   and means clip duration is exact rather than jittering with whatever the watcher happened to see.
+- **Each clip is its own recording, so each clip can be routed independently.** With
+  `SetRecordDirectory` between blocks, the multi-drive export pool the pipeline already bin-packs
+  across keeps working on this path. Nothing else in this design preserves that.
+
+Only the clip and its rolls are ever written, so the disk cost is the output and nothing else.
 
 The cost is that the recording contains the pre-roll and post-roll as head and tail footage. See
-"Does Render Studio still run" below — this turns out to be an argument *for* keeping it, not a
-problem.
+"Does Render Studio still run" below — the user can simply trim it in their editor, which is why the
+render pass stays *optional* here rather than becoming a requirement.
 
 ### Option B: record continuously, split at boundaries
 
-If `SplitRecordFile` is available, start recording once per chain and split at each block boundary,
-discarding the fast-forward segments. No encoder start/stop per clip at all, so no start latency and
-no risk of a stop/start cycle being too tight. Costs disk for the discarded segments — small, since
-fast-forward is fast — and depends on a request whose availability and container support both need
-checking. Worth prototyping if `SplitRecordFile` is present; Option A is the one that works
-everywhere.
+**This is not "one big file, cut up afterwards".** `SplitRecordFile` closes the current file and
+opens the next one *live*, mid-recording, so OBS itself writes the separate clips. Recording never
+stops between blocks, so the output is an alternating sequence:
+
+    [fast-forward junk] [clip 1] [fast-forward junk] [clip 2] [fast-forward junk] ...
+
+and the app deletes the junk segments as they close. The demo is never held as a single file, and the
+clips arrive already separate.
+
+What it buys is the elimination of encoder start/stop entirely: no start latency to absorb, and no
+exposure to `MIN_TAKE_SEPARATION_SECONDS`-style risk from a stop/start cycle landing too tight.
+
+What it costs:
+
+- **Transient disk for the junk segments.** Small — fast-forward is fast — but non-zero, and it is
+  strictly more than Option A writes.
+- **Per-block drive routing is gone.** One continuous recording writes to one directory, so the
+  export pool collapses to a single drive for the whole chain.
+- **It depends on a request** whose availability and per-container support both need checking.
+
+### Which one ships
+
+**Option A, and Option B is a contingency rather than a second user-facing mode.**
+
+Option B's only real advantage is removing start/stop latency — which matters *only if* the
+measurements in staging steps 1 and 2 show that OBS's start latency does not comfortably fit inside
+the pre-roll. If it fits, B buys nothing and costs drive routing.
+
+Shipping both as a user choice means maintaining two signalling paths, two verification shapes and
+two cleanup paths, on the feature explicitly scoped as the *convenience* option. That is a poor
+trade unless the measurements force it. Prototype B if `SplitRecordFile` turns out to be available,
+keep it in the back pocket, and revisit only if A's timing does not hold.
 
 ### Option C: precompute everything. Rejected.
 
