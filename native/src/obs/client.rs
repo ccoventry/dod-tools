@@ -335,14 +335,18 @@ impl ObsClient {
         }
 
         if let Some(container) = self.profile_param(category, "RecFormat2") {
-            // Only plain MP4/MOV lose the entire file when OBS dies mid-record:
-            // the index is written on a clean stop and nowhere else. MKV,
-            // MPEG-TS and the fragmented/hybrid MP4 variants all survive it.
+            // Measured on OBS 32.2.2 rather than assumed, because the received
+            // wisdom here is worse than the reality: an MP4 from an OBS killed
+            // mid-recording still played, decoded up to the moment it died, and
+            // reported only "partial file" with a damaged audio frame at the
+            // end. Truncated, not destroyed. MKV and the fragmented/hybrid MP4
+            // variants lose nothing at all, which is still worth having, but
+            // this is a preference and not the disaster it is usually called.
             if matches!(container.as_str(), "mp4" | "mov") {
                 warnings.push(format!(
-                    "OBS is recording to {container}. If OBS crashes mid-batch that file is \
-                     unplayable — its index is only written on a clean stop. MKV or hybrid MP4 \
-                     survive it, and dod-tools keeps whatever container OBS wrote."
+                    "OBS is recording to {container}. If OBS is killed mid-batch that block is \
+                     recoverable but cut short, with its last moment damaged. MKV or hybrid MP4 \
+                     lose nothing instead — dod-tools keeps whatever container OBS wrote."
                 ));
             }
         }

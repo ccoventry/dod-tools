@@ -44,11 +44,18 @@ pub struct RecordedBlock {
     pub take_folder: PathBuf,
     /// Where the video ended up, once folded into the take folder.
     pub video: PathBuf,
-    /// Wall-clock seconds OBS was recording. Compared against the block's
-    /// expected duration by take verification — a check the frame-sequence
-    /// path has no equivalent of, because there the duration is not known
-    /// ahead of time.
+    /// Wall-clock seconds between starting and stopping the recording.
+    ///
+    /// Close enough to the file's own duration on a clean stop — measured
+    /// 4.3s against a 4.28s file — but **not** for a salvaged block, where the
+    /// recording was cut off part way and the file is shorter than this by
+    /// however long the failure took to notice. Measured: 11.0s reported
+    /// against a 4.2s file. Check `salvaged` before trusting it as a duration.
     pub seconds: f64,
+    /// Recovered from disk after the connection died, rather than handed over
+    /// by a clean `StopRecord`. The file is playable but truncated, and its
+    /// tail is damaged where the muxer was interrupted.
+    pub salvaged: bool,
 }
 
 pub struct ObsSession {
@@ -257,14 +264,24 @@ impl ObsSession {
                 // — `stream_video_path` matches `video.<ext>` and nothing else.
                 match salvage_orphan(&dest) {
                     Some(video) => {
+                        // Measured against a real killed-mid-recording MP4:
+                        // the file plays, decodes to the point OBS died, and
+                        // reports "partial file" with a broken audio frame at
+                        // the very end. Truncated, not destroyed — so the
+                        // wording promises recovery, not integrity.
                         log_markdown(&format!(
                             "⚠️ **OBS** — lost the connection mid-block ({e}). Salvaged \
-                             `{}`, which may be unfinalised if OBS crashed rather than closed \
-                             — MKV survives that, MP4 usually does not.",
+                             `{}`. It will be short and its last moment damaged, because the \
+                             recording was cut off rather than stopped.",
                             video.display()
                         ));
                         let take_folder = take_folder_of(&dest);
-                        self.recorded.push(RecordedBlock { take_folder, video, seconds });
+                        self.recorded.push(RecordedBlock {
+                            take_folder,
+                            video,
+                            seconds,
+                            salvaged: true,
+                        });
                     }
                     None => self
                         .skipped
@@ -280,7 +297,12 @@ impl ObsSession {
         match fold_into_take(Path::new(&path), &dest) {
             Ok(video) => {
                 let take_folder = take_folder_of(&dest);
-                self.recorded.push(RecordedBlock { take_folder, video, seconds });
+                self.recorded.push(RecordedBlock {
+                    take_folder,
+                    video,
+                    seconds,
+                    salvaged: false,
+                });
             }
             Err(e) => self.skipped.push(e),
         }

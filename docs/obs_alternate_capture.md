@@ -750,10 +750,16 @@ fold the file. Anything else is somebody's own recording and is left alone.
 
 Two smaller ones found on the way:
 
-- **An OBS crash destroys a plain MP4 or MOV.** The index is written on a clean stop and nowhere
-  else. MKV, MPEG-TS and the hybrid/fragmented MP4 variants all survive, and `fold_into_take`
-  deliberately keeps whatever container OBS wrote — so preflight recommends MKV rather than forcing
-  it.
+- **An OBS killed mid-recording truncates a plain MP4 — it does not destroy it.** Measured on OBS
+  32.2.2, 2026-08-28, against a real killed recording: the salvaged file played, decoded cleanly up
+  to the moment OBS died (4.2s of an 11s block), and reported only `partial file` with one broken
+  audio frame at the tail. The received wisdom that an unfinalised MP4 is a total loss did not hold
+  here. MKV and the hybrid/fragmented MP4 variants still lose nothing at all, so preflight
+  recommends them — but as a preference, not a rescue. `fold_into_take` keeps whatever container OBS
+  wrote either way.
+- **A salvaged block's reported duration is wall-clock, not file length.** 11.0s reported against a
+  4.2s file, because the seconds between the failure happening and being noticed are counted but not
+  recorded. `RecordedBlock::salvaged` marks these; anything comparing a duration must check it.
 - **Automatic file splitting silently truncates a block.** `StopRecord` reports only the last piece,
   so everything before it is stranded under a name nothing downstream resolves. Preflight warns.
 

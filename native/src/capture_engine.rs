@@ -810,10 +810,16 @@ pub fn spawn_capture_engine(
                     log_markdown(&format!("⚠️ **OBS** — {problem}"));
                 }
                 for block in &session.recorded {
+                    // The duration is wall-clock, which tracks the file on a
+                    // clean stop and overstates it on a salvaged one — the
+                    // recording was cut off, so the seconds after that are not
+                    // in the file. Said out loud rather than silently printed
+                    // as if it were a length.
                     log_markdown(&format!(
-                        "- [obs] {} ({:.1}s) -> {}",
+                        "- [obs] {} ({:.1}s{}) -> {}",
                         block.take_folder.display(),
                         block.seconds,
+                        if block.salvaged { " of recording, salvaged — the file is shorter" } else { "" },
                         block.video.display()
                     ));
                 }
