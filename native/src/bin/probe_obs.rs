@@ -357,6 +357,20 @@ fn run_obs(args: &[String]) {
     // ── The measurement that matters ──────────────────────────────────────────
     println!("\n  recording {}s — timing the gap that Option A has to absorb", secs);
 
+    // A Game Capture source whose target process is gone records black, and the
+    // resulting file is valid in every other respect: right resolution, right
+    // frame rate, right duration, even real audio if another source supplies
+    // it. That is a measurement which looks successful and answers nothing —
+    // and it cost a full round of analysis before the game turned out to have
+    // exited. Checked here so the next person is told instead of deducing it.
+    if !game_is_running() {
+        println!(
+            "\n  WARNING: hl.exe is not running.\n\
+             \x20 Game Capture will record black, and the file will otherwise look correct.\n\
+             \x20 Launch the game first if you meant to measure whether OBS can see it.\n"
+        );
+    }
+
     if client
         .request("GetRecordStatus", serde_json::json!({}))
         .map(|d| d["outputActive"].as_bool().unwrap_or(false))
@@ -495,6 +509,20 @@ fn dump_scenes(client: &mut ObsClient) {
          \x20   GetInputList / GetInputSettings — reads only. This is what a scene\n\
          \x20   dropdown in dod-tools would be built from."
     );
+}
+
+/// Whether the game is up, checked the same way `capture_engine` checks it.
+///
+/// Note the game's lifecycle is not OBS's and not ours: dod-tools spawns
+/// `hl.exe` per batch and taskkills it at the end, and a `tauri dev` hot reload
+/// takes it down too. So "is it running right now" genuinely has to be asked
+/// rather than assumed from having launched it earlier.
+fn game_is_running() -> bool {
+    use sysinfo::{ProcessExt, SystemExt};
+    let sys = sysinfo::System::new_all();
+    sys.processes()
+        .values()
+        .any(|p| p.name().eq_ignore_ascii_case("hl.exe"))
 }
 
 /// One-line rendering of a response object, so four probes fit on four lines.
