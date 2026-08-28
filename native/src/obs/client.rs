@@ -461,8 +461,10 @@ impl ObsClient {
 
 /// obs-websocket v5 authentication.
 ///
-///     secret = base64(sha256(password + salt))
-///     auth   = base64(sha256(secret + challenge))
+/// ```text
+/// secret = base64(sha256(password + salt))
+/// auth   = base64(sha256(secret + challenge))
+/// ```
 ///
 /// Getting this wrong does not look like a bug: OBS simply never sends
 /// `Identified`, and it reads as a wrong password no matter what is actually

@@ -817,8 +817,17 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
     // `?? true` not `|| false`: a missing element must not silently disable
     // the flush, since nothing in the captured video would show that it had.
     const decalFlushVal = document.querySelector("#config-decal-flush")?.checked ?? true;
-    const ffmpegCaptureVal = document.querySelector("#config-ffmpeg-capture")?.checked || false;
+    // The mode select is the authority; `ffmpeg_capture` is derived from it so
+    // the payload cannot describe two modes at once. The backend reconciles
+    // both fields again in `normalise_capture_mode`, which is what keeps an
+    // older frontend working against this build.
+    const captureModeVal = document.querySelector("#config-capture-mode")?.value || "frame_sequence";
+    const ffmpegCaptureVal = captureModeVal === "direct_to_video";
     const ffmpegCaptureCodecVal = document.querySelector("#config-capture-codec")?.value || "utvideo";
+    const obsHostVal = document.querySelector("#config-obs-host")?.value?.trim() || "127.0.0.1";
+    const obsPortVal = parseInt(document.querySelector("#config-obs-port")?.value, 10) || 4455;
+    const obsPasswordVal = document.querySelector("#config-obs-password")?.value || "";
+    const obsSceneVal = document.querySelector("#config-obs-scene")?.value || "";
     const saveLocalPatchedCopyVal = document.querySelector("#config-save-local-patched")?.checked || false;
     const addCondebugVal = document.querySelector("#config-add-condebug")?.checked || false;
 
@@ -866,6 +875,11 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
       decal_flush: decalFlushVal,
       ffmpeg_capture: ffmpegCaptureVal,
       ffmpeg_capture_codec: ffmpegCaptureCodecVal,
+      capture_mode: captureModeVal,
+      obs_host: obsHostVal,
+      obs_port: obsPortVal,
+      obs_password: obsPasswordVal,
+      obs_scene: obsSceneVal,
       save_local_patched_copy: saveLocalPatchedCopyVal,
       add_condebug: addCondebugVal,
       streaks: selectedStreaks,

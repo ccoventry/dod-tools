@@ -164,6 +164,28 @@ export const STRINGS = {
     CAPTURE_MODE_VIDEO_TITLE:
         'HLAE pipes frames straight to FFmpeg as one lossless video per take. Same picture, roughly half the disk, and far fewer files. Needs the HLAE FFmpeg row above to be set.',
     CAPTURE_MODE_SWITCH_TITLE: 'Switch between capturing a bitmap frame sequence and a video file',
+    CAPTURE_MODE_LABEL: 'Capture Mode:',
+    CAPTURE_MODE_TITLE:
+        'How frames get onto disk. Frame sequence and Video are both HLAE, deterministic and capable of any frame rate. OBS records the screen in real time instead, which is faster to a finished file but captures whatever actually rendered.',
+    CAPTURE_MODE_OBS: 'OBS (real time)',
+    CAPTURE_MODE_OBS_TITLE:
+        'OBS records the game window while dod-tools tells it when each clip starts and stops. HLAE records nothing. Output is a finished, playable file with audio already in it — but capture runs at real time, so frames drop if the machine cannot keep up, and high capture rates are not possible. Separate HUD is not available on this path.',
+    // ── OBS connection ──────────────────────────────────────────────────────
+    OBS_SECTION_TITLE: 'OBS Connection',
+    OBS_HOST_LABEL: 'Host:',
+    OBS_PORT_LABEL: 'Port:',
+    OBS_PASSWORD_LABEL: 'Password:',
+    OBS_PASSWORD_PLACEHOLDER: 'From Tools → WebSocket Server Settings',
+    OBS_PASSWORD_TITLE:
+        'The obs-websocket password, if OBS has authentication enabled. Use the Copy button in OBS rather than retyping it.',
+    OBS_SCENE_LABEL: 'Scene:',
+    OBS_SCENE_TITLE:
+        'Scene to switch to for the batch, and switch back from afterwards. Leave on "Use current scene" to change nothing. The scene must contain a capture source pointed at hl.exe and an audio source.',
+    OBS_SCENE_CURRENT: 'Use current scene',
+    OBS_TEST_BUTTON: 'Test Connection',
+    OBS_TESTING: 'Connecting…',
+    OBS_ENABLE_HINT:
+        'OBS Studio 28+ has obs-websocket built in. Enable it under Tools → WebSocket Server Settings — the checkbox at the top of that dialog is the switch, not the Connect Info panel.',
     CAPTURE_CODEC_LABEL: 'Capture Codec:',
     // Says why the list is short, so the absence of H.264/HEVC reads as a
     // decision rather than an omission. The sizes are transcode measurements,

@@ -225,17 +225,24 @@
                      this; they now live in the Pipeline tab and must not be
                      duplicated here — two elements sharing an id would leave
                      querySelector wired to only the first one. -->
-                <div class="control-group setting-toggle">
-                  <span class="setting-label" id="capture-mode-label-frames" data-capture-mode="frames"
-                        data-str="CAPTURE_CONFIG.CAPTURE_MODE_FRAMES"
-                        data-str-title="CAPTURE_CONFIG.CAPTURE_MODE_FRAMES_TITLE">Frame sequence</span>
-                  <label class="setting-switch" data-str-title="CAPTURE_CONFIG.CAPTURE_MODE_SWITCH_TITLE">
-                    <input type="checkbox" id="config-ffmpeg-capture" />
-                    <span class="setting-switch-slider"></span>
-                  </label>
-                  <span class="setting-label" id="capture-mode-label-video" data-capture-mode="video"
-                        data-str="CAPTURE_CONFIG.CAPTURE_MODE_VIDEO"
-                        data-str-title="CAPTURE_CONFIG.CAPTURE_MODE_VIDEO_TITLE">Video</span>
+                <!-- A three-way select rather than the old two-state toggle.
+                     The modes are mutually exclusive — CaptureMode in the
+                     backend makes that unrepresentable rather than validated —
+                     and a toggle cannot express three. #config-ffmpeg-capture
+                     is kept as a hidden mirror so nothing that still reads it
+                     changes meaning; it is derived, never edited. -->
+                <div class="control-group">
+                  <label for="config-capture-mode" data-str="CAPTURE_CONFIG.CAPTURE_MODE_LABEL"
+                         data-str-title="CAPTURE_CONFIG.CAPTURE_MODE_TITLE">Capture Mode:</label>
+                  <select id="config-capture-mode" data-str-title="CAPTURE_CONFIG.CAPTURE_MODE_TITLE">
+                    <option value="frame_sequence" data-str="CAPTURE_CONFIG.CAPTURE_MODE_FRAMES"
+                            data-str-title="CAPTURE_CONFIG.CAPTURE_MODE_FRAMES_TITLE">Frame sequence</option>
+                    <option value="direct_to_video" data-str="CAPTURE_CONFIG.CAPTURE_MODE_VIDEO"
+                            data-str-title="CAPTURE_CONFIG.CAPTURE_MODE_VIDEO_TITLE">Video</option>
+                    <option value="obs" data-str="CAPTURE_CONFIG.CAPTURE_MODE_OBS"
+                            data-str-title="CAPTURE_CONFIG.CAPTURE_MODE_OBS_TITLE">OBS (real time)</option>
+                  </select>
+                  <input type="checkbox" id="config-ffmpeg-capture" hidden />
                 </div>
                 <!-- Lossless-only by design, not an oversight. The render pass
                      is mandatory (audio muxing, HUD alphamerge, export routing),
@@ -253,6 +260,40 @@
                     <option value="x264_lossless" data-str="CAPTURE_CONFIG.CODEC_X264_LOSSLESS">x264 lossless (smallest, slowest)</option>
                     <option value="rawvideo" data-str="CAPTURE_CONFIG.CODEC_RAWVIDEO">Uncompressed (no CPU cost, huge)</option>
                   </select>
+                </div>
+
+                <!-- Shown only in OBS mode. Read-only against the user's OBS:
+                     testing the connection switches no scene and writes no
+                     setting, so opening this panel cannot disturb a streaming
+                     setup. -->
+                <div id="obs-settings-group" style="display: none;">
+                  <h4 data-str="CAPTURE_CONFIG.OBS_SECTION_TITLE">OBS Connection</h4>
+                  <div class="control-group">
+                    <label for="config-obs-host" data-str="CAPTURE_CONFIG.OBS_HOST_LABEL">Host:</label>
+                    <input type="text" id="config-obs-host" value="127.0.0.1" style="width: 10em;" />
+                    <label for="config-obs-port" data-str="CAPTURE_CONFIG.OBS_PORT_LABEL">Port:</label>
+                    <input type="number" id="config-obs-port" value="4455" min="1" max="65535" style="width: 6em;" />
+                  </div>
+                  <div class="control-group">
+                    <label for="config-obs-password" data-str="CAPTURE_CONFIG.OBS_PASSWORD_LABEL">Password:</label>
+                    <input type="password" id="config-obs-password"
+                           data-str-placeholder="CAPTURE_CONFIG.OBS_PASSWORD_PLACEHOLDER"
+                           data-str-title="CAPTURE_CONFIG.OBS_PASSWORD_TITLE"
+                           placeholder="From Tools → WebSocket Server Settings" style="flex: 1;" />
+                    <button id="obs-test-btn" data-str="CAPTURE_CONFIG.OBS_TEST_BUTTON">Test Connection</button>
+                  </div>
+                  <div class="control-group">
+                    <label for="config-obs-scene" data-str="CAPTURE_CONFIG.OBS_SCENE_LABEL">Scene:</label>
+                    <select id="config-obs-scene" data-str-title="CAPTURE_CONFIG.OBS_SCENE_TITLE" style="flex: 1;">
+                      <option value="" data-str="CAPTURE_CONFIG.OBS_SCENE_CURRENT">Use current scene</option>
+                    </select>
+                  </div>
+                  <div id="obs-status" class="path-warning" style="display: none;"></div>
+                  <p class="setting-hint" data-str="CAPTURE_CONFIG.OBS_ENABLE_HINT">
+                    OBS Studio 28+ has obs-websocket built in. Enable it under Tools → WebSocket
+                    Server Settings — the checkbox at the top of that dialog is the switch, not the
+                    Connect Info panel.
+                  </p>
                 </div>
               </div>
             </div>
