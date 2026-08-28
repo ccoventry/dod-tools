@@ -369,6 +369,13 @@ export const STRINGS = {
     BATCH_FINISHED_WITH_ERRORS: 'Render batch finished with errors — check job rows for details.',
     BATCH_CANCELLED: 'Render batch cancelled.',
     BATCH_COMPLETED: 'Render batch completed successfully!',
+    // Mixed-outcome batches report every non-zero count instead of one label,
+    // so cancelling the takes you did not want does not read as "nothing
+    // rendered". Singular/plural matters here — these numbers are often 1.
+    countRendered: (n) => `${n} rendered`,
+    countFailed: (n) => (n === 1 ? '1 failed' : `${n} failed`),
+    countCancelled: (n) => `${n} cancelled`,
+    batchSummary: (parts) => `Render batch finished — ${parts}.`,
     STATUS_FINISHED: 'Status: Finished',
     scanFoundSoFar: (n) => `Status: Scanning… found ${n} take(s) so far`,
     ADD_RENDER_DIR_REQUIRED: 'Please add at least one render directory.',
