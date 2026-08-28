@@ -237,6 +237,23 @@
                         data-str="CAPTURE_CONFIG.CAPTURE_MODE_VIDEO"
                         data-str-title="CAPTURE_CONFIG.CAPTURE_MODE_VIDEO_TITLE">Video</span>
                 </div>
+                <!-- Lossless-only by design, not an oversight. The render pass
+                     is mandatory (audio muxing, HUD alphamerge, export routing),
+                     so a capture is always an intermediate that gets re-encoded
+                     — a lossy codec here would bake in artefacts for nothing.
+                     Every entry is also RGB/4:4:4 because hudAlpha carries the
+                     HUD matte in its red channel. Disabled unless Video is on;
+                     it has no meaning for a frame sequence. -->
+                <div class="control-group" id="capture-codec-group">
+                  <label for="config-capture-codec" data-str="CAPTURE_CONFIG.CAPTURE_CODEC_LABEL"
+                         data-str-title="CAPTURE_CONFIG.CAPTURE_CODEC_TITLE">Capture Codec:</label>
+                  <select id="config-capture-codec" data-str-title="CAPTURE_CONFIG.CAPTURE_CODEC_TITLE">
+                    <option value="utvideo" data-str="CAPTURE_CONFIG.CODEC_UTVIDEO">Ut Video (fastest, recommended)</option>
+                    <option value="ffv1" data-str="CAPTURE_CONFIG.CODEC_FFV1">FFV1 (smaller, slower)</option>
+                    <option value="x264_lossless" data-str="CAPTURE_CONFIG.CODEC_X264_LOSSLESS">x264 lossless (smallest, slowest)</option>
+                    <option value="rawvideo" data-str="CAPTURE_CONFIG.CODEC_RAWVIDEO">Uncompressed (no CPU cost, huge)</option>
+                  </select>
+                </div>
               </div>
             </div>
 

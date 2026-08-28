@@ -85,6 +85,13 @@ function applyCaptureModeUI() {
   document.querySelectorAll('.setting-label[data-capture-mode]').forEach((label) => {
     label.classList.toggle('active', (label.dataset.captureMode === 'video') === video);
   });
+  // The codec only describes a video file, so it is disabled rather than
+  // hidden in frame-sequence mode — a control that vanishes reads as a bug,
+  // and keeping it visible shows what switching to Video would give you.
+  const codecGroup = document.querySelector('#capture-codec-group');
+  const codecSelect = document.querySelector('#config-capture-codec');
+  if (codecSelect) codecSelect.disabled = !video;
+  if (codecGroup) codecGroup.classList.toggle('disabled', !video);
 }
 
 // ── HLAE's own FFmpeg ─────────────────────────────────────────────────────────
@@ -346,6 +353,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     // `?? true` rather than `|| false`, which would silently disable it.
     const decalFlush = document.querySelector('#config-decal-flush')?.checked ?? true;
     const ffmpegCapture = document.querySelector('#config-ffmpeg-capture')?.checked || false;
+    const ffmpegCaptureCodec = document.querySelector('#config-capture-codec')?.value || 'utvideo';
     const addCondebug = document.querySelector('#config-add-condebug')?.checked || false;
 
     const autoClearLogs = document.querySelector('#config-auto-clear-logs')?.checked || false;
@@ -382,6 +390,7 @@ window.addEventListener("DOMContentLoaded", async () => {
       separate_hud: separateHud,
       decal_flush: decalFlush,
       ffmpeg_capture: ffmpegCapture,
+      ffmpeg_capture_codec: ffmpegCaptureCodec,
       add_condebug: addCondebug,
       auto_clear_logs: autoClearLogs,
       auto_clear_previews: autoClearPreviews,
@@ -458,6 +467,8 @@ window.addEventListener("DOMContentLoaded", async () => {
       if (decalFlushEl) decalFlushEl.checked = settings.decal_flush !== false;
       const ffmpegCaptureEl = document.querySelector('#config-ffmpeg-capture');
       if (ffmpegCaptureEl) ffmpegCaptureEl.checked = !!settings.ffmpeg_capture;
+      const captureCodecEl = document.querySelector('#config-capture-codec');
+      if (captureCodecEl && settings.ffmpeg_capture_codec) captureCodecEl.value = settings.ffmpeg_capture_codec;
       applyCaptureModeUI();
       const addCondebugEl = document.querySelector('#config-add-condebug');
       if (addCondebugEl) addCondebugEl.checked = !!settings.add_condebug;

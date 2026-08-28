@@ -547,6 +547,14 @@ button.primary-btn:hover:not(:disabled) {
   gap: 4px;
 }
 
+/* A control that does not apply in the current mode — dimmed in place rather
+   than hidden, so it does not look like the UI lost something. The disabled
+   attribute on the input is what actually blocks interaction; this only says
+   so visually. */
+.control-group.disabled {
+  opacity: 0.45;
+}
+
 /* Pinned Bottom Status Bar — one child per tab (index.html), toggled by
    switchNavTab() (nav.js); only the active tab's content is visible. */
 #pinned-action-bar {

@@ -164,6 +164,17 @@ export const STRINGS = {
     CAPTURE_MODE_VIDEO_TITLE:
         'HLAE pipes frames straight to FFmpeg as one lossless video per take. Same picture, roughly half the disk, and far fewer files. Needs the HLAE FFmpeg row above to be set.',
     CAPTURE_MODE_SWITCH_TITLE: 'Switch between capturing a bitmap frame sequence and a video file',
+    CAPTURE_CODEC_LABEL: 'Capture Codec:',
+    // Says why the list is short, so the absence of H.264/HEVC reads as a
+    // decision rather than an omission. The sizes are transcode measurements,
+    // deliberately described as such — how each one behaves while competing
+    // with the game for cores during a live capture is not measured.
+    CAPTURE_CODEC_TITLE:
+        'All lossless: the render pass always re-encodes, so a lossy capture would cost quality for nothing. Ut Video is the only one built for real-time and is the safe default. The others are smaller per frame but heavier to encode, and the capture slows down if the encoder cannot keep up.',
+    CODEC_UTVIDEO: 'Ut Video (fastest, recommended)',
+    CODEC_FFV1: 'FFV1 (smaller, slower)',
+    CODEC_X264_LOSSLESS: 'x264 lossless (smallest, slowest)',
+    CODEC_RAWVIDEO: 'Uncompressed (no CPU cost, huge)',
     // Turning it on without HLAE having an FFmpeg produces a capture that runs
     // and records nothing, so it is worth saying before the batch rather than
     // after it.

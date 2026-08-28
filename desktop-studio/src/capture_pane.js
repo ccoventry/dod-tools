@@ -643,7 +643,10 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
   // change listener of their own — same missing-wiring bug as the Timing
   // Options fields above, just on Path Routing / Capture Output checkboxes.
   ['#config-add-condebug', '#config-auto-clear-logs', '#config-auto-clear-previews',
-   '#config-auto-clear-temp-demos', '#config-save-local-patched'].forEach(selector => {
+   '#config-auto-clear-temp-demos', '#config-save-local-patched',
+   // A <select> fires `change`, not `input` — it belongs here rather than in
+   // the list above, which is wired for text/number/checkbox inputs.
+   '#config-capture-codec'].forEach(selector => {
     const el = document.querySelector(selector);
     if (el) el.addEventListener('change', () => notifySettingsChange());
   });
@@ -815,6 +818,7 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
     // the flush, since nothing in the captured video would show that it had.
     const decalFlushVal = document.querySelector("#config-decal-flush")?.checked ?? true;
     const ffmpegCaptureVal = document.querySelector("#config-ffmpeg-capture")?.checked || false;
+    const ffmpegCaptureCodecVal = document.querySelector("#config-capture-codec")?.value || "utvideo";
     const saveLocalPatchedCopyVal = document.querySelector("#config-save-local-patched")?.checked || false;
     const addCondebugVal = document.querySelector("#config-add-condebug")?.checked || false;
 
@@ -861,6 +865,7 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
       separate_hud: separateHudVal,
       decal_flush: decalFlushVal,
       ffmpeg_capture: ffmpegCaptureVal,
+      ffmpeg_capture_codec: ffmpegCaptureCodecVal,
       save_local_patched_copy: saveLocalPatchedCopyVal,
       add_condebug: addCondebugVal,
       streaks: selectedStreaks,

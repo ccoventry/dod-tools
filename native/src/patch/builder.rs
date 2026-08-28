@@ -73,18 +73,6 @@ const LOG_TAG: &str = "[dod-tools]";
 /// pre-roll is shorter, so it never lands while still fast-forwarding.
 const SOUND_FLUSH_LEAD_SECONDS: f32 = 1.0;
 
-/// What `mirv_movie_ffmpeg` encodes to when direct-to-video capture is on.
-///
-/// Lossless, and chosen for speed rather than ratio: HLAE pipes frames to
-/// FFmpeg *live*, so an encoder that cannot keep up slows the capture down.
-/// `utvideo` exists for that job. Measured on real footage (3s at 1280x720,
-/// 120fps): `rawvideo` and the BMP sequence it replaces are both ~995 MB,
-/// `utvideo` 486 MB, `ffv1` 420 MB, `libx264 -qp 0` 267 MB. The smaller two are
-/// tempting and neither is built for real-time, which is a trade to make with
-/// capture-time measurements rather than file sizes — see
-/// `docs/direct_to_video_capture.md`.
-const FFMPEG_CAPTURE_CODEC: &str = "-c:v utvideo";
-
 /// Minimum breathing room between one take's `mirv_recordmovie_stop` and the
 /// next one's start. Two highlights closer than this are merged into a single
 /// take rather than risking a stop/start cycle that tight.
@@ -579,21 +567,23 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
     // ordinary syntax. {QUOTE} is HLAE's own token for a literal quote, which is
     // what keeps the inner path quoting away from the engine's parser entirely.
     //
-    // The codec is FFMPEG_CAPTURE_CODEC — see its own note for why it is
-    // lossless and why the size ranking there is not the viability ranking.
+    // The codec comes from the config — see `CaptureCodec` for why every option
+    // is lossless and RGB/4:4:4, and why the size ranking there is not the
+    // real-time-viability ranking.
     if config.ffmpeg_capture {
+        let codec_args = config.ffmpeg_capture_codec.args();
         helper_cfg_content.push_str("\n# Direct-to-video capture\n");
         helper_cfg_content.push_str("mirv_movie_ffmpeg all enabled 1\n");
         helper_cfg_content.push_str(&format!(
             "mirv_movie_ffmpeg all options \"{} {{QUOTE}}{{AFX_STREAM_PATH}}\\{}{{QUOTE}}\"\n",
-            FFMPEG_CAPTURE_CODEC,
+            codec_args,
             crate::hlcr::scanner::VIDEO_FILE,
         ));
         crate::log_markdown(&format!(
             "🎬 **Direct-to-video capture** — HLAE pipes frames to FFmpeg (`{}`) instead of \
              writing a BMP sequence, one `{}` per stream folder. Render Studio reads these the \
              same way it reads frame sequences.",
-            FFMPEG_CAPTURE_CODEC,
+            codec_args,
             crate::hlcr::scanner::VIDEO_FILE,
         ));
     }

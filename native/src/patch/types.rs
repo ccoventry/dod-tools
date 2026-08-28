@@ -8,6 +8,87 @@ use std::sync::{Arc, atomic::AtomicBool};
 pub const MAX_PAYLOAD_LIMIT_BYTES: usize = 2_097_152;
 pub const MAX_PAYLOAD_SIZE: usize = MAX_PAYLOAD_LIMIT_BYTES;
 
+// ── Direct-to-video capture codec ─────────────────────────────────────────────
+
+/// What `mirv_movie_ffmpeg` encodes to when direct-to-video capture is on.
+///
+/// **Lossless only, and RGB/4:4:4 only.** Two constraints, both load-bearing:
+///
+/// - The render pass is not optional — audio is a separate `sound.wav` that has
+///   to be muxed, Separate HUD needs an `alphamerge`, and export routing happens
+///   there. So a capture is always an intermediate that gets re-encoded, and a
+///   lossy capture codec would bake in artefacts for no benefit.
+/// - `hudAlpha` carries the HUD matte in its **red channel** and the renderer
+///   reads it with `extractplanes=r`. Any chroma-subsampled codec would destroy
+///   that silently — garbage HUD edges, no error anywhere.
+///
+/// Sizes measured on 3s of real footage at 1280x720/120fps, against the ~995 MB
+/// BMP sequence being replaced. **These are transcode figures with every core
+/// free, not capture-time.** HLAE pipes frames live, so an encoder that cannot
+/// keep up slows the capture instead of failing, and the size ranking is
+/// probably close to the inverse of the real-time-viability ranking.
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub enum CaptureCodec {
+    /// Built for real-time capture: fast, multithreaded, simple prediction.
+    /// 486 MB (0.49x). The default, and the only one proven in a real capture.
+    UtVideo,
+    /// Smaller (420 MB, 0.42x) but a range coder with context modelling — far
+    /// heavier per frame, and competing with `hl.exe` for cores during capture.
+    Ffv1,
+    /// Smallest lossless option at 267 MB (0.27x), and the heaviest to encode.
+    X264Lossless,
+    /// No compression — the same ~995 MB as the BMP sequence, and ~829 MB/s of
+    /// disk write at 300fps/720p, past a SATA SSD's ceiling. Kept as the
+    /// zero-CPU option for a machine that is CPU-bound rather than disk-bound.
+    RawVideo,
+}
+
+impl CaptureCodec {
+    /// The `-c:v ...` fragment placed at the head of the `mirv_movie_ffmpeg`
+    /// options string.
+    ///
+    /// `-pix_fmt gbrp` is explicit on every entry rather than left to FFmpeg's
+    /// negotiation. HLAE feeds `bgr24`, and the automatic choice happens to land
+    /// on `gbrp` for utvideo today — but "happens to" is what silently destroys
+    /// the HUD alpha the day it stops being true.
+    pub fn args(self) -> &'static str {
+        match self {
+            Self::UtVideo => "-c:v utvideo -pix_fmt gbrp",
+            Self::Ffv1 => "-c:v ffv1 -level 3 -pix_fmt gbrp",
+            Self::X264Lossless => "-c:v libx264 -qp 0 -pix_fmt gbrp",
+            Self::RawVideo => "-c:v rawvideo -pix_fmt bgr24",
+        }
+    }
+
+    /// Round-trips with `from_str_id` so a persisted setting parses back
+    /// without a second, drifting mapping — same contract as `RenderCodec`.
+    pub fn to_str_id(self) -> &'static str {
+        match self {
+            Self::UtVideo => "utvideo",
+            Self::Ffv1 => "ffv1",
+            Self::X264Lossless => "x264_lossless",
+            Self::RawVideo => "rawvideo",
+        }
+    }
+
+    /// Unrecognised ids fall back to the default rather than failing: a settings
+    /// file naming a codec this build does not have should not stop a capture.
+    pub fn from_str_id(id: &str) -> Self {
+        match id {
+            "ffv1" => Self::Ffv1,
+            "x264_lossless" => Self::X264Lossless,
+            "rawvideo" => Self::RawVideo,
+            _ => Self::UtVideo,
+        }
+    }
+}
+
+impl Default for CaptureCodec {
+    fn default() -> Self {
+        Self::UtVideo
+    }
+}
+
 // ── Command scheduling ────────────────────────────────────────────────────────
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq)]
@@ -184,6 +265,9 @@ pub struct PatcherConfig {
     /// Capture straight to video through `mirv_movie_ffmpeg` instead of writing
     /// a BMP frame sequence. See `docs/direct_to_video_capture.md`.
     pub ffmpeg_capture: bool,
+    /// Codec `mirv_movie_ffmpeg` encodes to. Only read when `ffmpeg_capture`
+    /// is set.
+    pub ffmpeg_capture_codec: CaptureCodec,
     pub resolution_width: i32,
     pub resolution_height: i32,
     pub primary_media_dir: Option<std::path::PathBuf>,
@@ -295,6 +379,7 @@ impl Default for PatcherConfig {
             capture_directories: Vec::new(),
             separate_hud: false,
             ffmpeg_capture: false,
+            ffmpeg_capture_codec: CaptureCodec::default(),
             resolution_width: 1280,
             resolution_height: 720,
             primary_media_dir: None,
@@ -340,4 +425,79 @@ pub struct CaptureWorker {
     pub is_running: bool,
     pub cancel_token: Arc<AtomicBool>,
     pub handle: Option<std::thread::JoinHandle<()>>,
+}
+
+#[cfg(test)]
+mod capture_codec_tests {
+    use super::CaptureCodec;
+
+    const ALL: [CaptureCodec; 4] = [
+        CaptureCodec::UtVideo,
+        CaptureCodec::Ffv1,
+        CaptureCodec::X264Lossless,
+        CaptureCodec::RawVideo,
+    ];
+
+    #[test]
+    fn test_str_id_round_trips_through_every_codec() {
+        // Settings persist the string id, so these must stay inverses or a
+        // saved choice silently reverts to the default on next launch.
+        for codec in ALL {
+            assert_eq!(CaptureCodec::from_str_id(codec.to_str_id()), codec);
+        }
+    }
+
+    #[test]
+    fn test_unknown_id_falls_back_to_default() {
+        // A settings file naming a codec this build does not have must not
+        // stop a capture.
+        assert_eq!(CaptureCodec::from_str_id("h265"), CaptureCodec::default());
+        assert_eq!(CaptureCodec::from_str_id(""), CaptureCodec::default());
+    }
+
+    #[test]
+    fn test_every_codec_pins_an_explicit_pixel_format() {
+        // hudAlpha carries the HUD matte in its red channel and the renderer
+        // reads it with extractplanes=r. Leaving pix_fmt to FFmpeg's
+        // negotiation is what would silently destroy that.
+        for codec in ALL {
+            assert!(
+                codec.args().contains("-pix_fmt"),
+                "{:?} must pin a pixel format",
+                codec
+            );
+        }
+    }
+
+    #[test]
+    fn test_no_codec_uses_chroma_subsampling() {
+        // Any yuv420p/yuv422p entry would wreck the HUD alpha with no error
+        // anywhere — the failure would only show up in a finished render.
+        for codec in ALL {
+            let args = codec.args();
+            assert!(
+                !args.contains("yuv420") && !args.contains("yuv422"),
+                "{:?} must stay RGB/4:4:4, got {}",
+                codec,
+                args
+            );
+        }
+    }
+
+    #[test]
+    fn test_no_codec_is_lossy() {
+        // The render pass always re-encodes, so a lossy capture codec costs
+        // quality for no benefit. x264 is admitted only at -qp 0.
+        for codec in ALL {
+            let args = codec.args();
+            if args.contains("libx264") {
+                assert!(args.contains("-qp 0"), "x264 must be lossless: {}", args);
+            }
+        }
+    }
+
+    #[test]
+    fn test_default_is_the_one_proven_in_a_real_capture() {
+        assert_eq!(CaptureCodec::default(), CaptureCodec::UtVideo);
+    }
 }

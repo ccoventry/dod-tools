@@ -40,6 +40,10 @@ pub struct CapturePayload {
     pub separate_hud: bool,
     #[serde(default)]
     pub ffmpeg_capture: bool,
+    /// Codec id for direct-to-video capture; unknown ids fall back to the
+    /// default rather than failing the batch.
+    #[serde(default)]
+    pub ffmpeg_capture_codec: String,
     #[serde(default)]
     pub save_local_patched_copy: bool,
     #[serde(default = "default_add_condebug")]
@@ -215,6 +219,7 @@ fn config_from_payload(payload: &CapturePayload) -> PatcherConfig {
     cfg.resolution_height = payload.resolution_height;
     cfg.separate_hud = payload.separate_hud;
     cfg.ffmpeg_capture = payload.ffmpeg_capture;
+    cfg.ffmpeg_capture_codec = native::patch::CaptureCodec::from_str_id(&payload.ffmpeg_capture_codec);
     cfg.save_local_patched_copy = payload.save_local_patched_copy;
     cfg.add_condebug = payload.add_condebug;
     cfg.auto_clear_logs = payload.auto_clear_logs;
@@ -1081,6 +1086,7 @@ pub async fn launch_standalone_game(app: tauri::AppHandle) -> Result<(), String>
             resolution_height: settings.resolution_height,
             separate_hud: settings.separate_hud,
             ffmpeg_capture: settings.ffmpeg_capture,
+            ffmpeg_capture_codec: native::patch::CaptureCodec::from_str_id(&settings.ffmpeg_capture_codec),
             ..PatcherConfig::default()
         };
 
@@ -1283,6 +1289,7 @@ mod tests {
             resolution_height: 1080,
             separate_hud: true,
             ffmpeg_capture: false,
+            ffmpeg_capture_codec: String::new(),
             save_local_patched_copy: false,
             add_condebug: true,
             streaks: Vec::new(),
