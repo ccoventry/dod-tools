@@ -16,7 +16,61 @@
 > `docs/goldsrc_dod_quirks.md` and `docs/hlae_protocols.md` hold the engine facts.
 >
 > **Everything below marked *(unverified)* needs an experiment.** The sections that are settled are
-> settled by reading this repository's own code, not by running OBS.
+> settled by reading this repository's own code, or — where it says so — by the probe run recorded
+> under "Measured against a live OBS" below.
+
+---
+
+## Measured against a live OBS, 2026-08-28
+
+Run with `native/src/bin/probe_obs.rs` against **OBS 32.2.2 / obs-websocket 5.7.4**. Everything in
+this section is measurement, not expectation.
+
+**Every request this design needs exists**, including both that were open questions:
+
+| request | | |
+|---|---|---|
+| `StartRecord` / `StopRecord` / `GetRecordStatus` | YES | the core loop |
+| `GetRecordDirectory` / `GetVideoSettings` | YES | preflight |
+| **`SetRecordDirectory`** | **YES** | so Option A's per-block export-pool routing is possible |
+| **`SplitRecordFile`** | **YES** | so Option B exists as a contingency |
+| `GetSceneList` / `GetSceneItemList` / `GetInputList` / `GetInputSettings` / `GetSceneCollectionList` | YES | the scene picker is buildable |
+| `SetVideoSettings` / `GetProfileList` / `SetCurrentProfile` / `CreateProfile` | YES | see "Video settings" below |
+
+**Start latency: 59–69 ms**, measured twice — the gap from `StartRecord` to
+`RecordStateChanged: OBS_WEBSOCKET_OUTPUT_STARTED`, which is when frames actually begin. The
+pre-roll budget is `AUDIO_RESYNC_SECONDS` = 2.0s, so this fits roughly thirty times over.
+**Option A's timing holds, and Option B's only real advantage disappears** — it stays a contingency
+and should not ship as a second user-facing mode.
+
+**Stop to file finalised: ~1.065 s**, also measured twice. This is a problem worth naming:
+`MIN_TAKE_SEPARATION_SECONDS` is **1.0 s**, so OBS needs marginally *longer* to finalise a file than
+the pipeline currently guarantees between one take's stop and the next one's start. That constant
+was derived for HLAE and must be raised for this path.
+
+**The container was MP4**, not the MKV this document assumed OBS defaults to. Both need handling, or
+the setting needs pinning — see the open question on containers.
+
+### The hook question: coexistence confirmed, frames still unproven
+
+With the HLAE-launched game running, `hl.exe` had **both** hooks loaded at once:
+
+    AfxHookGoldSrc.dll      HLAE's hook
+    graphics-hook32.dll     OBS Game Capture's hook
+    OPENGL32.dll            the API both are hooking
+
+So OBS Game Capture injects successfully into an HLAE-injected GoldSrc process, and the game stays
+alive and responsive. That retires the *crash* form of the risk.
+
+**It does not yet prove frames arrive.** Both hooks intercept the same OpenGL buffer swap, and the
+one probe recording attempted so far is void: the game had already exited when it ran, so the clip
+was 4.9s of black — a file with the right resolution, frame rate, duration and even real audio, and
+no information in it whatsoever. `probe_obs` now warns when `hl.exe` is not running, because that
+failure is indistinguishable from success by inspection.
+
+Note for whoever retests: dod-tools owns the game's lifecycle, and a `tauri dev` hot reload takes
+`hl.exe` down with it. The game being launched earlier in a session is not evidence it is running
+now.
 
 ---
 
@@ -87,8 +141,8 @@ The requests this needs:
 | `StartRecord` / `StopRecord` | `StopRecord` returns `outputPath` — the artefact's location, which is what take verification keys off instead of a take folder. |
 | `RecordStateChanged` (event) | `OBS_WEBSOCKET_OUTPUT_STARTED` / `STOPPED`, with `outputPath` on stop. Preferable to polling: it reports the moment recording *actually* began, which is not the moment `StartRecord` returned. |
 | `GetRecordDirectory` | where files will land, for the preflight report and the disk check. |
-| `SetRecordDirectory` | *(verify — believed obs-websocket 5.3+ / OBS 30)* per-block export routing without a cross-drive copy. |
-| `SplitRecordFile` | *(verify — believed 5.5+ / OBS 30.2, and may be unavailable for some containers)* the basis of Option B below. |
+| `SetRecordDirectory` | **confirmed present** — per-block export routing without a cross-drive copy. |
+| `SplitRecordFile` | **confirmed present** — the basis of Option B below. Per-container support still unchecked. |
 | `GetSceneList`, `GetCurrentProgramScene`, `GetSceneItemList`, `GetInputList`, `GetInputSettings` | read-only scene inspection for the preflight. |
 | `GetVideoSettings` | canvas/output resolution and `fpsNumerator`/`fpsDenominator` — the number that replaces `mirv_movie_fps` in `take_meta`. |
 
@@ -193,9 +247,9 @@ What it costs:
 
 **Option A, and Option B is a contingency rather than a second user-facing mode.**
 
-Option B's only real advantage is removing start/stop latency — which matters *only if* the
-measurements in staging steps 1 and 2 show that OBS's start latency does not comfortably fit inside
-the pre-roll. If it fits, B buys nothing and costs drive routing.
+Option B's only real advantage is removing start/stop latency — which matters *only if* OBS's start
+latency does not comfortably fit inside the pre-roll. **It fits: 59–69 ms measured, against a 2.0s
+pre-roll.** So B buys nothing and costs drive routing.
 
 Shipping both as a user choice means maintaining two signalling paths, two verification shapes and
 two cleanup paths, on the feature explicitly scoped as the *convenience* option. That is a poor
@@ -299,12 +353,14 @@ OBS needs a source pointed at the game. `hl.exe` runs **windowed** (`-windowed` 
 Capture handles best, and the resolution is known ahead of time, so the OBS canvas can be checked
 against it in the preflight rather than discovered by scaling artefacts.
 
-**Game Capture is the risk.** HLAE's `AfxHookGoldSrc.dll` is already injected into `hl.exe` and
-already hooks its OpenGL presentation. OBS Game Capture injects its own graphics hook into the same
-process to do the same thing. People do run OBS Game Capture alongside HLAE for Source-engine games,
-so this is not obviously fatal — but GoldSrc under `-customLoader` in a 32-bit process is not that
-configuration, and it has not been tried here. *(Unverified, and it is the experiment with the most
-riding on it.)*
+**Game Capture was the risk, and it is now half-answered.** HLAE's `AfxHookGoldSrc.dll` is already
+injected into `hl.exe` and already hooks its OpenGL presentation; OBS Game Capture injects its own
+graphics hook into the same process to do the same thing.
+
+Measured 2026-08-28: **both hooks load into the same live process and the game keeps running** — see
+"Measured against a live OBS" above. Injection does not collide. Whether *frames* survive two hooks
+on the same buffer swap is still open, and is the one thing left to check. Window Capture remains
+the fallback and cannot collide, since it injects nothing.
 
 Fall back to **Window Capture**, which does not inject anything and therefore cannot collide, at the
 cost of requiring the window to stay unoccluded. Display Capture is the last resort.
@@ -343,6 +399,47 @@ collection alongside the name and re-validate at dispatch.
 as a *third* category, between reading and editing. It changes live state, so it is a mutation; but
 it is reversible, destroys nothing, and is exactly what a user picking a scene is asking for.
 Restore the previously-active scene when the batch ends, and say so in the UI.
+
+### Video settings, and why the canvas is not ours to set
+
+`SetVideoSettings` is present, so canvas resolution, output resolution and FPS *can* be set from
+code. They mostly should not be, and the reason is not the one it looks like.
+
+**A canvas is not a scene property.** It belongs to the active **profile** and is shared by every
+scene, so writing to it for a capture writes to whatever else the user does in OBS.
+
+**The damage is the transforms, not the resolution.** Scene item positions and scales are stored in
+canvas coordinates, in the scene *collection*. Drop the canvas from 1920x1080 to 1280x720 and every
+source in every scene is mispositioned. Nothing in the API signals that, and it is the failure a
+user would notice next time they streamed rather than during our batch.
+
+Two further constraints, both measured or documented rather than assumed:
+
+- **`SetVideoSettings` is refused while an output is active.** It has to run in preflight, before
+  `StartRecord`. It cannot rescue a batch mid-flight.
+- **Profiles and scene collections are separate axes.** Switching profile keeps the current scene
+  collection, so a dedicated profile alone does *not* solve the transform problem — the sources are
+  still laid out for the old canvas.
+
+The mismatch is worth detecting regardless, and detecting it is nearly free: the pipeline already
+knows the game's resolution (`resolution_width` / `resolution_height`), so comparing it against
+`GetVideoSettings` is one comparison. The live install showed exactly the misconfiguration this
+would catch — a 1920x1080 canvas with a 1280x720 output and a game rendering at 1280x720, so the
+capture is scaled up onto the canvas and back down again, softening the image for nothing. Output
+FPS was 30, which on this path governs the clip entirely.
+
+**So: detect and report, do not write.** The preflight says the canvas disagrees with the game's
+resolution and what to set it to, and says when the output FPS is low. Always correct, cannot break
+anything, and a one-time manual fix is cheap.
+
+**If it is ever automated, it goes through a profile.** `CreateProfile` and `SetCurrentProfile` are
+both present, and a profile carries canvas, output resolution, FPS, recording format, encoder and
+output directory — every setting this feature wants pinned. Create a `dod-tools` profile, switch to
+it for the batch, switch back after. Additive and reversible, never editing the profile they are
+already using. `SetSceneItemTransform` exists to re-fit a source afterwards, but only ever inside a
+scene we created.
+
+That puts it in the same tier as the scene builder below, and it should land with it.
 
 ### Building a scene (low priority)
 
@@ -412,9 +509,10 @@ worrying about is one it spawned. OBS is not.
 - **Capture modes are mutually exclusive.** Frame sequence / direct-to-video / OBS is a three-way
   choice, not three checkboxes. `ffmpeg_capture` and an OBS mode must not both be settable.
 - **`MIN_TAKE_SEPARATION_SECONDS`** (1.0s) exists because a `mirv_recordmovie` stop/start cycle that
-  tight risks a take landing without audio. The rule transfers — OBS also needs time to finalise a
-  file and start an encoder — but the number was derived for HLAE and should be re-derived, or Option
-  B used to sidestep it entirely.
+  tight risks a take landing without audio. The rule transfers, and **the number does not**: OBS took
+  **~1.065s** to finalise a file after `StopRecord` returned, measured twice. That is already longer
+  than the separation the merge rule guarantees, so on this path the constant must be raised — two
+  highlights that merge today would otherwise produce a stop/start cycle OBS cannot service.
 
 ---
 
@@ -443,37 +541,38 @@ tractable piece of work.
 
 ## Staging
 
-0. **Prove Game Capture works, by hand, with no code at all.** Start an ordinary one-clip batch; while
-   it runs, add a Game Capture source on `hl.exe` in OBS and hit Record. This is the make-or-break
-   unknown and it needs nothing built to answer. If Game Capture fails, try Window Capture — the game
-   is already `-windowed` — and the feature survives with a caveat.
-1. **Tail the console log.** No OBS involved. Prove `qconsole.log` reports `START_RECORD` promptly
-   enough, measured during a live capture (see above — a saved log cannot answer this). If it is slow
-   or buffered, Option A needs rethinking, and it is better to know that now than after a WebSocket
-   client is written.
-2. **Talk to OBS.** Connect, authenticate, `GetVersion`, `GetRecordStatus`, one manual
-   `StartRecord`/`StopRecord`, timing the gap between the request returning and
-   `RecordStateChanged: STARTED`. Record what `availableRequests` contains — that settles
-   `SetRecordDirectory` and `SplitRecordFile` without version archaeology.
-4. **Wire one block end to end.** Log tail → `StartRecord` → timed stop → move into the take folder.
+0. ~~**Talk to OBS.**~~ **Done 2026-08-28.** `probe_obs obs` — every needed request is present, and
+   the start latency is 59–69 ms. See "Measured against a live OBS".
+1. **Prove Game Capture actually delivers frames.** Half done: both hooks are confirmed to coexist in
+   the live process. What remains is one recording made **while the game is running and rendering**,
+   checked with `blackdetect` rather than by eye. `probe_obs obs --record 5` plus
+   `tools/ffmpeg.exe -i <file> -vf blackdetect=d=0.05:pic_th=0.98 -an -f null -`. If frames do not
+   survive, fall back to Window Capture — the game is already `-windowed` — and the feature survives
+   with a caveat.
+2. **Tail the console log.** No OBS involved. Prove `qconsole.log` reports `START_RECORD` promptly
+   enough, measured during a live capture (a saved log cannot answer this). If it is slow or
+   buffered, the `screenshot` fallback above applies. `probe_obs log <qconsole.log>`.
+3. **Wire one block end to end.** Log tail → `StartRecord` → timed stop → move into the take folder.
    Verify against the demo that the clip contains what it should.
-5. **The predicate**, both sides at once, plus the duration assertion in `VerifiedBlock`.
-6. **Preflight, cancel and crash paths.** Not optional, and not last in practice — a half-wired
-   version that leaves OBS recording after a cancel is worse than no version.
-7. **The trim pass in Render Studio**, and the setting to skip it.
-8. **Measure it.** Wall-clock and disk against a real batch, next to the same batch through the
+4. **The predicate**, both sides at once, plus the duration assertion in `VerifiedBlock`.
+5. **Preflight, cancel and crash paths.** Not optional, and not last in practice — a half-wired
+   version that leaves OBS recording after a cancel is worse than no version. Raising
+   `MIN_TAKE_SEPARATION_SECONDS` for this path belongs here too.
+6. **The trim pass in Render Studio**, and the setting to skip it.
+7. **Measure it.** Wall-clock and disk against a real batch, next to the same batch through the
    existing path. The speed claim is currently an expectation.
 
 ---
 
 ## Open questions
 
-- **Does OBS Game Capture coexist with `AfxHookGoldSrc`?** The one that could reshape the feature.
-- **`qconsole.log` flush cadence.** Decides whether Option A's latency budget is real.
-- **Which container.** MKV is OBS's crash-safe default but is not what `avi_frame_count` reads; MP4
-  risks an unfinalised file if OBS dies. Remux-on-stop is OBS-side behaviour worth reading before
-  choosing.
-- **`SetRecordDirectory` and `SplitRecordFile` availability** on the installed build.
+- **Do frames survive two hooks on one buffer swap?** The last piece of the Game Capture question.
+  Coexistence is confirmed; delivery is not. Everything else in this document assumes it works.
+- **`qconsole.log` flush cadence.** Decides whether Option A's start signal is viable, or whether the
+  `screenshot` fallback is needed.
+- **Which container.** The live install recorded **MP4**, not the MKV assumed here. MKV is crash-safe
+  but is not what `avi_frame_count` reads; MP4 risks an unfinalised file if OBS dies, though modern
+  OBS hybrid-MP4 and remux-on-stop may cover that. Either pin the setting or teach the scanner both.
 - **Is `stopsound` still wanted in the record window** once nothing is being time-warped through it?
 - **What happens when the machine cannot keep up.** Dropped frames are invisible in the output file's
   metadata — the duration is right and the frames are missing. `GetRecordStatus` does not report
