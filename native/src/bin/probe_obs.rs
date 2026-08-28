@@ -246,6 +246,12 @@ const WANTED: &[(&str, &str)] = &[
     ("GetInputSettings", "scene picker — which window a capture targets (read-only)"),
     ("GetSceneCollectionList", "scene picker — scene names are per-collection"),
     ("SetCurrentProgramScene", "switch to the chosen scene (reversible mutation)"),
+    ("SetVideoSettings", "canvas/output resolution and FPS — PROFILE-WIDE"),
+    ("GetProfileList", "profiles — where video settings actually live"),
+    ("SetCurrentProfile", "switch to a dod-tools profile (reversible)"),
+    ("CreateProfile", "make a dod-tools profile instead of editing theirs"),
+    ("GetSceneItemTransform", "a source's placement, in canvas coordinates"),
+    ("SetSceneItemTransform", "re-fit a source after a canvas change"),
 ];
 
 /// Input kinds worth recognising when reporting what a scene holds.
