@@ -263,3 +263,44 @@ capture that runs and produces no video.
   failed capture being reported as a success. Neither currently knows what a video take looks like.
 - **Separate HUD.** Two video streams that have to be `alphamerge`d cannot be stream-copied, so the
   headline win does not apply to that path. Supported, or excluded at first?
+
+---
+
+## Separate HUD, measured 2026-08-27
+
+Run with `mirv_movie_separate_hud 1` and `-c:v utvideo`, `wsod25-po_r2_qf-m00cat_clinic_m2_lenn_h2`
+at 120 fps:
+
+    chain_01_b0/take0000/all/video.avi        1187 MB
+    chain_01_b0/take0000/hudcolor/video.avi    135 MB
+    chain_01_b0/take0000/hudalpha/video.avi    135 MB
+    chain_01_b0/take0000/sound.wav            0.85 MB
+
+Four things settled:
+
+1. **The `all` group reaches the HUD streams.** One `mirv_movie_ffmpeg all enabled 1` covered all
+   three — no per-stream `enabled`/`options` lines needed, and no stream fell back to BMPs.
+2. **HLAE writes the stream folders lowercase** — `hudcolor`/`hudalpha`, not the camelCase the
+   command uses for the stream names. The scanner's lookup is case-insensitive either way.
+3. **`pix_fmt` is `gbrp`** — lossless planar RGB, no chroma subsampling. This is what makes the
+   `extractplanes=r` alpha path safe, and it is the constraint any capture-codec dropdown has to
+   respect: a 4:2:0 codec would destroy the alpha channel silently.
+4. **All three streams and the audio agree exactly** — 1218 frames, 10.150s video against 10.150023s
+   of WAV. No drift to correct for.
+
+The HUD streams compress ~9x better than `all` (135 MB vs 1187 MB), which is what a mostly-flat
+overlay should do and a useful sanity signal that the streams are what they claim to be.
+
+**`nb_frames` is in the container.** The scanner reports `frame_count: 0` for video takes because
+`count_bmps` finds no bitmaps, and that gap blocks both the render progress percentage and any move
+to HLCR-style frame-count pairing. FFprobe reads 1218 straight off the stream, so the number is
+available without decoding — see `docs/render_studio_hlcr_parity.md`.
+
+### Not a codec problem: one demo crashes hl.exe
+
+`ktps8w1-stealth_soul_lenn_h1.dem` crashed hl.exe ~6s after spawn, four times running, with
+Separate HUD both on and off. The same build, same codec, same settings capture
+`wsod25-po_r2_qf-m00cat_clinic_m2_lenn_h2.dem` fine, so this is specific to that demo and not to
+direct-to-video. Untested whether it also crashes in frame-sequence mode. Note it has a
+`_forcehltv` twin of identical byte size but different content, which suggests it was already
+known to need working around.

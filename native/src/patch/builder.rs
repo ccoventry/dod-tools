@@ -365,10 +365,11 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
     // take0000, and sound.wav still lands beside the video.
     //
     // `all` here is HLAE's stream *group*, not the folder name it happens to
-    // share with the composited stream. Whether that group reaches hudColor and
-    // hudAlpha under mirv_movie_separate_hud is not yet observed — if it does
-    // not, those two streams fall back to BMP sequences and need their own
-    // enabled/options lines. Both outcomes are visible in the take folder.
+    // share with the composited stream. Measured with mirv_movie_separate_hud
+    // on: the group does reach hudColor and hudAlpha, so all three streams get
+    // a video and no per-stream enabled/options lines are needed. The folders
+    // HLAE writes are lowercase (`hudcolor`/`hudalpha`) even though the command
+    // names those streams in camelCase.
     //
     // Set here, once, at load — never as an injected ConsoleCommand frame. The
     // options string is several times GoldSrc's 64-byte Cbuf_AddTextToBuffer
