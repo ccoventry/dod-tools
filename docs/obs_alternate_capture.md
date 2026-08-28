@@ -709,6 +709,56 @@ worrying about is one it spawned. OBS is not.
 
 ---
 
+## Every way a batch can end, and what stops OBS in each
+
+Worked through 2026-08-28 after the first end-to-end test, because "the cancel button stops OBS" is
+only one of the ways a batch stops. The question that matters for every row is the same: **does
+anything survive to send `StopRecord`?** Where nothing does, OBS records until the drive fills.
+
+| How it ends | What the engine sees | What stops OBS |
+| --- | --- | --- |
+| Cancel Batch | Cancel token → `taskkill` → break | `session.finish()`. Verified. |
+| `quit` in console | hl.exe gone, no exit trigger | Same path, via the crash branch |
+| ALT+F4 | Identical to `quit` | Same |
+| End Process hl.exe | Identical to `quit` | Same |
+| **`disconnect` in console** | **Nothing — hl.exe is alive and idle at the menu** | **Marker-silence watchdog** |
+| Demo fails to load, or ends early | Same as `disconnect` | Same watchdog |
+| hl.exe freezes | Same as `disconnect` | Same watchdog |
+| OBS closed or crashes | Requests start failing | One reconnect, then abort the batch |
+| dod-tools panics | — | Nothing. `panic = "abort"`, no unwind, no `Drop` |
+| dod-tools force-killed, or power cut | — | Nothing |
+
+**`disconnect` was the real gap.** Every guard in the capture loop keys off hl.exe being gone or a
+file appearing, and `disconnect` produces neither: the process sits happily at the menu while the
+batch is over. The signal that was missing is the one already being written — `BREADCRUMB` fires
+every 5000 ticks throughout playback regardless of blocks, so its *absence* is the stall.
+
+The threshold cannot be derived from ticks. Demo ticks are frames, so the wall-clock spacing of a
+breadcrumb interval depends on the fps the demo was recorded at, and **an unfocused game stops
+fast-forwarding entirely** (see `docs/goldsrc_dod_quirks.md`), which stretches a gap of seconds into
+minutes with nothing wrong. Hence a five-minute floor plus an adaptive term of three times the
+longest gap the batch has already survived — a batch that has demonstrated a four-minute gap is not
+stalled at five. Tripping it kills the game and loses the batch, so it is biased towards waiting too
+long.
+
+**The last two rows cannot be fixed on the way out.** Release builds set `panic = "abort"`, so a
+panic runs no destructor, and a force-quit or a power cut runs nothing at all. From outside the
+process all three are the same event: dod-tools is gone and OBS is still recording. So the recovery
+is on the way *back in* — `obs::recover` asks OBS at start-up whether it is recording into a folder
+shaped like `<take>/take0000/all`, which is a path only this app produces, and offers to stop it and
+fold the file. Anything else is somebody's own recording and is left alone.
+
+Two smaller ones found on the way:
+
+- **An OBS crash destroys a plain MP4 or MOV.** The index is written on a clean stop and nowhere
+  else. MKV, MPEG-TS and the hybrid/fragmented MP4 variants all survive, and `fold_into_take`
+  deliberately keeps whatever container OBS wrote — so preflight recommends MKV rather than forcing
+  it.
+- **Automatic file splitting silently truncates a block.** `StopRecord` reports only the last piece,
+  so everything before it is stranded under a name nothing downstream resolves. Preflight warns.
+
+---
+
 ## Where this touches the codebase
 
 - **`native/src/capture_engine.rs`** — the batch loop gains a log tailer and an OBS client;

@@ -186,6 +186,21 @@ export const STRINGS = {
     OBS_TESTING: 'Connecting…',
     OBS_ENABLE_HINT:
         'OBS Studio 28+ has obs-websocket built in. Enable it under Tools → WebSocket Server Settings — the checkbox at the top of that dialog is the switch, not the Connect Info panel.',
+    // Measured, not folklore: GoldSrc throttles its frame loop when the window
+    // is not focused, and `host_framerate` fast-forward stops with it. It costs
+    // nothing on this path but wall-clock time — recording blocks run at real
+    // time regardless — but it can turn a short batch into a very long one.
+    OBS_FOCUS_HINT:
+        'Leave Day of Defeat focused for the whole batch. GoldSrc stops fast-forwarding when its window loses focus, so alt-tabbing away makes the gaps between clips play out in real time and the batch takes far longer.',
+    // ── Orphaned recording left by a previous run ───────────────────────────
+    OBS_ORPHAN_TITLE: 'OBS is still recording',
+    obsOrphanPrompt: (directory) =>
+        `OBS is still recording into a dod-tools take folder:\n\n${directory}\n\nA previous session ended without stopping it — a crash, a force-quit or a power cut. It will keep recording until the drive fills.\n\nStop it and keep the clip?`,
+    OBS_ORPHAN_STOP: 'Stop and keep',
+    OBS_ORPHAN_LEAVE: 'Leave it',
+    obsOrphanRecovered: (video) => `Stopped OBS and kept the recording: ${video}`,
+    OBS_ORPHAN_GONE: 'OBS had already stopped recording.',
+    obsOrphanFailed: (err) => `Could not stop the orphaned OBS recording: ${err}`,
     CAPTURE_CODEC_LABEL: 'Capture Codec:',
     // Says why the list is short, so the absence of H.264/HEVC reads as a
     // decision rather than an omission. The sizes are transcode measurements,

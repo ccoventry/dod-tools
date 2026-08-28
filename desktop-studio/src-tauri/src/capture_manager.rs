@@ -379,6 +379,84 @@ pub async fn obs_test_connection(
     .map_err(|e| format!("OBS connection test failed to run: {e}"))
 }
 
+/// What a start-up orphan check found.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ObsOrphanReport {
+    /// Whether OBS answered at all. `false` is the ordinary case — OBS is
+    /// simply not running — and the UI says nothing about it.
+    pub reachable: bool,
+    pub recording: bool,
+    pub directory: String,
+    /// Whether the folder OBS is recording into could only be one of ours.
+    pub ours: bool,
+}
+
+/// Asks OBS whether it is still recording a dod-tools take from a previous run.
+///
+/// Read-only, and quiet about failure on purpose: this runs at start-up, where
+/// "OBS is not running" is the normal answer and not something to report.
+///
+/// The case it exists for is the one no `Drop` can cover — a panic (release
+/// builds abort rather than unwind), a hard kill, a `tauri dev` restart, a
+/// power cut. In all of those the process is simply gone and OBS keeps
+/// recording until the disk fills.
+#[tauri::command]
+pub async fn obs_check_orphan(
+    host: String,
+    port: u16,
+    password: String,
+) -> Result<ObsOrphanReport, String> {
+    let cfg = obs_config(host, port, password);
+    tokio::task::spawn_blocking(move || match native::obs::check_orphan(&cfg) {
+        Ok(report) => ObsOrphanReport {
+            reachable: true,
+            recording: report.recording,
+            directory: report.directory,
+            ours: report.ours,
+        },
+        Err(_) => ObsOrphanReport {
+            reachable: false,
+            recording: false,
+            directory: String::new(),
+            ours: false,
+        },
+    })
+    .await
+    .map_err(|e| format!("OBS orphan check failed to run: {e}"))
+}
+
+/// Stops an orphaned recording and folds its file into the take folder.
+///
+/// Refuses any directory that is not shaped like one of ours, so a user who
+/// was recording something of their own keeps it. Called only after
+/// `obs_check_orphan` has reported `ours`, and asked of the user first.
+#[tauri::command]
+pub async fn obs_recover_orphan(
+    host: String,
+    port: u16,
+    password: String,
+) -> Result<String, String> {
+    let cfg = obs_config(host, port, password);
+    tokio::task::spawn_blocking(move || match native::obs::recover_orphan(&cfg) {
+        Ok(Some(video)) => Ok(video.to_string_lossy().to_string()),
+        Ok(None) => Ok(String::new()),
+        Err(e) => Err(e.to_string()),
+    })
+    .await
+    .map_err(|e| format!("OBS orphan recovery failed to run: {e}"))?
+}
+
+/// Settings-shaped values from the frontend, with the same defaults the
+/// settings file uses so an empty field means "the usual" rather than "".
+fn obs_config(host: String, port: u16, password: String) -> native::patch::ObsConfig {
+    native::patch::ObsConfig {
+        host: if host.is_empty() { "127.0.0.1".to_string() } else { host },
+        port: if port == 0 { 4455 } else { port },
+        password,
+        ..Default::default()
+    }
+}
+
 // ── Take verification ──────────────────────────────────────────────────────────
 
 /// Every recording block a dispatched batch planned, flattened across jobs.

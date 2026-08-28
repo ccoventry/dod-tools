@@ -19,17 +19,24 @@
 //!
 //! Everything here is blocking and thread-based, matching `capture_engine`,
 //! and deliberately so: `CaptureCleanupGuard::drop` has to be able to send a
-//! `StopRecord` on every path out of a batch — including a panic — and a `Drop`
-//! has no async runtime under it.
+//! `StopRecord` on every path out of a batch, and a `Drop` has no async
+//! runtime under it.
+//!
+//! That guard covers the paths the process survives to run. It does not cover
+//! a panic — release builds are `panic = "abort"`, so nothing unwinds — nor a
+//! hard kill or a power cut. `recover` handles those on the next start
+//! instead, because from outside the process they are indistinguishable.
 
 #![cfg(not(target_arch = "wasm32"))]
 
 pub mod client;
 pub mod log_tail;
+pub mod recover;
 pub mod session;
 
 pub use client::{ObsClient, ObsError};
 pub use log_tail::{LogTailer, Marker, MarkerKind};
+pub use recover::{check as check_orphan, recover as recover_orphan, OrphanReport};
 pub use session::{ObsSession, RecordedBlock};
 
 /// Stage markers the capture path acts on.

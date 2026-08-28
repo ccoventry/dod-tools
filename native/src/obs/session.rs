@@ -31,12 +31,12 @@ use super::{STOP_MARKER, TRIGGER_MARKER};
 /// `all` is HLAE's name for the composited stream, and the scanner, the
 /// renderer's `clip.img_folder` and `ClipData` all already expect it. Separate
 /// HUD is out of scope on this path, so there is only ever this one.
-const STREAM_FOLDER: &str = "all";
+pub(super) const STREAM_FOLDER: &str = "all";
 
 /// Take folder HLAE would have auto-numbered. Reproduced rather than invented:
 /// `shared::paths::take_key` matches across this level, and the scanner skips a
 /// trailing `take*` component, so writing anywhere else would break both.
-const TAKE_FOLDER: &str = "take0000";
+pub(super) const TAKE_FOLDER: &str = "take0000";
 
 /// What happened to one block.
 #[derive(Debug, Clone)]
@@ -55,6 +55,15 @@ pub struct ObsSession {
     /// Shared with the cleanup guard so a cancel or crash can still stop a
     /// recording. `None` once the session has been shut down.
     client: Arc<Mutex<Option<ObsClient>>>,
+    /// Kept for reconnection. OBS being closed or crashing mid-batch is a
+    /// recoverable event — it comes back with the same address and password.
+    cfg: ObsConfig,
+    /// Set once the connection is gone and could not be re-established. The
+    /// batch aborts on this rather than running to completion recording
+    /// nothing, which is what it did before: every later block would fail its
+    /// `SetRecordDirectory`, add a line to `skipped`, and the run would end
+    /// looking successful with an empty take for every block.
+    dead: bool,
     /// Block take folders in the order the batch will record them — the same
     /// flattened order the capture manifest uses.
     take_folders: Vec<PathBuf>,
@@ -134,6 +143,8 @@ impl ObsSession {
         Ok((
             Self {
                 client: Arc::new(Mutex::new(Some(client))),
+                cfg: cfg.clone(),
+                dead: false,
                 take_folders,
                 next_block: 0,
                 active: None,
@@ -146,8 +157,13 @@ impl ObsSession {
         ))
     }
 
-    /// Handle shared with `CaptureCleanupGuard` so every exit path can stop a
-    /// recording, including a panic.
+    /// Handle shared with `CaptureCleanupGuard` so a cancel, a crashed game or
+    /// a finished batch can stop a recording.
+    ///
+    /// Not a panic, despite what a `Drop` normally buys: release builds set
+    /// `panic = "abort"`, so nothing unwinds and no destructor runs. That gap,
+    /// together with a hard kill and a power cut, is what `obs::recover`
+    /// exists to clean up on the next start.
     pub fn stop_handle(&self) -> Arc<Mutex<Option<ObsClient>>> {
         Arc::clone(&self.client)
     }
@@ -191,25 +207,34 @@ impl ObsSession {
             return;
         }
 
-        let mut guard = self.client.lock().unwrap_or_else(|p| p.into_inner());
-        let Some(client) = guard.as_mut() else {
-            return;
-        };
-        // Pointing OBS at the destination before recording is what makes the
-        // later move a rename rather than a cross-drive copy, and it is what
-        // keeps blocks routed across the export pool.
-        if let Err(e) = client.set_record_directory(&dest.to_string_lossy()) {
-            self.skipped.push(format!("could not route OBS output: {e}"));
-            return;
+        // One reconnect and one retry before giving up: OBS being closed or
+        // crashing between blocks is survivable, and a batch has minutes of
+        // fast-forward in it during which it can plausibly come back.
+        if let Err(e) = self.try_begin(&dest) {
+            let recovered = e.is_transport() && self.reconnect() && self.try_begin(&dest).is_ok();
+            if !recovered {
+                self.note_failure(format!("OBS failed to start recording: {e}"), &e);
+                return;
+            }
         }
-        if let Err(e) = client.start_record() {
-            self.skipped.push(format!("OBS failed to start recording: {e}"));
-            return;
-        }
-        drop(guard);
 
         self.active = Some(dest);
         self.active_since = Some(std::time::Instant::now());
+    }
+
+    // Split out so `begin_block` can run it twice around a reconnect without
+    // holding the client lock across the retry.
+    fn try_begin(&self, dest: &Path) -> Result<(), ObsError> {
+        let mut guard = self.client.lock().unwrap_or_else(|p| p.into_inner());
+        let client = guard
+            .as_mut()
+            .ok_or_else(|| ObsError::Transport("not connected to OBS".into()))?;
+        // Pointing OBS at the destination before recording is what makes the
+        // later move a rename rather than a cross-drive copy, and it is what
+        // keeps blocks routed across the export pool.
+        client.set_record_directory(&dest.to_string_lossy())?;
+        client.start_record()?;
+        Ok(())
     }
 
     fn end_block(&mut self) {
@@ -222,30 +247,91 @@ impl ObsSession {
             .map(|t| t.elapsed().as_secs_f64())
             .unwrap_or(0.0);
 
-        let mut guard = self.client.lock().unwrap_or_else(|p| p.into_inner());
-        let Some(client) = guard.as_mut() else {
-            return;
-        };
-        let path = match client.stop_record() {
+        let path = match self.try_stop() {
             Ok(p) => p,
             Err(e) => {
-                self.skipped.push(format!("OBS failed to stop recording: {e}"));
+                // The recording is gone but its bytes may not be: OBS writes
+                // into `dest` from the moment it starts, so whatever is in
+                // there is this block's. Salvaging it beats leaving a file the
+                // scanner cannot see, which is what the timestamped name means
+                // — `stream_video_path` matches `video.<ext>` and nothing else.
+                match salvage_orphan(&dest) {
+                    Some(video) => {
+                        log_markdown(&format!(
+                            "⚠️ **OBS** — lost the connection mid-block ({e}). Salvaged \
+                             `{}`, which may be unfinalised if OBS crashed rather than closed \
+                             — MKV survives that, MP4 usually does not.",
+                            video.display()
+                        ));
+                        let take_folder = take_folder_of(&dest);
+                        self.recorded.push(RecordedBlock { take_folder, video, seconds });
+                    }
+                    None => self
+                        .skipped
+                        .push(format!("OBS failed to stop recording: {e}")),
+                }
+                if e.is_transport() {
+                    self.dead = true;
+                }
                 return;
             }
         };
-        drop(guard);
 
         match fold_into_take(Path::new(&path), &dest) {
             Ok(video) => {
-                let take_folder = dest
-                    .parent()
-                    .and_then(Path::parent)
-                    .map(Path::to_path_buf)
-                    .unwrap_or_else(|| dest.clone());
+                let take_folder = take_folder_of(&dest);
                 self.recorded.push(RecordedBlock { take_folder, video, seconds });
             }
             Err(e) => self.skipped.push(e),
         }
+    }
+
+    fn try_stop(&self) -> Result<String, ObsError> {
+        let mut guard = self.client.lock().unwrap_or_else(|p| p.into_inner());
+        let client = guard
+            .as_mut()
+            .ok_or_else(|| ObsError::Transport("not connected to OBS".into()))?;
+        client.stop_record()
+    }
+
+    /// True once the connection is gone and could not be re-established.
+    ///
+    /// The engine polls this and aborts the batch. Continuing would mean
+    /// playing the demo to the end capturing nothing, then reporting success.
+    pub fn is_dead(&self) -> bool {
+        self.dead
+    }
+
+    fn note_failure(&mut self, message: String, e: &ObsError) {
+        self.skipped.push(message);
+        if e.is_transport() {
+            self.dead = true;
+        }
+    }
+
+    fn reconnect(&mut self) -> bool {
+        let fresh = ObsClient::connect(&self.cfg.address(), &self.cfg.password);
+        let ok = {
+            let mut guard = self.client.lock().unwrap_or_else(|p| p.into_inner());
+            match fresh {
+                Ok(client) => {
+                    *guard = Some(client);
+                    true
+                }
+                Err(_) => {
+                    // Drop the dead socket so the cleanup guard does not try to
+                    // send `StopRecord` down it on the way out.
+                    *guard = None;
+                    false
+                }
+            }
+        };
+        if ok {
+            log_markdown("🔌 **OBS** — the connection dropped and was re-established.");
+        } else {
+            self.dead = true;
+        }
+        ok
     }
 
     /// Stops anything still recording and restores the previous scene.
@@ -263,13 +349,57 @@ impl ObsSession {
     }
 }
 
+/// The take folder two levels above a `<take>/take0000/all` stream folder.
+fn take_folder_of(dest: &Path) -> PathBuf {
+    dest.parent()
+        .and_then(Path::parent)
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| dest.to_path_buf())
+}
+
+/// Containers OBS can be configured to write. Kept in step with the scanner's
+/// `VIDEO_EXTENSIONS` — this list may be wider, never narrower, because a file
+/// salvaged under a name the scanner cannot resolve helps nobody.
+const ORPHAN_VIDEO_EXTENSIONS: &[&str] = &["mp4", "mkv", "mov", "avi"];
+
+/// Folds whatever video OBS left in a block's own folder into `video.<ext>`.
+///
+/// Only ever called against a folder `SetRecordDirectory` pointed at for this
+/// block, so anything video-shaped inside it is this block's output — there is
+/// no ambiguity to resolve. Used when the connection dies before `StopRecord`
+/// can report the filename.
+fn salvage_orphan(dest: &Path) -> Option<PathBuf> {
+    let entries = std::fs::read_dir(dest).ok()?;
+    let mut newest: Option<(std::time::SystemTime, PathBuf)> = None;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let ext = path.extension()?.to_string_lossy().to_lowercase();
+        if !ORPHAN_VIDEO_EXTENSIONS.contains(&ext.as_str()) {
+            continue;
+        }
+        if path.file_stem().is_some_and(|s| s == "video") {
+            // Already folded — a previous block's output, or a retry.
+            continue;
+        }
+        let modified = entry.metadata().ok()?.modified().ok()?;
+        if newest.as_ref().is_none_or(|(t, _)| modified > *t) {
+            newest = Some((modified, path));
+        }
+    }
+    let (_, path) = newest?;
+    fold_into_take(&path, dest).ok()
+}
+
 /// Renames OBS's output into the stream folder as `video.<ext>`.
 ///
 /// The extension is kept from whatever OBS wrote rather than forced: the
 /// container is the user's setting, the scanner matches `video.*` by
 /// extension, and renaming an MP4 to `.avi` would produce a file that lies
 /// about itself to every tool downstream.
-fn fold_into_take(recorded: &Path, dest: &Path) -> Result<PathBuf, String> {
+pub(super) fn fold_into_take(recorded: &Path, dest: &Path) -> Result<PathBuf, String> {
     if !recorded.is_file() {
         return Err(format!(
             "OBS reported {} but no file is there",

@@ -538,6 +538,8 @@ pub fn run() {
             launch_demo_preview,
             generate_all_previews,
             capture_manager::obs_test_connection,
+            capture_manager::obs_check_orphan,
+            capture_manager::obs_recover_orphan,
             launch_standalone_game,
             check_engine_processes,
             kill_engine_processes,

@@ -1,10 +1,13 @@
 //! A blocking obs-websocket v5 client, scoped to what the capture path needs.
 //!
 //! Blocking rather than async on purpose. `CaptureCleanupGuard::drop` must be
-//! able to send a `StopRecord` on every path out of a batch — cancel, crash,
-//! panic — and a `Drop` has no async runtime under it. A recording OBS left
-//! running after a cancelled batch fills the user's drive silently, so that
-//! guarantee is worth more here than concurrency is.
+//! able to send a `StopRecord` on every path out of a batch — a cancel, a
+//! crashed game, a finished run — and a `Drop` has no async runtime under it.
+//! A recording OBS left running after a cancelled batch fills the user's drive
+//! silently, so that guarantee is worth more here than concurrency is.
+//!
+//! It does not extend to a panic: release builds abort rather than unwind, so
+//! no destructor runs. `obs::recover` covers that on the next start.
 //!
 //! Verified against **OBS 32.2.2 / obs-websocket 5.7.4**: every request below
 //! is present, `StopRecord` reports the output path, and `SetRecordDirectory`
@@ -78,6 +81,17 @@ impl std::fmt::Display for ObsError {
 }
 
 impl std::error::Error for ObsError {}
+
+impl ObsError {
+    /// Whether this is the connection failing rather than OBS answering.
+    ///
+    /// The distinction decides whether a reconnect is worth attempting: a
+    /// refused request means OBS is alive and said no, and retrying it down a
+    /// fresh socket would just be refused again.
+    pub fn is_transport(&self) -> bool {
+        matches!(self, Self::Transport(_) | Self::Connect(_))
+    }
+}
 
 /// What a preflight found, for reporting to the user before a batch starts.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -239,6 +253,7 @@ impl ObsClient {
                     .to_string(),
             );
         }
+        warnings.extend(self.output_settings_warnings());
 
         Ok(ObsPreflight {
             obs_version: version["obsVersion"].as_str().unwrap_or("?").to_string(),
@@ -259,6 +274,94 @@ impl ObsClient {
                 .to_string(),
             warnings,
         })
+    }
+
+    /// Whether OBS is recording right now.
+    pub fn is_recording(&mut self) -> Result<bool, ObsError> {
+        Ok(self.request("GetRecordStatus", json!({}))?["outputActive"]
+            .as_bool()
+            .unwrap_or(false))
+    }
+
+    /// Where OBS is currently set to write recordings.
+    pub fn record_directory(&mut self) -> Result<String, ObsError> {
+        Ok(self.request("GetRecordDirectory", json!({}))?["recordDirectory"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string())
+    }
+
+    /// A profile setting, read-only.
+    ///
+    /// `GetProfileParameter` is deliberately not in `REQUIRED_REQUESTS`: these
+    /// lookups only produce advice, and an OBS too old to answer them should
+    /// still be able to capture. Every failure here is silent for that reason.
+    fn profile_param(&mut self, category: &str, name: &str) -> Option<String> {
+        let v = self
+            .request(
+                "GetProfileParameter",
+                json!({ "parameterCategory": category, "parameterName": name }),
+            )
+            .ok()?;
+        let value = v["parameterValue"]
+            .as_str()
+            .or_else(|| v["defaultParameterValue"].as_str())?;
+        (!value.is_empty()).then(|| value.to_string())
+    }
+
+    /// Warnings about how the recording output is configured.
+    ///
+    /// Reads only. The profile is the user's file and the same discipline
+    /// applies to it as to their game `.cfg`s: detect and warn, never write.
+    fn output_settings_warnings(&mut self) -> Vec<String> {
+        let mut warnings = Vec::new();
+        let advanced = self
+            .profile_param("Output", "Mode")
+            .is_some_and(|m| m.eq_ignore_ascii_case("Advanced"));
+        let category = if advanced { "AdvOut" } else { "SimpleOutput" };
+
+        if advanced
+            && self
+                .profile_param("AdvOut", "RecType")
+                .is_some_and(|t| t == "FFmpegOutput")
+        {
+            warnings.push(
+                "OBS is in Custom Output (FFmpeg) mode. Per-block routing does not work there \
+                 — `SetRecordDirectory` only steers the standard output, measured — so every \
+                 block would be written to the same path. Switch Output -> Recording back to \
+                 Standard for this capture mode."
+                    .to_string(),
+            );
+        }
+
+        if let Some(container) = self.profile_param(category, "RecFormat2") {
+            // Only plain MP4/MOV lose the entire file when OBS dies mid-record:
+            // the index is written on a clean stop and nowhere else. MKV,
+            // MPEG-TS and the fragmented/hybrid MP4 variants all survive it.
+            if matches!(container.as_str(), "mp4" | "mov") {
+                warnings.push(format!(
+                    "OBS is recording to {container}. If OBS crashes mid-batch that file is \
+                     unplayable — its index is only written on a clean stop. MKV or hybrid MP4 \
+                     survive it, and dod-tools keeps whatever container OBS wrote."
+                ));
+            }
+        }
+
+        // Splitting turns one block into several files and `StopRecord` reports
+        // only the last, so the rest of the clip would be stranded under names
+        // nothing downstream resolves.
+        if self
+            .profile_param(category, "RecSplitFile")
+            .is_some_and(|v| v == "true")
+        {
+            warnings.push(
+                "OBS has automatic file splitting enabled. Any block long enough to split \
+                 would keep only its final piece. Turn it off in Output -> Recording."
+                    .to_string(),
+            );
+        }
+
+        warnings
     }
 
     /// Scene names in the active collection, for the settings picker.
@@ -300,12 +403,6 @@ impl ObsClient {
     pub fn set_record_directory(&mut self, dir: &str) -> Result<(), ObsError> {
         self.request("SetRecordDirectory", json!({ "recordDirectory": dir }))?;
         Ok(())
-    }
-
-    pub fn is_recording(&mut self) -> bool {
-        self.request("GetRecordStatus", json!({}))
-            .map(|d| d["outputActive"].as_bool().unwrap_or(false))
-            .unwrap_or(false)
     }
 
     /// Starts recording and waits until frames are actually being written.

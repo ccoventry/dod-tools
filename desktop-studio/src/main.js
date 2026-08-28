@@ -132,6 +132,61 @@ function renderObsReport(report) {
 }
 
 /** The selected capture mode id, defaulting to the path that always works. */
+/**
+ * OBS connection fields as the settings form currently holds them.
+ */
+function obsSettingsFromForm() {
+  return {
+    host: document.querySelector('#config-obs-host')?.value?.trim() || '127.0.0.1',
+    port: parseInt(document.querySelector('#config-obs-port')?.value, 10) || 4455,
+    password: document.querySelector('#config-obs-password')?.value || ''
+  };
+}
+
+/**
+ * Offers to stop an OBS recording left running by a previous session.
+ *
+ * The capture engine stops OBS on every exit path the process lives to run,
+ * but a panic (release builds abort rather than unwind), a force-quit and a
+ * power cut all leave nothing behind to run anything. OBS simply keeps
+ * recording — into a folder only dod-tools would ever name — until the drive
+ * fills. This is the only place that can notice.
+ *
+ * Silent unless there is something to act on: OBS not running is the ordinary
+ * answer at startup, and a recording that is not ours is not ours to stop.
+ */
+async function checkObsOrphanOnStartup() {
+  if (currentCaptureMode() !== 'obs') return;
+
+  const report = await invoke('obs_check_orphan', obsSettingsFromForm()).catch((err) => {
+    console.error('OBS orphan check failed:', err);
+    return null;
+  });
+  if (!report?.recording || !report.ours) return;
+
+  const stop = await confirm(STRINGS.CAPTURE_CONFIG.obsOrphanPrompt(report.directory), {
+    title: STRINGS.CAPTURE_CONFIG.OBS_ORPHAN_TITLE,
+    kind: 'warning',
+    okLabel: STRINGS.CAPTURE_CONFIG.OBS_ORPHAN_STOP,
+    cancelLabel: STRINGS.CAPTURE_CONFIG.OBS_ORPHAN_LEAVE
+  }).catch(() => false);
+  if (!stop) return;
+
+  await invoke('obs_recover_orphan', obsSettingsFromForm())
+    .then((video) => {
+      showToast(
+        video
+          ? STRINGS.CAPTURE_CONFIG.obsOrphanRecovered(video)
+          : STRINGS.CAPTURE_CONFIG.OBS_ORPHAN_GONE,
+        'success'
+      );
+    })
+    .catch((err) => {
+      console.error('OBS orphan recovery failed:', err);
+      showToast(STRINGS.CAPTURE_CONFIG.obsOrphanFailed(err), 'error');
+    });
+}
+
 export function currentCaptureMode() {
   return document.querySelector('#config-capture-mode')?.value || 'frame_sequence';
 }
@@ -1302,6 +1357,8 @@ window.addEventListener("DOMContentLoaded", async () => {
   // Render-batch crash-recovery prompt — checked once on startup, same
   // pattern as dev's StartupState::PendingRenderRecovery.
   checkRenderRecoveryOnStartup(() => switchNavTab('render-studio'));
+
+  checkObsOrphanOnStartup();
 
   // Flush any not-yet-persisted settings edit before the window actually
   // closes. list_editor.js (Init/Custom Commands, numeric fields) only
