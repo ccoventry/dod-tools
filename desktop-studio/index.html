@@ -198,10 +198,21 @@
                   <input type="checkbox" id="config-separate-hud" />
                   <label for="config-separate-hud" data-str="CAPTURE_CONFIG.SEPARATE_HUD_LABEL">Separate HUD</label>
                 </div>
-                <div class="control-group">
-                  <input type="checkbox" id="config-ffmpeg-capture" />
-                  <label for="config-ffmpeg-capture" data-str="CAPTURE_CONFIG.FFMPEG_CAPTURE_LABEL"
-                         data-str-title="CAPTURE_CONFIG.FFMPEG_CAPTURE_TITLE">Capture to video</label>
+                <!-- A two-state choice rather than an option you switch on:
+                     the alternative to video is not "no capture", it is a BMP
+                     frame sequence. Naming both sides says that; a checkbox
+                     labelled "Capture to video" implies the other state is off. -->
+                <div class="control-group setting-toggle">
+                  <span class="setting-label" id="capture-mode-label-frames" data-capture-mode="frames"
+                        data-str="CAPTURE_CONFIG.CAPTURE_MODE_FRAMES"
+                        data-str-title="CAPTURE_CONFIG.CAPTURE_MODE_FRAMES_TITLE">Frame sequence</span>
+                  <label class="setting-switch" data-str-title="CAPTURE_CONFIG.CAPTURE_MODE_SWITCH_TITLE">
+                    <input type="checkbox" id="config-ffmpeg-capture" />
+                    <span class="setting-switch-slider"></span>
+                  </label>
+                  <span class="setting-label" id="capture-mode-label-video" data-capture-mode="video"
+                        data-str="CAPTURE_CONFIG.CAPTURE_MODE_VIDEO"
+                        data-str-title="CAPTURE_CONFIG.CAPTURE_MODE_VIDEO_TITLE">Video</span>
                 </div>
                 <div class="control-group">
                   <input type="checkbox" id="config-save-local-patched" />

@@ -76,6 +76,14 @@ async function refreshPathWarnings() {
   });
 }
 
+/** Highlights whichever side of the capture-mode toggle is currently in force. */
+function applyCaptureModeUI() {
+  const video = document.querySelector('#config-ffmpeg-capture')?.checked || false;
+  document.querySelectorAll('.setting-label[data-capture-mode]').forEach((label) => {
+    label.classList.toggle('active', (label.dataset.captureMode === 'video') === video);
+  });
+}
+
 // ── HLAE's own FFmpeg ─────────────────────────────────────────────────────────
 // `mirv_movie_ffmpeg` makes HLAE spawn FFmpeg itself, and it does not consult
 // the app's FFmpeg setting — it looks only in its own folder or at an ffmpeg.ini
@@ -437,6 +445,7 @@ window.addEventListener("DOMContentLoaded", async () => {
       if (separateHudEl) separateHudEl.checked = !!settings.separate_hud;
       const ffmpegCaptureEl = document.querySelector('#config-ffmpeg-capture');
       if (ffmpegCaptureEl) ffmpegCaptureEl.checked = !!settings.ffmpeg_capture;
+      applyCaptureModeUI();
       const addCondebugEl = document.querySelector('#config-add-condebug');
       if (addCondebugEl) addCondebugEl.checked = !!settings.add_condebug;
       const autoClearLogsEl = document.querySelector('#config-auto-clear-logs');
@@ -681,7 +690,25 @@ window.addEventListener("DOMContentLoaded", async () => {
   // on, "HLAE has no FFmpeg" stops being a note about an unused feature and
   // becomes the reason the next batch will record nothing.
   document.querySelector('#config-ffmpeg-capture')
-    ?.addEventListener('change', () => { refreshHlaeFfmpegStatus(); });
+    ?.addEventListener('change', () => {
+      applyCaptureModeUI();
+      refreshHlaeFfmpegStatus();
+    });
+  // Clicking either label flips the switch, matching the Quick-Clip/Workspace
+  // toggle this borrows its look from.
+  document.querySelectorAll('.setting-label[data-capture-mode]').forEach((label) => {
+    label.addEventListener('click', () => {
+      const input = document.querySelector('#config-ffmpeg-capture');
+      if (!input) return;
+      const wanted = label.dataset.captureMode === 'video';
+      if (input.checked === wanted) return;
+      input.checked = wanted;
+      // Assigning .checked does not fire 'change', and persistence and the
+      // status row both hang off that event.
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+  });
+  applyCaptureModeUI();
 
   const hlaeFfmpegLinkBtn = document.querySelector('#hlae-ffmpeg-link-btn');
   if (hlaeFfmpegLinkBtn) {

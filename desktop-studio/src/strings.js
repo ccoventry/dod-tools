@@ -151,9 +151,13 @@ export const STRINGS = {
     // Shown under the field that caused it, so a typo is obvious while you are
     // still looking at the box you typed it into. Nothing is blocked — Start
     // Capture Batch has its own guard.
-    FFMPEG_CAPTURE_LABEL: 'Capture to video',
-    FFMPEG_CAPTURE_TITLE:
-        "HLAE pipes frames straight to FFmpeg as one lossless video per take, instead of writing thousands of bitmaps. Same picture, roughly half the disk. Needs the HLAE FFmpeg row above to be set.",
+    CAPTURE_MODE_FRAMES: 'Frame sequence',
+    CAPTURE_MODE_FRAMES_TITLE:
+        'HLAE writes every frame as its own bitmap. What this pipeline has always done, and what Render Studio was built around.',
+    CAPTURE_MODE_VIDEO: 'Video',
+    CAPTURE_MODE_VIDEO_TITLE:
+        'HLAE pipes frames straight to FFmpeg as one lossless video per take. Same picture, roughly half the disk, and far fewer files. Needs the HLAE FFmpeg row above to be set.',
+    CAPTURE_MODE_SWITCH_TITLE: 'Switch between capturing a bitmap frame sequence and a video file',
     // Turning it on without HLAE having an FFmpeg produces a capture that runs
     // and records nothing, so it is worth saying before the batch rather than
     // after it.
