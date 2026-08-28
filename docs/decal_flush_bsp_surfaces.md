@@ -1,6 +1,7 @@
 # Decal Flush: BSP-Derived Surface Coordinates
 
-> **Status 2026-08-26 — stages 1, 2, 4 and 6 built and measured. 3 and 5 not started.**
+> **Status 2026-08-27 — stages 1, 2, 3, 4 and 6 built and measured; 3 also verified in game.
+> Stage 5 declined, deliberately.**
 > The R&D direction for the decal flush ([#60](https://github.com/ccoventry/dod-tools/issues/60)).
 >
 > - **Stage 1 built** (`a4bed14`, `1c86571`): `native/src/patch/bsp.rs` reads BSP v30 geometry,
@@ -20,9 +21,15 @@
 >   faces. Reached only when the demo's decals and the coordinate store together cannot fill a
 >   sweep, so a mature map pays nothing for it. `DOD_FLUSH_MAP_GEOMETRY_ONLY` forces it for an
 >   in-game look. See "What the map is worth on its own" below.
-> - **Stage 5 is design only.** Stage 3 feeds `resolve_flush_positions` directly rather than the
->   coordinate store; writing map-derived coordinates into the store is still open, and is what
->   would make a pre-built store distributable.
+> - **Stage 5 declined (2026-08-27).** Stage 3 feeds `resolve_flush_positions` directly and persists
+>   nothing. Writing map-derived coordinates to disk was considered and dropped: the scan is ~15 ms
+>   per map and the coordinates are a pure function of the map file, so a store would save about six
+>   seconds across a 442-demo library in exchange for a second file format, a version field and a
+>   staleness rule. The separation it was meant to protect already holds — only
+>   `survey.world_harvested` is ever written to `decal_atlas`, so computed coordinates cannot reach
+>   the store that `validate_bsp` tests against. The expensive half (testing candidates against every
+>   in-clip camera) depends on the demo's camera path and cannot be cached across demos regardless.
+>   Revisit only if a map appears whose scan is not cheap.
 >
 > Read `docs/goldsrc_dod_quirks.md` and issue #60 first — the engine facts the flush rests on
 > are recorded there and must not be re-derived.

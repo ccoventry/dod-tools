@@ -3336,6 +3336,27 @@ mod tests {
     }
 
     #[test]
+    fn the_gate_with_no_map_places_nothing_rather_than_guessing() {
+        // Running the gate on a machine where the map is not installed leaves
+        // it with no source at all. The honest outcome is an empty placement,
+        // which the caller reports as a partial sweep — not a quiet fallback to
+        // the spawn floor, which would put the decals on ground the player
+        // walks and look exactly like the map source failing in game.
+        let opts = DecalCleanOptions {
+            map_geometry_only: true,
+            ..Default::default()
+        };
+        let mut survey = survey_facing_away(vec![[98.0, 20.0, 20.0]]);
+        survey.grounded_origin = Some([50.0, 32.0, 32.0]);
+        let visibility = Visibility::new(None, &survey.window_cameras, &opts);
+
+        let placement = resolve_flush_positions(&survey, &[], &visibility, &opts, 2);
+
+        assert!(placement.positions.is_empty(), "{:?}", placement.positions);
+        assert_eq!(placement.source, None);
+    }
+
+    #[test]
     fn the_experiment_gate_refuses_everything_the_match_proved() {
         // `DOD_FLUSH_MAP_GEOMETRY_ONLY` exists to put the map source in front
         // of someone watching the game. It is worthless if a harvested decal
