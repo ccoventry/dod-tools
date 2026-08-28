@@ -157,16 +157,21 @@
 
             <!-- Tab Content: Path Routing -->
             <div id="tab-path-routing" class="config-tab-content active-tab" style="display: block;">
+              <!-- The three things you set, then the one thing that follows
+                   from them. HLAE FFmpeg is a status rather than an input: HLAE
+                   spawns its own FFmpeg for mirv_movie_ffmpeg and does not
+                   consult the app's setting, so what it is pointed at is a
+                   consequence of the two rows above and belongs after them. -->
+              <div class="input-row">
+                <label data-str="CAPTURE_CONFIG.HL_EXEC_LABEL">Half-Life Executable:</label>
+                <input type="text" id="hl-path-input" data-str-placeholder="CAPTURE_CONFIG.HL_EXEC_PLACEHOLDER" placeholder="Path to hl.exe" style="flex: 1;" />
+                <button id="hl-browse-btn" data-str="CAPTURE_CONFIG.BROWSE_BUTTON">Browse</button>
+              </div>
               <div class="input-row">
                 <label data-str="CAPTURE_CONFIG.HLAE_EXEC_LABEL">HLAE Executable:</label>
                 <input type="text" id="hlae-path-input" data-str-placeholder="CAPTURE_CONFIG.HLAE_EXEC_PLACEHOLDER" placeholder="Path to hlae.exe" style="flex: 1;" />
                 <button id="hlae-browse-btn" data-str="CAPTURE_CONFIG.BROWSE_BUTTON">Browse</button>
               </div>
-              <!-- Ordered so the dependency reads downwards: which HLAE, which
-                   FFmpeg, and then what HLAE is actually pointed at — the last
-                   being a consequence of the two above it. HLAE spawns its own
-                   FFmpeg for mirv_movie_ffmpeg and does not consult the app's
-                   setting, which is why it needs a row of its own at all. -->
               <div class="input-row">
                 <label data-str="CAPTURE_CONFIG.FFMPEG_OVERRIDE_LABEL">FFmpeg Override Path:</label>
                 <input type="text" id="ffmpeg-override-path-input" data-str-placeholder="CAPTURE_CONFIG.FFMPEG_OVERRIDE_PLACEHOLDER" placeholder="Optional path to ffmpeg.exe" style="flex: 1;" />
@@ -176,11 +181,6 @@
                 <label data-str="CAPTURE_CONFIG.HLAE_FFMPEG_LABEL">HLAE FFmpeg:</label>
                 <span id="hlae-ffmpeg-status" style="flex: 1; font-size: 0.85em; opacity: 0.85;"></span>
                 <button id="hlae-ffmpeg-link-btn" data-str="CAPTURE_CONFIG.HLAE_FFMPEG_LINK_BUTTON" style="display: none;">Point HLAE at FFmpeg</button>
-              </div>
-              <div class="input-row">
-                <label data-str="CAPTURE_CONFIG.HL_EXEC_LABEL">Half-Life Executable:</label>
-                <input type="text" id="hl-path-input" data-str-placeholder="CAPTURE_CONFIG.HL_EXEC_PLACEHOLDER" placeholder="Path to hl.exe" style="flex: 1;" />
-                <button id="hl-browse-btn" data-str="CAPTURE_CONFIG.BROWSE_BUTTON">Browse</button>
               </div>
               <div class="inline-controls">
                 <div class="control-group">
