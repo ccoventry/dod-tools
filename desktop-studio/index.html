@@ -71,6 +71,10 @@
                 <button id="clear-all-btn" disabled style="color: #ff5555; border-color: #ff5555;" data-str="WORKSPACE.CLEAR_ALL_BUTTON" data-str-title="WORKSPACE.CLEAR_ALL_TITLE_TOOLTIP">Clear All</button>
               </div>
             </div>
+            <!-- Populated by map_warnings.js when a scanned demo needs a map
+                 that is missing or is a different build than it was recorded
+                 on. Stays hidden when the library is complete. -->
+            <div id="map-warning-banner" hidden></div>
             <div class="table-wrapper">
               <table id="master-demo-table">
                 <thead>
@@ -149,10 +153,12 @@
             </div>
 
             <div class="config-tabs-nav">
-              <button class="config-tab-btn active" data-tab="tab-path-routing" data-str="CAPTURE_CONFIG.TAB_PATH_ROUTING">Path Routing</button>
-              <button class="config-tab-btn" data-tab="tab-timing-options" data-str="CAPTURE_CONFIG.TAB_TIMING_OPTIONS">Timing Options</button>
-              <button class="config-tab-btn" data-tab="tab-drive-overrides" data-str="CAPTURE_CONFIG.TAB_CAPTURE_OUTPUT">Capture Output</button>
-              <button class="config-tab-btn" data-tab="tab-custom-commands" data-str="CAPTURE_CONFIG.TAB_CUSTOM_COMMANDS">Custom Commands</button>
+              <button class="config-tab-btn active" data-tab="tab-path-routing" data-str="CAPTURE_CONFIG.TAB_PATH_ROUTING">Paths</button>
+              <button class="config-tab-btn" data-tab="tab-output-format" data-str="CAPTURE_CONFIG.TAB_OUTPUT_FORMAT">Output Format</button>
+              <button class="config-tab-btn" data-tab="tab-timing-options" data-str="CAPTURE_CONFIG.TAB_TIMING_OPTIONS">Timing</button>
+              <button class="config-tab-btn" data-tab="tab-pipeline" data-str="CAPTURE_CONFIG.TAB_PIPELINE">Pipeline</button>
+              <button class="config-tab-btn" data-tab="tab-drive-overrides" data-str="CAPTURE_CONFIG.TAB_CAPTURE_OUTPUT">Destinations</button>
+              <button class="config-tab-btn" data-tab="tab-custom-commands" data-str="CAPTURE_CONFIG.TAB_CUSTOM_COMMANDS">Commands</button>
             </div>
 
             <!-- Tab Content: Path Routing -->
@@ -172,6 +178,13 @@
                 <input type="text" id="ffmpeg-override-path-input" data-str-placeholder="CAPTURE_CONFIG.FFMPEG_OVERRIDE_PLACEHOLDER" placeholder="Optional path to ffmpeg.exe" style="flex: 1;" />
                 <button id="ffmpeg-browse-btn" data-str="CAPTURE_CONFIG.BROWSE_BUTTON">Browse</button>
               </div>
+            </div>
+
+            <!-- Tab Content: Output Format — what the recorded video IS.
+                 Resolution and FPS live together because they are the two
+                 halves of that, they are multiplied together in the disk
+                 estimator, and both become `mirv_movie_*` init commands. -->
+            <div id="tab-output-format" class="config-tab-content" style="display: none;">
               <div class="inline-controls">
                 <div class="control-group">
                   <label for="config-res-width" data-str="CAPTURE_CONFIG.WIDTH_LABEL">Width:</label>
@@ -182,22 +195,22 @@
                   <input type="number" id="config-res-height" value="720" style="width: 80px;" />
                 </div>
                 <div class="control-group">
+                  <label for="config-capture-fps" data-str="CAPTURE_CONFIG.CAPTURE_FPS_LABEL" data-str-title="CAPTURE_CONFIG.CAPTURE_FPS_TITLE">Capture FPS:</label>
+                  <input type="number" id="config-capture-fps" value="300" style="width: 80px;" data-str-title="CAPTURE_CONFIG.CAPTURE_FPS_TITLE" />
+                </div>
+                <div class="control-group">
                   <input type="checkbox" id="config-separate-hud" />
                   <label for="config-separate-hud" data-str="CAPTURE_CONFIG.SEPARATE_HUD_LABEL">Separate HUD</label>
-                </div>
-                <div class="control-group">
-                  <input type="checkbox" id="config-save-local-patched" />
-                  <label for="config-save-local-patched" data-str="CAPTURE_CONFIG.SAVE_LOCAL_PATCHED_LABEL">Save Local Patched Copy</label>
-                </div>
-                <div class="control-group">
-                  <input type="checkbox" id="config-add-condebug" checked />
-                  <label for="config-add-condebug" data-str="CAPTURE_CONFIG.ADD_CONDEBUG_LABEL">Add Condebug</label>
                 </div>
               </div>
             </div>
 
             <!-- Tab Content: Timing Options -->
             <div id="tab-timing-options" class="config-tab-content" style="display: none;">
+              <!-- Populated by roll_floors.js when a roll is shorter than the
+                   audio resync, the sound flush, the decal sweep's lead or a
+                   Scheduled Command's offset needs. -->
+              <div id="roll-floor-banner" hidden></div>
               <div class="grid-controls">
                 <div class="control-group">
                   <label for="config-pre-roll" data-str="CAPTURE_CONFIG.PRE_ROLL_LABEL">Pre-roll (s):</label>
@@ -223,21 +236,28 @@
                   <label for="config-fast-forward-speed" data-str="CAPTURE_CONFIG.FF_SPEED_LABEL">FF Speed (x):</label>
                   <input type="number" step="0.01" id="config-fast-forward-speed" value="0.05" style="width: 80px;" disabled data-str-title="CAPTURE_CONFIG.FF_SPEED_TITLE" title="Locked, matching dev — not currently user-editable." />
                 </div>
-                <div class="control-group">
-                  <label for="config-capture-fps" data-str="CAPTURE_CONFIG.CAPTURE_FPS_LABEL">Capture FPS:</label>
-                  <input type="number" id="config-capture-fps" value="300" style="width: 80px;" />
-                </div>
               </div>
             </div>
 
-            <!-- Tab Content: Capture Output (id kept as tab-drive-overrides — internal hook, not user-visible) -->
-            <div id="tab-drive-overrides" class="config-tab-content" style="display: none;">
-              <div class="input-row">
-                <input type="text" id="drive-path-input" data-str-placeholder="CAPTURE_CONFIG.OUTPUT_DIR_PLACEHOLDER" placeholder="Capture output directory path..." style="flex: 1;" />
-                <button id="add-drive-btn" data-str="CAPTURE_CONFIG.ADD_DIRECTORY_BUTTON">Add Directory</button>
-                <button id="browse-drive-btn" data-str="CAPTURE_CONFIG.BROWSE_BUTTON">Browse</button>
-              </div>
+            <!-- Tab Content: Pipeline — what the app does around the recording,
+                 as opposed to what the recording is. -->
+            <div id="tab-pipeline" class="config-tab-content" style="display: none;">
               <div class="inline-controls">
+                <div class="control-group">
+                  <!-- Separate from the `r_decals` init command, which says how
+                       many decals the engine keeps. This says whether the
+                       pipeline sweeps them between clips. -->
+                  <input type="checkbox" id="config-decal-flush" checked />
+                  <label for="config-decal-flush" data-str="CAPTURE_CONFIG.DECAL_FLUSH_LABEL" data-str-title="CAPTURE_CONFIG.DECAL_FLUSH_TITLE">Flush Decals Between Clips</label>
+                </div>
+                <div class="control-group">
+                  <input type="checkbox" id="config-save-local-patched" />
+                  <label for="config-save-local-patched" data-str="CAPTURE_CONFIG.SAVE_LOCAL_PATCHED_LABEL">Save Local Patched Copy</label>
+                </div>
+                <div class="control-group">
+                  <input type="checkbox" id="config-add-condebug" checked />
+                  <label for="config-add-condebug" data-str="CAPTURE_CONFIG.ADD_CONDEBUG_LABEL">Add Condebug</label>
+                </div>
                 <div class="control-group">
                   <input type="checkbox" id="config-auto-clear-logs" />
                   <label for="config-auto-clear-logs" data-str="CAPTURE_CONFIG.AUTO_CLEAR_LOGS_LABEL">Auto-clear Logs</label>
@@ -254,22 +274,36 @@
                   <button id="open-clear-previews-btn" data-str="CAPTURE_CONFIG.CLEAR_PREVIEWS_BUTTON">Clear Previews...</button>
                 </div>
               </div>
+            </div>
+
+            <!-- Tab Content: Destinations — where captures are written.
+                 (id kept as tab-drive-overrides: internal hook, not user-visible) -->
+            <div id="tab-drive-overrides" class="config-tab-content" style="display: none;">
+              <div class="input-row">
+                <input type="text" id="drive-path-input" data-str-placeholder="CAPTURE_CONFIG.OUTPUT_DIR_PLACEHOLDER" placeholder="Capture output directory path..." style="flex: 1;" />
+                <button id="add-drive-btn" data-str="CAPTURE_CONFIG.ADD_DIRECTORY_BUTTON">Add Directory</button>
+                <button id="browse-drive-btn" data-str="CAPTURE_CONFIG.BROWSE_BUTTON">Browse</button>
+              </div>
               <div id="target-drive-list" class="list-editor-list"></div>
             </div>
 
-            <!-- Tab Content: Custom Commands -->
+            <!-- Tab Content: Initial + Scheduled Commands -->
             <div id="tab-custom-commands" class="config-tab-content" style="display: none;">
               <div class="input-row">
-                <strong data-str="CAPTURE_CONFIG.INIT_COMMANDS_LABEL">Initial Commands (executed once at demo load):</strong>
+                <strong data-str="CAPTURE_CONFIG.INIT_COMMANDS_LABEL">Initial Commands (run once at demo load):</strong>
               </div>
+              <!-- Populated by cfg_warnings.js when the game's own config files
+                   set a cvar the pipeline reads. Advisory only — nothing in this
+                   app ever edits a config file. -->
+              <div id="cfg-warning-banner" hidden></div>
               <div id="init-commands-list" class="list-editor-list"></div>
-              <button id="add-init-command-btn" data-str="CAPTURE_CONFIG.ADD_INIT_COMMAND_BUTTON">+ Add Init Command</button>
+              <button id="add-init-command-btn" data-str="CAPTURE_CONFIG.ADD_INIT_COMMAND_BUTTON">+ Add Initial Command</button>
 
               <div class="input-row" style="margin-top: 16px;">
-                <strong data-str="CAPTURE_CONFIG.CUSTOM_COMMANDS_LABEL">Custom Commands (scheduled relative to each highlight):</strong>
+                <strong data-str="CAPTURE_CONFIG.CUSTOM_COMMANDS_LABEL">Scheduled Commands (run relative to each highlight):</strong>
               </div>
               <div id="custom-commands-list" class="list-editor-list"></div>
-              <button id="add-custom-command-btn" data-str="CAPTURE_CONFIG.ADD_CUSTOM_COMMAND_BUTTON">+ Add Custom Command</button>
+              <button id="add-custom-command-btn" data-str="CAPTURE_CONFIG.ADD_CUSTOM_COMMAND_BUTTON">+ Add Scheduled Command</button>
             </div>
 
             <p id="disk-space-warning-banner" style="display: none; color: #f44336; font-weight: 600; margin-top: 10px; white-space: pre-line;"></p>

@@ -34,6 +34,16 @@ pub struct AppSettings {
     pub resolution_height: i32,
     #[serde(default)]
     pub separate_hud: bool,
+    /// Whether the pipeline sweeps the decal ring between clips.
+    ///
+    /// Distinct from `r_decals` in `init_commands`, which says how many decals
+    /// the engine keeps. Off here means "capture as the engine would, bullet
+    /// holes and all" — which `r_decals 0` cannot express, since that turns
+    /// decals off entirely and changes how the capture looks.
+    ///
+    /// Defaults on, including for settings files written before it existed.
+    #[serde(default = "default_decal_flush")]
+    pub decal_flush: bool,
     #[serde(default = "default_add_condebug")]
     pub add_condebug: bool,
     #[serde(default)]
@@ -87,6 +97,7 @@ fn default_render_codec() -> String { "prores".to_string() }
 fn default_render_fps() -> i32 { 300 }
 fn default_render_max_concurrent() -> i32 { 2 }
 fn default_analyzer_explorer_width() -> i32 { 260 }
+fn default_decal_flush() -> bool { true }
 fn default_studio_mode() -> String { "quick-clip".to_string() }
 
 impl Default for AppSettings {
@@ -106,6 +117,7 @@ impl Default for AppSettings {
             resolution_width: default_resolution_width(),
             resolution_height: default_resolution_height(),
             separate_hud: false,
+            decal_flush: default_decal_flush(),
             add_condebug: default_add_condebug(),
             auto_clear_logs: false,
             auto_clear_previews: false,
@@ -115,7 +127,18 @@ impl Default for AppSettings {
             initial_delay: default_initial_delay(),
             fast_forward_speed: default_fast_forward_speed(),
             target_drives: Vec::new(),
-            init_commands: Vec::new(),
+            // Seeded on first run only. `Default` is reached when there is no
+            // settings file at all, so nobody's saved init commands are ever
+            // appended to — silently changing the FOV or the decal ring of a
+            // capture someone had already configured would be a far worse
+            // trade than a new user having to discover these two lines exist.
+            //
+            // Both are values the pipeline reads back: `r_decals` states the
+            // decal ring the flush sizes its sweep to, and `mirv_fov` states
+            // the FOV the on-screen test is derived from. 90 is the engine's
+            // own default and the right starting point; change it here and the
+            // flush follows.
+            init_commands: vec!["r_decals 256".to_string(), "mirv_fov 90".to_string()],
             custom_commands: Vec::new(),
             save_local_patched_copy: false,
             render_folders: Vec::new(),

@@ -4,6 +4,8 @@ import { confirm } from '@tauri-apps/plugin-dialog';
 import { showToast } from './toast.js';
 import { requestProcessGuardedLaunch } from './detail_pane.js';
 import { createListEditor } from './list_editor.js';
+import { refreshCfgWarnings } from './cfg_warnings.js';
+import { refreshRollFloors } from './roll_floors.js';
 import { streakUid, recordTake } from './take_index.js';
 import { STRINGS } from './strings.js';
 
@@ -40,6 +42,58 @@ let unlistenTakesVerified = null;
 
 function notifySettingsChange() {
   if (currentOnSettingsChange) currentOnSettingsChange();
+}
+
+/**
+ * Settings the pipeline turns into init commands of its own, appended after
+ * the user's own list. Capture FPS becomes `mirv_movie_fps <n>`, Separate HUD
+ * becomes `mirv_movie_separate_hud <n>`, and the decal flush contributes the
+ * `r_decals` pin — so each can displace a value from a config file, and the
+ * warning banner is stale until it is told one changed.
+ *
+ * Keyed by element id rather than by tab, deliberately: what makes these
+ * special is that they become commands, not where they happen to sit.
+ */
+const FIELDS_THAT_BECOME_COMMANDS = [
+  '#config-capture-fps',
+  '#config-separate-hud',
+  '#config-decal-flush',
+];
+
+/**
+ * Re-check the game's config files against the commands a capture would apply.
+ *
+ * Passes the settings that decide what the pipeline appends for itself — the
+ * movie fps, the HUD split, the decal pin — so the overrides reported are the
+ * ones a real capture would really perform, not just the ones typed by hand.
+ * `movie.cfg` setting `mirv_movie_fps 300` against a capture configured for 120
+ * is a collision nobody typed and nobody would otherwise see.
+ *
+ * Called by main.js once persisted settings have landed in the DOM, whenever
+ * the hl.exe path changes, by the command editors on every edit, and by the
+ * settings below that the pipeline turns into commands of its own.
+ */
+export function refreshInitCommandWarnings() {
+  const gamePath = document.querySelector('#hl-path-input')?.value?.trim() || '';
+  refreshCfgWarnings(
+    gamePath,
+    initCommands.map((c) => c.trim()).filter((c) => c.length > 0),
+    // Relation and offset travel with the command: they decide which one the
+    // engine reaches first, and only the first to touch a cvar displaces what
+    // the configs left it at.
+    customCommands
+      .filter((c) => (c?.command || '').trim())
+      .map((c) => ({
+        command: c.command.trim(),
+        relation: c.relation === 'After' ? 'After' : 'Before',
+        offset_seconds: Number(c.offsetSeconds) || 0,
+      })),
+    {
+      captureFps: parseInt(document.querySelector('#config-capture-fps')?.value, 10) || null,
+      separateHud: document.querySelector('#config-separate-hud')?.checked ?? null,
+      decalFlush: document.querySelector('#config-decal-flush')?.checked ?? true,
+    }
+  );
 }
 
 /** Generates a `session_YYYYMMDD_HHMMSS` id so each batch routes into its own
@@ -516,7 +570,12 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
     container: document.querySelector('#init-commands-list'),
     getItems: () => initCommands,
     fields: [{ key: 'value', type: 'text', primitive: true, placeholder: STRINGS.CAPTURE_CONFIG.INIT_COMMAND_PLACEHOLDER }],
-    onChange: notifySettingsChange,
+    onChange: () => {
+      notifySettingsChange();
+      // Typing a command here can silence a line in the user's own config, and
+      // this is the moment they can still see both.
+      refreshInitCommandWarnings();
+    },
   });
 
   customCommandsEditor = createListEditor({
@@ -527,11 +586,26 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
       { key: 'relation', type: 'select', options: STRINGS.CAPTURE_CONFIG.CUSTOM_COMMAND_RELATION_OPTIONS },
       { key: 'offsetSeconds', type: 'number', step: 0.1, min: 0, width: '70px' },
     ],
-    onChange: notifySettingsChange,
+    onChange: () => {
+      notifySettingsChange();
+      // These run last of all — after the configs and after the init commands —
+      // and are the only place a cvar changes partway through a capture.
+      refreshInitCommandWarnings();
+      // A Scheduled Command offset is one of the terms the roll floors are
+      // built from, so moving one can move the floor.
+      refreshRollFloors();
+    },
   });
 
   initClearPreviewsModal();
   initStandaloneLaunchButton();
+
+  // The pipeline turns some settings into init commands, so the warnings go
+  // stale when one changes.
+  FIELDS_THAT_BECOME_COMMANDS.forEach((sel) => {
+    const el = document.querySelector(sel);
+    if (el) el.addEventListener("change", refreshInitCommandWarnings);
+  });
 
   const addInitCommandBtn = document.querySelector('#add-init-command-btn');
   if (addInitCommandBtn) {
@@ -738,6 +812,9 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
     const resWidthVal = parseInt(document.querySelector("#config-res-width")?.value, 10) || 1280;
     const resHeightVal = parseInt(document.querySelector("#config-res-height")?.value, 10) || 720;
     const separateHudVal = document.querySelector("#config-separate-hud")?.checked || false;
+    // `?? true` not `|| false`: a missing element must not silently disable
+    // the flush, since nothing in the captured video would show that it had.
+    const decalFlushVal = document.querySelector("#config-decal-flush")?.checked ?? true;
     const saveLocalPatchedCopyVal = document.querySelector("#config-save-local-patched")?.checked || false;
     const addCondebugVal = document.querySelector("#config-add-condebug")?.checked || false;
 
@@ -782,6 +859,7 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
       resolution_width: resWidthVal,
       resolution_height: resHeightVal,
       separate_hud: separateHudVal,
+      decal_flush: decalFlushVal,
       save_local_patched_copy: saveLocalPatchedCopyVal,
       add_condebug: addCondebugVal,
       streaks: selectedStreaks,

@@ -135,10 +135,16 @@ export const STRINGS = {
   // ── Export Configuration & Batch Capture Pipeline ────────────────────────
   CAPTURE_CONFIG: {
     PANEL_TITLE: 'Export Configuration & Batch Capture Pipeline',
-    TAB_PATH_ROUTING: 'Path Routing',
-    TAB_TIMING_OPTIONS: 'Timing Options',
-    TAB_CAPTURE_OUTPUT: 'Capture Output',
-    TAB_CUSTOM_COMMANDS: 'Custom Commands',
+    // Grouped by what a field does, not by what it historically sat next to.
+    // Capture FPS moved out of Timing — it is the recording rate and has
+    // nothing to do with when anything happens — and joined resolution, which
+    // is the other half of "what the video is".
+    TAB_PATH_ROUTING: 'Paths',
+    TAB_OUTPUT_FORMAT: 'Output Format',
+    TAB_TIMING_OPTIONS: 'Timing',
+    TAB_PIPELINE: 'Pipeline',
+    TAB_CAPTURE_OUTPUT: 'Destinations',
+    TAB_CUSTOM_COMMANDS: 'Commands',
     HLAE_EXEC_LABEL: 'HLAE Executable:',
     HLAE_EXEC_PLACEHOLDER: 'Path to hlae.exe',
     HL_EXEC_LABEL: 'Half-Life Executable:',
@@ -149,6 +155,9 @@ export const STRINGS = {
     WIDTH_LABEL: 'Width:',
     HEIGHT_LABEL: 'Height:',
     SEPARATE_HUD_LABEL: 'Separate HUD',
+    DECAL_FLUSH_LABEL: 'Flush Decals Between Clips',
+    DECAL_FLUSH_TITLE:
+      'Clear bullet holes and blood off the walls between one clip and the next, so a later capture does not inherit the damage from an earlier one. Off captures the walls exactly as the engine leaves them. How many decals the engine keeps is a separate thing — set r_decals in Initial Commands.',
     SAVE_LOCAL_PATCHED_LABEL: 'Save Local Patched Copy',
     ADD_CONDEBUG_LABEL: 'Add Condebug',
     PRE_ROLL_LABEL: 'Pre-roll (s):',
@@ -159,16 +168,25 @@ export const STRINGS = {
     FF_SPEED_LABEL: 'FF Speed (x):',
     FF_SPEED_TITLE: 'Locked, matching dev — not currently user-editable.',
     CAPTURE_FPS_LABEL: 'Capture FPS:',
+    // Worth stating outright. This used to sit under Timing Options, and the
+    // adjacency invited exactly the confusion that cost real time: the demo's
+    // own tickrate is a different number entirely, and conflating the two is
+    // how a "3 second" margin turned out to be 0.6.
+    CAPTURE_FPS_TITLE:
+      'Frames per second written to the recorded video. Nothing to do with the demo\'s own tickrate, which is a property of how the demo was recorded and is not adjustable here.',
     OUTPUT_DIR_PLACEHOLDER: 'Capture output directory path...',
     ADD_DIRECTORY_BUTTON: 'Add Directory',
     AUTO_CLEAR_LOGS_LABEL: 'Auto-clear Logs',
     AUTO_CLEAR_PREVIEWS_LABEL: 'Auto-clear Previews',
     AUTO_CLEAR_TEMP_DEMOS_LABEL: 'Auto-clear Temp Demos',
     CLEAR_PREVIEWS_BUTTON: 'Clear Previews...',
-    INIT_COMMANDS_LABEL: 'Initial Commands (executed once at demo load):',
-    ADD_INIT_COMMAND_BUTTON: '+ Add Init Command',
-    CUSTOM_COMMANDS_LABEL: 'Custom Commands (scheduled relative to each highlight):',
-    ADD_CUSTOM_COMMAND_BUTTON: '+ Add Custom Command',
+    INIT_COMMANDS_LABEL: 'Initial Commands (run once at demo load):',
+    ADD_INIT_COMMAND_BUTTON: '+ Add Initial Command',
+    // Both lists on this tab are custom commands; only one is scheduled, so
+    // that is what the label says. Paired with INIT_COMMANDS_LABEL's "once at
+    // demo load", the two read as the distinction they actually are.
+    CUSTOM_COMMANDS_LABEL: 'Scheduled Commands (run relative to each highlight):',
+    ADD_CUSTOM_COMMAND_BUTTON: '+ Add Scheduled Command',
     START_CAPTURE_BUTTON: 'Start Capture Batch',
     CANCEL_BATCH_BUTTON: 'Cancel Batch',
     STATUS_WAITING: 'Status: Waiting...',
@@ -594,6 +612,86 @@ export const STRINGS = {
   },
 
   // ── main.js: sessions, settings dialogs, scan status, Clear actions ─────
+  // Map library warnings. A demo names the map it was recorded on and stamps
+  // that map's build alongside it, so "missing" and "wrong build" are different
+  // problems: one cannot be played at all, the other plays and is quietly wrong.
+  MAPS: {
+    BANNER_TITLE: 'Maps needed',
+    MISSING_LABEL: 'missing',
+    WRONG_BUILD_LABEL: 'different build',
+    UNREADABLE_LABEL: 'unreadable',
+    DOWNLOAD_BUTTON: 'Download',
+    DOWNLOAD_ALL_BUTTON: 'Download all',
+    DISMISS_BUTTON: 'Dismiss',
+    DOWNLOADING: 'Downloading…',
+    NO_GAME_PATH: 'Set the hl.exe path in Configuration to check demo maps.',
+    demoCount: (n) => (n === 1 ? '1 demo' : `${n} demos`),
+    missingSummary: (maps, demos) =>
+      `${maps === 1 ? '1 map' : `${maps} maps`} needed by ${demos === 1 ? '1 demo' : `${demos} demos`}`,
+    wrongBuildDetail: (map, wanted, found) =>
+      `${map} — these demos need build ${wanted}, the installed map is ${found}`,
+    missingDetail: (map, demos) => `${map} — not installed, needed by ${demos}`,
+    installedToast: (map) => `Installed ${map}`,
+    alreadyCorrectToast: (map) => `${map} was already the right build`,
+    replacedNote: (path) => `Previous map kept at ${path}`,
+    downloadFailedToast: (map, err) => `Could not install ${map}: ${err}`,
+    checkFailed: (err) => `Could not check demo maps: ${err}`,
+    UNVERIFIABLE_NOTE:
+      'HLTV demos do not record which map build they need, so those can only be checked for the map being present.',
+  },
+
+  // The game's own config files setting cvars this app reads. Advisory only —
+  // nothing in this app writes to a config file.
+  CFG: {
+    BANNER_TITLE: "Your game's config files set values this app reads:",
+    ADVICE:
+      'These are set outside the app, so it cannot see them when it plans a capture. Either remove them from your configs, or state them in Initial Commands below so the pipeline works from the same values the engine does. Nothing here changes your config files.',
+    location: (file, line) => `set in ${file}, line ${line}`,
+    OVERRIDE_TITLE: 'These Initial Commands will override your config files:',
+    OVERRIDE_ADVICE:
+      'Init commands run after the game loads its configs, so these values win. That is usually the point — but the config line stops applying, and nothing else would tell you.',
+    FROM_APP_NOTE: 'added by the app',
+    SHADOWED_TITLE: 'These Initial Commands will not take effect:',
+    SHADOWED_ADVICE:
+      'The app appends its own commands after yours, and the last one wins. Change the setting that owns the value instead — editing the line here cannot win.',
+    shadowedByApp: (cvar, yours, winner, setting) =>
+      `${cvar} ${yours} never applies — the app sets ${winner} from ${setting}`,
+    shadowedByYou: (cvar, yours, winner) =>
+      `${cvar} ${yours} never applies — a later Initial Command sets ${winner}`,
+    // Which setting owns a value the pipeline appends for itself, so the advice
+    // can name the control rather than leaving the user to hunt for it.
+    SETTING_FOR_CVAR: {
+      mirv_movie_fps: 'Timing Options → Capture FPS',
+      mirv_movie_separate_hud: 'Capture Config → Separate HUD',
+      r_decals: 'Capture Config → Flush Decals Between Clips',
+    },
+    UNKNOWN_SETTING: 'its own setting',
+    HAZARD_TITLE: 'These Scheduled Commands will break the decal flush:',
+    HAZARD_ADVICE:
+      'r_decals bounds how far the engine\'s decal ring may travel before it wraps — it evicts nothing. Setting it during playback strands every decal above the new limit for the rest of the demo, and the capture still completes looking plausible. Set the ring once, in Initial Commands, and leave it alone.',
+    CUSTOM_TITLE: 'These Scheduled Commands override earlier values:',
+    CUSTOM_ADVICE:
+      'Scheduled commands run during playback, so they come after your configs and after the Initial Commands — they are the last word on whatever they set, and the only place a value changes partway through a capture.',
+    hazardRow: (command) => `${command} — runs during playback`,
+    customOverridesInit: (cvar, value, previous) =>
+      `${cvar} ${value} replaces ${previous}, set before the demo loads`,
+    customOverridesConfig: (cvar, value, previous, source) =>
+      `${cvar} ${value} replaces ${previous} from ${source}`,
+    override: (cvar, initValue, cfgValue, file, line) =>
+      `${cvar} ${initValue} replaces ${cfgValue} from ${file}, line ${line}`,
+  },
+
+  // Pre-roll and post-roll are load-bearing: playback returns to real time one
+  // pre-roll before recording, so everything that must happen at normal speed
+  // has to fit inside it.
+  ROLLS: {
+    BANNER_TITLE: 'These timings are shorter than this capture needs:',
+    ADVICE:
+      'Playback only returns to real time one pre-roll before recording starts. Anything that has to happen at normal speed — the engine flushing its audio buffers after the fast-forward, the decal sweep, a Scheduled Command — has to fit inside that window, or it happens while the engine is still racing through frames.',
+    tooShort: (name, have, need, binding) =>
+      `<code>${name} ${have.toFixed(1)}s</code> — needs at least <code>${need.toFixed(1)}s</code> for ${binding}`,
+  },
+
   MAIN: {
     SELECT_CAPTURE_OUTPUT_DIR_TITLE: 'Select Capture Output Directory',
     SELECT_RENDER_DIR_TITLE: 'Select Render Directory',

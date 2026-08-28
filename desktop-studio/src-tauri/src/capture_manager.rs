@@ -79,6 +79,14 @@ pub struct CapturePayload {
     /// User-defined commands scheduled relative to each highlight's bounds.
     #[serde(default)]
     pub custom_commands: Vec<CustomCommandPayload>,
+    /// Clear accumulated wall decals ahead of every recorded clip, so the
+    /// second and later takes cut from one demo don't start dirty. Absent
+    /// means "leave it at the pipeline default".
+    #[serde(default)]
+    pub decal_flush: Option<bool>,
+    /// Decal ring size the flush pins `r_decals` to. Absent means the default.
+    #[serde(default)]
+    pub decal_ring_limit: Option<u32>,
 }
 
 fn default_initial_delay() -> f32 { 3.0 }
@@ -219,6 +227,12 @@ fn config_from_payload(payload: &CapturePayload) -> PatcherConfig {
             _ => CommandRelation::Before,
         },
     }).collect();
+    if let Some(v) = payload.decal_flush {
+        cfg.decal_flush = v;
+    }
+    if let Some(v) = payload.decal_ring_limit {
+        cfg.decal_ring_limit = v;
+    }
     // Capture Output is the sole (required) source of output directories —
     // the frontend already blocks the batch if `drives` is empty.
     cfg.primary_media_dir = payload.drives.first().map(std::path::PathBuf::from);
@@ -232,6 +246,10 @@ fn config_from_payload(payload: &CapturePayload) -> PatcherConfig {
 pub struct CaptureManifest {
     pub session_id: String,
     pub blocks: Vec<CaptureBlock>,
+    /// `mirv_movie_fps` this batch was captured at, recorded beside the takes
+    /// once they verify so Render Studio can tell when its own FPS setting
+    /// disagrees. See `native::hlcr::take_meta`.
+    pub capture_fps: i32,
 }
 
 /// One block's post-batch verdict, checked against what's actually on disk.
@@ -251,8 +269,16 @@ pub struct VerifiedBlock {
 }
 
 fn take_folder_has_content(path: &Path) -> bool {
+    // Our own metadata does not count as captured output. It is written into
+    // this folder after verification, so it cannot affect the batch that made
+    // it — but a re-verification of an older session would otherwise report a
+    // capture that never happened.
     std::fs::read_dir(path)
-        .map(|mut entries| entries.next().is_some())
+        .map(|entries| {
+            entries
+                .flatten()
+                .any(|e| !native::hlcr::take_meta::is_metadata(&e.file_name()))
+        })
         .unwrap_or(false)
 }
 
@@ -294,6 +320,43 @@ fn verify_capture_takes(manifest: &CaptureManifest) -> Vec<VerifiedBlock> {
     verified
 }
 
+/// Records what each take was captured at, in the take's own block folder.
+///
+/// Per take rather than per session so the record travels with the take. Two
+/// batches at different rates already land in different session folders, so a
+/// session-level file would be right for that — until somebody moves a take,
+/// at which point it would silently inherit the settings of wherever it landed.
+///
+/// Runs **after** verification and only for blocks that actually landed. A
+/// metadata file in a block that produced nothing would be misleading on its
+/// own, and `take_folder_has_content` decides a take was captured by asking
+/// whether its folder is non-empty — that check now skips our own file, so the
+/// ordering here is belt-and-braces rather than the only thing holding it up.
+///
+/// Best-effort throughout: a capture that succeeded must never be reported as
+/// failed because a metadata file could not be written.
+fn record_capture_settings(manifest: &CaptureManifest, blocks: &[VerifiedBlock]) {
+    if manifest.capture_fps <= 0 {
+        return;
+    }
+    let meta = native::hlcr::take_meta::SessionMeta::new(
+        manifest.session_id.clone(),
+        manifest.capture_fps,
+    );
+
+    for block in blocks.iter().filter(|b| b.captured) {
+        let folder = Path::new(&block.take_folder);
+        if let Err(e) = native::hlcr::take_meta::write(folder, &meta) {
+            log_markdown(&format!(
+                "[take-verify] could not record capture settings at {} — {}. Render Studio will \
+                 not be able to warn about an FPS mismatch for this take.",
+                folder.display(),
+                e
+            ));
+        }
+    }
+}
+
 /// Runs verification for the batch that just ended and reports it to the
 /// frontend. Phase 1 is observe-only — nothing consumes this to change a
 /// highlight's status yet.
@@ -320,6 +383,8 @@ fn emit_take_verification(app: &tauri::AppHandle, manifest_slot: &Arc<Mutex<Opti
             block.take_key, block.captured, block.renderable, block.take_folder
         ));
     }
+
+    record_capture_settings(&manifest, &blocks);
 
     let _ = app.emit("capture_takes_verified", serde_json::json!({
         "session_id": manifest.session_id,
@@ -416,6 +481,7 @@ pub async fn start_capture_batch_impl(
             let manifest = CaptureManifest {
                 session_id: patcher_config.session_id.clone(),
                 blocks: patch_jobs.iter().flat_map(|j| j.blocks.iter().cloned()).collect(),
+                capture_fps: patcher_config.capture_fps,
             };
             let mut slot = manifest_arc.lock().unwrap_or_else(|p| p.into_inner());
             *slot = Some(manifest);
@@ -1224,6 +1290,8 @@ mod tests {
                 CustomCommandPayload { command: "say after".to_string(), relation: "After".to_string(), offset_seconds: 1.0 },
                 CustomCommandPayload { command: "say unrecognized".to_string(), relation: "Sideways".to_string(), offset_seconds: 1.0 },
             ],
+            decal_flush: None,
+            decal_ring_limit: None,
         }
     }
 
@@ -1241,6 +1309,24 @@ mod tests {
         assert_eq!(cfg.session_id, "session_test");
         assert_eq!(cfg.init_commands, vec!["exec autoexec".to_string()]);
         assert_eq!(cfg.capture_directories, vec![PathBuf::from("D:/capture")]);
+    }
+
+    #[test]
+    fn test_config_from_payload_decal_flush_overrides_only_when_sent() {
+        // Absent means "leave the pipeline default alone", so a frontend that
+        // knows nothing about decals still gets the flush.
+        let defaults = PatcherConfig::default();
+        let mut payload = sample_payload();
+
+        let cfg = config_from_payload(&payload);
+        assert_eq!(cfg.decal_flush, defaults.decal_flush);
+        assert_eq!(cfg.decal_ring_limit, defaults.decal_ring_limit);
+
+        payload.decal_flush = Some(false);
+        payload.decal_ring_limit = Some(64);
+        let cfg = config_from_payload(&payload);
+        assert!(!cfg.decal_flush);
+        assert_eq!(cfg.decal_ring_limit, 64);
     }
 
     #[test]

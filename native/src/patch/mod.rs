@@ -37,12 +37,31 @@ pub const EVENT_FRAME_SIZE: usize = 84;
 pub const MAX_ECHO_CHUNK_SIZE: usize = 55;
 pub const CUSTOM_CMD_WARN_LIMIT: usize = 60;
 pub const PRIMER_DELAY_TICKS: i32 = 500;
+
+/// The engine's own ceiling on the decal ring. `r_decals` is clamped to this,
+/// so a sweep of this size turns a full revolution regardless of what the cvar
+/// is set to — which is what lets the pipeline stop pinning it. See
+/// `decal_strip` and `docs/decal_flush_bsp_surfaces.md`.
+pub const MAX_RENDER_DECALS: u32 = 4096;
 pub const BREADCRUMB_INTERVAL_TICKS: i32 = 5000;
 
 pub mod types;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod highlevel;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod decal_strip;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod decal_atlas;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod bsp;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod cfg_scan;
+pub mod map_check;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod map_fetch;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod decal_probe;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod engine;
 #[cfg(not(target_arch = "wasm32"))]
@@ -74,10 +93,39 @@ pub use types::{PatchEvent, CaptureWorker};
 pub use highlevel::patch_demo_highlights;
 
 #[cfg(not(target_arch = "wasm32"))]
+pub use decal_strip::{
+    capture_fov, clean_demo_decals, on_screen_half_angle, prepare_flushed_source,
+    DEFAULT_LEAD_SECONDS,
+    proven_world_coordinates, ring_limit, ring_limit_from_init, ring_set_by_game_config,
+    strip_decals_outside_windows,
+    CleanedSource, DecalCleanOptions, DecalCleanStats, FlushSource, VisibilityBasis,
+    DECALS_PER_POSITION, MAX_OVERLAP_DECALS,
+};
+
+#[cfg(not(target_arch = "wasm32"))]
+pub use decal_probe::{
+    best_view_for, camera_at_time, decal_texture_histogram, probe_decal_offsets, project,
+    CameraView, GridStats, Probe, ProbeOptions, ProbeRow,
+    ProbeStats, Sighting,
+};
+
+#[cfg(not(target_arch = "wasm32"))]
+pub use cfg_scan::{scan as scan_game_cfgs, CfgScan, CvarSetting, WATCHED_CVARS};
+
+#[cfg(not(target_arch = "wasm32"))]
+pub use decal_strip::{capture_fov_from_init, capture_fov_resolved};
+
+#[cfg(not(target_arch = "wasm32"))]
+pub use map_check::{check_demo, map_reference, MapReference, MapStatus};
+
+#[cfg(not(target_arch = "wasm32"))]
+pub use map_fetch::{fetch_map, map_url, FetchOutcome, DEFAULT_MIRROR};
+
+#[cfg(not(target_arch = "wasm32"))]
 pub use engine::StreamPatcher;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use builder::{build_batch_queue, spawn_patch_batch, WorkspaceGuard, build_director_message, build_director_stufftext, build_preview_patch_jobs};
+pub use builder::{build_batch_queue, final_init_commands, spawn_patch_batch, WorkspaceGuard, build_director_message, build_director_stufftext, build_preview_patch_jobs};
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use scanner::{is_hltv_demo, scan_demo_for_highlights, scan_demo_for_highlights_with_analysis};

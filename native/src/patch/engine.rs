@@ -82,6 +82,25 @@ fn write_director_event_payload(
     Ok(total_bytes as i32)
 }
 
+/// Parked R&D, deliberately kept: forcing the spectator view into one player's
+/// eyes by injecting `DRC_CMD_INEYE`.
+///
+/// **Unused, and not dead.** It exists for the HLTV case, which is still open.
+/// An HLTV demo carries every player's highlights and the app offers all of
+/// them, but there is no reliable way yet to put the camera on the one a clip
+/// is about — today that means left/right-clicking through spectator targets by
+/// hand. This is the attempt at doing it from the stream instead.
+///
+/// It is NOT about first-person demos. Those already record the only camera
+/// they have, and the Highlights table filters a POV demo down to the recording
+/// player (`isVisibleStreak`, `detail_pane.js`), so nothing there needs a view
+/// hijack. Other players' streaks are scanned out of a POV demo only so the
+/// Demo Analyzer can build a scoreboard from them.
+///
+/// Anything reasoning about where the capture camera is — the decal flush's
+/// visibility test most of all — reads the demo's recorded `refparams`, which
+/// is correct exactly while this stays unused. Switching it on moves the camera
+/// away from what those samples describe, and the flush would have to follow.
 #[allow(dead_code)]
 fn write_ineye_hijack_payload(
     writer: &mut std::io::BufWriter<std::fs::File>,
@@ -137,10 +156,21 @@ impl StreamPatcher {
         }
     }
 
-    pub fn patch(&self, job: &PatchJob, _config: &PatcherConfig, cancel_token: &Arc<AtomicBool>) -> Result<(), std::io::Error> {
+    pub fn patch(&self, job: &PatchJob, config: &PatcherConfig, cancel_token: &Arc<AtomicBool>) -> Result<(), std::io::Error> {
         use std::io::{BufReader, BufWriter, Read, Write, Seek, SeekFrom};
 
-        let input_file = std::fs::File::open(&job.source_demo)?;
+        // Decal hygiene runs first, as a whole-file rewrite the stream below
+        // then reads from. Held for the whole patch: the scratch demo is
+        // deleted when this drops, including on the cancellation path.
+        // Falls back to the original demo (having logged why) rather than
+        // failing the batch — see `prepare_flushed_source`.
+        let cleaned_source = crate::patch::decal_strip::prepare_flushed_source(job, config);
+        let source_demo: &std::path::Path = match &cleaned_source {
+            Some(c) => c.path(),
+            None => std::path::Path::new(&job.source_demo),
+        };
+
+        let input_file = std::fs::File::open(source_demo)?;
         let output_file = std::fs::File::create(&job.output_demo)?;
 
         let mut reader = BufReader::with_capacity(crate::patch::IO_BUFFER_CAPACITY, input_file);
