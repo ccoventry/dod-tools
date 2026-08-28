@@ -296,6 +296,33 @@ overlay should do and a useful sanity signal that the streams are what they clai
 to HLCR-style frame-count pairing. FFprobe reads 1218 straight off the stream, so the number is
 available without decoding — see `docs/render_studio_hlcr_parity.md`.
 
+### Separate HUD does not survive `mirv_movie_ffmpeg`
+
+The streams are created and the render runs clean end to end, but the HUD clip comes out as a black
+rectangle. Two independent faults, separated by capturing the same demo both ways:
+
+| stream | BMP mode | video mode |
+|---|---|---|
+| `all` | scene, no HUD | scene, no HUD |
+| `hudcolor` | **real HUD** — min 16 / avg 17.2 / max 222 | **blank** — min = max = 16 |
+| `hudalpha` | **pure white** — R/G/B all 255 | **pure white** — R all 255 |
+
+1. **`hudcolor` is dropped by the FFmpeg path.** BMP mode captures the kill feed, objective icons and
+   crosshair correctly; the same capture through `mirv_movie_ffmpeg` writes uniformly black frames.
+   `all` is identical in both modes, so `mirv_movie_separate_hud` itself is taking effect — the HUD
+   is pulled out of `all` either way. Only the FFmpeg path fails to write it into its own stream.
+2. **`hudalpha` is fully opaque in *both* modes.** Every plane reads 255, so `extractplanes=r` can
+   only ever produce an opaque mask and `alphamerge` can never produce transparency. This is not a
+   direct-to-video regression — separate HUD has this problem independently of how it is captured.
+
+Fault 2 means the HUD pair would not composite correctly even in BMP mode, so the alpha half needs
+solving on its own terms before either path is usable. Worth noting `hudcolor` is black wherever the
+HUD is absent, which is why the standalone HLCR carries a `detect_chromakey_color` path — keying on
+black is a route that does not depend on the alpha stream at all.
+
+Until fault 1 is fixed, **Separate HUD and direct-to-video must not be used together**: the capture
+reports success, the render reports success, and the output is silently wrong.
+
 ### Not a codec problem: one demo crashes hl.exe
 
 `ktps8w1-stealth_soul_lenn_h1.dem` crashed hl.exe ~6s after spawn, four times running, with
