@@ -170,15 +170,15 @@ export const STRINGS = {
     CAPTURE_MODE_OBS: 'OBS (real time)',
     CAPTURE_MODE_OBS_TITLE:
         'OBS records the game window while dod-tools tells it when each clip starts and stops. HLAE records nothing. Output is a finished, playable file with audio already in it — but capture runs at real time, so frames drop if the machine cannot keep up, and high capture rates are not possible. Separate HUD is not available on this path.',
-    // Applies to every capture mode, which is why it sits with the mode
-    // selector rather than in the OBS panel. The throttle is the engine's:
-    // GoldSrc slows its frame loop when the window is not focused, and
-    // `host_framerate` fast-forward stops with it, so the gaps between clips
-    // play out in real time. Nothing is lost and no HLAE flag defeats it —
-    // `engine_no_focus_sleep` is Source 2 only. See
+    // Shown beside the progress bar while a batch runs, not in the settings —
+    // there is nothing to configure and no mode it does not apply to. The
+    // throttle is the engine's: GoldSrc slows its frame loop when the window is
+    // not focused and `host_framerate` fast-forward stops with it, so the gaps
+    // between clips play out in real time. Nothing is lost and no HLAE flag
+    // defeats it — `engine_no_focus_sleep` is Source 2 only. See
     // docs/goldsrc_dod_quirks.md.
-    FOCUS_HINT:
-        'Leave Day of Defeat focused for the whole batch. GoldSrc stops fast-forwarding when its window loses focus, so alt-tabbing away makes the gaps between clips play out in real time and the batch takes far longer.',
+    FOCUS_REMINDER:
+        'Keep Day of Defeat focused — it stops fast-forwarding between clips when it loses focus, and the batch takes far longer.',
     // ── OBS connection ──────────────────────────────────────────────────────
     OBS_SECTION_TITLE: 'OBS Connection',
     OBS_HOST_LABEL: 'Host:',

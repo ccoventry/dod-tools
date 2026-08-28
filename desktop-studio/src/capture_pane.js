@@ -559,6 +559,15 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
   const statusEl = document.querySelector('#batch-status');
   const progressContainer = document.querySelector('#capture-progress-container');
   const progressBar = document.querySelector('#capture-progress-bar');
+  const focusReminder = document.querySelector('#batch-focus-reminder');
+
+  // Tied to the progress bar rather than tracked separately: the reminder is
+  // only true while a batch is actually running, and two flags for one state
+  // is how they come to disagree.
+  const setBatchRunning = (running) => {
+    if (progressContainer && running) progressContainer.style.display = 'block';
+    if (focusReminder) focusReminder.style.display = running ? 'block' : 'none';
+  };
 
   currentGetState = getState;
   currentOnSettingsChange = onSettingsChange || null;
@@ -660,7 +669,7 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
       const payload = event.payload || {};
       if (payload.running) {
         capturingInFlight = true;
-        if (progressContainer) progressContainer.style.display = 'block';
+        setBatchRunning(true);
         if (progressBar) {
           if (payload.index !== undefined && payload.total && payload.total > 0) {
             const pct = Math.min(100, Math.round((payload.index / payload.total) * 100));
@@ -675,6 +684,7 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
         if (cancelBtn) cancelBtn.disabled = false;
       } else {
         capturingInFlight = false;
+        setBatchRunning(false);
         if (cancelBtn) cancelBtn.disabled = true;
         refreshLaunchGuard();
 
@@ -938,7 +948,7 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
       startCaptureBatch(activePayload)
         .then(() => {
           showToast(STRINGS.CAPTURE.BATCH_QUEUED_TOAST, "success");
-          if (progressContainer) progressContainer.style.display = 'block';
+          setBatchRunning(true);
           if (progressBar) progressBar.style.width = '10%';
         })
         .catch((err) => {
@@ -946,6 +956,8 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
           showToast(STRINGS.CAPTURE.startBatchError(err), "error");
           if (cancelBtn) cancelBtn.disabled = true;
           capturingInFlight = false;
+          // The batch never started, so the reminder must not be left standing.
+          setBatchRunning(false);
           refreshLaunchGuard(state);
         });
     });
