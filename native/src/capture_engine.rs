@@ -396,7 +396,27 @@ pub fn spawn_capture_engine(
             }
 
             let condebug_flag = if config.add_condebug { "-condebug " } else { "" };
-            let extra_args = format!("{}+exec dodtools_helper.cfg +playdemo primer", condebug_flag);
+            // `-afxForceAlpha8` is read by AfxHookGoldSrc.dll off the *game's*
+            // command line, not by HLAE.exe. HLAE's own Launch GoldSrc dialog
+            // appends it when its alpha box is ticked — but that dialog is the
+            // path we do not use. Under `-customLoader` we build the game
+            // command line ourselves, so nothing appends it and the hook never
+            // sees it. The `-forceAlpha true` passed to HLAE.exe below is a
+            // Launcher-mode switch and does not reach the hook from here.
+            //
+            // Without it the hudAlpha stream captures fully opaque (every plane
+            // 255), so extractplanes=r yields an all-opaque mask and the HUD
+            // composite has no transparency — measured in both BMP and video
+            // capture, see docs/direct_to_video_capture.md.
+            //
+            // Gated on separate_hud deliberately: only the HUD pair needs the
+            // alpha buffer, and the single-stream `all` capture is a known-good
+            // path not worth perturbing to fix something it does not use.
+            let alpha_flag = if config.separate_hud { "-afxForceAlpha8 " } else { "" };
+            let extra_args = format!(
+                "{}{}+exec dodtools_helper.cfg +playdemo primer",
+                condebug_flag, alpha_flag
+            );
 
             let dummy_path = active_export_dir.join("DOD_BATCH_DONE");
             let _ = std::fs::remove_dir_all(&dummy_path);
