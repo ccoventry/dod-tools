@@ -67,6 +67,8 @@ fn main() {
             }
         },
         Some("obs") => run_obs(&args[1..]),
+        Some("routing") => run_routing(&args[1..]),
+        Some("ffmpegmode") => run_ffmpeg_mode(&args[1..]),
         _ => {
             eprintln!(
                 "probe_obs — R&D probe for #65 (docs/obs_alternate_capture.md)\n\
@@ -350,6 +352,7 @@ fn run_obs(args: &[String]) {
         }
     }
 
+    dump_record_mode(&mut client);
     dump_scenes(&mut client);
 
     let Some(secs) = a.record else {
@@ -418,6 +421,423 @@ fn run_obs(args: &[String]) {
             ev["outputPath"].as_str().unwrap_or("(none reported)")
         );
     }
+}
+
+/// Does `SetRecordDirectory` steer *Custom Output (FFmpeg)* mode?
+///
+/// **This mode writes to the user's OBS profile** and restores it afterwards.
+/// It exists because the answer decides whether Custom Output — the mode that
+/// unlocks lossless, all-intra capture codecs — can coexist with Option A's
+/// per-block export-pool routing. If `SetRecordDirectory` only steers the
+/// standard output, choosing lossless costs drive routing, and that is a real
+/// trade-off the design has to state rather than discover later.
+///
+/// Deliberately **does not record**. Custom Output with no encoder configured
+/// would simply fail, and the path question is answerable from the settings
+/// alone — `AdvOut/FFFilePath` either follows the request or it does not. Not
+/// recording also means nothing here can leave a broken output configuration
+/// behind mid-capture.
+fn run_ffmpeg_mode(args: &[String]) {
+    let mut host = "127.0.0.1".to_string();
+    let mut port: u16 = 4455;
+    let mut password: Option<String> = None;
+    let mut target = "C:\\dod-tools-routing-probe".to_string();
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--host" => { host = args.get(i + 1).cloned().unwrap_or_default(); i += 2; }
+            "--port" => { port = args.get(i + 1).and_then(|s| s.parse().ok()).unwrap_or(4455); i += 2; }
+            "--password" => { password = args.get(i + 1).cloned(); i += 2; }
+            "--dir" => { target = args.get(i + 1).cloned().unwrap_or(target); i += 2; }
+            other => { eprintln!("unknown argument: {}", other); std::process::exit(2); }
+        }
+    }
+
+    let url = format!("ws://{}:{}", host, port);
+    let mut client = match ObsClient::connect(&url, password.as_deref()) {
+        Ok(c) => c,
+        Err(e) => { eprintln!("connect failed: {}", e); std::process::exit(1); }
+    };
+
+    // Back up first, and refuse to touch anything if the backup is incomplete.
+    let backup: Vec<(&str, &str, Option<String>)> = ["RecType", "FFFilePath"]
+        .iter()
+        .map(|k| ("AdvOut", *k, profile_get(&mut client, "AdvOut", k)))
+        .collect();
+    let orig_dir = client
+        .request("GetRecordDirectory", serde_json::json!({}))
+        .ok()
+        .and_then(|d| d["recordDirectory"].as_str().map(str::to_string));
+    let Some(orig_dir) = orig_dir else {
+        eprintln!("could not read the record directory — aborting before writing anything");
+        std::process::exit(1);
+    };
+
+    println!("  backup taken:");
+    for (cat, key, val) in &backup {
+        println!("    {}/{:<12} = {}", cat, key, val.clone().unwrap_or_else(|| "(unset)".into()));
+    }
+    println!("    record directory  = {}\n", orig_dir);
+
+    let result = ffmpeg_mode_experiment(&mut client, &target);
+
+    // Restore on every path, including a panic-free error return above.
+    println!("\n  restoring profile …");
+    for (cat, key, val) in &backup {
+        match val {
+            Some(v) => {
+                let ok = profile_set(&mut client, cat, key, v);
+                println!("    {}/{:<12} -> {}   [{}]", cat, key, v, if ok { "ok" } else { "FAILED" });
+            }
+            None => println!("    {}/{:<12} was unset; left alone", cat, key),
+        }
+    }
+    let ok = client
+        .request("SetRecordDirectory", serde_json::json!({ "recordDirectory": orig_dir }))
+        .is_ok();
+    println!("    record directory -> {}   [{}]", orig_dir, if ok { "ok" } else { "FAILED" });
+
+    match profile_get(&mut client, "AdvOut", "RecType") {
+        Some(t) => println!("\n  recording type is now: {}", t),
+        None => println!("\n  recording type is now: (unset — Standard)"),
+    }
+
+    if let Err(e) = result {
+        eprintln!("\n  experiment did not complete: {}", e);
+    }
+}
+
+fn ffmpeg_mode_experiment(client: &mut ObsClient, target: &str) -> Result<(), String> {
+    println!("  1. switching AdvOut/RecType to FFmpegOutput");
+    if !profile_set(client, "AdvOut", "RecType", "FFmpegOutput") {
+        return Err("SetProfileParameter refused".into());
+    }
+    let now = profile_get(client, "AdvOut", "RecType").unwrap_or_default();
+    println!("     readback: {}   [{}]", now, if now == "FFmpegOutput" { "TOOK" } else { "IGNORED" });
+    if now != "FFmpegOutput" {
+        return Err("could not switch mode; nothing further is meaningful".into());
+    }
+
+    let path_before = profile_get(client, "AdvOut", "FFFilePath");
+    let dir_before = client
+        .request("GetRecordDirectory", serde_json::json!({}))?
+        ["recordDirectory"].as_str().unwrap_or_default().to_string();
+    println!("\n  2. before SetRecordDirectory");
+    println!("     AdvOut/FFFilePath     : {}", path_before.clone().unwrap_or_else(|| "(unset)".into()));
+    println!("     GetRecordDirectory    : {}", dir_before);
+
+    println!("\n  3. SetRecordDirectory -> {}", target);
+    client.request("SetRecordDirectory", serde_json::json!({ "recordDirectory": target }))?;
+
+    let path_after = profile_get(client, "AdvOut", "FFFilePath");
+    let dir_after = client
+        .request("GetRecordDirectory", serde_json::json!({}))?
+        ["recordDirectory"].as_str().unwrap_or_default().to_string();
+    println!("\n  4. after");
+    println!("     AdvOut/FFFilePath     : {}", path_after.clone().unwrap_or_else(|| "(unset)".into()));
+    println!("     GetRecordDirectory    : {}", dir_after);
+
+    println!("\n  VERDICT");
+    let ff_followed = path_after.as_deref().map(|p| same_dir(p, target)).unwrap_or(false);
+    let get_followed = same_dir(&dir_after, target);
+    if ff_followed {
+        println!("     SetRecordDirectory steers the Custom Output path.");
+        println!("     Lossless capture and Option A per-block routing can coexist.");
+    } else if get_followed {
+        println!("     GetRecordDirectory reports the new path, but AdvOut/FFFilePath did NOT change.");
+        println!("     The request is steering the *standard* output only, so in Custom Output");
+        println!("     mode the recording would still land in the old place. Per-block routing");
+        println!("     and lossless capture are mutually exclusive unless FFFilePath is written");
+        println!("     directly via SetProfileParameter — which is a profile write, not a");
+        println!("     recording call, and belongs behind the same consent as everything else.");
+    } else {
+        println!("     Neither followed. Investigate before relying on either.");
+    }
+    Ok(())
+}
+
+fn profile_get(client: &mut ObsClient, category: &str, name: &str) -> Option<String> {
+    client
+        .request(
+            "GetProfileParameter",
+            serde_json::json!({ "parameterCategory": category, "parameterName": name }),
+        )
+        .ok()
+        .and_then(|d| d["parameterValue"].as_str().map(str::to_string))
+        .filter(|s| !s.is_empty())
+}
+
+fn profile_set(client: &mut ObsClient, category: &str, name: &str, value: &str) -> bool {
+    client
+        .request(
+            "SetProfileParameter",
+            serde_json::json!({
+                "parameterCategory": category,
+                "parameterName": name,
+                "parameterValue": value
+            }),
+        )
+        .is_ok()
+}
+
+/// Which recording mode is active, and what it is configured to write.
+///
+/// This matters more than it looks: OBS's *Custom Output (FFmpeg)* mode keeps
+/// its own output path and its own encoder settings, so answers gathered in
+/// Standard mode do not necessarily transfer to it. Reporting the mode
+/// alongside every other result is what stops a favourable measurement being
+/// quietly attributed to the wrong configuration.
+///
+/// Read through `GetProfileParameter`, which is read-only. The parameter names
+/// are OBS's own `basic.ini` keys, so they are stable but undocumented — an
+/// absent one reports as unset rather than as an error.
+fn dump_record_mode(client: &mut ObsClient) {
+    println!("\n  ── recording mode ──────────────────────────────────────────────");
+
+    let mut get = |category: &str, name: &str| -> Option<String> {
+        client
+            .request(
+                "GetProfileParameter",
+                serde_json::json!({ "parameterCategory": category, "parameterName": name }),
+            )
+            .ok()
+            .and_then(|d| {
+                d["parameterValue"]
+                    .as_str()
+                    .or_else(|| d["defaultParameterValue"].as_str())
+                    .map(str::to_string)
+            })
+            .filter(|s| !s.is_empty())
+    };
+
+    let mode = get("Output", "Mode").unwrap_or_else(|| "Simple".into());
+    println!("    output mode     : {}", mode);
+
+    if mode.eq_ignore_ascii_case("Advanced") {
+        let rec_type = get("AdvOut", "RecType").unwrap_or_else(|| "Standard".into());
+        // OBS writes "FFmpegOutput" for the Custom Output (FFmpeg) selection.
+        let custom = rec_type.eq_ignore_ascii_case("FFmpegOutput");
+        println!(
+            "    recording type  : {}{}",
+            rec_type,
+            if custom { "   <-- Custom Output (FFmpeg)" } else { "   (Standard)" }
+        );
+        if custom {
+            for (label, cat, key) in [
+                ("container", "AdvOut", "FFFormat"),
+                ("video codec", "AdvOut", "FFVEncoder"),
+                ("audio codec", "AdvOut", "FFAEncoder"),
+                ("video bitrate", "AdvOut", "FFVBitrate"),
+                ("keyframe (frames)", "AdvOut", "FFGOPSize"),
+                ("muxer settings", "AdvOut", "FFMCustom"),
+                ("encoder settings", "AdvOut", "FFVCustom"),
+                ("path", "AdvOut", "FFFilePath"),
+            ] {
+                println!("      {:<18}: {}", label, get(cat, key).unwrap_or_else(|| "(unset)".into()));
+            }
+            println!(
+                "\n    NOTE: Custom Output (FFmpeg) has its own path field (FFFilePath).\n\
+                 \x20   Whether SetRecordDirectory steers it is what `probe_obs routing` tests."
+            );
+        } else {
+            println!("      container       : {}", get("AdvOut", "RecFormat2").unwrap_or_else(|| "(unset)".into()));
+            println!("      encoder         : {}", get("AdvOut", "RecEncoder").unwrap_or_else(|| "(unset)".into()));
+        }
+    } else {
+        println!("      container       : {}", get("SimpleOutput", "RecFormat2").unwrap_or_else(|| "(unset)".into()));
+        println!("      quality         : {}", get("SimpleOutput", "RecQuality").unwrap_or_else(|| "(unset)".into()));
+        println!("      encoder         : {}", get("SimpleOutput", "RecEncoder").unwrap_or_else(|| "(unset)".into()));
+    }
+}
+
+/// Does per-block export routing survive the recording mode in use?
+///
+/// **This mode writes to the user's OBS settings**, unlike every other part of
+/// this probe. It is here because the answer cannot be read: `SetRecordDirectory`
+/// is documented against the standard recording output, and OBS's *Custom
+/// Output (FFmpeg)* mode keeps its own "File path or URL" field. Whether the
+/// request steers that field decides whether Option A's per-block drive routing
+/// works at all in that mode — and per-block routing is the main thing Option A
+/// has over Option B.
+///
+/// Three answers come out of one run:
+///
+/// 1. does `SetRecordDirectory` take, and read back?
+/// 2. does the file actually land where it says — or in the old directory?
+/// 3. does `StopRecord` still report an `outputPath`, which take verification
+///    keys off, and does `SplitRecordFile` work here?
+///
+/// The original directory is restored on every path out, including failures.
+/// The caller's setting is not ours to keep.
+fn run_routing(args: &[String]) {
+    let mut host = "127.0.0.1".to_string();
+    let mut port: u16 = 4455;
+    let mut password: Option<String> = None;
+    let mut target: Option<String> = None;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--host" => { host = args.get(i + 1).cloned().unwrap_or_default(); i += 2; }
+            "--port" => { port = args.get(i + 1).and_then(|s| s.parse().ok()).unwrap_or(4455); i += 2; }
+            "--password" => { password = args.get(i + 1).cloned(); i += 2; }
+            "--dir" => { target = args.get(i + 1).cloned(); i += 2; }
+            other => { eprintln!("unknown argument: {}", other); std::process::exit(2); }
+        }
+    }
+    let Some(target) = target else {
+        eprintln!("usage: probe_obs routing --dir <writable-dir> [--password S]");
+        std::process::exit(2);
+    };
+    if let Err(e) = std::fs::create_dir_all(&target) {
+        eprintln!("could not create {}: {}", target, e);
+        std::process::exit(1);
+    }
+
+    let url = format!("ws://{}:{}", host, port);
+    let mut client = match ObsClient::connect(&url, password.as_deref()) {
+        Ok(c) => c,
+        Err(e) => { eprintln!("connect failed: {}", e); std::process::exit(1); }
+    };
+
+    let original = client
+        .request("GetRecordDirectory", serde_json::json!({}))
+        .ok()
+        .and_then(|d| d["recordDirectory"].as_str().map(str::to_string));
+    let Some(original) = original else {
+        eprintln!("could not read the current record directory — aborting rather than guessing");
+        std::process::exit(1);
+    };
+    println!("  original record directory : {}", original);
+    println!("  routing test target       : {}\n", target);
+
+    // Everything from here restores `original` before returning.
+    let outcome = routing_experiment(&mut client, &target);
+
+    print!("\n  restoring record directory … ");
+    match client.request(
+        "SetRecordDirectory",
+        serde_json::json!({ "recordDirectory": original }),
+    ) {
+        Ok(_) => {
+            let back = client
+                .request("GetRecordDirectory", serde_json::json!({}))
+                .ok()
+                .and_then(|d| d["recordDirectory"].as_str().map(str::to_string))
+                .unwrap_or_default();
+            if same_dir(&back, &original) {
+                println!("restored to {}", back);
+            } else {
+                println!("MISMATCH — OBS now reports {}. Set it back by hand.", back);
+            }
+        }
+        Err(e) => println!("FAILED: {} — set it back by hand: {}", e, original),
+    }
+
+    if let Err(e) = outcome {
+        eprintln!("\n  experiment did not complete: {}", e);
+    }
+}
+
+/// The middle of `run_routing`, split out so the restore above always runs.
+fn routing_experiment(client: &mut ObsClient, target: &str) -> Result<(), String> {
+    println!("  1. SetRecordDirectory");
+    client.request(
+        "SetRecordDirectory",
+        serde_json::json!({ "recordDirectory": target }),
+    )?;
+    let readback = client
+        .request("GetRecordDirectory", serde_json::json!({}))?
+        ["recordDirectory"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    println!(
+        "     readback: {}   [{}]",
+        readback,
+        if same_dir(&readback, target) { "TOOK" } else { "IGNORED" }
+    );
+
+    // A directory listing before and after is what actually answers where the
+    // file went. `outputPath` is a claim; the filesystem is the fact, and in
+    // Custom Output (FFmpeg) mode the two are exactly what might disagree.
+    let before = dir_snapshot(target);
+
+    println!("\n  2. recording 4s");
+    if client
+        .request("GetRecordStatus", serde_json::json!({}))
+        .map(|d| d["outputActive"].as_bool().unwrap_or(false))
+        .unwrap_or(false)
+    {
+        return Err("OBS is already recording — refusing to interfere".into());
+    }
+    client.request("StartRecord", serde_json::json!({}))?;
+    if client
+        .wait_for_record_state("OBS_WEBSOCKET_OUTPUT_STARTED", Duration::from_secs(15))
+        .is_none()
+    {
+        return Err("recording never started — check the encoder is configured".into());
+    }
+
+    std::thread::sleep(Duration::from_millis(1800));
+    println!("\n  3. SplitRecordFile mid-recording");
+    match client.request("SplitRecordFile", serde_json::json!({})) {
+        Ok(_) => println!("     SUPPORTED — Option B is possible in this mode"),
+        Err(e) => println!("     NOT SUPPORTED HERE — {}", e),
+    }
+    std::thread::sleep(Duration::from_millis(1800));
+
+    println!("\n  4. StopRecord");
+    let stop = client.request("StopRecord", serde_json::json!({}))?;
+    let reported = stop["outputPath"].as_str().unwrap_or("");
+    println!(
+        "     outputPath: {}",
+        if reported.is_empty() { "(EMPTY — take verification cannot key off this)" } else { reported }
+    );
+    if let Some(ev) = client.wait_for_record_state("OBS_WEBSOCKET_OUTPUT_STOPPED", Duration::from_secs(30)) {
+        let ev_path = ev["outputPath"].as_str().unwrap_or("");
+        println!(
+            "     RecordStateChanged outputPath: {}",
+            if ev_path.is_empty() { "(empty)" } else { ev_path }
+        );
+    }
+
+    println!("\n  5. where the files actually landed");
+    let after = dir_snapshot(target);
+    let new: Vec<&String> = after.iter().filter(|f| !before.contains(*f)).collect();
+    if new.is_empty() {
+        println!("     NOTHING new in {} — the output went elsewhere.", target);
+        println!("     That means SetRecordDirectory does not steer this recording mode,");
+        println!("     and Option A's per-block drive routing does not work here.");
+    } else {
+        for f in &new {
+            println!("     {}", f);
+        }
+        println!(
+            "     {} new file(s) — routing works in this mode.",
+            new.len()
+        );
+    }
+    Ok(())
+}
+
+/// Windows paths differ by separator and case without differing in meaning.
+fn same_dir(a: &str, b: &str) -> bool {
+    fn norm(s: &str) -> String {
+        s.replace('/', "\\").trim_end_matches('\\').to_lowercase()
+    }
+    norm(a) == norm(b)
+}
+
+fn dir_snapshot(dir: &str) -> Vec<String> {
+    let mut out: Vec<String> = std::fs::read_dir(dir)
+        .map(|rd| {
+            rd.flatten()
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .collect()
+        })
+        .unwrap_or_default();
+    out.sort();
+    out
 }
 
 /// Everything a scene picker in the app would need, dumped read-only.
