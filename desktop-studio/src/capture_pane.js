@@ -270,20 +270,37 @@ export async function refreshLaunchGuard(state) {
   // "you added something, but it doesn't resolve to a usable directory" —
   // those used to share one message, which told the user to do something
   // they'd already done.
+  // Nothing selected is the most basic reason a batch cannot run, and it was
+  // the one condition nothing checked: `buildCapturePayload` happily produced
+  // a payload with zero streaks, so the batch started, patched nothing and
+  // captured nothing. It belongs here rather than in the click handler so the
+  // button is simply not live until there is something to capture.
+  const selectedHighlights = (resolvedState.currentScannedDemos || []).reduce(
+    (total, demo) => total + (demo.streaks || []).filter((s) => s.selected === true).length,
+    0
+  );
+  const noHighlightsSelected = selectedHighlights === 0;
+
   const noDrivesConfigured = effectiveDrivePool.length === 0;
   const noUsableSpace = !noDrivesConfigured && availableBytes === 0;
   const insufficientSpace = !noDrivesConfigured && !noUsableSpace && requiredBytes > availableBytes;
   // Pool is usable overall (at least one real drive with room) but not every
   // configured entry is — worth a heads-up, not worth blocking the batch.
   const hasPartialProblems = !noDrivesConfigured && !noUsableSpace && !insufficientSpace && problemPaths.length > 0;
-  const blocked = noDrivesConfigured || noUsableSpace || insufficientSpace;
+  const blocked = noHighlightsSelected || noDrivesConfigured || noUsableSpace || insufficientSpace;
 
   if (!capturingInFlight) {
     startBtn.disabled = blocked;
   }
 
   if (warningEl) {
-    if (noDrivesConfigured) {
+    // First, and in the calm colour: an empty selection is the ordinary state
+    // of a freshly scanned workspace, not a misconfiguration to shout about.
+    if (noHighlightsSelected) {
+      warningEl.style.color = '#64b5f6';
+      warningEl.textContent = STRINGS.CAPTURE.NO_HIGHLIGHTS_SELECTED_WARNING;
+      warningEl.style.display = 'block';
+    } else if (noDrivesConfigured) {
       warningEl.style.color = '#f44336';
       warningEl.textContent = STRINGS.CAPTURE.NO_DRIVES_CONFIGURED_WARNING;
       warningEl.style.display = 'block';
@@ -325,7 +342,7 @@ export async function refreshLaunchGuard(state) {
     footerRequiredEl.style.color = insufficientSpace ? '#f44336' : '#4caf50';
   }
 
-  return { requiredBytes, availableBytes, blocked };
+  return { requiredBytes, availableBytes, blocked, noHighlightsSelected };
 }
 
 // ── Custom Engine Commands (Init / Before-After) ──────────────────────────────
@@ -922,7 +939,12 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
       // now blocks unconditionally instead of skipping the check).
       const guard = await refreshLaunchGuard(state);
       if (guard && guard.blocked) {
-        if (guard.availableBytes === 0) {
+        // Ahead of the disk branches, and well ahead of the running-game check
+        // below: "you haven't picked anything yet" is the answer the user needs,
+        // and it should not arrive behind a modal about closing their game.
+        if (guard.noHighlightsSelected) {
+          showToast(STRINGS.CAPTURE.NO_HIGHLIGHTS_SELECTED_WARNING, 'error');
+        } else if (guard.availableBytes === 0) {
           showToast(STRINGS.CAPTURE.NO_CAPTURE_OUTPUT_DIR_WITH_SPACE, 'error');
         } else {
           showToast(STRINGS.CAPTURE.insufficientDiskSpaceToast((guard.requiredBytes / 1e9).toFixed(2), (guard.availableBytes / 1e9).toFixed(2)), 'error');
