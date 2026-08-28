@@ -1,7 +1,11 @@
 # OBS as an Alternate Capture Method
 
-> **Status 2026-08-28 — write-up only. No code, and nothing here has been run against OBS.**
+> **Status 2026-08-28 — design, plus a probe and one round of live measurement. No feature code.**
 > Tracks [#65](https://github.com/ccoventry/dod-tools/issues/65).
+>
+> **The load-bearing question is answered: OBS Game Capture captures the HLAE-injected `hl.exe`.**
+> Verified against a real frame, not inferred. See "Measured against a live OBS". The remaining gate
+> is the console-log signal latency, which needs a running batch rather than OBS.
 >
 > **Scope, set by the user 2026-08-28**, narrowing the issue's own title:
 >
@@ -51,7 +55,7 @@ was derived for HLAE and must be raised for this path.
 **The container was MP4**, not the MKV this document assumed OBS defaults to. Both need handling, or
 the setting needs pinning — see the open question on containers.
 
-### The hook question: coexistence confirmed, frames still unproven
+### The hook question: answered, both halves
 
 With the HLAE-launched game running, `hl.exe` had **both** hooks loaded at once:
 
@@ -62,15 +66,22 @@ With the HLAE-launched game running, `hl.exe` had **both** hooks loaded at once:
 So OBS Game Capture injects successfully into an HLAE-injected GoldSrc process, and the game stays
 alive and responsive. That retires the *crash* form of the risk.
 
-**It does not yet prove frames arrive.** Both hooks intercept the same OpenGL buffer swap, and the
-one probe recording attempted so far is void: the game had already exited when it ran, so the clip
-was 4.9s of black — a file with the right resolution, frame rate, duration and even real audio, and
-no information in it whatsoever. `probe_obs` now warns when `hl.exe` is not running, because that
-failure is indistinguishable from success by inspection.
+**And the frames arrive.** A 6-second probe recording taken while that process was rendering came
+back with **no black frames at all** (`blackdetect d=0.05 pic_th=0.98`), 179 frames across 5.967s at
+30fps — no drops — and an extracted frame is the Day of Defeat menu in colour. Two hooks on the same
+OpenGL buffer swap do not fight.
 
-Note for whoever retests: dod-tools owns the game's lifecycle, and a `tauri dev` hot reload takes
-`hl.exe` down with it. The game being launched earlier in a session is not evidence it is running
-now.
+**So Game Capture is viable and Window Capture is not needed as a fallback.** This was the largest
+risk in the document and it is now closed on evidence rather than on the absence of a crash.
+
+**A caution worth keeping, because it cost two rounds of analysis.** A Game Capture source whose
+target process has exited records black into a file that is valid in every other respect — right
+resolution, right frame rate, right duration, sometimes real audio from another source. Two probe
+recordings were wasted that way before the cause was understood, and the second one looked exactly
+like a hook collision. dod-tools owns the game's lifecycle, and *any* rebuild of the workspace while
+`tauri dev` is watching takes `hl.exe` down with it — including a `git checkout` that touches
+`Cargo.toml`. The game having been launched earlier in a session is not evidence that it is running
+now, which is why `probe_obs` checks and says so.
 
 ---
 
@@ -353,14 +364,14 @@ OBS needs a source pointed at the game. `hl.exe` runs **windowed** (`-windowed` 
 Capture handles best, and the resolution is known ahead of time, so the OBS canvas can be checked
 against it in the preflight rather than discovered by scaling artefacts.
 
-**Game Capture was the risk, and it is now half-answered.** HLAE's `AfxHookGoldSrc.dll` is already
-injected into `hl.exe` and already hooks its OpenGL presentation; OBS Game Capture injects its own
-graphics hook into the same process to do the same thing.
+**Game Capture was the risk, and it is answered.** HLAE's `AfxHookGoldSrc.dll` is already injected
+into `hl.exe` and already hooks its OpenGL presentation; OBS Game Capture injects its own graphics
+hook into the same process to do the same thing.
 
-Measured 2026-08-28: **both hooks load into the same live process and the game keeps running** — see
-"Measured against a live OBS" above. Injection does not collide. Whether *frames* survive two hooks
-on the same buffer swap is still open, and is the one thing left to check. Window Capture remains
-the fallback and cannot collide, since it injects nothing.
+Measured 2026-08-28: both hooks load into the same live process, the game keeps running, **and the
+captured frames contain the game** — see "Measured against a live OBS" above. Window Capture is kept
+in mind as a fallback that injects nothing and therefore cannot collide, but nothing currently
+requires it.
 
 Fall back to **Window Capture**, which does not inject anything and therefore cannot collide, at the
 cost of requiring the window to stay unoccluded. Display Capture is the last resort.
@@ -423,10 +434,20 @@ Two further constraints, both measured or documented rather than assumed:
 
 The mismatch is worth detecting regardless, and detecting it is nearly free: the pipeline already
 knows the game's resolution (`resolution_width` / `resolution_height`), so comparing it against
-`GetVideoSettings` is one comparison. The live install showed exactly the misconfiguration this
-would catch — a 1920x1080 canvas with a 1280x720 output and a game rendering at 1280x720, so the
-capture is scaled up onto the canvas and back down again, softening the image for nothing. Output
-FPS was 30, which on this path governs the clip entirely.
+`GetVideoSettings` is one comparison.
+
+**And it is not a cosmetic check.** The live install had a 1920x1080 canvas, a 1280x720 output, and
+a game rendering at 1280x720 — and the captured frame shows what that actually produces: the game
+occupying roughly **854x480 in the top-left of a 1280x720 frame**, black everywhere else. The source
+sits at its native size on a canvas 1.5x larger, and the whole canvas is then scaled down by 1.5 to
+reach the output. About **two thirds of the pixels are discarded before the encoder ever sees
+them.**
+
+Nothing in OBS flags this; the recording is perfectly valid and simply much worse than the machine
+is capable of. Output FPS was also 30, which on this path governs the clip entirely.
+
+Setting the base canvas to match the game — 1280x720 here — makes the whole path 1:1 with no
+resampling at all. That is a one-line preflight comparison away from being impossible to get wrong.
 
 **So: detect and report, do not write.** The preflight says the canvas disagrees with the game's
 resolution and what to set it to, and says when the output FPS is low. Always correct, cannot break
@@ -543,12 +564,11 @@ tractable piece of work.
 
 0. ~~**Talk to OBS.**~~ **Done 2026-08-28.** `probe_obs obs` — every needed request is present, and
    the start latency is 59–69 ms. See "Measured against a live OBS".
-1. **Prove Game Capture actually delivers frames.** Half done: both hooks are confirmed to coexist in
-   the live process. What remains is one recording made **while the game is running and rendering**,
-   checked with `blackdetect` rather than by eye. `probe_obs obs --record 5` plus
-   `tools/ffmpeg.exe -i <file> -vf blackdetect=d=0.05:pic_th=0.98 -an -f null -`. If frames do not
-   survive, fall back to Window Capture — the game is already `-windowed` — and the feature survives
-   with a caveat.
+1. ~~**Prove Game Capture actually delivers frames.**~~ **Done 2026-08-28.** Both hooks coexist and
+   the captured frames contain the game. Method worth reusing:
+   `tools/ffmpeg.exe -i <file> -vf blackdetect=d=0.05:pic_th=0.98 -an -f null -`, then extract one
+   frame and look at it — a valid-but-empty recording is the failure mode here, and only the second
+   step catches it.
 2. **Tail the console log.** No OBS involved. Prove `qconsole.log` reports `START_RECORD` promptly
    enough, measured during a live capture (a saved log cannot answer this). If it is slow or
    buffered, the `screenshot` fallback above applies. `probe_obs log <qconsole.log>`.
@@ -566,10 +586,13 @@ tractable piece of work.
 
 ## Open questions
 
-- **Do frames survive two hooks on one buffer swap?** The last piece of the Game Capture question.
-  Coexistence is confirmed; delivery is not. Everything else in this document assumes it works.
-- **`qconsole.log` flush cadence.** Decides whether Option A's start signal is viable, or whether the
-  `screenshot` fallback is needed.
+- **`qconsole.log` flush cadence.** The only remaining gate on the recommended design: it decides
+  whether Option A's start signal is viable or whether the `screenshot` fallback is needed. Needs a
+  running batch, not just a running game.
+- **Frame pacing under real playback.** The delivery test was taken at the menu, where nothing is
+  moving. Whether a demo playing at `host_framerate 0` on a loaded machine produces dropped or
+  duplicated frames is a different question, and it is the one that decides how good this path
+  actually looks.
 - **Which container.** The live install recorded **MP4**, not the MKV assumed here. MKV is crash-safe
   but is not what `avi_frame_count` reads; MP4 risks an unfinalised file if OBS dies, though modern
   OBS hybrid-MP4 and remux-on-stop may cover that. Either pin the setting or teach the scanner both.
