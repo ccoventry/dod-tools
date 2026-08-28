@@ -134,8 +134,10 @@ to trade quality for speed.
   and re-encoding the result.
 - **`desktop-studio/src-tauri/src/capture_manager.rs`** — `take_folder_has_content` and
   `VerifiedBlock`'s two tiers, if the output layout changes shape.
-- **`native/src/hlcr/take_meta.rs`** — already records the capture FPS per take; a video take should
-  carry the same record, and the existing `[render-fps-mismatch]` check keeps working unchanged.
+- **`native/src/hlcr/take_meta.rs`** — records the capture FPS per take and warns when a render
+  interprets it at a different rate. A video take should carry the same record and the existing
+  `[render-fps-mismatch]` check keeps working unchanged. *Note: that module lands with
+  `feature/decal-flush-r-and-d`, not on `dev` — so it is not present on this branch yet.*
 
 ---
 
