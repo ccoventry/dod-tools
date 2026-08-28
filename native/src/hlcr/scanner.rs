@@ -182,8 +182,25 @@ pub fn scan_folder_background(
                 wav_stem.clone()
             };
 
+            // Keyed lowercase. The BMP path produces `all`/`hudcolor`/`hudalpha`,
+            // but HLAE names those same streams `hudColor`/`hudAlpha` in the
+            // `mirv_movie_ffmpeg` command, and nothing here has proven which
+            // spelling FFmpeg mode uses for the folder. An exact-case lookup
+            // that guessed wrong would not error — it would quietly skip the
+            // HUD bundling and emit two unrelated clips instead of one merged
+            // render, which is the kind of wrong output this pipeline is bad at
+            // noticing. Windows resolves the paths case-insensitively either
+            // way, so only this lookup was ever at risk.
+            //
+            // `docs/render_studio_hlcr_parity.md` notes the standalone HLCR
+            // pairs folders generically instead — any `alpha`/`mask` folder with
+            // a same-frame-count `color`/`rgb` one — which is more robust than
+            // literal names and remains the better long-term shape.
             let folder_names: HashMap<String, PathBuf> = image_folders.iter()
-                .map(|p| (p.file_name().unwrap_or_default().to_string_lossy().into_owned(), p.clone()))
+                .map(|p| {
+                    let name = p.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
+                    (name, p.clone())
+                })
                 .collect();
 
             // Bundle HLAE split streams if "all", "hudcolor", and "hudalpha" exist
@@ -221,7 +238,7 @@ pub fn scan_folder_background(
 
                 // Remove bundled folders from list to avoid double-processing
                 image_folders.retain(|p| {
-                    let name = p.file_name().unwrap_or_default().to_string_lossy();
+                    let name = p.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
                     name != "all" && name != "hudcolor" && name != "hudalpha"
                 });
             }
