@@ -1,0 +1,563 @@
+//! A blocking obs-websocket v5 client, scoped to what the capture path needs.
+//!
+//! Blocking rather than async on purpose. `CaptureCleanupGuard::drop` must be
+//! able to send a `StopRecord` on every path out of a batch — cancel, crash,
+//! panic — and a `Drop` has no async runtime under it. A recording OBS left
+//! running after a cancelled batch fills the user's drive silently, so that
+//! guarantee is worth more here than concurrency is.
+//!
+//! Verified against **OBS 32.2.2 / obs-websocket 5.7.4**: every request below
+//! is present, `StopRecord` reports the output path, and `SetRecordDirectory`
+//! steers the standard recording output (though *not* Custom Output (FFmpeg),
+//! which keeps its own path — see `docs/obs_alternate_capture.md`).
+
+use std::net::TcpStream;
+use std::time::{Duration, Instant};
+
+use serde_json::{json, Value};
+
+/// How long a single request waits for its reply.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// How long to wait for recording to actually begin after `StartRecord`.
+///
+/// Measured at 59-85 ms across five runs; this is a generous ceiling for a
+/// machine under capture load, not an expectation.
+const RECORD_START_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// How long to wait for the output file to be finalised after `StopRecord`.
+///
+/// Measured at ~1.06 s consistently. Worth noting that number is longer than
+/// `MIN_TAKE_SEPARATION_SECONDS` (1.0 s), which is why that constant needs
+/// raising for this path — see `obs_take_separation_seconds`.
+const RECORD_STOP_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Socket read timeout. Nothing waits on a single read; the timeout only makes
+/// the read loop interruptible so an overall deadline can be enforced.
+const SOCKET_READ_TIMEOUT: Duration = Duration::from_millis(200);
+
+/// Minimum gap between one take's stop and the next one's start, for OBS.
+///
+/// `patch::builder::MIN_TAKE_SEPARATION_SECONDS` is 1.0 s and was derived for
+/// HLAE, where the risk is a take landing without its audio. OBS took **~1.06 s
+/// to finalise a file** after `StopRecord` returned, measured repeatedly — so
+/// the existing guard is, by a small margin, already too tight for this path.
+///
+/// 2.0 s rather than 1.1 s because the measured figure is one machine writing
+/// one container, the cost of being wrong is a lost take, and the cost of being
+/// generous is a second of connective footage inside a merged clip.
+pub const OBS_TAKE_SEPARATION_SECONDS: f32 = 2.0;
+
+#[derive(Debug)]
+pub enum ObsError {
+    /// Could not reach OBS at all.
+    Connect(String),
+    /// Reached it, but the handshake failed.
+    ///
+    /// Carries whether OBS said the password was wrong (close code 4009) as
+    /// opposed to anything else, because those want completely different
+    /// advice: one is "check the password", the other is "this is a bug".
+    Auth { wrong_password: bool, detail: String },
+    /// A request was refused by OBS, with its own message.
+    Request { request: String, detail: String },
+    /// The connection dropped or a reply never came.
+    Transport(String),
+}
+
+impl std::fmt::Display for ObsError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Connect(d) => write!(
+                f,
+                "could not reach OBS ({d}). Is OBS running, with Tools -> WebSocket Server \
+                 Settings enabled?"
+            ),
+            Self::Auth { wrong_password: true, .. } => write!(
+                f,
+                "OBS rejected the password. Copy it from Tools -> WebSocket Server Settings -> \
+                 Show Connect Info rather than retyping it."
+            ),
+            Self::Auth { detail, .. } => write!(f, "OBS refused the connection: {detail}"),
+            Self::Request { request, detail } => write!(f, "OBS refused {request}: {detail}"),
+            Self::Transport(d) => write!(f, "lost contact with OBS: {d}"),
+        }
+    }
+}
+
+impl std::error::Error for ObsError {}
+
+/// What a preflight found, for reporting to the user before a batch starts.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ObsPreflight {
+    pub obs_version: String,
+    pub websocket_version: String,
+    /// Requests this design needs that the install does *not* have. Empty is
+    /// the expected case; anything here means the batch cannot run.
+    pub missing_requests: Vec<String>,
+    pub recording: bool,
+    pub streaming: bool,
+    pub record_directory: String,
+    pub canvas_width: i64,
+    pub canvas_height: i64,
+    pub output_width: i64,
+    pub output_height: i64,
+    pub fps: f64,
+    pub current_scene: String,
+    pub scene_collection: String,
+    /// Non-fatal problems worth showing the user — a canvas that does not match
+    /// the game, a low frame rate, no audio source in the scene.
+    pub warnings: Vec<String>,
+}
+
+/// Requests the capture path issues. Checked up front so a batch fails before
+/// it spawns the game rather than half way through.
+const REQUIRED_REQUESTS: &[&str] = &[
+    "StartRecord",
+    "StopRecord",
+    "GetRecordStatus",
+    "GetRecordDirectory",
+    "GetVideoSettings",
+    "GetSceneList",
+];
+
+pub struct ObsClient {
+    ws: tungstenite::WebSocket<TcpStream>,
+    next_id: u64,
+    last_close: Option<String>,
+}
+
+impl ObsClient {
+    /// Connects and completes the v5 handshake.
+    ///
+    /// `password` may be empty when OBS has authentication switched off; it is
+    /// only used if the server's Hello asks for it.
+    pub fn connect(url: &str, password: &str) -> Result<Self, ObsError> {
+        let host = url.trim_start_matches("ws://");
+        let stream = TcpStream::connect(host)
+            .map_err(|e| ObsError::Connect(format!("{host}: {e}")))?;
+        stream
+            .set_read_timeout(Some(SOCKET_READ_TIMEOUT))
+            .map_err(|e| ObsError::Connect(e.to_string()))?;
+        let uri = url
+            .parse::<tungstenite::http::Uri>()
+            .map_err(|e| ObsError::Connect(e.to_string()))?;
+        let (ws, _) = tungstenite::client(uri, stream)
+            .map_err(|e| ObsError::Connect(format!("websocket handshake: {e}")))?;
+
+        let mut client = Self { ws, next_id: 0, last_close: None };
+
+        let hello = client
+            .read_op(0, Duration::from_secs(10))
+            .ok_or_else(|| ObsError::Transport("no Hello (op 0) from OBS".into()))?;
+
+        let mut identify = json!({ "rpcVersion": 1 });
+        if let Some(auth) = hello["authentication"].as_object() {
+            if password.is_empty() {
+                return Err(ObsError::Auth {
+                    wrong_password: true,
+                    detail: "OBS requires a password but none is configured".into(),
+                });
+            }
+            let challenge = auth["challenge"].as_str().unwrap_or_default();
+            let salt = auth["salt"].as_str().unwrap_or_default();
+            identify["authentication"] = Value::String(auth_string(password, salt, challenge));
+        }
+        client.send(json!({ "op": 1, "d": identify }))?;
+
+        if client.read_op(2, Duration::from_secs(10)).is_none() {
+            let detail = client.last_close.clone().unwrap_or_else(|| "no reply".into());
+            // 4009 is obs-websocket's own "authentication failed". Anything
+            // else is not a password problem and should not be reported as one.
+            return Err(ObsError::Auth {
+                wrong_password: detail.contains("4009"),
+                detail,
+            });
+        }
+        Ok(client)
+    }
+
+    /// Checks the install can do what the capture path needs, and gathers what
+    /// is worth telling the user before a batch runs.
+    ///
+    /// `game_width`/`game_height` are the pipeline's own capture resolution,
+    /// used to catch the misconfiguration that silently costs the most quality:
+    /// a canvas larger than the game means the source is scaled up onto it and
+    /// the whole canvas scaled back down, discarding most of the pixels before
+    /// the encoder sees them.
+    pub fn preflight(
+        &mut self,
+        game_width: i32,
+        game_height: i32,
+    ) -> Result<ObsPreflight, ObsError> {
+        let version = self.request("GetVersion", json!({}))?;
+        let available: Vec<String> = version["availableRequests"]
+            .as_array()
+            .map(|v| v.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+            .unwrap_or_default();
+        let missing_requests = REQUIRED_REQUESTS
+            .iter()
+            .filter(|r| !available.iter().any(|a| a == *r))
+            .map(|r| r.to_string())
+            .collect();
+
+        let status = self.request("GetRecordStatus", json!({}))?;
+        let stream = self.request("GetStreamStatus", json!({})).unwrap_or(json!({}));
+        let dir = self.request("GetRecordDirectory", json!({}))?;
+        let video = self.request("GetVideoSettings", json!({}))?;
+        let scene = self.request("GetCurrentProgramScene", json!({})).unwrap_or(json!({}));
+        let collection = self
+            .request("GetSceneCollectionList", json!({}))
+            .unwrap_or(json!({}));
+
+        let fps_num = video["fpsNumerator"].as_f64().unwrap_or(0.0);
+        let fps_den = video["fpsDenominator"].as_f64().unwrap_or(1.0);
+        let fps = if fps_den > 0.0 { fps_num / fps_den } else { 0.0 };
+
+        let canvas_width = video["baseWidth"].as_i64().unwrap_or(0);
+        let canvas_height = video["baseHeight"].as_i64().unwrap_or(0);
+        let output_width = video["outputWidth"].as_i64().unwrap_or(0);
+        let output_height = video["outputHeight"].as_i64().unwrap_or(0);
+
+        let mut warnings = Vec::new();
+        if canvas_width != game_width as i64 || canvas_height != game_height as i64 {
+            warnings.push(format!(
+                "OBS canvas is {canvas_width}x{canvas_height} but the game renders at \
+                 {game_width}x{game_height}. The capture is scaled onto the canvas and scaled \
+                 again to the output, which throws away detail for nothing. Set Settings -> \
+                 Video -> Base (Canvas) Resolution to {game_width}x{game_height}."
+            ));
+        }
+        if output_width != canvas_width || output_height != canvas_height {
+            warnings.push(format!(
+                "OBS output is {output_width}x{output_height} against a {canvas_width}x\
+                 {canvas_height} canvas, so every frame is rescaled. Matching them avoids it."
+            ));
+        }
+        if fps > 0.0 && fps < 60.0 {
+            warnings.push(format!(
+                "OBS output is {fps:.0} fps. On this path OBS's rate is the clip's rate — \
+                 HLAE's capture FPS does not apply — so 60 is usually the sensible floor."
+            ));
+        }
+        if stream["outputActive"].as_bool().unwrap_or(false) {
+            warnings.push(
+                "OBS is streaming. Driving its recorder during a live stream is not something \
+                 dod-tools should do uninvited; stop the stream or use a different capture mode."
+                    .to_string(),
+            );
+        }
+
+        Ok(ObsPreflight {
+            obs_version: version["obsVersion"].as_str().unwrap_or("?").to_string(),
+            websocket_version: version["obsWebSocketVersion"].as_str().unwrap_or("?").to_string(),
+            missing_requests,
+            recording: status["outputActive"].as_bool().unwrap_or(false),
+            streaming: stream["outputActive"].as_bool().unwrap_or(false),
+            record_directory: dir["recordDirectory"].as_str().unwrap_or("").to_string(),
+            canvas_width,
+            canvas_height,
+            output_width,
+            output_height,
+            fps,
+            current_scene: scene["currentProgramSceneName"].as_str().unwrap_or("").to_string(),
+            scene_collection: collection["currentSceneCollectionName"]
+                .as_str()
+                .unwrap_or("")
+                .to_string(),
+            warnings,
+        })
+    }
+
+    /// Scene names in the active collection, for the settings picker.
+    pub fn scene_names(&mut self) -> Result<Vec<String>, ObsError> {
+        let list = self.request("GetSceneList", json!({}))?;
+        Ok(list["scenes"]
+            .as_array()
+            .map(|v| {
+                v.iter()
+                    .filter_map(|s| s["sceneName"].as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+
+    pub fn current_scene(&mut self) -> Result<String, ObsError> {
+        Ok(self.request("GetCurrentProgramScene", json!({}))?
+            ["currentProgramSceneName"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string())
+    }
+
+    /// Switches the active scene.
+    ///
+    /// A live-state change rather than a settings edit: reversible, destroys
+    /// nothing, and exactly what a user picking a scene is asking for. The
+    /// caller is expected to restore the previous scene when the batch ends.
+    pub fn set_scene(&mut self, scene: &str) -> Result<(), ObsError> {
+        self.request("SetCurrentProgramScene", json!({ "sceneName": scene }))?;
+        Ok(())
+    }
+
+    /// Points OBS's recording output at `dir`.
+    ///
+    /// Only steers the **standard** recording output. Custom Output (FFmpeg)
+    /// keeps its own path in `AdvOut/FFFilePath` and ignores this — measured,
+    /// and the reason the OBS path ships on Standard mode first.
+    pub fn set_record_directory(&mut self, dir: &str) -> Result<(), ObsError> {
+        self.request("SetRecordDirectory", json!({ "recordDirectory": dir }))?;
+        Ok(())
+    }
+
+    pub fn is_recording(&mut self) -> bool {
+        self.request("GetRecordStatus", json!({}))
+            .map(|d| d["outputActive"].as_bool().unwrap_or(false))
+            .unwrap_or(false)
+    }
+
+    /// Starts recording and waits until frames are actually being written.
+    ///
+    /// The wait is the point. `StartRecord` returns almost immediately, but
+    /// recording begins at `RecordStateChanged: OBS_WEBSOCKET_OUTPUT_STARTED` —
+    /// measured 59-85 ms later. Returning before that would put the clip's
+    /// first frames outside the file.
+    pub fn start_record(&mut self) -> Result<(), ObsError> {
+        self.request("StartRecord", json!({}))?;
+        self.wait_for_record_state("OBS_WEBSOCKET_OUTPUT_STARTED", RECORD_START_TIMEOUT)
+            .ok_or_else(|| {
+                ObsError::Transport("OBS never reported that recording started".into())
+            })?;
+        Ok(())
+    }
+
+    /// Stops recording and returns the finished file's path.
+    ///
+    /// Prefers the path from the `STOPPED` event over the one in the request's
+    /// own reply: the event fires when the file is finalised, and by then the
+    /// file exists. Falls back to the reply's path when the event does not
+    /// arrive, since a path that is probably right beats none at all.
+    pub fn stop_record(&mut self) -> Result<String, ObsError> {
+        let reply = self.request("StopRecord", json!({}))?;
+        let reply_path = reply["outputPath"].as_str().unwrap_or_default().to_string();
+        let event_path = self
+            .wait_for_record_state("OBS_WEBSOCKET_OUTPUT_STOPPED", RECORD_STOP_TIMEOUT)
+            .and_then(|e| e["outputPath"].as_str().map(str::to_string))
+            .filter(|p| !p.is_empty());
+        match event_path.or(if reply_path.is_empty() { None } else { Some(reply_path) }) {
+            Some(p) => Ok(p),
+            None => Err(ObsError::Transport(
+                "OBS stopped recording but reported no output path".into(),
+            )),
+        }
+    }
+
+    /// Best-effort stop for cleanup paths.
+    ///
+    /// Never fails and never blocks long: used from `Drop`, where the only
+    /// thing that matters is that OBS is not left recording, and where there is
+    /// nobody left to report an error to.
+    pub fn stop_record_quietly(&mut self) {
+        let _ = self.request("StopRecord", json!({}));
+    }
+
+    // ── protocol ─────────────────────────────────────────────────────────────
+
+    fn send(&mut self, v: Value) -> Result<(), ObsError> {
+        self.ws
+            .send(tungstenite::Message::Text(v.to_string().into()))
+            .map_err(|e| ObsError::Transport(format!("send: {e}")))
+    }
+
+    fn read_op(&mut self, op: u64, timeout: Duration) -> Option<Value> {
+        self.read_until(timeout, |m| (m["op"].as_u64() == Some(op)).then(|| m["d"].clone()))
+    }
+
+    fn read_until<T>(
+        &mut self,
+        timeout: Duration,
+        mut f: impl FnMut(&Value) -> Option<T>,
+    ) -> Option<T> {
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            let msg = match self.ws.read() {
+                Ok(m) => m,
+                // A read timeout is "nothing yet", not a failure — that is what
+                // makes the overall deadline enforceable.
+                Err(tungstenite::Error::Io(e))
+                    if matches!(
+                        e.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) =>
+                {
+                    continue
+                }
+                Err(_) => return None,
+            };
+            let text = match msg {
+                tungstenite::Message::Text(t) => t.to_string(),
+                tungstenite::Message::Close(frame) => {
+                    self.last_close = Some(match frame {
+                        Some(fr) => format!("code {} — {}", u16::from(fr.code), fr.reason),
+                        None => "closed with no detail".to_string(),
+                    });
+                    return None;
+                }
+                _ => continue,
+            };
+            let Ok(parsed) = serde_json::from_str::<Value>(&text) else {
+                continue;
+            };
+            if let Some(found) = f(&parsed) {
+                return Some(found);
+            }
+        }
+        None
+    }
+
+    fn request(&mut self, request_type: &str, data: Value) -> Result<Value, ObsError> {
+        self.next_id += 1;
+        let id = format!("dodtools-{}", self.next_id);
+        self.send(json!({
+            "op": 6,
+            "d": { "requestType": request_type, "requestId": id, "requestData": data }
+        }))?;
+
+        let response = self
+            .read_until(REQUEST_TIMEOUT, |m| {
+                if m["op"].as_u64() != Some(7) {
+                    return None;
+                }
+                if m["d"]["requestId"].as_str() != Some(id.as_str()) {
+                    return None;
+                }
+                Some(m["d"].clone())
+            })
+            .ok_or_else(|| {
+                ObsError::Transport(format!("{request_type}: no response within 15s"))
+            })?;
+
+        let status = &response["requestStatus"];
+        if status["result"].as_bool() == Some(true) {
+            Ok(response["responseData"].clone())
+        } else {
+            Err(ObsError::Request {
+                request: request_type.to_string(),
+                detail: format!(
+                    "{} (code {})",
+                    status["comment"].as_str().unwrap_or("refused"),
+                    status["code"]
+                ),
+            })
+        }
+    }
+
+    fn wait_for_record_state(&mut self, state: &str, timeout: Duration) -> Option<Value> {
+        let want = state.to_string();
+        self.read_until(timeout, |m| {
+            if m["op"].as_u64() != Some(5) {
+                return None;
+            }
+            if m["d"]["eventType"].as_str() != Some("RecordStateChanged") {
+                return None;
+            }
+            let d = &m["d"]["eventData"];
+            (d["outputState"].as_str() == Some(want.as_str())).then(|| d.clone())
+        })
+    }
+}
+
+/// obs-websocket v5 authentication.
+///
+///     secret = base64(sha256(password + salt))
+///     auth   = base64(sha256(secret + challenge))
+///
+/// Getting this wrong does not look like a bug: OBS simply never sends
+/// `Identified`, and it reads as a wrong password no matter what is actually
+/// wrong. Hence the test below, pinned against an independent implementation.
+fn auth_string(password: &str, salt: &str, challenge: &str) -> String {
+    use base64::Engine as _;
+    use sha2::{Digest, Sha256};
+
+    let b64 = base64::engine::general_purpose::STANDARD;
+    let secret = b64.encode(Sha256::digest(format!("{password}{salt}").as_bytes()));
+    b64.encode(Sha256::digest(format!("{secret}{challenge}").as_bytes()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Pins the handshake against OpenSSL rather than a published vector.
+    ///
+    /// The four algorithm steps are quoted from obs-websocket's
+    /// `docs/generated/protocol.md`; the value below is this input run through
+    /// OpenSSL, which agrees with `auth_string` to the character:
+    ///
+    /// ```text
+    /// SECRET=$(printf '%s' "supersecretpassword${SALT}" \
+    ///   | openssl dgst -sha256 -binary | openssl base64 -A)
+    /// printf '%s' "${SECRET}${CHAL}" \
+    ///   | openssl dgst -sha256 -binary | openssl base64 -A
+    /// ```
+    ///
+    /// Said plainly so nobody later "fixes" this against a mismatched example:
+    /// two independent implementations of the quoted steps agree, and that is
+    /// what is being asserted.
+    #[test]
+    fn auth_string_matches_an_independent_implementation() {
+        assert_eq!(
+            auth_string(
+                "supersecretpassword",
+                "lM1GncleQOaCu9lT1yeUZhFYnqhsLLP1G5lAGo3ixaI=",
+                "+IxH4CnCiqpX1rM9scsNynZzbOe4KhDeYcTNS3PDaeY="
+            ),
+            "1Ct943GAT+6YQUUX47Ia/ncufilbe6+oD6lY+5kaCu4="
+        );
+    }
+
+    /// The intermediate secret is base64 of the *binary* digest, not of its hex
+    /// rendering — the easiest way to get this wrong, and it fails silently as
+    /// an auth rejection.
+    #[test]
+    fn secret_is_base64_of_the_binary_digest() {
+        use base64::Engine as _;
+        use sha2::{Digest, Sha256};
+        let secret = base64::engine::general_purpose::STANDARD.encode(Sha256::digest(
+            b"supersecretpasswordlM1GncleQOaCu9lT1yeUZhFYnqhsLLP1G5lAGo3ixaI=",
+        ));
+        assert_eq!(secret, "H1IfVz1pSREUQzbFTVnX/Tyb+gMhMik5x7yUBCY0PTs=");
+    }
+
+    /// A wrong password and a broken handshake produce the same silence from
+    /// OBS, so the distinction has to survive into the error type or the user
+    /// gets told to check a password that is already correct.
+    #[test]
+    fn auth_errors_distinguish_a_wrong_password_from_everything_else() {
+        let wrong = ObsError::Auth {
+            wrong_password: true,
+            detail: "code 4009 — Authentication failed.".into(),
+        };
+        assert!(wrong.to_string().contains("rejected the password"));
+
+        let other = ObsError::Auth {
+            wrong_password: false,
+            detail: "code 4008 — unsupported rpc version".into(),
+        };
+        assert!(!other.to_string().contains("rejected the password"));
+        assert!(other.to_string().contains("4008"));
+    }
+
+    /// OBS needs ~1.06s to finalise a file; the HLAE-derived merge guard is
+    /// 1.0s. If this ever drops back below that, takes start disappearing.
+    #[test]
+    fn obs_take_separation_clears_the_measured_finalise_time() {
+        assert!(
+            OBS_TAKE_SEPARATION_SECONDS > 1.065,
+            "OBS took ~1.065s to finalise a file; a shorter guard loses takes"
+        );
+        assert!(
+            OBS_TAKE_SEPARATION_SECONDS > crate::patch::builder::MIN_TAKE_SEPARATION_SECONDS,
+            "the OBS guard must be looser than the HLAE one, not tighter"
+        );
+    }
+}

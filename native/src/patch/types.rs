@@ -243,6 +243,113 @@ pub struct PatchJob {
     pub blocks: Vec<CaptureBlock>,
 }
 
+// ── Capture mode ──────────────────────────────────────────────────────────────
+
+/// How a batch's frames get off the screen and onto disk.
+///
+/// One enum rather than a pair of booleans, because the three are mutually
+/// exclusive and a `ffmpeg_capture && obs_capture` state has no meaning — the
+/// type is the place to make that unrepresentable rather than a validation step
+/// somebody can forget to call.
+///
+/// See `docs/direct_to_video_capture.md` (#42) and
+/// `docs/obs_alternate_capture.md` (#65).
+#[derive(Clone, Copy, Debug, Default, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub enum CaptureMode {
+    /// HLAE writes a numbered BMP per frame. Deterministic, frame-exact, and by
+    /// far the most disk-hungry — a 17-block batch at 120fps with separate HUD
+    /// measured on the order of 300 GB.
+    #[default]
+    FrameSequence,
+    /// HLAE pipes frames to an FFmpeg it spawns itself (`mirv_movie_ffmpeg`).
+    /// Same determinism, one video file per stream instead of the sequence.
+    DirectToVideo,
+    /// OBS records the game window in real time and dod-tools only tells it
+    /// when to start and stop. HLAE records nothing at all in this mode.
+    ///
+    /// Not deterministic and not capable of high frame rates — it captures
+    /// whatever the screen actually showed. In exchange the file is finished
+    /// and playable the moment the clip ends, audio already muxed.
+    Obs,
+}
+
+impl CaptureMode {
+    pub fn to_str_id(self) -> &'static str {
+        match self {
+            Self::FrameSequence => "frame_sequence",
+            Self::DirectToVideo => "direct_to_video",
+            Self::Obs => "obs",
+        }
+    }
+
+    /// Unknown ids fall back to the safe default rather than erroring: a
+    /// settings file from a newer build naming a mode this one does not have
+    /// should degrade to the path that always works, not refuse to load.
+    pub fn from_str_id(id: &str) -> Self {
+        match id {
+            "direct_to_video" => Self::DirectToVideo,
+            "obs" => Self::Obs,
+            _ => Self::FrameSequence,
+        }
+    }
+
+    /// Whether HLAE is doing the recording. False only for OBS, where
+    /// `mirv_recordmovie` is never issued and the engine simply plays back.
+    pub fn hlae_records(self) -> bool {
+        !matches!(self, Self::Obs)
+    }
+}
+
+/// Where OBS is and how to talk to it.
+///
+/// Only read when `capture_mode` is `Obs`. The password is the user's own
+/// obs-websocket secret; it is stored with the rest of the settings and never
+/// logged — see `ObsConfig::redacted` for the form that goes into log lines.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ObsConfig {
+    pub host: String,
+    pub port: u16,
+    /// Empty when OBS has authentication switched off.
+    pub password: String,
+    /// Scene to switch to for the batch, and restore afterwards. Empty means
+    /// "use whatever is already active and change nothing".
+    pub scene: String,
+    /// The scene collection `scene` belongs to, recorded because scene names
+    /// are scoped to a collection — a remembered name alone can silently
+    /// resolve to something unrelated after the user switches collections.
+    pub scene_collection: String,
+}
+
+impl Default for ObsConfig {
+    fn default() -> Self {
+        Self {
+            host: "127.0.0.1".to_string(),
+            port: 4455,
+            password: String::new(),
+            scene: String::new(),
+            scene_collection: String::new(),
+        }
+    }
+}
+
+impl ObsConfig {
+    pub fn address(&self) -> String {
+        format!("ws://{}:{}", self.host, self.port)
+    }
+
+    /// Safe to log. The password is reduced to whether one is set at all,
+    /// which is the only part of it worth knowing from a log line.
+    pub fn redacted(&self) -> String {
+        format!(
+            "ws://{}:{} (password: {}, scene: {})",
+            self.host,
+            self.port,
+            if self.password.is_empty() { "none" } else { "set" },
+            if self.scene.is_empty() { "<current>" } else { &self.scene }
+        )
+    }
+}
+
 // ── Patcher configuration ─────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -262,8 +369,21 @@ pub struct PatcherConfig {
     pub tickrate: f32,
     pub capture_directories: Vec<std::path::PathBuf>,
     pub separate_hud: bool,
+    /// How this batch records. The authority — `ffmpeg_capture` below is kept
+    /// only so older settings files and payloads keep deserialising, and is
+    /// reconciled into this by `PatcherConfig::normalise_capture_mode`.
+    #[serde(default)]
+    pub capture_mode: CaptureMode,
+    /// Where OBS is, when `capture_mode` is `Obs`. Ignored otherwise.
+    #[serde(default)]
+    pub obs: ObsConfig,
     /// Capture straight to video through `mirv_movie_ffmpeg` instead of writing
     /// a BMP frame sequence. See `docs/direct_to_video_capture.md`.
+    ///
+    /// **Superseded by `capture_mode`.** Retained so settings written by builds
+    /// predating the enum still load, and so nothing that already reads this
+    /// field silently changes meaning. Kept in step by
+    /// `normalise_capture_mode`; do not branch on it in new code.
     pub ffmpeg_capture: bool,
     /// Codec `mirv_movie_ffmpeg` encodes to. Only read when `ffmpeg_capture`
     /// is set.
@@ -317,6 +437,34 @@ fn default_capture_fov() -> f32 {
 }
 
 impl PatcherConfig {
+    /// Reconciles `capture_mode` with the legacy `ffmpeg_capture` flag, and
+    /// applies the constraints the mode implies.
+    ///
+    /// Call once, after building a config from settings or a payload, before
+    /// anything branches on the mode. Cheap and idempotent.
+    ///
+    /// Three things happen:
+    ///
+    /// - A config from an older build has `capture_mode` at its default and
+    ///   only `ffmpeg_capture` set. That is promoted, so the enum is right
+    ///   without every caller having to know the old field exists.
+    /// - `ffmpeg_capture` is then written back from the enum, so the two can
+    ///   never disagree for anything still reading it.
+    /// - **Separate HUD is forced off in OBS mode.** It is out of scope for
+    ///   that path by decision (`docs/obs_alternate_capture.md`), and it is not
+    ///   merely unsupported: leaving it on would send `-afxForceAlpha8 1` and
+    ///   the rest of the alpha launch flags for a capture HLAE is not making,
+    ///   perturbing the render for no reason at all.
+    pub fn normalise_capture_mode(&mut self) {
+        if self.capture_mode == CaptureMode::FrameSequence && self.ffmpeg_capture {
+            self.capture_mode = CaptureMode::DirectToVideo;
+        }
+        self.ffmpeg_capture = self.capture_mode == CaptureMode::DirectToVideo;
+        if self.capture_mode == CaptureMode::Obs {
+            self.separate_hud = false;
+        }
+    }
+
     pub fn build_hlae_process(&self, extra_engine_args: &str) -> std::process::Command {
         let hlae_exe = &self.hlae_path;
         let hl_exe = &self.game_path;
@@ -378,6 +526,8 @@ impl Default for PatcherConfig {
             tickrate: 100.0,
             capture_directories: Vec::new(),
             separate_hud: false,
+            capture_mode: CaptureMode::default(),
+            obs: ObsConfig::default(),
             ffmpeg_capture: false,
             ffmpeg_capture_codec: CaptureCodec::default(),
             resolution_width: 1280,
