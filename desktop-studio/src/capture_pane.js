@@ -1,6 +1,6 @@
 import { startCaptureBatch, cancelCaptureBatch, validatePaths, calculateExportPoolSpace, diagnoseCaptureOutputPaths, scanOrphanedPreviews, deleteOrphanedPreviews, checkEngineProcesses, launchStandaloneGame } from './ipc_bridge.js';
 import { listen } from '@tauri-apps/api/event';
-import { confirm } from '@tauri-apps/plugin-dialog';
+import { themedConfirm } from './themed_confirm.js';
 import { showToast } from './toast.js';
 import { requestProcessGuardedLaunch } from './detail_pane.js';
 import { createListEditor } from './list_editor.js';
@@ -554,7 +554,7 @@ function initClearPreviewsModal() {
       const checked = document.querySelectorAll('.clear-previews-row-cb:checked');
       const pathsToDelete = Array.from(checked).map(cb => cb.dataset.path);
       if (pathsToDelete.length === 0) return;
-      if (!(await confirm(STRINGS.CAPTURE.deletePreviewsConfirm(pathsToDelete.length)))) return;
+      if (!(await themedConfirm(STRINGS.CAPTURE.deletePreviewsConfirm(pathsToDelete.length)))) return;
 
       deleteBtn.disabled = true;
       try {

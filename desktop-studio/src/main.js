@@ -22,6 +22,7 @@ import { renderDetailView, initDetailPane } from './detail_pane.js';
 import { initCaptureUI, getCommandsState, hydrateCommandsState, refreshLaunchGuard, refreshInitCommandWarnings } from './capture_pane.js';
 import { initRenderUI, checkRenderRecoveryOnStartup } from './render_pane.js';
 import { initAuditorPane } from './auditor_pane.js';
+import { initThemedConfirm, themedConfirm } from './themed_confirm.js';
 import { initAnalyzerPane } from './analyzer_pane.js';
 import { switchNavTab, setCaptureDetailSubtab } from './nav.js';
 import { showToast } from './toast.js';
@@ -414,6 +415,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   }
 
   // Initialize modular UI panes
+  initThemedConfirm();
   initAuditorPane();
 
   async function pickTargetDrive() {
@@ -1562,7 +1564,7 @@ window.addEventListener("DOMContentLoaded", async () => {
         const outcome = await requestTrackedClearConfirmation(targets, { title: STRINGS.MAIN.CLEAR_SELECTED_TITLE, verb: STRINGS.MAIN.VERB_REMOVES, filterNote: hiddenNote, confirmLabel: STRINGS.MAIN.CLEAR_SELECTED_ANYWAY });
         if (!outcome) return;
         savedFirst = outcome === 'save-first';
-      } else if (!(await confirm(STRINGS.MAIN.removeSelectedConfirm(targets.length, hiddenNote)))) {
+      } else if (!(await themedConfirm(STRINGS.MAIN.removeSelectedConfirm(targets.length, hiddenNote)))) {
         return;
       }
       const removePaths = new Set(targets.map((d) => d.path));
@@ -1605,7 +1607,7 @@ window.addEventListener("DOMContentLoaded", async () => {
         const outcome = await requestTrackedClearConfirmation(targets, { title: STRINGS.MAIN.CLEAR_ALL_TITLE, verb: STRINGS.MAIN.VERB_REMOVES, filterNote: note, confirmLabel: STRINGS.MAIN.CLEAR_ALL_ANYWAY });
         if (!outcome) return;
         savedFirst = outcome === 'save-first';
-      } else if (!(await confirm(STRINGS.MAIN.removeAllConfirm(targets.length, note)))) {
+      } else if (!(await themedConfirm(STRINGS.MAIN.removeAllConfirm(targets.length, note)))) {
         return;
       }
       const removePaths = new Set(targets.map((d) => d.path));
