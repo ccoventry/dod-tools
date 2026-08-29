@@ -93,20 +93,20 @@ function renderObsReport(report) {
   status.style.display = '';
 
   if (!report?.connected) {
-    status.textContent = report?.error || 'Could not reach OBS.';
+    status.textContent = report?.error || STRINGS.CAPTURE_CONFIG.OBS_UNREACHABLE;
     return;
   }
 
   const lines = [
-    `Connected — OBS ${report.obs_version} (obs-websocket ${report.websocket_version})`,
-    `Canvas ${report.canvas}, output ${report.output} @ ${Math.round(report.fps)} fps`,
-    `Recording to ${report.record_directory}`,
+    STRINGS.CAPTURE_CONFIG.obsConnectedSummary(report.obs_version, report.websocket_version),
+    STRINGS.CAPTURE_CONFIG.obsCanvasSummary(report.canvas, report.output, report.fps),
+    STRINGS.CAPTURE_CONFIG.obsRecordingToSummary(report.record_directory),
   ];
   if (report.missing_requests?.length) {
-    lines.push(`This OBS is missing: ${report.missing_requests.join(', ')} — capture cannot run.`);
+    lines.push(STRINGS.CAPTURE_CONFIG.obsMissingRequests(report.missing_requests));
   }
-  if (report.recording) lines.push('OBS is already recording — stop it before starting a batch.');
-  if (report.streaming) lines.push('OBS is streaming — dod-tools will not drive its recorder.');
+  if (report.recording) lines.push(STRINGS.CAPTURE_CONFIG.OBS_ALREADY_RECORDING);
+  if (report.streaming) lines.push(STRINGS.CAPTURE_CONFIG.OBS_ALREADY_STREAMING);
   for (const w of report.warnings || []) lines.push(w);
   status.textContent = lines.join('\n');
 
@@ -931,7 +931,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     } catch (e) {
       // Every invoke needs this: without it a Rust-side failure is swallowed
       // and the button simply appears to do nothing.
-      status.textContent = `OBS test failed: ${e}`;
+      status.textContent = STRINGS.CAPTURE_CONFIG.obsTestFailed(e);
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = label || STRINGS.CAPTURE_CONFIG.OBS_TEST_BUTTON; }
     }
