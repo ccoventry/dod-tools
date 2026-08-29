@@ -80,19 +80,158 @@ async function refreshPathWarnings() {
 }
 
 /** Highlights whichever side of the capture-mode toggle is currently in force. */
+/**
+ * Renders an `obs_test_connection` result into the status row and scene list.
+ *
+ * Warnings are shown rather than swallowed: the canvas mismatch in particular
+ * costs most of the picture's detail and has no visible symptom, so it would
+ * otherwise be found only by comparing a finished clip against expectations.
+ */
+function renderObsReport(report) {
+  const status = document.querySelector('#obs-status');
+  if (!status) return;
+  status.style.display = '';
+
+  if (!report?.connected) {
+    status.textContent = report?.error || 'Could not reach OBS.';
+    return;
+  }
+
+  const lines = [
+    `Connected — OBS ${report.obs_version} (obs-websocket ${report.websocket_version})`,
+    `Canvas ${report.canvas}, output ${report.output} @ ${Math.round(report.fps)} fps`,
+    `Recording to ${report.record_directory}`,
+  ];
+  if (report.missing_requests?.length) {
+    lines.push(`This OBS is missing: ${report.missing_requests.join(', ')} — capture cannot run.`);
+  }
+  if (report.recording) lines.push('OBS is already recording — stop it before starting a batch.');
+  if (report.streaming) lines.push('OBS is streaming — dod-tools will not drive its recorder.');
+  for (const w of report.warnings || []) lines.push(w);
+  status.textContent = lines.join('\n');
+
+  // Replace the list with what OBS actually has, keeping the current choice if
+  // it survived. Scene names are scoped to a collection, so a name saved under
+  // a different one legitimately disappears here.
+  const sel = document.querySelector('#config-obs-scene');
+  if (sel && Array.isArray(report.scenes)) {
+    const wanted = sel.value;
+    sel.innerHTML = '';
+    const none = document.createElement('option');
+    none.value = '';
+    none.textContent = STRINGS.CAPTURE_CONFIG.OBS_SCENE_CURRENT;
+    sel.appendChild(none);
+    for (const name of report.scenes) {
+      const opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = name;
+      sel.appendChild(opt);
+    }
+    sel.value = report.scenes.includes(wanted) ? wanted : '';
+  }
+}
+
+/** The selected capture mode id, defaulting to the path that always works. */
+/**
+ * OBS connection fields as the settings form currently holds them.
+ */
+function obsSettingsFromForm() {
+  return {
+    host: document.querySelector('#config-obs-host')?.value?.trim() || '127.0.0.1',
+    port: parseInt(document.querySelector('#config-obs-port')?.value, 10) || 4455,
+    password: document.querySelector('#config-obs-password')?.value || ''
+  };
+}
+
+/**
+ * Offers to stop an OBS recording left running by a previous session.
+ *
+ * The capture engine stops OBS on every exit path the process lives to run,
+ * but a panic (release builds abort rather than unwind), a force-quit and a
+ * power cut all leave nothing behind to run anything. OBS simply keeps
+ * recording — into a folder only dod-tools would ever name — until the drive
+ * fills. This is the only place that can notice.
+ *
+ * Silent unless there is something to act on: OBS not running is the ordinary
+ * answer at startup, and a recording that is not ours is not ours to stop.
+ */
+async function checkObsOrphanOnStartup() {
+  if (currentCaptureMode() !== 'obs') return;
+
+  const report = await invoke('obs_check_orphan', obsSettingsFromForm()).catch((err) => {
+    console.error('OBS orphan check failed:', err);
+    return null;
+  });
+  if (!report?.recording || !report.ours) return;
+
+  const stop = await confirm(STRINGS.CAPTURE_CONFIG.obsOrphanPrompt(report.directory), {
+    title: STRINGS.CAPTURE_CONFIG.OBS_ORPHAN_TITLE,
+    kind: 'warning',
+    okLabel: STRINGS.CAPTURE_CONFIG.OBS_ORPHAN_STOP,
+    cancelLabel: STRINGS.CAPTURE_CONFIG.OBS_ORPHAN_LEAVE
+  }).catch(() => false);
+  if (!stop) return;
+
+  await invoke('obs_recover_orphan', obsSettingsFromForm())
+    .then((video) => {
+      showToast(
+        video
+          ? STRINGS.CAPTURE_CONFIG.obsOrphanRecovered(video)
+          : STRINGS.CAPTURE_CONFIG.OBS_ORPHAN_GONE,
+        'success'
+      );
+    })
+    .catch((err) => {
+      console.error('OBS orphan recovery failed:', err);
+      showToast(STRINGS.CAPTURE_CONFIG.obsOrphanFailed(err), 'error');
+    });
+}
+
+export function currentCaptureMode() {
+  return document.querySelector('#config-capture-mode')?.value || 'frame_sequence';
+}
+
 function applyCaptureModeUI() {
-  const video = document.querySelector('#config-ffmpeg-capture')?.checked || false;
+  const mode = currentCaptureMode();
+  const video = mode === 'direct_to_video';
+  const obs = mode === 'obs';
+
+  // Kept in step rather than read: the backend still accepts `ffmpeg_capture`
+  // from older payloads, and leaving it stale would make the two disagree for
+  // anything that has not moved to the enum yet.
+  const legacy = document.querySelector('#config-ffmpeg-capture');
+  if (legacy) legacy.checked = video;
+
   document.querySelectorAll('.setting-label[data-capture-mode]').forEach((label) => {
     label.classList.toggle('active', (label.dataset.captureMode === 'video') === video);
   });
-  // Hidden rather than disabled: frame-sequence mode has its own, unrelated
-  // answer to "what codec" — Render Studio's own codec picker, a completely
-  // different set of options (ProRes/DNxHR/H.264) for a completely different
-  // purpose (final delivery, not the capture-time lossless intermediate) —
-  // so a dimmed control here would not be previewing anything connected to
-  // the active mode, just sitting there disconnected from it.
+  // Hidden rather than disabled, in both other modes: frame-sequence mode
+  // has its own, unrelated answer to "what codec" — Render Studio's own
+  // codec picker, a different set of options (ProRes/DNxHR/H.264) for a
+  // different purpose (final delivery, not the capture-time lossless
+  // intermediate). OBS mode does not consume this setting today either. If
+  // OBS capture grows its own codec choice later (it can already ask for a
+  // container in Custom Output mode), this is where that would show — but
+  // "will eventually" is not "does now", and showing it today would claim a
+  // connection to OBS capture that does not exist yet.
   const codecGroup = document.querySelector('#capture-codec-group');
   if (codecGroup) codecGroup.style.display = video ? '' : 'none';
+
+  // The OBS block follows the same rule: hidden rather than disabled,
+  // because showing a dead connection form in frame-sequence mode would
+  // suggest OBS is involved when it is not.
+  const obsGroup = document.querySelector('#obs-settings-group');
+  if (obsGroup) obsGroup.style.display = obs ? '' : 'none';
+
+  // Separate HUD cannot work on the OBS path — OBS captures one composited
+  // window, and there is no second stream to alphamerge. The backend forces it
+  // off in `normalise_capture_mode`; this makes the UI agree rather than
+  // showing a tick that silently does nothing.
+  const hud = document.querySelector('#config-separate-hud');
+  if (hud) {
+    hud.disabled = obs;
+    if (obs) hud.checked = false;
+  }
 }
 
 // ── HLAE's own FFmpeg ─────────────────────────────────────────────────────────
@@ -353,8 +492,15 @@ window.addEventListener("DOMContentLoaded", async () => {
     // Defaults on when the element is missing, matching the backend default —
     // `?? true` rather than `|| false`, which would silently disable it.
     const decalFlush = document.querySelector('#config-decal-flush')?.checked ?? true;
-    const ffmpegCapture = document.querySelector('#config-ffmpeg-capture')?.checked || false;
+    const captureMode = currentCaptureMode();
+    // Derived from the mode, never read from the checkbox — the select is the
+    // authority and the checkbox is a compatibility mirror.
+    const ffmpegCapture = captureMode === 'direct_to_video';
     const ffmpegCaptureCodec = document.querySelector('#config-capture-codec')?.value || 'utvideo';
+    const obsHost = document.querySelector('#config-obs-host')?.value?.trim() || '127.0.0.1';
+    const obsPort = parseInt(document.querySelector('#config-obs-port')?.value, 10) || 4455;
+    const obsPassword = document.querySelector('#config-obs-password')?.value || '';
+    const obsScene = document.querySelector('#config-obs-scene')?.value || '';
     const addCondebug = document.querySelector('#config-add-condebug')?.checked || false;
 
     const autoClearLogs = document.querySelector('#config-auto-clear-logs')?.checked || false;
@@ -392,6 +538,11 @@ window.addEventListener("DOMContentLoaded", async () => {
       decal_flush: decalFlush,
       ffmpeg_capture: ffmpegCapture,
       ffmpeg_capture_codec: ffmpegCaptureCodec,
+      capture_mode: captureMode,
+      obs_host: obsHost,
+      obs_port: obsPort,
+      obs_password: obsPassword,
+      obs_scene: obsScene,
       add_condebug: addCondebug,
       auto_clear_logs: autoClearLogs,
       auto_clear_previews: autoClearPreviews,
@@ -470,6 +621,33 @@ window.addEventListener("DOMContentLoaded", async () => {
       if (ffmpegCaptureEl) ffmpegCaptureEl.checked = !!settings.ffmpeg_capture;
       const captureCodecEl = document.querySelector('#config-capture-codec');
       if (captureCodecEl && settings.ffmpeg_capture_codec) captureCodecEl.value = settings.ffmpeg_capture_codec;
+      const captureModeEl = document.querySelector('#config-capture-mode');
+      if (captureModeEl) {
+        // A settings file written before the selector existed has no
+        // capture_mode and only ffmpeg_capture, so fall back to it rather than
+        // silently resetting the user's choice to frame sequence.
+        captureModeEl.value =
+          settings.capture_mode || (settings.ffmpeg_capture ? 'direct_to_video' : 'frame_sequence');
+      }
+      const obsHostEl = document.querySelector('#config-obs-host');
+      if (obsHostEl) obsHostEl.value = settings.obs_host || '127.0.0.1';
+      const obsPortEl = document.querySelector('#config-obs-port');
+      if (obsPortEl) obsPortEl.value = settings.obs_port || 4455;
+      const obsPasswordEl = document.querySelector('#config-obs-password');
+      if (obsPasswordEl) obsPasswordEl.value = settings.obs_password || '';
+      const obsSceneEl = document.querySelector('#config-obs-scene');
+      if (obsSceneEl && settings.obs_scene) {
+        // The saved scene may not exist in the active collection — scene names
+        // are scoped to one — so it is added as an option rather than assumed
+        // present. Test Connection replaces the list with what OBS actually has.
+        if (!Array.from(obsSceneEl.options).some((o) => o.value === settings.obs_scene)) {
+          const opt = document.createElement('option');
+          opt.value = settings.obs_scene;
+          opt.textContent = settings.obs_scene;
+          obsSceneEl.appendChild(opt);
+        }
+        obsSceneEl.value = settings.obs_scene;
+      }
       applyCaptureModeUI();
       const addCondebugEl = document.querySelector('#config-add-condebug');
       if (addCondebugEl) addCondebugEl.checked = !!settings.add_condebug;
@@ -722,21 +900,42 @@ window.addEventListener("DOMContentLoaded", async () => {
       applyCaptureModeUI();
       refreshHlaeFfmpegStatus();
     });
-  // Clicking either label flips the switch, matching the Quick-Clip/Workspace
-  // toggle this borrows its look from.
-  document.querySelectorAll('.setting-label[data-capture-mode]').forEach((label) => {
-    label.addEventListener('click', () => {
-      const input = document.querySelector('#config-ffmpeg-capture');
-      if (!input) return;
-      const wanted = label.dataset.captureMode === 'video';
-      if (input.checked === wanted) return;
-      input.checked = wanted;
-      // Assigning .checked does not fire 'change', and persistence and the
-      // status row both hang off that event.
-      input.dispatchEvent(new Event('change', { bubbles: true }));
+  // The mode selector is the authority. It keeps the legacy checkbox in step
+  // and then fires its 'change', so persistence and the HLAE FFmpeg status row
+  // — both of which already hang off that event — keep working unchanged.
+  document.querySelector('#config-capture-mode')
+    ?.addEventListener('change', () => {
+      applyCaptureModeUI();
+      const legacy = document.querySelector('#config-ffmpeg-capture');
+      if (legacy) legacy.dispatchEvent(new Event('change', { bubbles: true }));
     });
-  });
   applyCaptureModeUI();
+
+  document.querySelector('#obs-test-btn')?.addEventListener('click', async () => {
+    const btn = document.querySelector('#obs-test-btn');
+    const status = document.querySelector('#obs-status');
+    if (!status) return;
+    const label = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = STRINGS.CAPTURE_CONFIG.OBS_TESTING; }
+    status.style.display = '';
+    status.textContent = STRINGS.CAPTURE_CONFIG.OBS_TESTING;
+    try {
+      const report = await invoke('obs_test_connection', {
+        host: document.querySelector('#config-obs-host')?.value?.trim() || '127.0.0.1',
+        port: parseInt(document.querySelector('#config-obs-port')?.value, 10) || 4455,
+        password: document.querySelector('#config-obs-password')?.value || '',
+        gameWidth: parseInt(document.querySelector('#config-res-width')?.value, 10) || 1280,
+        gameHeight: parseInt(document.querySelector('#config-res-height')?.value, 10) || 720,
+      });
+      renderObsReport(report);
+    } catch (e) {
+      // Every invoke needs this: without it a Rust-side failure is swallowed
+      // and the button simply appears to do nothing.
+      status.textContent = `OBS test failed: ${e}`;
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = label || STRINGS.CAPTURE_CONFIG.OBS_TEST_BUTTON; }
+    }
+  });
 
   const hlaeFfmpegLinkBtn = document.querySelector('#hlae-ffmpeg-link-btn');
   if (hlaeFfmpegLinkBtn) {
@@ -1161,6 +1360,8 @@ window.addEventListener("DOMContentLoaded", async () => {
   // Render-batch crash-recovery prompt — checked once on startup, same
   // pattern as dev's StartupState::PendingRenderRecovery.
   checkRenderRecoveryOnStartup(() => switchNavTab('render-studio'));
+
+  checkObsOrphanOnStartup();
 
   // Flush any not-yet-persisted settings edit before the window actually
   // closes. list_editor.js (Init/Custom Commands, numeric fields) only

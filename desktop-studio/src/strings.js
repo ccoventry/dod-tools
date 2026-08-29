@@ -127,6 +127,11 @@ export const STRINGS = {
   PROCESS_DETECTOR_MODAL: {
     TITLE: 'Half-Life Preview Detector',
     BODY: 'The Half-Life engine is already running (hl.exe / hlae.exe). Launching a new preview now can corrupt the capture session — close the running instance first, or force a relaunch.',
+    // A batch fails differently and later: GoldSrc refuses the second instance
+    // outright, but not until every demo in the queue has been patched, so the
+    // work is already done by the time the error box appears.
+    TITLE_BATCH: 'Day of Defeat Is Already Running',
+    BODY_BATCH: 'The Half-Life engine is already running (hl.exe / hlae.exe). Day of Defeat allows only one instance, so the batch would patch every demo and then fail to launch. Close the running game first, or force a relaunch to close it now.',
     FORCE_RELAUNCH_BUTTON: 'Force Relaunch',
     COPY_VIEW_COMMAND_BUTTON: 'Copy View Command',
     CANCEL_BUTTON: 'Cancel',
@@ -164,6 +169,46 @@ export const STRINGS = {
     CAPTURE_MODE_VIDEO_TITLE:
         'HLAE pipes frames straight to FFmpeg as one lossless video per take. Same picture, roughly half the disk, and far fewer files. Needs the HLAE FFmpeg row above to be set.',
     CAPTURE_MODE_SWITCH_TITLE: 'Switch between capturing a bitmap frame sequence and a video file',
+    CAPTURE_MODE_LABEL: 'Capture Mode:',
+    CAPTURE_MODE_TITLE:
+        'How frames get onto disk. Frame sequence and Video are both HLAE, deterministic and capable of any frame rate. OBS records the screen in real time instead, which is faster to a finished file but captures whatever actually rendered.',
+    CAPTURE_MODE_OBS: 'OBS (real time)',
+    CAPTURE_MODE_OBS_TITLE:
+        'OBS records the game window while dod-tools tells it when each clip starts and stops. HLAE records nothing. Output is a finished, playable file with audio already in it — but capture runs at real time, so frames drop if the machine cannot keep up, and high capture rates are not possible. Separate HUD is not available on this path.',
+    // Shown beside the progress bar while a batch runs, not in the settings —
+    // there is nothing to configure and no mode it does not apply to. The
+    // throttle is the engine's: GoldSrc slows its frame loop when the window is
+    // not focused and `host_framerate` fast-forward stops with it, so the gaps
+    // between clips play out in real time. Nothing is lost and no HLAE flag
+    // defeats it — `engine_no_focus_sleep` is Source 2 only. See
+    // docs/goldsrc_dod_quirks.md.
+    FOCUS_REMINDER:
+        'Keep Day of Defeat focused — it stops fast-forwarding between clips when it loses focus, and the batch takes far longer.',
+    // ── OBS connection ──────────────────────────────────────────────────────
+    OBS_SECTION_TITLE: 'OBS Connection',
+    OBS_HOST_LABEL: 'Host:',
+    OBS_PORT_LABEL: 'Port:',
+    OBS_PASSWORD_LABEL: 'Password:',
+    OBS_PASSWORD_PLACEHOLDER: 'From Tools → WebSocket Server Settings',
+    OBS_PASSWORD_TITLE:
+        'The obs-websocket password, if OBS has authentication enabled. Use the Copy button in OBS rather than retyping it.',
+    OBS_SCENE_LABEL: 'Scene:',
+    OBS_SCENE_TITLE:
+        'Scene to switch to for the batch, and switch back from afterwards. Leave on "Use current scene" to change nothing. The scene must contain a capture source pointed at hl.exe and an audio source.',
+    OBS_SCENE_CURRENT: 'Use current scene',
+    OBS_TEST_BUTTON: 'Test Connection',
+    OBS_TESTING: 'Connecting…',
+    OBS_ENABLE_HINT:
+        'OBS Studio 28+ has obs-websocket built in. Enable it under Tools → WebSocket Server Settings — the checkbox at the top of that dialog is the switch, not the Connect Info panel.',
+    // ── Orphaned recording left by a previous run ───────────────────────────
+    OBS_ORPHAN_TITLE: 'OBS is still recording',
+    obsOrphanPrompt: (directory) =>
+        `OBS is still recording into a dod-tools take folder:\n\n${directory}\n\nA previous session ended without stopping it — a crash, a force-quit or a power cut. It will keep recording until the drive fills.\n\nStop it and keep the clip?`,
+    OBS_ORPHAN_STOP: 'Stop and keep',
+    OBS_ORPHAN_LEAVE: 'Leave it',
+    obsOrphanRecovered: (video) => `Stopped OBS and kept the recording: ${video}`,
+    OBS_ORPHAN_GONE: 'OBS had already stopped recording.',
+    obsOrphanFailed: (err) => `Could not stop the orphaned OBS recording: ${err}`,
     CAPTURE_CODEC_LABEL: 'Capture Codec:',
     // Says why the list is short, so the absence of H.264/HEVC reads as a
     // decision rather than an omission. The sizes are transcode measurements,
@@ -276,6 +321,7 @@ export const STRINGS = {
       unusable: (p) => `"${p}" is unusable`,
     },
     andNMore: (n) => `...and ${n} more`,
+    NO_HIGHLIGHTS_SELECTED_WARNING: 'No highlights selected — pick at least one in the Highlights tab before starting a capture.',
     NO_DRIVES_CONFIGURED_WARNING: 'No Capture Output directories configured — add at least one with free space before starting a capture.',
     // Measured 2026-08-28, see docs/direct_to_video_capture.md. Spelled out
     // because both halves report success and the broken output only shows up

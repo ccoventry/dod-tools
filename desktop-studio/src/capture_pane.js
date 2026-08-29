@@ -270,20 +270,37 @@ export async function refreshLaunchGuard(state) {
   // "you added something, but it doesn't resolve to a usable directory" —
   // those used to share one message, which told the user to do something
   // they'd already done.
+  // Nothing selected is the most basic reason a batch cannot run, and it was
+  // the one condition nothing checked: `buildCapturePayload` happily produced
+  // a payload with zero streaks, so the batch started, patched nothing and
+  // captured nothing. It belongs here rather than in the click handler so the
+  // button is simply not live until there is something to capture.
+  const selectedHighlights = (resolvedState.currentScannedDemos || []).reduce(
+    (total, demo) => total + (demo.streaks || []).filter((s) => s.selected === true).length,
+    0
+  );
+  const noHighlightsSelected = selectedHighlights === 0;
+
   const noDrivesConfigured = effectiveDrivePool.length === 0;
   const noUsableSpace = !noDrivesConfigured && availableBytes === 0;
   const insufficientSpace = !noDrivesConfigured && !noUsableSpace && requiredBytes > availableBytes;
   // Pool is usable overall (at least one real drive with room) but not every
   // configured entry is — worth a heads-up, not worth blocking the batch.
   const hasPartialProblems = !noDrivesConfigured && !noUsableSpace && !insufficientSpace && problemPaths.length > 0;
-  const blocked = noDrivesConfigured || noUsableSpace || insufficientSpace;
+  const blocked = noHighlightsSelected || noDrivesConfigured || noUsableSpace || insufficientSpace;
 
   if (!capturingInFlight) {
     startBtn.disabled = blocked;
   }
 
   if (warningEl) {
-    if (noDrivesConfigured) {
+    // First, and in the calm colour: an empty selection is the ordinary state
+    // of a freshly scanned workspace, not a misconfiguration to shout about.
+    if (noHighlightsSelected) {
+      warningEl.style.color = '#64b5f6';
+      warningEl.textContent = STRINGS.CAPTURE.NO_HIGHLIGHTS_SELECTED_WARNING;
+      warningEl.style.display = 'block';
+    } else if (noDrivesConfigured) {
       warningEl.style.color = '#f44336';
       warningEl.textContent = STRINGS.CAPTURE.NO_DRIVES_CONFIGURED_WARNING;
       warningEl.style.display = 'block';
@@ -325,7 +342,7 @@ export async function refreshLaunchGuard(state) {
     footerRequiredEl.style.color = insufficientSpace ? '#f44336' : '#4caf50';
   }
 
-  return { requiredBytes, availableBytes, blocked };
+  return { requiredBytes, availableBytes, blocked, noHighlightsSelected };
 }
 
 // ── Custom Engine Commands (Init / Before-After) ──────────────────────────────
@@ -559,6 +576,15 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
   const statusEl = document.querySelector('#batch-status');
   const progressContainer = document.querySelector('#capture-progress-container');
   const progressBar = document.querySelector('#capture-progress-bar');
+  const focusReminder = document.querySelector('#batch-focus-reminder');
+
+  // Tied to the progress bar rather than tracked separately: the reminder is
+  // only true while a batch is actually running, and two flags for one state
+  // is how they come to disagree.
+  const setBatchRunning = (running) => {
+    if (progressContainer && running) progressContainer.style.display = 'block';
+    if (focusReminder) focusReminder.style.display = running ? 'block' : 'none';
+  };
 
   currentGetState = getState;
   currentOnSettingsChange = onSettingsChange || null;
@@ -660,7 +686,7 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
       const payload = event.payload || {};
       if (payload.running) {
         capturingInFlight = true;
-        if (progressContainer) progressContainer.style.display = 'block';
+        setBatchRunning(true);
         if (progressBar) {
           if (payload.index !== undefined && payload.total && payload.total > 0) {
             const pct = Math.min(100, Math.round((payload.index / payload.total) * 100));
@@ -675,6 +701,7 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
         if (cancelBtn) cancelBtn.disabled = false;
       } else {
         capturingInFlight = false;
+        setBatchRunning(false);
         if (cancelBtn) cancelBtn.disabled = true;
         refreshLaunchGuard();
 
@@ -817,8 +844,17 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
     // `?? true` not `|| false`: a missing element must not silently disable
     // the flush, since nothing in the captured video would show that it had.
     const decalFlushVal = document.querySelector("#config-decal-flush")?.checked ?? true;
-    const ffmpegCaptureVal = document.querySelector("#config-ffmpeg-capture")?.checked || false;
+    // The mode select is the authority; `ffmpeg_capture` is derived from it so
+    // the payload cannot describe two modes at once. The backend reconciles
+    // both fields again in `normalise_capture_mode`, which is what keeps an
+    // older frontend working against this build.
+    const captureModeVal = document.querySelector("#config-capture-mode")?.value || "frame_sequence";
+    const ffmpegCaptureVal = captureModeVal === "direct_to_video";
     const ffmpegCaptureCodecVal = document.querySelector("#config-capture-codec")?.value || "utvideo";
+    const obsHostVal = document.querySelector("#config-obs-host")?.value?.trim() || "127.0.0.1";
+    const obsPortVal = parseInt(document.querySelector("#config-obs-port")?.value, 10) || 4455;
+    const obsPasswordVal = document.querySelector("#config-obs-password")?.value || "";
+    const obsSceneVal = document.querySelector("#config-obs-scene")?.value || "";
     const saveLocalPatchedCopyVal = document.querySelector("#config-save-local-patched")?.checked || false;
     const addCondebugVal = document.querySelector("#config-add-condebug")?.checked || false;
 
@@ -866,6 +902,11 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
       decal_flush: decalFlushVal,
       ffmpeg_capture: ffmpegCaptureVal,
       ffmpeg_capture_codec: ffmpegCaptureCodecVal,
+      capture_mode: captureModeVal,
+      obs_host: obsHostVal,
+      obs_port: obsPortVal,
+      obs_password: obsPasswordVal,
+      obs_scene: obsSceneVal,
       save_local_patched_copy: saveLocalPatchedCopyVal,
       add_condebug: addCondebugVal,
       streaks: selectedStreaks,
@@ -898,7 +939,12 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
       // now blocks unconditionally instead of skipping the check).
       const guard = await refreshLaunchGuard(state);
       if (guard && guard.blocked) {
-        if (guard.availableBytes === 0) {
+        // Ahead of the disk branches, and well ahead of the running-game check
+        // below: "you haven't picked anything yet" is the answer the user needs,
+        // and it should not arrive behind a modal about closing their game.
+        if (guard.noHighlightsSelected) {
+          showToast(STRINGS.CAPTURE.NO_HIGHLIGHTS_SELECTED_WARNING, 'error');
+        } else if (guard.availableBytes === 0) {
           showToast(STRINGS.CAPTURE.NO_CAPTURE_OUTPUT_DIR_WITH_SPACE, 'error');
         } else {
           showToast(STRINGS.CAPTURE.insufficientDiskSpaceToast((guard.requiredBytes / 1e9).toFixed(2), (guard.availableBytes / 1e9).toFixed(2)), 'error');
@@ -917,14 +963,43 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
         return;
       }
 
-      showToast(STRINGS.CAPTURE.INITIALIZING_CAPTURE_BATCH, "info");
-      startBtn.disabled = true;
-      if (cancelBtn) cancelBtn.disabled = false;
+      // Day of Defeat allows one instance, and the batch does not find that out
+      // until after it has patched every demo in the queue — the engine's own
+      // "Only one instance of this game can be run at a time" box appears at
+      // the end of all that work, with nothing captured. The preview and
+      // standalone launches have been guarded against this all along; the batch
+      // was the one path that went straight through. Observed 2026-08-28.
+      let engineAlreadyRunning = false;
+      try {
+        engineAlreadyRunning = await checkEngineProcesses();
+      } catch (err) {
+        // Already toasted by ipc_bridge.js — fail open rather than blocking a
+        // legitimate batch because the detector itself errored.
+      }
 
-      startCaptureBatch(activePayload)
+      const runBatch = () => {
+        showToast(STRINGS.CAPTURE.INITIALIZING_CAPTURE_BATCH, "info");
+        startBtn.disabled = true;
+        if (cancelBtn) cancelBtn.disabled = false;
+        return startBatchWithPayload(activePayload, state);
+      };
+
+      if (engineAlreadyRunning) {
+        requestProcessGuardedLaunch(runBatch, { forBatch: true });
+        return;
+      }
+
+      runBatch();
+    });
+  }
+
+  // Split out of the click handler so the process-conflict modal can park it
+  // and run it later unchanged.
+  function startBatchWithPayload(activePayload, state) {
+    return startCaptureBatch(activePayload)
         .then(() => {
           showToast(STRINGS.CAPTURE.BATCH_QUEUED_TOAST, "success");
-          if (progressContainer) progressContainer.style.display = 'block';
+          setBatchRunning(true);
           if (progressBar) progressBar.style.width = '10%';
         })
         .catch((err) => {
@@ -932,9 +1007,10 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
           showToast(STRINGS.CAPTURE.startBatchError(err), "error");
           if (cancelBtn) cancelBtn.disabled = true;
           capturingInFlight = false;
+          // The batch never started, so the reminder must not be left standing.
+          setBatchRunning(false);
           refreshLaunchGuard(state);
         });
-    });
   }
 
   if (cancelBtn) {

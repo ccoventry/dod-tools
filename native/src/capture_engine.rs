@@ -19,6 +19,37 @@ pub enum EngineEvent {
     Cancelled,
 }
 
+/// Longest a batch may go without a console marker before OBS mode calls it
+/// stalled.
+///
+/// Every other guard in the capture loop keys off hl.exe being gone or a file
+/// appearing, so none of them notices the engine being alive and well but no
+/// longer playing the demo: `disconnect` typed into the console, a demo that
+/// failed to load, a frozen engine. On the frame-sequence path that wastes
+/// time. In OBS mode it records until the disk fills, which is why the
+/// watchdog lives here.
+///
+/// The floor has to clear the longest *legitimate* silence, which is one
+/// breadcrumb interval of real-time playback. That is not a fixed number of
+/// seconds — demo ticks are frames, so their wall-clock spacing depends on the
+/// fps the demo was recorded at. And an unfocused game stops fast-forwarding
+/// altogether (GoldSrc throttles without focus), so alt-tabbing stretches gaps
+/// that are normally seconds into minutes. Five minutes clears both.
+///
+/// Tripping this kills the game and loses the batch, so it is deliberately
+/// biased towards waiting too long over firing on a slow one.
+const MARKER_STALL_FLOOR: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// How long to wait for the next marker, given the longest gap this batch has
+/// already shown.
+///
+/// The adaptive term covers a demo whose breadcrumbs really are further apart
+/// than the floor allows: a batch that has already demonstrated a four-minute
+/// gap is not stalled at five.
+fn marker_stall_deadline(longest_gap: std::time::Duration) -> std::time::Duration {
+    std::cmp::max(MARKER_STALL_FLOOR, longest_gap * 3)
+}
+
 struct CaptureCleanupGuard {
     exit_trigger: PathBuf,
     session_junction: PathBuf,
@@ -26,6 +57,18 @@ struct CaptureCleanupGuard {
     auto_clear_temp_demos: bool,
     auto_clear_previews: bool,
     save_local_patched_copy: bool,
+    /// OBS's connection, when this batch is driving one.
+    ///
+    /// Here rather than in the batch loop because this guard is the only thing
+    /// that runs on every exit path the process survives — normal completion,
+    /// cancel, a mid-batch crash of the game, an early return. Anywhere else
+    /// and a cancelled batch leaves OBS recording indefinitely, filling the
+    /// user's drive with no indication that anything is wrong.
+    ///
+    /// Not a panic, though: release builds are `panic = "abort"`, so nothing
+    /// unwinds and no `Drop` runs. That gap, a hard kill and a power cut are
+    /// all covered by `obs::recover` on the next start instead.
+    obs: Option<std::sync::Arc<std::sync::Mutex<Option<crate::obs::ObsClient>>>>,
     _wake_lock: Option<keepawake::KeepAwake>,
 }
 
@@ -56,6 +99,7 @@ impl CaptureCleanupGuard {
             auto_clear_temp_demos,
             auto_clear_previews,
             save_local_patched_copy,
+            obs: None,
             _wake_lock: keepawake::Builder::default()
                 .display(false)
                 .idle(true)
@@ -68,6 +112,19 @@ impl CaptureCleanupGuard {
 
 impl Drop for CaptureCleanupGuard {
     fn drop(&mut self) {
+        // First, before anything else can fail: OBS must not be left
+        // recording. Best-effort and silent by design — there is nobody left
+        // to report to, and a cleanup path that panics is worse than one that
+        // quietly does nothing.
+        if let Some(obs) = self.obs.take() {
+            if let Ok(mut guard) = obs.lock() {
+                if let Some(client) = guard.as_mut() {
+                    client.stop_record_quietly();
+                }
+                *guard = None;
+            }
+        }
+
         if let Err(e) = std::fs::remove_dir_all(&self.exit_trigger) {
             if e.kind() != std::io::ErrorKind::NotFound {
                 log::warn!("[GC::drop] Failed to remove exit_trigger {:?}: {}", self.exit_trigger, e);
@@ -146,6 +203,14 @@ pub fn spawn_capture_engine(
     // pre-launch check below re-validates these same numbers instead of
     // re-querying disk space itself for just the primary export dir.
     drive_headroom: Vec<(PathBuf, u64)>,
+    // Each planned block's take folder, in the order the batch will record
+    // them — the same flattened order the capture manifest uses.
+    //
+    // Only read in `CaptureMode::Obs`, where the engine has to know where a
+    // block's output belongs *before* the recording starts, so OBS can be
+    // pointed straight at it. In every other mode HLAE decides that from
+    // `mirv_movie_filename` and this is empty.
+    obs_take_folders: Vec<PathBuf>,
 ) {
     std::thread::Builder::new()
         .name("capture_engine".into())
@@ -185,7 +250,7 @@ pub fn spawn_capture_engine(
             let exit_trigger = hl_exe_parent.join("DOD_TOOLS_EXIT_TRIGGER");
             let session_junction = hl_exe_parent.join("dodtools_session");
             
-            let _cleanup_guard = CaptureCleanupGuard::new(
+            let mut _cleanup_guard = CaptureCleanupGuard::new(
                 exit_trigger.clone(),
                 session_junction.clone(),
                 config.auto_clear_logs,
@@ -405,6 +470,76 @@ pub fn spawn_capture_engine(
                 }
             }
 
+            // ── OBS capture mode ──────────────────────────────────────────────
+            // Everything here happens *before* the game is spawned, on purpose.
+            // Every failure below otherwise produces a batch that runs to
+            // completion and captures nothing — the worst outcome this path has,
+            // because it looks exactly like success until someone opens the
+            // folder.
+            let obs_mode = config.capture_mode == crate::patch::CaptureMode::Obs;
+            let mut obs_session: Option<crate::obs::ObsSession> = None;
+            let (marker_tx, marker_rx) = std::sync::mpsc::channel::<crate::obs::Marker>();
+            let tail_cancel = Arc::new(AtomicBool::new(false));
+
+            if obs_mode {
+                if !config.add_condebug {
+                    log_crash_abort!(
+                        tx,
+                        "OBS capture needs the engine's console log, which requires -condebug. \
+                         Enable \"Add condebug\" in settings, or choose another capture mode."
+                    );
+                    return;
+                }
+                if obs_take_folders.is_empty() {
+                    log_crash_abort!(tx, "OBS capture was requested but no blocks were planned");
+                    return;
+                }
+                match crate::obs::ObsSession::start(
+                    &config.obs,
+                    obs_take_folders.clone(),
+                    config.resolution_width,
+                    config.resolution_height,
+                ) {
+                    Ok((session, preflight)) => {
+                        log_markdown(&format!(
+                            "🎥 **OBS capture** — connected to OBS {} (obs-websocket {}) at {}. \
+                             Canvas {}x{} @ {:.0}fps, scene `{}`. HLAE will record nothing; OBS is \
+                             driven from the engine's own console markers.",
+                            preflight.obs_version,
+                            preflight.websocket_version,
+                            config.obs.redacted(),
+                            preflight.canvas_width,
+                            preflight.canvas_height,
+                            preflight.fps,
+                            preflight.current_scene,
+                        ));
+                        // Hand the connection to the guard first, so that from
+                        // this point on every exit path stops the recorder.
+                        _cleanup_guard.obs = Some(session.stop_handle());
+                        obs_session = Some(session);
+                    }
+                    Err(e) => {
+                        log_crash_abort!(tx, format!("OBS capture could not start — {}", e));
+                        return;
+                    }
+                }
+
+                // The log is deleted at the end of a batch, not the start, so a
+                // file left by a previous run is normal and its markers are
+                // history. `LogTailer::at_end` is what stops a stale
+                // `START_RECORD` firing a recording the moment this begins.
+                let log_path = hl_exe_parent.join("qconsole.log");
+                let tailer = crate::obs::LogTailer::at_end(&log_path);
+                let cancel = Arc::clone(&tail_cancel);
+                if let Err(e) = std::thread::Builder::new()
+                    .name("obs_log_tail".into())
+                    .spawn(move || tailer.run(marker_tx, cancel))
+                {
+                    log_crash_abort!(tx, format!("could not start the console log reader: {}", e));
+                    return;
+                }
+            }
+
             let condebug_flag = if config.add_condebug { "-condebug " } else { "" };
             // `-afxForceAlpha8` is read by AfxHookGoldSrc.dll off the *game's*
             // command line, not by HLAE.exe. HLAE's own Launch GoldSrc dialog
@@ -500,11 +635,39 @@ pub fn spawn_capture_engine(
             let mut launcher_exit_logged = false;
             let mut hl_seen_alive = false;
             let mut failure_reason: Option<&'static str> = None;
+            // Stall detection state. Both stay untouched outside OBS mode,
+            // where no markers are drained and `last_marker_at` never leaves
+            // `None` — the watchdog below is inert as a result.
+            let mut last_marker_at: Option<std::time::Instant> = None;
+            let mut longest_marker_gap = std::time::Duration::ZERO;
+            // Armed from hl.exe coming up, not from the first marker. A batch
+            // where markers never start at all — a demo that fails to load, a
+            // game sitting at the menu — would otherwise never be watched,
+            // because the deadline had nothing to count from. Seen in a real
+            // run: 398s with hl.exe alive and not one marker.
+            let mut hl_first_seen: Option<std::time::Instant> = None;
             let mut sys = {
                 use sysinfo::SystemExt;
                 sysinfo::System::new_all()
             };
             loop {
+                // Drain whatever the engine has echoed since the last pass.
+                // This is the whole synchronisation mechanism: markers reach
+                // the log 21-40 ms after the tick that emitted them, measured
+                // over a 17-block batch, so a 500 ms poll below would be far
+                // too coarse to act on them — hence the shorter sleep chosen
+                // for OBS mode at the end of this loop.
+                if let Some(session) = obs_session.as_mut() {
+                    for marker in marker_rx.try_iter() {
+                        let now = std::time::Instant::now();
+                        if let Some(previous) = last_marker_at {
+                            longest_marker_gap = longest_marker_gap.max(now - previous);
+                        }
+                        last_marker_at = Some(now);
+                        session.on_marker(&marker);
+                    }
+                }
+
                 if !launcher_exit_logged {
                     match child.try_wait() {
                         Ok(Some(status)) => {
@@ -526,12 +689,50 @@ pub fn spawn_capture_engine(
                     let alive = sys.processes().values().any(|p| p.name().eq_ignore_ascii_case("hl.exe"));
                     if alive {
                         hl_seen_alive = true;
+                        hl_first_seen.get_or_insert_with(std::time::Instant::now);
                     }
                     alive
                 };
 
                 if cancel_token.load(Ordering::Relaxed) {
                     log_markdown(&format!("[HLAE] Cancelled by user after {:.1}s", start_time.elapsed().as_secs_f32()));
+                    std::process::Command::new("taskkill").args(&["/F", "/IM", "hl.exe"]).output().ok();
+                    break;
+                }
+                // Counts from the last marker, or from hl.exe first appearing
+                // when none has arrived yet — the second case is a demo that
+                // never started playing, which produces no markers to count
+                // from at all. Both mean the same thing: the game is alive and
+                // the batch is not advancing.
+                if obs_mode {
+                    if let Some(since) = last_marker_at.or(hl_first_seen) {
+                        if hl_alive && since.elapsed() > marker_stall_deadline(longest_marker_gap) {
+                            let never_started = last_marker_at.is_none();
+                            log_markdown(&format!(
+                                "[HLAE] No console markers for {:.0}s with hl.exe still running — treating the batch as stalled. {}",
+                                since.elapsed().as_secs_f32(),
+                                if never_started {
+                                    "Playback never produced a single marker, so the demo most likely failed to load."
+                                } else {
+                                    "`disconnect` typed in the console, a demo that ended early, and a frozen engine all look like this from out here."
+                                }
+                            ));
+                            failure_reason = Some(if never_started {
+                                "the demo never started playing — hl.exe came up but produced no console markers at all"
+                            } else {
+                                "the batch stopped progressing while hl.exe was still running — no console markers arrived for several minutes"
+                            });
+                            std::process::Command::new("taskkill").args(&["/F", "/IM", "hl.exe"]).output().ok();
+                            break;
+                        }
+                    }
+                }
+                // OBS gone for good, after a reconnect was already tried.
+                // Continuing would play the demo to the end capturing nothing
+                // and then report the batch as finished.
+                if obs_session.as_ref().is_some_and(|s| s.is_dead()) {
+                    log_markdown("[HLAE] OBS is unreachable and could not be reconnected — aborting rather than finishing the batch with nothing recorded.");
+                    failure_reason = Some("lost contact with OBS mid-batch and could not reconnect");
                     std::process::Command::new("taskkill").args(&["/F", "/IM", "hl.exe"]).output().ok();
                     break;
                 }
@@ -565,19 +766,65 @@ pub fn spawn_capture_engine(
                     break;
                 }
                 // hl.exe was running and has now disappeared without ever writing
-                // an exit trigger/done marker — a genuine mid-capture crash rather
-                // than the normal quit-cfg-driven exit (which writes the trigger
-                // before the process goes away).
+                // an exit trigger/done marker, unlike the normal quit-cfg-driven
+                // exit which writes the trigger before the process goes away.
+                //
+                // Not necessarily a crash, and it used to say it was: `quit` in
+                // the console, ALT+F4 and End Process all land here too, and all
+                // of them are the user closing the game deliberately. Nothing
+                // visible from out here separates them from an access violation
+                // — the exit status belongs to the launcher, which handed off
+                // long ago — so the wording covers both rather than guessing.
                 if hl_seen_alive && !hl_alive && !dummy_path.exists() && !exit_trigger.exists() {
                     log_markdown(&format!(
-                        "[HLAE] hl.exe was running and is now gone with no exit trigger after {:.1}s — treating as a mid-capture crash",
+                        "[HLAE] hl.exe is gone with no exit trigger after {:.1}s — either the game was closed (quit / ALT+F4 / End Process) or it crashed",
                         start_time.elapsed().as_secs_f32()
                     ));
-                    failure_reason = Some("hl.exe started but crashed mid-capture (no exit trigger was ever written)");
+                    failure_reason = Some("hl.exe ended before the batch finished — the game was either closed manually or crashed (no exit trigger was written)");
                     break;
                 }
-                std::thread::sleep(std::time::Duration::from_millis(500));
+                // 500 ms is fine for watching a process; it is far too coarse
+                // for acting on stage markers, where the engine's own flush
+                // granularity is ~21 ms and the pre-roll budget being spent is
+                // one second. The process checks above tolerate the faster
+                // cadence — `refresh_processes` is the only real cost, and it
+                // is cheap next to a capture.
+                let poll = if obs_mode { 16 } else { 500 };
+                std::thread::sleep(std::time::Duration::from_millis(poll));
             }
+
+            // Stop anything still recording and put the scene back before the
+            // teardown below starts removing junctions.
+            if let Some(mut session) = obs_session.take() {
+                tail_cancel.store(true, Ordering::Relaxed);
+                for marker in marker_rx.try_iter() {
+                    session.on_marker(&marker);
+                }
+                session.finish();
+                log_markdown(&format!(
+                    "🎥 **OBS capture** — {} block(s) recorded, {} skipped.",
+                    session.recorded.len(),
+                    session.skipped.len()
+                ));
+                for problem in &session.skipped {
+                    log_markdown(&format!("⚠️ **OBS** — {problem}"));
+                }
+                for block in &session.recorded {
+                    // The duration is wall-clock, which tracks the file on a
+                    // clean stop and overstates it on a salvaged one — the
+                    // recording was cut off, so the seconds after that are not
+                    // in the file. Said out loud rather than silently printed
+                    // as if it were a length.
+                    log_markdown(&format!(
+                        "- [obs] {} ({:.1}s{}) -> {}",
+                        block.take_folder.display(),
+                        block.seconds,
+                        if block.salvaged { " of recording, salvaged — the file is shorter" } else { "" },
+                        block.video.display()
+                    ));
+                }
+            }
+            tail_cancel.store(true, Ordering::Relaxed);
 
             if let Some(reason) = failure_reason.filter(|_| !cancel_token.load(Ordering::Relaxed)) {
                 log_crash_abort!(tx, format!("{} — see [HLAE] lines above in this log for timing.", reason));
@@ -631,4 +878,43 @@ pub fn spawn_capture_engine(
             let _ = tx.send(EngineEvent::AllCompleted);
         })
         .unwrap();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    /// A batch that has shown nothing unusual gets the floor. Five minutes is
+    /// the number that has to clear an unfocused game's stalled fast-forward.
+    #[test]
+    fn quiet_batch_waits_the_floor() {
+        assert_eq!(marker_stall_deadline(Duration::ZERO), MARKER_STALL_FLOOR);
+        assert_eq!(
+            marker_stall_deadline(Duration::from_secs(30)),
+            MARKER_STALL_FLOOR
+        );
+    }
+
+    /// A demo whose breadcrumbs are genuinely further apart than the floor
+    /// must not be killed for being slow — it has already demonstrated the gap
+    /// is legitimate.
+    #[test]
+    fn adapts_to_a_batch_with_long_legitimate_gaps() {
+        let observed = Duration::from_secs(240);
+        assert_eq!(
+            marker_stall_deadline(observed),
+            Duration::from_secs(720),
+            "three times the longest gap already survived"
+        );
+    }
+
+    /// The adaptive term only ever widens the window. Narrowing it would make
+    /// a fast batch trip on its first slow stretch.
+    #[test]
+    fn never_shortens_below_the_floor() {
+        for secs in [0, 1, 10, 99, 100, 101] {
+            assert!(marker_stall_deadline(Duration::from_secs(secs)) >= MARKER_STALL_FLOOR);
+        }
+    }
 }

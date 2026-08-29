@@ -86,6 +86,22 @@ const SOUND_FLUSH_LEAD_SECONDS: f32 = 1.0;
 /// is a far cheaper outcome than a silent take.
 pub const MIN_TAKE_SEPARATION_SECONDS: f32 = 1.0;
 
+/// The separation this batch's capture mode actually needs.
+///
+/// `MIN_TAKE_SEPARATION_SECONDS` above is HLAE's, and was a deliberately
+/// conservative guess because the demo side cannot observe how long HLAE takes
+/// to finalise a take. The OBS figure is not a guess — it is measured, and it
+/// is larger — so the mode has to choose.
+///
+/// Public so `find_overlaps` and the tests ask the same question the merge loop
+/// does, rather than re-deriving it and drifting.
+pub fn take_separation_seconds(config: &PatcherConfig) -> f32 {
+    match config.capture_mode {
+        crate::patch::CaptureMode::Obs => crate::patch::types::OBS_TAKE_SEPARATION_SECONDS,
+        _ => MIN_TAKE_SEPARATION_SECONDS,
+    }
+}
+
 fn build_safe_echos(tick: i32, message: &str) -> Vec<(i32, String)> {
     let mut result = Vec::new();
     let mut current_tick = tick;
@@ -538,8 +554,31 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
     helper_cfg_content.push_str("alias sys_normal_speed \"sys_autodir; clear; host_framerate 0\"\n");
     helper_cfg_content.push_str("alias sys_fast_forward \"host_framerate 0.05\"\n");
     helper_cfg_content.push_str("alias sys_sound \"stopsound\"\n");
-    helper_cfg_content.push_str("alias sys_record_start \"mirv_recordmovie_start; stopsound\"\n");
-    helper_cfg_content.push_str("alias sys_record_stop \"mirv_recordmovie_stop\"\n");
+    // In OBS mode HLAE records nothing: the recorder is an external process
+    // driven off the console-log markers these same stages already echo, so the
+    // record aliases must not issue `mirv_recordmovie_*` at all.
+    //
+    // This is what keeps the clip at real time. `mirv_recordmovie_start` pins
+    // the engine's timestep to `1/mirv_movie_fps`; without it the engine simply
+    // stays at the `host_framerate 0` that `sys_normal_speed` set at the
+    // pre-roll, which is exactly what OBS needs in order to capture a clip that
+    // plays at the right speed.
+    //
+    // `stopsound` is kept. It exists to flush the audio buffers fast-forward
+    // corrupts, and that corruption happens whoever is recording. It lands
+    // ~1s before the first captured frame, inside the pre-roll head that gets
+    // trimmed, so it is not audible in the finished clip.
+    //
+    // `sys_record_stop` becomes an echo rather than an empty alias: GoldSrc
+    // treats an alias with an empty body as a parse oddity, and a no-op that
+    // announces itself is easier to recognise in a log than one that vanishes.
+    if config.capture_mode.hlae_records() {
+        helper_cfg_content.push_str("alias sys_record_start \"mirv_recordmovie_start; stopsound\"\n");
+        helper_cfg_content.push_str("alias sys_record_stop \"mirv_recordmovie_stop\"\n");
+    } else {
+        helper_cfg_content.push_str("alias sys_record_start \"stopsound\"\n");
+        helper_cfg_content.push_str("alias sys_record_stop \"echo [dod-tools] OBS_MODE_NO_HLAE_STOP\"\n");
+    }
     helper_cfg_content.push_str("alias sys_capture_done_path \"mirv_movie_filename DOD_TOOLS_EXIT_TRIGGER; mirv_recordmovie_start; mirv_recordmovie_stop\"\n");
 
     // Direct-to-video (docs/direct_to_video_capture.md), driven by the capture-
@@ -570,7 +609,7 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
     // The codec comes from the config — see `CaptureCodec` for why every option
     // is lossless and RGB/4:4:4, and why the size ranking there is not the
     // real-time-viability ranking.
-    if config.ffmpeg_capture {
+    if config.capture_mode == crate::patch::CaptureMode::DirectToVideo {
         let codec_args = config.ffmpeg_capture_codec.args();
         helper_cfg_content.push_str("\n# Direct-to-video capture\n");
         helper_cfg_content.push_str("mirv_movie_ffmpeg all enabled 1\n");
@@ -711,7 +750,13 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
             let next_start = first_kill_frame(&current);
 
             // Recordings overlap, or sit too close for a safe stop/start cycle.
-            let min_separation_ticks = (MIN_TAKE_SEPARATION_SECONDS * demo_fps) as i32;
+            // OBS needs longer between takes than HLAE does, and the number is
+            // measured rather than guessed: ~1.065s to finalise a file after
+            // `StopRecord` returned, against the 1.0s this guard promises. So
+            // the HLAE-derived constant is already too tight for that path by a
+            // small margin, and two highlights that merge today would otherwise
+            // ask OBS for a stop/start cycle it cannot service.
+            let min_separation_ticks = (take_separation_seconds(config) * demo_fps) as i32;
             if blocks_merge(
                 prev_stop,
                 next_start,

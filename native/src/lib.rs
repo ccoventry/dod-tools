@@ -26,6 +26,10 @@ pub mod shared;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod capture_engine;
 
+/// Driving OBS Studio as an alternate capture path (#65).
+#[cfg(not(target_arch = "wasm32"))]
+pub mod obs;
+
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct FileInfo {
     pub created_at: SystemTime,

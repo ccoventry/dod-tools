@@ -1,14 +1,22 @@
 # OBS as an Alternate Capture Method
 
-> **Status 2026-08-28 — design, plus a probe and one round of live measurement. No feature code.**
-> Tracks [#65](https://github.com/ccoventry/dod-tools/issues/65).
+> **Status 2026-08-28 — built and tested against a live OBS.** Tracks
+> [#65](https://github.com/ccoventry/dod-tools/issues/65), in PRs
+> [#72](https://github.com/ccoventry/dod-tools/pull/72) (this document) →
+> [#73](https://github.com/ccoventry/dod-tools/pull/73) (`probe_obs`) →
+> [#74](https://github.com/ccoventry/dod-tools/pull/74) (the feature).
 >
-> **Every gate is cleared. This is ready to build.**
+> **What has actually been run:** a full batch producing playable clips with audio; a cancel
+> mid-recording; OBS killed between blocks; OBS killed mid-recording; dod-tools killed mid-batch and
+> recovered on restart. Every failure path in the table below except the stall watchdog.
 >
 > - OBS Game Capture captures the HLAE-injected `hl.exe` — verified against a real frame.
 > - `qconsole.log` carries the per-block signal at **21–40 ms**, measured over a 17-block batch under
 >   the heaviest I/O configuration the pipeline has.
 > - Every obs-websocket request the design needs exists on the install tested.
+>
+> **Not built:** the Render Studio trim pass (staging item 6), and the wall-clock/disk comparison
+> against the existing path (item 7) — so the speed claim remains an expectation.
 >
 > See "Measured against a live OBS". **One claim was refuted rather than confirmed:** the wall-clock
 > saving is small — the real prize is disk. See "What OBS actually buys".
@@ -461,6 +469,19 @@ Recommendation: re-encode, and expose "leave the take as OBS wrote it" as the sk
 the user to change OBS's keyframe interval — see below. **Unless Custom Output is in play, in which
 case there is a better answer** — see the next section.
 
+**Scoped as [issue #82](https://github.com/ccoventry/dod-tools/issues/82), 2026-08-28 — read that
+before building this.** The recommendation above turned out to rest on a gap: `scan_folder_background`
+(`native/src/hlcr/scanner.rs`) hard-requires a `sound.wav` to discover a take at all, so an OBS take
+— which has no wav, its audio already being in the video — is never scanned into a `ClipData` and
+never reaches Render Studio's queue in the first place. `is_renderable_take`, built earlier in this
+same effort, does correctly recognize the shape, but that is the *Capture Studio verification* path,
+a different function from the *Render Studio scanner*. So this is three pieces, not one: scanner
+support for the shape, a render path with no separate wav to mux (`run_render_job` currently hard-fails
+without one), and the trim itself — which is the easy part once the other two exist. Two decisions
+locked in when this was scoped: `ClipData.wav_file` becomes `Option<String>` rather than staying a
+bare `String`, and "skip" still routes the take into the export pool (naming applied, same as a
+rendered take) just without re-encoding — not a no-op "mark it Rendered" with no file movement at all.
+
 ---
 
 ## Custom Output (FFmpeg): lossless capture, and exactly what it costs
@@ -709,6 +730,62 @@ worrying about is one it spawned. OBS is not.
 
 ---
 
+## Every way a batch can end, and what stops OBS in each
+
+Worked through 2026-08-28 after the first end-to-end test, because "the cancel button stops OBS" is
+only one of the ways a batch stops. The question that matters for every row is the same: **does
+anything survive to send `StopRecord`?** Where nothing does, OBS records until the drive fills.
+
+| How it ends | What the engine sees | What stops OBS |
+| --- | --- | --- |
+| Cancel Batch | Cancel token → `taskkill` → break | `session.finish()`. Verified. |
+| `quit` in console | hl.exe gone, no exit trigger | Same path, via the crash branch |
+| ALT+F4 | Identical to `quit` | Same |
+| End Process hl.exe | Identical to `quit` | Same |
+| **`disconnect` in console** | **Nothing — hl.exe is alive and idle at the menu** | **Marker-silence watchdog** |
+| Demo fails to load, or ends early | Same as `disconnect` | Same watchdog |
+| hl.exe freezes | Same as `disconnect` | Same watchdog |
+| OBS closed or crashes | Requests start failing | One reconnect, then abort the batch |
+| dod-tools panics | — | Nothing. `panic = "abort"`, no unwind, no `Drop` |
+| dod-tools force-killed, or power cut | — | Nothing |
+
+**`disconnect` was the real gap.** Every guard in the capture loop keys off hl.exe being gone or a
+file appearing, and `disconnect` produces neither: the process sits happily at the menu while the
+batch is over. The signal that was missing is the one already being written — `BREADCRUMB` fires
+every 5000 ticks throughout playback regardless of blocks, so its *absence* is the stall.
+
+The threshold cannot be derived from ticks. Demo ticks are frames, so the wall-clock spacing of a
+breadcrumb interval depends on the fps the demo was recorded at, and **an unfocused game stops
+fast-forwarding entirely** (see `docs/goldsrc_dod_quirks.md`), which stretches a gap of seconds into
+minutes with nothing wrong. Hence a five-minute floor plus an adaptive term of three times the
+longest gap the batch has already survived — a batch that has demonstrated a four-minute gap is not
+stalled at five. Tripping it kills the game and loses the batch, so it is biased towards waiting too
+long.
+
+**The last two rows cannot be fixed on the way out.** Release builds set `panic = "abort"`, so a
+panic runs no destructor, and a force-quit or a power cut runs nothing at all. From outside the
+process all three are the same event: dod-tools is gone and OBS is still recording. So the recovery
+is on the way *back in* — `obs::recover` asks OBS at start-up whether it is recording into a folder
+shaped like `<take>/take0000/all`, which is a path only this app produces, and offers to stop it and
+fold the file. Anything else is somebody's own recording and is left alone.
+
+Two smaller ones found on the way:
+
+- **An OBS killed mid-recording truncates a plain MP4 — it does not destroy it.** Measured on OBS
+  32.2.2, 2026-08-28, against a real killed recording: the salvaged file played, decoded cleanly up
+  to the moment OBS died (4.2s of an 11s block), and reported only `partial file` with one broken
+  audio frame at the tail. The received wisdom that an unfinalised MP4 is a total loss did not hold
+  here. MKV and the hybrid/fragmented MP4 variants still lose nothing at all, so preflight
+  recommends them — but as a preference, not a rescue. `fold_into_take` keeps whatever container OBS
+  wrote either way.
+- **A salvaged block's reported duration is wall-clock, not file length.** 11.0s reported against a
+  4.2s file, because the seconds between the failure happening and being noticed are counted but not
+  recorded. `RecordedBlock::salvaged` marks these; anything comparing a duration must check it.
+- **Automatic file splitting silently truncates a block.** `StopRecord` reports only the last piece,
+  so everything before it is stranded under a name nothing downstream resolves. Preflight warns.
+
+---
+
 ## Where this touches the codebase
 
 - **`native/src/capture_engine.rs`** — the batch loop gains a log tailer and an OBS client;
@@ -743,32 +820,35 @@ tractable piece of work.
    step catches it.
 2. ~~**Tail the console log.**~~ **Done 2026-08-28.** 21–40 ms marker latency across 17 blocks under
    the heaviest I/O configuration. The channel works; the `screenshot` fallback is not needed.
-3. **Wire one block end to end.** Log tail → `StartRecord` on `AUDIO_SYNC` → `StopRecord` on
-   `STOP_RECORD` → move into the take folder. Verify against the demo that the clip contains what it
-   should. **Every gate is now cleared, so this is the next thing to build.**
-4. **The predicate**, both sides at once, plus the duration assertion in `VerifiedBlock`.
-5. **Preflight, cancel and crash paths.** Not optional, and not last in practice — a half-wired
-   version that leaves OBS recording after a cancel is worse than no version. Raising
-   `MIN_TAKE_SEPARATION_SECONDS` for this path belongs here too.
-6. **The trim pass in Render Studio**, and the setting to skip it.
+3. ~~**Wire one block end to end.**~~ **Done 2026-08-28.** Log tail → `StartRecord` on `AUDIO_SYNC`
+   → `StopRecord` on `STOP_RECORD` → folded into the take folder. Verified against a real batch:
+   blocks land as `<take>/take0000/all/video.mp4`, decode clean, and carry their audio.
+4. ~~**The predicate**~~ **Done 2026-08-28.** Both sides at once, testing for the audio *stream* —
+   a muted OBS source writes a perfectly valid silent file, and admitting it would render a clip
+   with no sound and no error.
+5. ~~**Preflight, cancel and crash paths.**~~ **Done and tested live 2026-08-28.** See the failure
+   table above. `MIN_TAKE_SEPARATION_SECONDS` is mode-aware via `OBS_TAKE_SEPARATION_SECONDS`.
+6. **The trim pass in Render Studio**, and the setting to skip it. *Not built.*
 7. **Measure it.** Wall-clock and disk against a real batch, next to the same batch through the
-   existing path. The speed claim is currently an expectation.
+   existing path. The speed claim is still an expectation. *Not done.*
 
 ---
 
 ## Open questions
 
-- **`qconsole.log` flush cadence.** The only remaining gate on the recommended design: it decides
-  whether Option A's start signal is viable or whether the `screenshot` fallback is needed. Needs a
-  running batch, not just a running game.
+- ~~**`qconsole.log` flush cadence.**~~ **Answered 2026-08-28.** 21–40 ms across a real 17-block
+  batch. The `screenshot` fallback is not needed and was never built.
 - **Frame pacing under real playback.** The delivery test was taken at the menu, where nothing is
   moving. Whether a demo playing at `host_framerate 0` on a loaded machine produces dropped or
   duplicated frames is a different question, and it is the one that decides how good this path
-  actually looks.
-- ~~**Which container.**~~ **Largely settled.** The live install records `hybrid_mp4`, the crash-safe
-  MP4 variant, so the unfinalised-file worry does not apply to a default modern OBS. What remains is
-  a choice rather than an unknown: MP4 needs a second frame-count reader beside `avi_frame_count`,
-  while Custom Output writing `utvideo` into an AVI reuses the existing one untouched.
+  actually looks. **Still open** — the captured clips decode clean and run the right duration, which
+  says nothing about frames OBS silently duplicated to fill time.
+- ~~**Which container.**~~ **Settled, and the worry was overstated.** A plain MP4 from an OBS killed
+  mid-recording is *truncated, not destroyed*: measured, it played, decoded to the moment OBS died,
+  and reported only `partial file` with one broken audio frame. So the container choice is a
+  preference — MKV and the hybrid/fragmented variants lose nothing, plain MP4 loses the tail — not a
+  correctness gate. What remains is that MP4 needs a second frame-count reader beside
+  `avi_frame_count`, while Custom Output writing `utvideo` into an AVI reuses the existing one.
 - **Is `stopsound` still wanted in the record window** once nothing is being time-warped through it?
 - **What happens when the machine cannot keep up.** Promoted from a nicety to the question that
   decides who this path is usable for — see the break-even table above: the machines where OBS saves
@@ -776,6 +856,11 @@ tractable piece of work.
   in the output file's metadata: the duration is right and the frames are simply missing.
   `GetRecordStatus` does not report skipped frames; OBS's own stats do. Whether that is reachable
   over the WebSocket, and whether a batch should warn or refuse, is unanswered.
-- **Whether OBS should be driven at all when it is already streaming.** `GetRecordStatus` says whether
-  it is recording; it does not make refusing to touch a live stream automatic. Leaning toward: detect
-  an active stream and refuse, loudly.
+- ~~**Whether OBS should be driven at all when it is already streaming.**~~ **Settled: it refuses.**
+  `ObsSession::start` fails the batch on an active stream rather than warning, because the failure
+  would be visible to the user's audience rather than to them. It refuses an already-running
+  recording the same way.
+- **The stall watchdog is the one failure path never triggered live.** Everything else in the table
+  above has been tested against a real batch. Reproducing this one means a demo that fails to load
+  with hl.exe still alive, plus a five-minute wait; it did arm correctly off a real run in the
+  activity log, which is weaker evidence than the rest.

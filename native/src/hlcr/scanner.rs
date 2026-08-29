@@ -82,7 +82,7 @@ fn collect_image_folders(take_folder: &Path) -> Vec<PathBuf> {
             if let Ok(file_type) = sub_entry.file_type() {
                 let path = sub_entry.path();
                 if file_type.is_dir()
-                    && (path.join("00000.bmp").exists() || path.join(VIDEO_FILE).exists())
+                    && (path.join("00000.bmp").exists() || stream_video_path(&path).is_some())
                 {
                     image_folders.push(path);
                 }
@@ -90,6 +90,30 @@ fn collect_image_folders(take_folder: &Path) -> Vec<PathBuf> {
         }
     }
     image_folders
+}
+
+/// Containers a stream folder's video may be in.
+///
+/// `mirv_movie_ffmpeg` writes `video.avi` because that is what the pipeline
+/// asks it for. OBS writes whatever container the user's OBS settings name —
+/// the install this was developed against defaults to `hybrid_mp4` — and its
+/// output keeps the extension it was written with rather than being renamed,
+/// since a file that lies about its own container breaks every tool that reads
+/// it afterwards.
+const VIDEO_EXTENSIONS: &[&str] = &["avi", "mp4", "mkv", "mov"];
+
+/// The video inside a stream folder, whatever container it is in.
+fn stream_video_path(folder: &Path) -> Option<PathBuf> {
+    // `video.avi` first so an HLAE take resolves without touching the disk
+    // more than once — it is by far the common case.
+    let preferred = folder.join(VIDEO_FILE);
+    if preferred.is_file() {
+        return Some(preferred);
+    }
+    VIDEO_EXTENSIONS
+        .iter()
+        .map(|ext| folder.join(format!("video.{ext}")))
+        .find(|p| p.is_file())
 }
 
 /// A stream folder's name exactly as it appears on disk. Paths on the clip are
@@ -190,8 +214,11 @@ fn avi_frame_count(path: &Path) -> Option<usize> {
 
 /// Frames in a stream folder, whichever shape it was captured in.
 fn stream_frame_count(folder: &Path) -> usize {
-    let video = folder.join(VIDEO_FILE);
-    if video.is_file() {
+    if let Some(video) = stream_video_path(folder) {
+        // Only AVI carries the count somewhere this cheap to reach. An
+        // OBS-written MP4 or MKV keeps it behind a container walk that is not
+        // worth doing for a progress bar, so 0 stands — which the UI shows as
+        // an indeterminate bar rather than as a wrong number.
         return avi_frame_count(&video).unwrap_or(0);
     }
     count_bmps(folder)
@@ -199,10 +226,85 @@ fn stream_frame_count(folder: &Path) -> usize {
 
 /// The video inside a stream folder, when that is what it holds.
 fn stream_video(folder: &Path) -> Option<String> {
-    folder
-        .join(VIDEO_FILE)
-        .is_file()
-        .then(|| VIDEO_FILE.to_string())
+    stream_video_path(folder)
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+}
+
+/// How much of a container to read looking for an audio track.
+///
+/// Both ends, because the two formats disagree about where the index lives: an
+/// AVI's `hdrl` is at the front, while an MP4 written without `+faststart` —
+/// which is every OBS recording — puts `moov` at the end. A window at each end
+/// finds both without reading a multi-gigabyte file.
+const AUDIO_SCAN_BYTES: usize = 512 * 1024;
+
+/// Whether a video file carries an audio stream.
+///
+/// Deliberately a byte scan rather than an FFprobe call. This runs inside the
+/// scanner, which walks every folder the user has pointed Render Studio at, and
+/// spawning a process per candidate take would make a library scan unusable.
+///
+/// Signature per container:
+///
+/// - **AVI** — a stream header (`strh`) whose `fccType` is `auds`.
+/// - **MP4/MOV** — a handler box (`hdlr`) declaring the `soun` handler type.
+/// - **MKV** — the Matroska `TrackType` element (`0x83`) with value 2, audio.
+///
+/// A false negative means a take is reported unrenderable and the user is told
+/// why; a false positive means a silent clip renders as if fine. So when the
+/// scan cannot tell, the answer is no.
+fn video_has_audio(path: &Path) -> bool {
+    use std::io::{Read, Seek, SeekFrom};
+
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let Ok(len) = file.metadata().map(|m| m.len()) else {
+        return false;
+    };
+
+    let mut windows: Vec<Vec<u8>> = Vec::new();
+    let mut head = vec![0u8; AUDIO_SCAN_BYTES.min(len as usize)];
+    if file.read_exact(&mut head).is_ok() {
+        windows.push(head);
+    }
+    if len > AUDIO_SCAN_BYTES as u64 {
+        let tail_start = len.saturating_sub(AUDIO_SCAN_BYTES as u64);
+        if file.seek(SeekFrom::Start(tail_start)).is_ok() {
+            let mut tail = Vec::new();
+            if file.take(AUDIO_SCAN_BYTES as u64).read_to_end(&mut tail).is_ok() {
+                windows.push(tail);
+            }
+        }
+    }
+
+    windows.iter().any(|w| {
+        contains_pair(w, b"strh", b"auds")
+            || contains_pair(w, b"hdlr", b"soun")
+            || contains_mkv_audio_track(w)
+    })
+}
+
+/// `needle` followed by `tag` within a short distance.
+///
+/// Both AVI and MP4 place the type immediately after the box name — 4 bytes for
+/// `strh`, 8 for `hdlr` after its version/flags — so a small window is enough,
+/// and keeping it small is what stops an unrelated occurrence of `soun`
+/// elsewhere in the file reading as an audio track.
+fn contains_pair(haystack: &[u8], needle: &[u8; 4], tag: &[u8; 4]) -> bool {
+    haystack.windows(4).enumerate().any(|(i, w)| {
+        if w != needle {
+            return false;
+        }
+        let from = i + 4;
+        let to = (from + 16).min(haystack.len());
+        haystack[from..to].windows(4).any(|c| c == tag)
+    })
+}
+
+/// Matroska `TrackType` (element id `0x83`), size 1, value 2 (audio).
+fn contains_mkv_audio_track(haystack: &[u8]) -> bool {
+    haystack.windows(3).any(|w| w == [0x83, 0x81, 0x02])
 }
 
 /// Whether Render Studio's scanner would admit this folder as a renderable take.
@@ -219,7 +321,7 @@ fn stream_video(folder: &Path) -> Option<String> {
 /// because `WalkDir` recurses into every subdirectory on its own; this check
 /// has to look explicitly since it only tests one specific folder.
 pub fn is_renderable_take(take_folder: &Path) -> bool {
-    if !collect_wav_files(take_folder).is_empty() && !collect_image_folders(take_folder).is_empty() {
+    if take_shape_is_renderable(take_folder) {
         return true;
     }
     if let Ok(read_dir) = std::fs::read_dir(take_folder) {
@@ -227,14 +329,42 @@ pub fn is_renderable_take(take_folder: &Path) -> bool {
             if entry.file_type().map(|t| t.is_dir()).unwrap_or(false)
                 && entry.file_name().to_string_lossy().to_lowercase().starts_with("take")
             {
-                let sub = entry.path();
-                if !collect_wav_files(&sub).is_empty() && !collect_image_folders(&sub).is_empty() {
+                if take_shape_is_renderable(&entry.path()) {
                     return true;
                 }
             }
         }
     }
     false
+}
+
+/// The two admissible shapes, checked against one specific folder.
+///
+/// 1. **Audio beside a stream folder.** How HLAE writes a take, whether that
+///    stream folder holds a BMP sequence or a `mirv_movie_ffmpeg` video: the
+///    audio is always a separate `sound.wav` that the render pass muxes in.
+/// 2. **A stream folder holding a video that already contains its audio.** How
+///    an OBS take arrives, because OBS records A/V together and there is no
+///    wav to find.
+///
+/// The second case tests for the audio *stream*, not merely for a video file.
+/// A muted OBS source produces a video that is valid in every respect and
+/// silent, and admitting it would mean the render pass emits a clip with no
+/// sound and no error — exactly the plausible-looking-but-wrong output this
+/// pipeline keeps being bitten by. The check is cheap because the answer is in
+/// the container header.
+fn take_shape_is_renderable(folder: &Path) -> bool {
+    let streams = collect_image_folders(folder);
+    if streams.is_empty() {
+        return false;
+    }
+    if !collect_wav_files(folder).is_empty() {
+        return true;
+    }
+    streams
+        .iter()
+        .filter_map(|s| stream_video_path(s))
+        .any(|v| video_has_audio(&v))
 }
 
 pub fn scan_folder_background(
@@ -532,6 +662,130 @@ mod tests {
         let folder = take.join(stream);
         std::fs::create_dir_all(&folder).unwrap();
         std::fs::write(folder.join(VIDEO_FILE), avi).unwrap();
+    }
+
+    fn scratch(name: &str) -> PathBuf {
+        let p = std::env::temp_dir().join(format!("dod_scan_{}_{}", name, std::process::id()));
+        let _ = std::fs::remove_dir_all(&p);
+        std::fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    /// A stream folder holding a video with the given bytes, named `video.<ext>`.
+    fn write_named_video(take: &Path, stream: &str, ext: &str, body: &[u8]) -> PathBuf {
+        let folder = take.join(stream);
+        std::fs::create_dir_all(&folder).unwrap();
+        let p = folder.join(format!("video.{ext}"));
+        std::fs::write(&p, body).unwrap();
+        p
+    }
+
+    /// Enough of an MP4 to carry the audio-handler signature the scan looks
+    /// for: an `hdlr` box declaring `soun`, padded the way a real one is.
+    fn mp4_with_audio() -> Vec<u8> {
+        let mut v = b"\x00\x00\x00\x20ftypisom".to_vec();
+        v.extend_from_slice(b"hdlr");
+        v.extend_from_slice(&[0u8; 8]); // version/flags + pre_defined
+        v.extend_from_slice(b"soun");
+        v.extend_from_slice(&[0u8; 64]);
+        v
+    }
+
+    fn mp4_without_audio() -> Vec<u8> {
+        let mut v = b"\x00\x00\x00\x20ftypisom".to_vec();
+        v.extend_from_slice(b"hdlr");
+        v.extend_from_slice(&[0u8; 8]);
+        v.extend_from_slice(b"vide");
+        v.extend_from_slice(&[0u8; 64]);
+        v
+    }
+
+    /// The OBS shape: one stream folder, a video with its audio already in it,
+    /// and no `sound.wav` anywhere. This is the case the predicate was widened
+    /// for, and both the capture side and Render Studio go through it.
+    #[test]
+    fn a_video_take_with_audio_is_renderable_without_a_wav() {
+        let root = scratch("obs_take");
+        let take = root.join("chain_01_b0").join("take0000");
+        write_named_video(&take, "all", "mp4", &mp4_with_audio());
+        assert!(collect_wav_files(&take).is_empty(), "no wav, by construction");
+        assert!(is_renderable_take(&take));
+        // And through the take* nesting, which is how the capture side asks.
+        assert!(is_renderable_take(&root.join("chain_01_b0")));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A muted OBS source produces a video that is valid in every respect and
+    /// silent. Admitting it would render a clip with no sound and no error.
+    #[test]
+    fn a_silent_video_take_is_not_renderable() {
+        let root = scratch("silent");
+        let take = root.join("chain_01_b0").join("take0000");
+        write_named_video(&take, "all", "mp4", &mp4_without_audio());
+        assert!(
+            !is_renderable_take(&take),
+            "a video with no audio track and no wav must not pass"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// OBS writes whatever container its settings name, and the file keeps the
+    /// extension it was written with rather than being renamed to `.avi`.
+    #[test]
+    fn video_takes_are_found_in_any_supported_container() {
+        for ext in ["mp4", "mkv", "mov", "avi"] {
+            let root = scratch(&format!("ext_{ext}"));
+            let take = root.join("b0").join("take0000");
+            write_named_video(&take, "all", ext, &mp4_with_audio());
+            assert!(
+                !collect_image_folders(&take).is_empty(),
+                "a .{ext} video should mark its folder as a stream"
+            );
+            assert!(is_renderable_take(&take), ".{ext} take should be renderable");
+            let _ = std::fs::remove_dir_all(&root);
+        }
+    }
+
+    /// The wav path must keep working exactly as before — a BMP sequence beside
+    /// a `sound.wav` is still the common case and is not audited for audio.
+    #[test]
+    fn the_wav_shape_still_passes_untouched() {
+        let root = scratch("wav");
+        let take = root.join("b0").join("take0000");
+        let stream = take.join("all");
+        std::fs::create_dir_all(&stream).unwrap();
+        std::fs::write(stream.join("00000.bmp"), b"x").unwrap();
+        std::fs::write(take.join("sound.wav"), b"x").unwrap();
+        assert!(is_renderable_take(&take));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// An empty folder, or one holding only our own metadata, is not a take.
+    #[test]
+    fn an_empty_folder_is_not_renderable() {
+        let root = scratch("empty");
+        assert!(!is_renderable_take(&root));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The audio signature must not be matched by an unrelated occurrence of
+    /// the tag somewhere in the payload — hence the bounded window.
+    #[test]
+    fn a_stray_soun_in_the_payload_is_not_an_audio_track() {
+        let root = scratch("stray");
+        let take = root.join("b0").join("take0000");
+        let mut body = b"\x00\x00\x00\x20ftypisom".to_vec();
+        body.extend_from_slice(b"hdlr");
+        body.extend_from_slice(&[0u8; 8]);
+        body.extend_from_slice(b"vide");
+        body.extend_from_slice(&[0u8; 256]); // well past the window
+        body.extend_from_slice(b"soun");
+        let p = write_named_video(&take, "all", "mp4", &body);
+        assert!(
+            !video_has_audio(&p),
+            "`soun` far from any hdlr is not an audio handler"
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
