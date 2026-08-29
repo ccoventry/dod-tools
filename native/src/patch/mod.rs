@@ -77,6 +77,7 @@ pub use types::{
     MAX_PAYLOAD_SIZE,
     CustomCommand,
     CommandRelation,
+    CaptureCodec,
     PatchOptions,
     CaptureStreak,
     CaptureBlock,

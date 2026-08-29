@@ -164,6 +164,22 @@ export const STRINGS = {
     CAPTURE_MODE_VIDEO_TITLE:
         'HLAE pipes frames straight to FFmpeg as one lossless video per take. Same picture, roughly half the disk, and far fewer files. Needs the HLAE FFmpeg row above to be set.',
     CAPTURE_MODE_SWITCH_TITLE: 'Switch between capturing a bitmap frame sequence and a video file',
+    CAPTURE_CODEC_LABEL: 'Capture Codec:',
+    // Says why the list is short, so the absence of H.264/HEVC reads as a
+    // decision rather than an omission. The sizes are transcode measurements,
+    // deliberately described as such — how each one behaves while competing
+    // with the game for cores during a live capture is not measured.
+    CAPTURE_CODEC_TITLE:
+        'All lossless: the render pass always re-encodes, so a lossy capture would cost quality for nothing. Ut Video is the only one built for real-time and is the safe default. The others are smaller per frame but heavier to encode, and the capture slows down if the encoder cannot keep up.',
+    CODEC_UTVIDEO: 'Ut Video (fastest, recommended)',
+    CODEC_FFV1: 'FFV1 (smaller, slower)',
+    CODEC_X264_LOSSLESS: 'x264 lossless (smallest, slowest)',
+    CODEC_RAWVIDEO: 'Uncompressed (no CPU cost, huge)',
+    // The tooltip above already hedges this, but a hover-only warning is easy
+    // to miss — put it where it stays visible regardless of which option is
+    // picked, since "unverified" doesn't change once you've stopped hovering.
+    CAPTURE_CODEC_UNVERIFIED_HINT:
+        'Only Ut Video has been proven in a real capture. The others are sized from a transcode with every core free — during a live capture they compete with the game, and that ranking is likely to change.',
     // Turning it on without HLAE having an FFmpeg produces a capture that runs
     // and records nothing, so it is worth saying before the batch rather than
     // after it.
@@ -369,6 +385,13 @@ export const STRINGS = {
     BATCH_FINISHED_WITH_ERRORS: 'Render batch finished with errors — check job rows for details.',
     BATCH_CANCELLED: 'Render batch cancelled.',
     BATCH_COMPLETED: 'Render batch completed successfully!',
+    // Mixed-outcome batches report every non-zero count instead of one label,
+    // so cancelling the takes you did not want does not read as "nothing
+    // rendered". Singular/plural matters here — these numbers are often 1.
+    countRendered: (n) => `${n} rendered`,
+    countFailed: (n) => (n === 1 ? '1 failed' : `${n} failed`),
+    countCancelled: (n) => `${n} cancelled`,
+    batchSummary: (parts) => `Render batch finished — ${parts}.`,
     STATUS_FINISHED: 'Status: Finished',
     scanFoundSoFar: (n) => `Status: Scanning… found ${n} take(s) so far`,
     ADD_RENDER_DIR_REQUIRED: 'Please add at least one render directory.',

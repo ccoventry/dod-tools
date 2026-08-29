@@ -35,6 +35,29 @@ function statusColor(status) {
   }
 }
 
+/**
+ * One sentence describing how a finished batch actually ended.
+ *
+ * Reports every non-zero outcome rather than picking a single label, because
+ * mixed batches are the normal case: cancelling the takes you did not want and
+ * letting the rest run should read as a success with a note, not as "the batch
+ * was cancelled". Falls back to the single-outcome wording when only one kind
+ * of thing happened, so the common all-finished case stays as short as before.
+ */
+function summarizeBatchOutcome(finished, failed, cancelled) {
+  const parts = [];
+  if (finished > 0) parts.push(STRINGS.RENDER.countRendered(finished));
+  if (failed > 0) parts.push(STRINGS.RENDER.countFailed(failed));
+  if (cancelled > 0) parts.push(STRINGS.RENDER.countCancelled(cancelled));
+
+  if (parts.length === 0) return STRINGS.RENDER.BATCH_COMPLETED;
+  if (parts.length === 1) {
+    if (failed === 0 && cancelled === 0) return STRINGS.RENDER.BATCH_COMPLETED;
+    if (finished === 0 && failed === 0) return STRINGS.RENDER.BATCH_CANCELLED;
+  }
+  return STRINGS.RENDER.batchSummary(parts.join(', '));
+}
+
 function updateFooterQueueSummary() {
   const el = document.querySelector('#render-footer-queue-summary');
   if (!el) return;
@@ -255,14 +278,21 @@ export function initRenderUI(getRenderFolders, getExportDirs, onSettingsChange, 
       if (renderStatusEl) renderStatusEl.textContent = STRINGS.MAIN.statusGeneric(status);
       return;
     }
-    const errored = jobs.some((j) => j.status === 'Error');
-    const cancelled = jobs.some((j) => j.status === 'Cancelled');
-    if (errored) {
-      showToast(STRINGS.RENDER.BATCH_FINISHED_WITH_ERRORS, 'error');
-    } else if (cancelled) {
-      showToast(STRINGS.RENDER.BATCH_CANCELLED, 'info');
-    } else if (jobs.length > 0) {
-      showToast(STRINGS.RENDER.BATCH_COMPLETED, 'success');
+    // Counted, not `some()`. The old check asked "was anything cancelled?"
+    // before "did anything finish?", so one cancelled job in a batch of any
+    // size reported the whole batch as cancelled — including the common case
+    // of cancelling the takes you did not want and letting the rest run, where
+    // it read as though nothing had rendered at all.
+    const finished = jobs.filter((j) => j.status === 'Finished').length;
+    const failed = jobs.filter((j) => j.status === 'Error').length;
+    const cancelled = jobs.filter((j) => j.status === 'Cancelled').length;
+
+    if (jobs.length > 0) {
+      // Severity follows what actually happened rather than what is present:
+      // a deliberate partial cancel where the rest rendered is a success, not
+      // an "info" event. Only a real failure is an error.
+      const level = failed > 0 ? 'error' : (finished > 0 ? 'success' : 'info');
+      showToast(summarizeBatchOutcome(finished, failed, cancelled), level);
     }
     if (renderStatusEl) renderStatusEl.textContent = STRINGS.RENDER.STATUS_FINISHED;
   });
