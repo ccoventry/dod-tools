@@ -1,0 +1,74 @@
+# `dev` isn't this repo's default branch (`main` is), so GitHub's own
+# closing-keyword auto-close never fires when a fix merges into `dev` — and
+# even once `dev` reaches `main`, this repo's commit convention is a bare
+# "(#NN)" in the subject line rather than "Fixes #NN", which GitHub's
+# keyword parser doesn't recognize either. Without this, a fixed issue just
+# stays open indefinitely. See issue #64/#66/#78/#80/#82's discussion.
+#
+# This labels an issue `on-dev` the moment a commit whose *subject line*
+# ends in "(#NN)" lands on `dev`, so a human can batch-close what's actually
+# done. Deliberately scoped to the subject line only: a bare "#NN" mention
+# in a commit *body* is routinely just a reference to related or still-open
+# work (e.g. "deferred to #84"), not a completion signal, and labeling on
+# that would mislabel it.
+name: Label issues merged to dev
+
+on:
+  push:
+    branches: [dev]
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Label issues fixed by this push's commits
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -e
+          before="${{ github.event.before }}"
+          after="${{ github.event.after }}"
+          # A brand-new branch (or a history-rewriting force-push) can leave
+          # `before` unreachable — fall back to just the tip commit rather
+          # than failing the run.
+          if git cat-file -e "$before" 2>/dev/null; then
+            range="$before..$after"
+          else
+            range="$after"
+          fi
+
+          numbers=$(git log "$range" --format=%s \
+            | grep -oE '\(#[0-9]+\)' \
+            | tr -d '()#' \
+            | sort -un)
+
+          for n in $numbers; do
+            # repos/{owner}/{repo}/issues/N returns PRs too (with a
+            # non-null pull_request field) — skip those rather than
+            # mislabeling a PR number that happened to match the pattern.
+            info=$(gh api "repos/$REPO/issues/$n" \
+              -q '.state + "|" + (.pull_request != null | tostring) + "|" + .title' 2>/dev/null) || continue
+            state="${info%%|*}"
+            rest="${info#*|}"
+            is_pr="${rest%%|*}"
+            subject="${rest#*|}"
+            [ "$state" = "open" ] || continue
+            [ "$is_pr" = "false" ] || continue
+            case "$subject" in
+              "[R&D]"*)
+                echo "Skipping #$n (R&D tracker, needs a human judgment call): $subject"
+                continue
+                ;;
+            esac
+            echo "Labeling #$n as on-dev: $subject"
+            gh issue edit "$n" --add-label "on-dev" --repo "$REPO"
+          done
