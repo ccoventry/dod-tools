@@ -93,10 +93,10 @@ export const STRINGS = {
     LAUNCH_STANDALONE_BUTTON: 'Launch Game (HLAE)',
     LAUNCH_STANDALONE_TITLE: 'Boots HLAE against hl.exe directly with no demo loaded.',
     MIN_KILLS_LABEL: 'Min Kills:',
-    EMPTY_SELECT_DEMO: 'Select a demo in the Master List to view its killstreak details.',
-    EMPTY_NO_STREAKS: 'No killstreak highlights detected in this demo.',
+    EMPTY_SELECT_DEMO: 'Select a demo in the Master List to view its highlights.',
+    EMPTY_NO_STREAKS: 'No highlights detected in this demo.',
     ADVANCED_DIAGNOSTICS_SUMMARY: 'Advanced Diagnostics (Canvas Timeline & Telemetry)',
-    TIMELINE_NO_DATA: 'No streak timeline available',
+    TIMELINE_NO_DATA: 'No highlight timeline available',
     COL_ROW_NUM: 'Row #',
     COL_SEL: 'Sel',
     COL_KILL_RANGE: 'Kill Range',
@@ -220,6 +220,11 @@ export const STRINGS = {
     CODEC_FFV1: 'FFV1 (smaller, slower)',
     CODEC_X264_LOSSLESS: 'x264 lossless (smallest, slowest)',
     CODEC_RAWVIDEO: 'Uncompressed (no CPU cost, huge)',
+    // The tooltip above already hedges this, but a hover-only warning is easy
+    // to miss — put it where it stays visible regardless of which option is
+    // picked, since "unverified" doesn't change once you've stopped hovering.
+    CAPTURE_CODEC_UNVERIFIED_HINT:
+        'Only Ut Video has been proven in a real capture. The others are sized from a transcode with every core free — during a live capture they compete with the game, and that ranking is likely to change.',
     // Turning it on without HLAE having an FFmpeg produces a capture that runs
     // and records nothing, so it is worth saying before the batch rather than
     // after it.

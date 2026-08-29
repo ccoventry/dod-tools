@@ -260,6 +260,11 @@
                     <option value="x264_lossless" data-str="CAPTURE_CONFIG.CODEC_X264_LOSSLESS">x264 lossless (smallest, slowest)</option>
                     <option value="rawvideo" data-str="CAPTURE_CONFIG.CODEC_RAWVIDEO">Uncompressed (no CPU cost, huge)</option>
                   </select>
+                  <p class="setting-hint" data-str="CAPTURE_CONFIG.CAPTURE_CODEC_UNVERIFIED_HINT">
+                    Only Ut Video has been proven in a real capture. The others are sized from a
+                    transcode with every core free — during a live capture they compete with the
+                    game, and that ranking is likely to change.
+                  </p>
                 </div>
 
                 <!-- Shown only in OBS mode. Read-only against the user's OBS:

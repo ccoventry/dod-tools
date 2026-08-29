@@ -205,7 +205,6 @@ function applyCaptureModeUI() {
   document.querySelectorAll('.setting-label[data-capture-mode]').forEach((label) => {
     label.classList.toggle('active', (label.dataset.captureMode === 'video') === video);
   });
-
   // Hidden rather than disabled, in both other modes: frame-sequence mode
   // has its own, unrelated answer to "what codec" — Render Studio's own
   // codec picker, a different set of options (ProRes/DNxHR/H.264) for a
