@@ -610,6 +610,13 @@ function initAnalyzerBrowserKeyboardNav() {
       row?.scrollIntoView({ block: 'nearest' });
     } else if (e.key === 'Enter' && browserSelectedDemo) {
       loadAnalyzerDemo(browserSelectedDemo);
+    } else if (e.key === 'Escape' && browserSelectedDemo) {
+      // Clears the row highlight/arrow-nav cursor only — it was never what
+      // loaded the currently-displayed demo (only Enter/click do that via
+      // loadAnalyzerDemo), so this can't lose or change anything shown. #28.
+      e.preventDefault();
+      browserSelectedDemo = null;
+      renderDemoTable();
     }
   });
 }

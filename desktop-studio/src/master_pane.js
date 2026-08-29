@@ -135,6 +135,14 @@ export function initMasterPane(onDeleteDemo, onRequestTrackedDeleteConfirm) {
         e.preventDefault();
         rows[currentIndex].click();
       }
+    } else if (e.key === 'Escape') {
+      // Clears the keyboard-nav ring/cursor only — the actual selected demo
+      // (table-row-selected, driving Highlight Details) is untouched, same
+      // as arrow-key movement never committing anything until Enter. See #28.
+      if (currentIndex >= 0) {
+        e.preventDefault();
+        rows[currentIndex].classList.remove('keyboard-selected');
+      }
     }
   });
 }
