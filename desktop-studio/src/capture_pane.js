@@ -33,6 +33,15 @@ let currentOnStatusChange = null;
 // gets serialized on Save Session. Null in Quick-Clip-only contexts where
 // main.js hasn't wired one up yet.
 let currentGetTakeIndex = null;
+// Fired once per batch when capture_status reports it's no longer running
+// (finished, cancelled, or errored) — main.js's updateExportPoolIndicator,
+// so the footer's "Capture Output Free" figure reflects what the batch just
+// wrote. Previously only refreshLaunchGuard() ran here, which reads its own
+// separate availableBytes for the launch-guard banner and never touched the
+// footer, so it stayed stuck at its last edit-time value until something
+// unrelated (editing the drive list, restarting) happened to refresh it.
+// See issue #13.
+let currentOnBatchFinished = null;
 // The most recent batch dispatched from this window: its session id and the
 // live streak objects, in the exact order they were sent. The backend's take
 // manifest indexes into that same order, which is what lets a verified block
@@ -570,7 +579,7 @@ function initClearPreviewsModal() {
   }
 }
 
-export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTakeIndex) {
+export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTakeIndex, onBatchFinished) {
   const startBtn = document.querySelector('#start-capture-btn') || document.querySelector('#start-batch-btn');
   const cancelBtn = document.querySelector('#cancel-batch-btn');
   const statusEl = document.querySelector('#batch-status');
@@ -590,6 +599,7 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
   currentOnSettingsChange = onSettingsChange || null;
   currentOnStatusChange = onStatusChange || null;
   currentGetTakeIndex = getTakeIndex || null;
+  currentOnBatchFinished = onBatchFinished || null;
 
   initCommandsEditor = createListEditor({
     container: document.querySelector('#init-commands-list'),
@@ -704,6 +714,7 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
         setBatchRunning(false);
         if (cancelBtn) cancelBtn.disabled = true;
         refreshLaunchGuard();
+        if (currentOnBatchFinished) currentOnBatchFinished();
 
         if (payload.error) {
           showToast(STRINGS.CAPTURE.captureErrorToast(payload.status || STRINGS.CAPTURE.CAPTURE_ERROR_STATUS_DEFAULT), "error");

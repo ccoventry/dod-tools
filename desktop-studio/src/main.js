@@ -1348,7 +1348,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     scanPaths,
     targetDrives,
     currentScannedDemos
-  }), persistAppSettings, onHighlightStatusChange, () => takeIndex);
+  }), persistAppSettings, onHighlightStatusChange, () => takeIndex, updateExportPoolIndicator);
 
   // Initialize Render Studio UI
   initRenderUI(() => renderFolders, () => renderExportDirs, persistAppSettings, {
