@@ -175,6 +175,11 @@ export const STRINGS = {
     CODEC_FFV1: 'FFV1 (smaller, slower)',
     CODEC_X264_LOSSLESS: 'x264 lossless (smallest, slowest)',
     CODEC_RAWVIDEO: 'Uncompressed (no CPU cost, huge)',
+    // The tooltip above already hedges this, but a hover-only warning is easy
+    // to miss — put it where it stays visible regardless of which option is
+    // picked, since "unverified" doesn't change once you've stopped hovering.
+    CAPTURE_CODEC_UNVERIFIED_HINT:
+        'Only Ut Video has been proven in a real capture. The others are sized from a transcode with every core free — during a live capture they compete with the game, and that ranking is likely to change.',
     // Turning it on without HLAE having an FFmpeg produces a capture that runs
     // and records nothing, so it is worth saying before the batch rather than
     // after it.
