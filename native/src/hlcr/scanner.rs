@@ -10,7 +10,11 @@ pub struct ClipData {
     pub take_folder: String,
     pub clip_type: String, // "single" or "hud_only"
     pub img_folder: String,
-    pub wav_file: String,
+    /// The wav to mux in, relative to `take_folder`. `None` for an OBS take:
+    /// its audio is already muxed into `video_file`, so there is nothing to
+    /// mux — `run_render_job` branches on this rather than trusting a wav is
+    /// always there.
+    pub wav_file: Option<String>,
     pub base_name: String,
     pub frame_count: usize,
     pub date: String,
@@ -36,6 +40,18 @@ pub struct ClipData {
     /// written before this field existed must keep loading.
     #[serde(default)]
     pub alpha_folder: Option<String>,
+}
+
+/// Whether a clip is eligible for "Skip (keep original)" — no FFmpeg pass at
+/// all, just a copy of `video_file` into the export pool.
+///
+/// Shared between the Tauri layer's per-job toggle gate
+/// (`desktop-studio/src-tauri/src/render_manager.rs`'s `skip_available`) and
+/// `run_render_job`'s own admission check, so the two can never quietly drift
+/// apart about which clips qualify — the same reason `is_renderable_take` is
+/// shared between the capture and render sides.
+pub fn clip_is_skip_eligible(clip: &ClipData) -> bool {
+    clip.clip_type != "hud_only" && clip.wav_file.is_none() && clip.video_file.is_some()
 }
 
 /// The file `mirv_movie_ffmpeg` is told to write, per stream. Also what the
@@ -394,30 +410,33 @@ pub fn scan_folder_background(
                 continue;
             }
 
-            let wav_files = collect_wav_files(&take_folder);
-            if wav_files.is_empty() {
-                continue;
-            }
-
             let mut image_folders = collect_image_folders(&take_folder);
             if image_folders.is_empty() {
                 continue;
             }
+            // Shared with the capture-side take-verification predicate so the
+            // two can never silently disagree about what counts as a take —
+            // admits both the wav-beside-a-stream shape and an OBS take
+            // (a stream folder whose video already carries its own audio).
+            if !take_shape_is_renderable(&take_folder) {
+                continue;
+            }
+            let wav_files = collect_wav_files(&take_folder);
 
             // Valid take found!
             processed_folders.insert(take_folder.clone());
             let _ = status_tx.send(format!("Found take: {}", take_folder.file_name().unwrap_or_default().to_string_lossy()));
 
-            // Prioritize sound.wav if it exists
+            // Prioritize sound.wav if it exists. `None` means an OBS take —
+            // its audio is already muxed into the video, so there is no wav
+            // to pick among.
             let sound_wav_exists = wav_files.iter().any(|f| f.to_lowercase() == "sound.wav");
             let wav_to_use = if sound_wav_exists {
-                "sound.wav".to_string()
+                Some("sound.wav".to_string())
             } else {
-                wav_files[0].clone()
+                wav_files.first().cloned()
             };
 
-            let wav_path = Path::new(&wav_to_use);
-            let wav_stem = wav_path.file_stem().unwrap_or_default().to_string_lossy().into_owned();
             let take_name = take_folder.file_name().unwrap_or_default().to_string_lossy().into_owned();
             let demo_name = take_folder.parent()
                 .and_then(|p| p.file_name())
@@ -425,10 +444,16 @@ pub fn scan_folder_background(
                 .to_string_lossy()
                 .into_owned();
 
-            let base_name = if wav_stem.to_lowercase() == "sound" {
-                format!("{}-{}-{}", demo_name, take_name, wav_stem)
-            } else {
-                wav_stem.clone()
+            let base_name = match &wav_to_use {
+                Some(wav) => {
+                    let wav_stem = Path::new(wav).file_stem().unwrap_or_default().to_string_lossy().into_owned();
+                    if wav_stem.to_lowercase() == "sound" {
+                        format!("{}-{}-{}", demo_name, take_name, wav_stem)
+                    } else {
+                        wav_stem
+                    }
+                }
+                None => format!("{}-{}-obs", demo_name, take_name),
             };
 
             // Keyed lowercase. The BMP path produces `all`/`hudcolor`/`hudalpha`,
@@ -460,37 +485,53 @@ pub fn scan_folder_background(
                 let frame_count = stream_frame_count(all_folder);
                 let date = get_clip_date(all_folder);
 
-                let clip_all = ClipData {
-                    take_folder: take_folder.to_string_lossy().into_owned(),
-                    clip_type: "single".to_string(),
-                    img_folder: on_disk_name(all_folder),
-                    wav_file: wav_to_use.clone(),
-                    base_name: base_name.clone(),
-                    frame_count,
-                    date: date.clone(),
-                    video_file: stream_video(all_folder),
-                    alpha_folder: None,
-                };
-                accumulated_clips.push(clip_all);
+                // `take_shape_is_renderable` above only asked whether *some*
+                // stream in this take has audio, which is enough to admit the
+                // take but not enough to admit `all` specifically — the same
+                // reasoning the "process remaining folders" loop below applies
+                // per stream. And a HUD/alpha composite always needs a real
+                // wav regardless: the alpha stream is a mask, never a mix, so
+                // `run_render_job` rejects `hud_only` with `wav_file: None`
+                // outright — bundling one without a wav would only queue a
+                // job that is guaranteed to fail at render time.
+                let all_has_audio = wav_to_use.is_some()
+                    || stream_video_path(all_folder).map(|v| video_has_audio(&v)).unwrap_or(false);
 
-                let clip_hud = ClipData {
-                    take_folder: take_folder.to_string_lossy().into_owned(),
-                    clip_type: "hud_only".to_string(),
-                    // Both halves of the pair are named from what is actually on
-                    // disk, so the renderer never has to reconstruct either one
-                    // from a literal. The lookup keys above are lowercased for
-                    // matching only — HLAE writes `hudColor`/`hudAlpha` in the
-                    // `mirv_movie_ffmpeg` command, and these carry whichever
-                    // spelling the capture produced.
-                    img_folder: on_disk_name(hud_color_folder),
-                    wav_file: wav_to_use.clone(),
-                    base_name: base_name.clone(),
-                    frame_count,
-                    date: date.clone(),
-                    video_file: stream_video(hud_color_folder),
-                    alpha_folder: Some(on_disk_name(hud_alpha_folder)),
-                };
-                accumulated_clips.push(clip_hud);
+                if all_has_audio {
+                    let clip_all = ClipData {
+                        take_folder: take_folder.to_string_lossy().into_owned(),
+                        clip_type: "single".to_string(),
+                        img_folder: on_disk_name(all_folder),
+                        wav_file: wav_to_use.clone(),
+                        base_name: base_name.clone(),
+                        frame_count,
+                        date: date.clone(),
+                        video_file: stream_video(all_folder),
+                        alpha_folder: None,
+                    };
+                    accumulated_clips.push(clip_all);
+
+                    if wav_to_use.is_some() {
+                        let clip_hud = ClipData {
+                            take_folder: take_folder.to_string_lossy().into_owned(),
+                            clip_type: "hud_only".to_string(),
+                            // Both halves of the pair are named from what is actually on
+                            // disk, so the renderer never has to reconstruct either one
+                            // from a literal. The lookup keys above are lowercased for
+                            // matching only — HLAE writes `hudColor`/`hudAlpha` in the
+                            // `mirv_movie_ffmpeg` command, and these carry whichever
+                            // spelling the capture produced.
+                            img_folder: on_disk_name(hud_color_folder),
+                            wav_file: wav_to_use.clone(),
+                            base_name: base_name.clone(),
+                            frame_count,
+                            date: date.clone(),
+                            video_file: stream_video(hud_color_folder),
+                            alpha_folder: Some(on_disk_name(hud_alpha_folder)),
+                        };
+                        accumulated_clips.push(clip_hud);
+                    }
+                }
 
                 // Remove bundled folders from list to avoid double-processing
                 image_folders.retain(|p| {
@@ -501,6 +542,21 @@ pub fn scan_folder_background(
 
             // Process remaining folders
             for img_folder in image_folders {
+                // `take_shape_is_renderable` above only asked whether *some*
+                // stream in this take has audio — enough to admit the take,
+                // not enough to admit every stream in it. With no take-level
+                // wav, a stream whose own video is silent must still be
+                // skipped individually, or it would render with no audio and
+                // no error: exactly what `video_has_audio` exists to prevent
+                // for a lone OBS take.
+                if wav_to_use.is_none() {
+                    let has_own_audio = stream_video_path(&img_folder)
+                        .map(|v| video_has_audio(&v))
+                        .unwrap_or(false);
+                    if !has_own_audio {
+                        continue;
+                    }
+                }
                 let frame_count = stream_frame_count(&img_folder);
                 let folder_name = img_folder.file_name().unwrap_or_default().to_string_lossy().into_owned();
                 let date = get_clip_date(&img_folder);
@@ -941,5 +997,123 @@ mod tests {
         std::fs::write(take0000.join("sound.wav"), b"wav").unwrap();
         write_frames(&take0000, "all");
         assert!(is_renderable_take(&block_folder));
+    }
+
+    /// The gap issue #82 exists to close: an OBS take — no `sound.wav`, its
+    /// audio already muxed into the video — used to be silently dropped by
+    /// the scanner's hard `wav_files.is_empty()` gate even though
+    /// `is_renderable_take` already recognised the shape.
+    #[test]
+    fn scan_finds_an_obs_take_with_no_wav() {
+        let root = scratch("obs_scan");
+        let take = root.join("chain_01_b0").join("take0000");
+        write_named_video(&take, "all", "mp4", &mp4_with_audio());
+
+        let clips = scan(&take);
+        assert_eq!(clips.len(), 1, "an OBS-shaped take must be scanned into exactly one clip");
+        assert_eq!(clips[0].wav_file, None, "no wav exists for an OBS take to name");
+        assert_eq!(clips[0].video_file.as_deref(), Some("video.mp4"));
+        assert_eq!(clips[0].img_folder, "all");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Without a wav to derive a name from, the base name still has to be
+    /// distinctive per take — demo/take, same as the wav path's own fallback
+    /// for a literal `sound.wav`, plus a marker so it reads as an OBS clip.
+    #[test]
+    fn scan_names_an_obs_take_from_demo_and_take_not_a_wav() {
+        let root = scratch("obs_naming");
+        let take = root.join("some_demo").join("chain_02_b1").join("take0000");
+        write_named_video(&take, "all", "mp4", &mp4_with_audio());
+
+        let clips = scan(&take);
+        assert_eq!(clips.len(), 1);
+        assert!(clips[0].base_name.contains("chain_02_b1"), "{}", clips[0].base_name);
+        assert!(clips[0].base_name.ends_with("-obs"), "{}", clips[0].base_name);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A muted OBS source must stay invisible to the scanner too, not just to
+    /// `is_renderable_take` — otherwise the scanner would queue a render job
+    /// for a clip with no audio and no error.
+    #[test]
+    fn scan_does_not_find_a_silent_obs_take() {
+        let root = scratch("obs_silent_scan");
+        let take = root.join("chain_01_b0").join("take0000");
+        write_named_video(&take, "all", "mp4", &mp4_without_audio());
+
+        let clips = scan(&take);
+        assert!(clips.is_empty(), "a silent video with no wav must not become a render job");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The wav-and-frames shape must still scan to `Some(wav)`, unaffected by
+    /// `ClipData.wav_file` becoming optional.
+    #[test]
+    fn scan_still_carries_the_wav_name_for_the_ordinary_shape() {
+        let take = scratch_dir("wav_shape_still_some");
+        std::fs::write(take.join("sound.wav"), b"wav").unwrap();
+        write_frames(&take, "all");
+
+        let clips = scan(&take);
+        assert_eq!(clips[0].wav_file.as_deref(), Some("sound.wav"));
+    }
+
+    /// `take_shape_is_renderable` only asks whether *some* stream in the take
+    /// has audio, which is enough to admit the take as a whole — it is not
+    /// enough to admit every stream inside it. With no take-level wav, a
+    /// stream whose own video is silent must be skipped individually rather
+    /// than scanned with `wav_file: None`, or it would render with no audio
+    /// and no error.
+    #[test]
+    fn a_silent_stream_beside_an_audible_one_is_not_scanned_even_though_the_take_is() {
+        let root = scratch("mixed_streams");
+        let take = root.join("chain_01_b0").join("take0000");
+        write_named_video(&take, "all", "mp4", &mp4_with_audio());
+        write_named_video(&take, "second", "mp4", &mp4_without_audio());
+
+        let clips = scan(&take);
+        assert_eq!(clips.len(), 1, "only the audible stream should be scanned: {:?}", clips.iter().map(|c| &c.img_folder).collect::<Vec<_>>());
+        assert_eq!(clips[0].img_folder, "all");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The HUD-bundling branch must apply the same per-stream audio rule the
+    /// "process remaining folders" loop does — a silent `all` stream must not
+    /// be admitted just because bundling happened to trigger, and a HUD/alpha
+    /// composite (which never carries its own audio) must not be scanned at
+    /// all without a real wav, since `run_render_job` always rejects it.
+    #[test]
+    fn a_hud_bundle_with_no_wav_and_a_silent_all_stream_is_not_scanned() {
+        let root = scratch("hud_bundle_silent_all");
+        let take = root.join("chain_01_b0").join("take0000");
+        // "all" is silent, but some other stream carries audio, so the take
+        // as a whole still passes `take_shape_is_renderable`.
+        write_named_video(&take, "all", "mp4", &mp4_without_audio());
+        write_named_video(&take, "hudcolor", "mp4", &mp4_with_audio());
+        write_named_video(&take, "hudalpha", "mp4", &mp4_without_audio());
+
+        let clips = scan(&take);
+        assert!(clips.is_empty(), "a silent `all` stream must not be bundled just because the take passes overall: {:?}", clips.iter().map(|c| &c.img_folder).collect::<Vec<_>>());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// An audible `all` stream with no take-level wav can still be admitted
+    /// as the plain "single" clip — but the paired `hud_only` clip must not
+    /// be, since HUD compositing always needs a real wav and would only ever
+    /// fail at render time.
+    #[test]
+    fn a_hud_bundle_with_no_wav_admits_all_but_not_the_hud_pair() {
+        let root = scratch("hud_bundle_no_wav");
+        let take = root.join("chain_01_b0").join("take0000");
+        write_named_video(&take, "all", "mp4", &mp4_with_audio());
+        write_named_video(&take, "hudcolor", "mp4", &mp4_without_audio());
+        write_named_video(&take, "hudalpha", "mp4", &mp4_without_audio());
+
+        let clips = scan(&take);
+        assert_eq!(clips.len(), 1, "expected only the `all` single clip: {:?}", clips.iter().map(|c| (&c.img_folder, &c.clip_type)).collect::<Vec<_>>());
+        assert_eq!(clips[0].clip_type, "single");
+        assert_eq!(clips[0].img_folder, "all");
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

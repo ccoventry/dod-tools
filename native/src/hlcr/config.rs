@@ -13,6 +13,11 @@ pub enum RenderCodec {
     H264Software,
     ProRes,
     DnxHr,
+    /// "Skip" — leave an OBS take exactly as OBS wrote it: no FFmpeg pass at
+    /// all, just a copy into the export pool under the pipeline's naming.
+    /// Only meaningful for a clip with its own muxed-in audio (`ClipData.wav_file
+    /// == None`); `run_render_job` rejects it for anything else.
+    SourceCopy,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -35,6 +40,7 @@ impl RenderCodec {
             "h264" => Self::H264Software,
             "h264_nvenc" => Self::NvencH264,
             "dnxhr" => Self::DnxHr,
+            "source_copy" => Self::SourceCopy,
             _ => Self::ProRes,
         }
     }
@@ -48,6 +54,7 @@ impl RenderCodec {
             Self::NvencH264 => "h264_nvenc",
             Self::DnxHr => "dnxhr",
             Self::ProRes => "prores",
+            Self::SourceCopy => "source_copy",
         }
     }
 
@@ -59,6 +66,7 @@ impl RenderCodec {
             Self::NvencH264 => "H.264 (NVENC)",
             Self::DnxHr => "DNxHR",
             Self::ProRes => "ProRes",
+            Self::SourceCopy => "Skip (Keep Original)",
         }
     }
 }
@@ -117,7 +125,7 @@ mod tests {
         // to_str_id/from_str_id must stay inverses — autosave recovery
         // (render_manager.rs's recover_render_batch) round-trips a persisted
         // codec through exactly this pair.
-        for codec in [RenderCodec::NvencH264, RenderCodec::H264Software, RenderCodec::ProRes, RenderCodec::DnxHr] {
+        for codec in [RenderCodec::NvencH264, RenderCodec::H264Software, RenderCodec::ProRes, RenderCodec::DnxHr, RenderCodec::SourceCopy] {
             assert_eq!(RenderCodec::from_str_id(codec.to_str_id()), codec);
         }
     }

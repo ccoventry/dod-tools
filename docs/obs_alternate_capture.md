@@ -482,6 +482,17 @@ locked in when this was scoped: `ClipData.wav_file` becomes `Option<String>` rat
 bare `String`, and "skip" still routes the take into the export pool (naming applied, same as a
 rendered take) just without re-encoding — not a no-op "mark it Rendered" with no file movement at all.
 
+**Scanner + render-path + skip landed 2026-08-28.** `scan_folder_background` now discovers an OBS
+take via the shared `take_shape_is_renderable` predicate; `run_render_job` has a `RenderCodec::SourceCopy`
+branch (surfaced in Render Studio as a per-job "Skip" toggle, offered only for an OBS-shaped clip)
+that copies the OBS-written file straight into the export pool with no FFmpeg pass, and a plain
+single-video-input branch for the "render" case when `wav_file` is `None`. **The trim itself did not
+ship with this**: nothing on disk records how many seconds of pre-roll/post-roll head and tail an OBS
+block actually has, so "render" currently re-encodes the whole clip (codec conversion, export-pool
+routing, pipeline naming) without cutting the head/tail. That gap — and the capture-side metadata it
+needs — is tracked separately as
+[issue #84](https://github.com/ccoventry/dod-tools/issues/84).
+
 ---
 
 ## Custom Output (FFmpeg): lossless capture, and exactly what it costs

@@ -413,6 +413,9 @@ export const STRINGS = {
 
     CANCEL_JOB_TITLE: 'Cancel this job',
     RESET_JOB_TITLE: 'Reset to Queued',
+    SKIP_TOGGLE_LABEL: 'Skip',
+    SKIP_TOGGLE_TITLE: 'Leave this OBS take exactly as recorded — no re-encode, just routed into the export pool under the pipeline naming.',
+    setJobCodecFailed: (err) => `Could not change this job's render setting: ${err}`,
     VIEW_LOG_TITLE: 'View error log',
     VIEW_LOG_BUTTON: '⚠️ View Log',
     OPEN_OUTPUT_FOLDER_TITLE: "Open the rendered file's folder",

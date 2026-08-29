@@ -269,20 +269,21 @@ export async function simulateAotCapacity(streaks, fps, bytesPerFrame, available
   });
 }
 
-export async function scanRenderDirectories(renderFolders) {
-  return invoke("scan_render_directories", { paths: renderFolders })
+export async function queueRenderBatch(payload) {
+  // payload must match RenderBatchPayload:
+  //   { render_directories, codec, fps, ffmpeg_path?, export_directories, max_concurrent_renders }
+  // Resolves to the number of takes found and staged as Queued jobs.
+  return invoke("queue_render_batch", { payload: payload })
     .catch((err) => {
-      console.error("IPC Execution Error (scan_render_directories):", err);
+      console.error("IPC Execution Error (queue_render_batch):", err);
       throw err;
     });
 }
 
-export async function executeRenderBatch(payload) {
-  // payload must match RenderBatchPayload:
-  //   { render_directories, codec, fps, ffmpeg_path?, export_directories, max_concurrent_renders }
-  return invoke("execute_render_batch", { payload: payload })
+export async function startQueuedRender() {
+  return invoke("start_queued_render")
     .catch((err) => {
-      console.error("IPC Execution Error (execute_render_batch):", err);
+      console.error("IPC Execution Error (start_queued_render):", err);
       throw err;
     });
 }
@@ -307,6 +308,14 @@ export async function resetRenderJob(jobId) {
   return invoke("reset_render_job", { jobId })
     .catch((err) => {
       console.error("IPC Execution Error (reset_render_job):", err);
+      throw err;
+    });
+}
+
+export async function setRenderJobCodec(jobId, codec) {
+  return invoke("set_render_job_codec", { jobId, codec })
+    .catch((err) => {
+      console.error("IPC Execution Error (set_render_job_codec):", err);
       throw err;
     });
 }
