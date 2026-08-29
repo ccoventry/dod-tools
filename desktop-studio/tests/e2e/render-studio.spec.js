@@ -145,6 +145,55 @@ test.describe('issue #80 — row/button identity survives unrelated snapshot chu
   });
 });
 
+test.describe('scan stages a batch, Start is a separate step', () => {
+  test('clicking Scan calls queue_render_batch and populates the job table, without starting the batch', async ({ page }) => {
+    await gotoHarness(page);
+    await page.evaluate(() => {
+      window.__testRenderFolders = ['C:\\captures'];
+      window.__mockInvokeHandlers['queue_render_batch'] = () => {
+        window.__mockEmit('render_jobs_snapshot', [
+          {
+            id: '0', name: 'demo1-chain_01_b0-obs', stream: 'all', frames: 100, date: '-',
+            status: 'Queued', speed: '', progress: 0, error_log: null,
+            settings_summary: 'ProRes @ 300fps', output_path: '', take_folder: 'C:\\x',
+            codec_id: 'prores', skip_available: true,
+          },
+        ]);
+        return 1;
+      };
+    });
+
+    await page.locator('#scan-render-btn').click();
+    await expect(page.locator('tr[data-job-id="0"] .rj-status')).toHaveText('Queued');
+
+    expect(await invocationsFor(page, 'queue_render_batch')).toHaveLength(1);
+    expect(await invocationsFor(page, 'start_queued_render')).toHaveLength(0);
+    await expect(page.locator('#start-render-btn')).toBeEnabled();
+    await expect(page.locator('#scan-render-btn')).toBeDisabled();
+  });
+
+  test('clicking Start Render Batch calls start_queued_render with no payload of its own', async ({ page }) => {
+    await gotoHarness(page);
+    await emitSnapshot(page, [job({ id: '0', status: 'Queued' })]);
+    await expect(page.locator('#start-render-btn')).toBeEnabled();
+
+    await page.locator('#start-render-btn').click();
+
+    const calls = await invocationsFor(page, 'start_queued_render');
+    expect(calls).toEqual([undefined]);
+  });
+
+  test('once rendering starts, Scan and Start are both disabled again', async ({ page }) => {
+    await gotoHarness(page);
+    await emitSnapshot(page, [job({ id: '0', status: 'Queued' })]);
+    await emitSnapshot(page, [job({ id: '0', status: 'Rendering', progress: 5 })]);
+
+    await expect(page.locator('#scan-render-btn')).toBeDisabled();
+    await expect(page.locator('#start-render-btn')).toBeDisabled();
+    await expect(page.locator('#cancel-render-btn')).toBeEnabled();
+  });
+});
+
 test.describe('Skip (keep original) toggle', () => {
   test('the Skip checkbox only appears for an OBS-shaped, Queued job', async ({ page }) => {
     await gotoHarness(page);

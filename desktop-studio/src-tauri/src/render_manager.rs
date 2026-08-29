@@ -22,75 +22,6 @@ use native::shared::paths::take_key;
 use native::log_markdown;
 use tauri::{AppHandle, Emitter};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SerializedRenderJob {
-    pub take_folder: String,
-    pub clip_type: String,
-    pub img_folder: String,
-    /// `None` for an OBS take — its audio is already muxed into its video.
-    /// The frontend uses this to decide whether "Skip (keep original)" is an
-    /// offerable per-job option: only an OBS-shaped clip has anything to skip.
-    pub wav_file: Option<String>,
-    pub base_name: String,
-    pub frame_count: usize,
-    pub date: String,
-}
-
-impl From<ClipData> for SerializedRenderJob {
-    fn from(c: ClipData) -> Self {
-        Self {
-            take_folder: c.take_folder,
-            clip_type: c.clip_type,
-            img_folder: c.img_folder,
-            wav_file: c.wav_file,
-            base_name: c.base_name,
-            frame_count: c.frame_count,
-            date: c.date,
-        }
-    }
-}
-
-#[tauri::command]
-pub async fn scan_render_directories(app: AppHandle, paths: Vec<String>) -> Result<Vec<SerializedRenderJob>, String> {
-    tokio::task::spawn_blocking(move || {
-        let source_folders: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
-        let (clip_tx, clip_rx) = std::sync::mpsc::channel();
-        let (status_tx, status_rx) = std::sync::mpsc::channel::<String>();
-
-        // scan_folder_background sends one status line per take it finds
-        // (blocking, on this thread); drain it concurrently on its own
-        // thread so the frontend gets live progress instead of the whole
-        // batch arriving at once when the scan finishes. Exits on its own
-        // once status_tx drops (scan_folder_background returns below).
-        let status_app = app.clone();
-        let status_thread = std::thread::spawn(move || {
-            while let Ok(msg) = status_rx.recv() {
-                let _ = status_app.emit("render_scan_status", msg);
-            }
-        });
-
-        // scan_folder_background is blocking and exhausts sends before returning.
-        // try_recv is therefore race-free here.
-        scan_folder_background(source_folders, clip_tx, status_tx);
-        let _ = status_thread.join();
-
-        let mut results = Vec::new();
-        while let Ok(clip) = clip_rx.try_recv() {
-            results.push(SerializedRenderJob::from(clip));
-        }
-
-        results.sort_by(|a, b| {
-            a.take_folder.cmp(&b.take_folder)
-                .then_with(|| a.img_folder.cmp(&b.img_folder))
-                .then_with(|| a.clip_type.cmp(&b.clip_type))
-        });
-
-        Ok(results)
-    })
-    .await
-    .map_err(|e| format!("Task join failed: {}", e))?
-}
-
 /// Codec is a string id ("prores" | "dnxhr" | "h264" | "h264_nvenc") mapped
 /// to `RenderCodec` via `RenderCodec::from_str_id` — see
 /// docs/tauri_parity_audit.md Area 5 for why `h264`/software libx264 exists
@@ -491,29 +422,56 @@ fn spawn_scheduler(app: AppHandle, handles: SchedulerHandles, config: RenderConf
     });
 }
 
+/// Scans and stages a batch as `Queued` jobs — real rows in the job table,
+/// each with its own settings snapshot and (for an OBS-shaped take) a
+/// Skip toggle — without starting the scheduler. Split from starting so a
+/// batch has a genuine "queued, not yet running" window: the previous
+/// single Start action queued and launched the scheduler in the same call,
+/// which for a small batch (especially Skip jobs, which are a plain file
+/// copy) left no realistic time to review or toggle anything before it was
+/// already done.
 #[tauri::command]
-pub async fn execute_render_batch(
+pub async fn queue_render_batch(
     app: AppHandle,
     state: tauri::State<'_, RenderManager>,
     payload: RenderBatchPayload,
-) -> Result<(), String> {
-    if state.is_rendering.swap(true, Ordering::SeqCst) {
-        log_markdown("[render] execute_render_batch rejected: a batch is already in progress");
-        return Err("Render batch already in progress".to_string());
+) -> Result<usize, String> {
+    if state.is_rendering.load(Ordering::SeqCst) {
+        return Err("A render batch is already running.".to_string());
+    }
+    if state.jobs.lock().unwrap().iter().any(|j| j.status == "Queued" || j.status == "Rendering") {
+        return Err("A batch is already queued — start it or cancel it before scanning again.".to_string());
     }
     log_markdown(&format!(
-        "[render] execute_render_batch starting: {} source dir(s), codec={}, fps={}, max_concurrent={}",
+        "[render] queue_render_batch starting: {} source dir(s), codec={}, fps={}, max_concurrent={}",
         payload.render_directories.len(), payload.codec, payload.fps, payload.max_concurrent_renders
     ));
     state.global_cancel.store(false, Ordering::SeqCst);
 
-    let scan_result = tokio::task::spawn_blocking({
+    let scan_app = app.clone();
+    let scan_result: Vec<ClipData> = tokio::task::spawn_blocking({
         let dirs = payload.render_directories.clone();
         move || {
             let source_folders: Vec<PathBuf> = dirs.into_iter().map(PathBuf::from).collect();
             let (clip_tx, clip_rx) = std::sync::mpsc::channel();
-            let (status_tx, _status_rx) = std::sync::mpsc::channel();
+            let (status_tx, status_rx) = std::sync::mpsc::channel::<String>();
+
+            // scan_folder_background sends one status line per take it finds
+            // (blocking, on this thread); drain it concurrently on its own
+            // thread so the frontend gets live progress instead of the whole
+            // batch arriving at once when the scan finishes. Exits on its own
+            // once status_tx drops (scan_folder_background returns below).
+            let status_thread = std::thread::spawn(move || {
+                while let Ok(msg) = status_rx.recv() {
+                    let _ = scan_app.emit("render_scan_status", msg);
+                }
+            });
+
+            // scan_folder_background is blocking and exhausts sends before returning.
+            // try_recv is therefore race-free here.
             scan_folder_background(source_folders, clip_tx, status_tx);
+            let _ = status_thread.join();
+
             let mut clips: Vec<ClipData> = Vec::new();
             while let Ok(clip) = clip_rx.try_recv() {
                 clips.push(clip);
@@ -524,14 +482,12 @@ pub async fn execute_render_batch(
     .await
     .map_err(|e| format!("Task join failed: {}", e))?;
 
+    let count = scan_result.len();
     if scan_result.is_empty() {
-        log_markdown("[render] execute_render_batch: no takes found in the scanned directories, aborting");
-        state.is_rendering.store(false, Ordering::SeqCst);
-        let _ = app.emit("render_jobs_snapshot", Vec::<RenderJobView>::new());
-        let _ = app.emit("render_batch_finished", serde_json::json!({ "status": "No takes found to render" }));
-        return Ok(());
+        log_markdown("[render] queue_render_batch: no takes found in the scanned directories");
+        return Ok(0);
     }
-    log_markdown(&format!("[render] execute_render_batch: {} take(s) found, dispatching to scheduler", scan_result.len()));
+    log_markdown(&format!("[render] queue_render_batch: {} take(s) found, staged as Queued", count));
 
     let ffmpeg_path = resolve_ffmpeg(payload.ffmpeg_path.as_ref()).to_string_lossy().into_owned();
     let export_directories: Vec<PathBuf> = payload.export_directories.iter().map(PathBuf::from).collect();
@@ -560,18 +516,54 @@ pub async fn execute_render_batch(
     write_autosave(&state.render_session, &jobs, &config);
     *state.jobs.lock().unwrap() = jobs;
     *state.last_config.lock().unwrap() = Some(config.clone());
-    *state.wake_lock.lock().unwrap() = hold_render_wake_lock();
 
     emit_jobs_snapshot(&app, &state.jobs);
+
+    Ok(count)
+}
+
+/// Starts the scheduler on whatever `queue_render_batch` already staged.
+/// Takes no settings of its own — a queued job carries its own
+/// codec/fps snapshot (including any Skip toggle applied while it sat
+/// Queued), and batch-wide infrastructure (ffmpeg path, export pool,
+/// concurrency) came from `queue_render_batch`'s payload via `last_config`.
+#[tauri::command]
+pub async fn start_queued_render(app: AppHandle, state: tauri::State<'_, RenderManager>) -> Result<(), String> {
+    if state.is_rendering.swap(true, Ordering::SeqCst) {
+        log_markdown("[render] start_queued_render rejected: a batch is already in progress");
+        return Err("Render batch already in progress".to_string());
+    }
+    let config = state.last_config.lock().unwrap().clone();
+    let has_queued = state.jobs.lock().unwrap().iter().any(|j| j.status == "Queued");
+    let Some(config) = config.filter(|_| has_queued) else {
+        state.is_rendering.store(false, Ordering::SeqCst);
+        return Err("Nothing queued to render — scan for takes first.".to_string());
+    };
+
+    log_markdown("[render] start_queued_render: starting scheduler");
+    state.global_cancel.store(false, Ordering::SeqCst);
+    *state.wake_lock.lock().unwrap() = hold_render_wake_lock();
     spawn_scheduler(app, state.handles(), config);
 
     Ok(())
 }
 
 #[tauri::command]
-pub async fn cancel_render_batch(state: tauri::State<'_, RenderManager>) -> Result<(), String> {
+pub async fn cancel_render_batch(app: AppHandle, state: tauri::State<'_, RenderManager>) -> Result<(), String> {
     log_markdown("[render] cancel_render_batch requested");
-    state.global_cancel.store(true, Ordering::SeqCst);
+    if state.is_rendering.load(Ordering::SeqCst) {
+        state.global_cancel.store(true, Ordering::SeqCst);
+    } else {
+        // Nothing is actively rendering, so this is a staged batch (queued
+        // via queue_render_batch, Start not yet clicked) — no scheduler loop
+        // is running to ever observe global_cancel in that state, so clear
+        // the queue directly instead of setting a flag nothing will read.
+        *state.jobs.lock().unwrap() = Vec::new();
+        *state.last_config.lock().unwrap() = None;
+        let _ = std::fs::remove_file(autosave_path());
+        *state.render_session.lock().unwrap() = None;
+        emit_jobs_snapshot(&app, &state.jobs);
+    }
     Ok(())
 }
 

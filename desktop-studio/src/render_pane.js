@@ -1,7 +1,7 @@
 import { listen } from '@tauri-apps/api/event';
 import {
-  scanRenderDirectories,
-  executeRenderBatch,
+  queueRenderBatch,
+  startQueuedRender,
   cancelRenderBatch,
   cancelRenderJob,
   resetRenderJob,
@@ -387,27 +387,27 @@ export function initRenderUI(getRenderFolders, getExportDirs, onSettingsChange, 
   listen('render_jobs_snapshot', (event) => {
     jobs = event.payload || [];
     renderJobsTable();
-    const activeOrQueued = jobs.filter((j) => j.status === 'Rendering' || j.status === 'Queued').length;
+    const queuedCount = jobs.filter((j) => j.status === 'Queued').length;
+    const renderingCount = jobs.filter((j) => j.status === 'Rendering').length;
+    const activeOrQueued = queuedCount + renderingCount;
     if (renderStatusEl) {
-      renderStatusEl.textContent = activeOrQueued > 0
+      renderStatusEl.textContent = renderingCount > 0
         ? STRINGS.RENDER.renderingStatus(jobs.length - activeOrQueued, jobs.length)
-        : STRINGS.RENDER.STATUS_WAITING;
+        : (queuedCount > 0 ? STRINGS.RENDER.scanCompleteStatus(queuedCount) : STRINGS.RENDER.STATUS_WAITING);
     }
-    if (startRenderBtn) startRenderBtn.disabled = activeOrQueued > 0;
+    // Start only makes sense on a staged-but-not-started batch: something
+    // Queued, and nothing already Rendering. Scan is blocked for the same
+    // window so a re-scan can't clobber jobs the user may have already
+    // toggled Skip on — see queue_render_batch's own guard against this.
+    if (scanRenderBtn) scanRenderBtn.disabled = activeOrQueued > 0;
+    if (startRenderBtn) startRenderBtn.disabled = !(queuedCount > 0 && renderingCount === 0);
     if (cancelRenderBtn) cancelRenderBtn.disabled = activeOrQueued === 0;
   });
 
-  listen('render_batch_finished', (event) => {
-    const status = event.payload && event.payload.status;
-    if (startRenderBtn) startRenderBtn.disabled = false;
+  listen('render_batch_finished', () => {
+    if (scanRenderBtn) scanRenderBtn.disabled = false;
+    if (startRenderBtn) startRenderBtn.disabled = true;
     if (cancelRenderBtn) cancelRenderBtn.disabled = true;
-    if (status === 'No takes found to render') {
-      // status is backend-emitted text (out of scope for centralization) —
-      // shown verbatim as it's the sole source of truth for this message.
-      showToast(status, 'error');
-      if (renderStatusEl) renderStatusEl.textContent = STRINGS.MAIN.statusGeneric(status);
-      return;
-    }
     // Counted, not `some()`. The old check asked "was anything cancelled?"
     // before "did anything finish?", so one cancelled job in a batch of any
     // size reported the whole batch as cancelled — including the common case
@@ -443,47 +443,6 @@ export function initRenderUI(getRenderFolders, getExportDirs, onSettingsChange, 
         showToast(STRINGS.RENDER.ADD_RENDER_DIR_REQUIRED, 'error');
         return;
       }
-      scanFoundCount = 0;
-      showToast(STRINGS.RENDER.SCANNING_TOAST, 'info');
-      if (renderStatusEl) renderStatusEl.textContent = STRINGS.RENDER.STATUS_SCANNING;
-      scanRenderDirectories(renderFolders)
-        .then((takes) => {
-          const count = takes ? takes.length : 0;
-          showToast(STRINGS.RENDER.scannedTakesToast(count), 'info');
-          if (renderStatusEl) renderStatusEl.textContent = STRINGS.RENDER.scanCompleteStatus(count);
-
-          const container = document.querySelector('#render-job-container');
-          if (container) {
-            container.innerHTML =
-              takes && takes.length > 0
-                ? takes
-                    .map(
-                      (t) =>
-                        // base_name is the canonical display field on SerializedRenderJob
-                        `<div style="padding: 6px; border-bottom: 1px solid #444; font-family: monospace;">` +
-                        `<span style="color:#aaa;">[${t.clip_type}]</span> ` +
-                        `${t.base_name} &mdash; ${STRINGS.RENDER.frameCountLabel(t.frame_count)}` +
-                        `</div>`,
-                    )
-                    .join('')
-                : `<p style="color: #888;">${STRINGS.RENDER.NO_RENDER_TAKES_DETECTED}</p>`;
-          }
-        })
-        .catch((err) => {
-          console.error('IPC Execution Error (scan_render_directories):', err);
-          showToast(STRINGS.RENDER.scanDirError(err), 'error');
-          if (renderStatusEl) renderStatusEl.textContent = STRINGS.RENDER.STATUS_SCAN_FAILED;
-        });
-    });
-  }
-
-  if (startRenderBtn) {
-    startRenderBtn.addEventListener('click', () => {
-      const renderFolders = getRenderFolders ? getRenderFolders() : [];
-      if (!renderFolders || renderFolders.length === 0) {
-        showToast(STRINGS.RENDER.ADD_RENDER_DIR_REQUIRED, 'error');
-        return;
-      }
 
       const codecVal = getSelectedCodec();
       const fpsVal = parseInt(document.querySelector('#render-fps-input')?.value, 10) || 300;
@@ -493,10 +452,10 @@ export function initRenderUI(getRenderFolders, getExportDirs, onSettingsChange, 
       // FFmpeg override is shared with the capture config panel.
       const ffmpegPathVal = document.querySelector('#ffmpeg-override-path-input')?.value?.trim() || null;
 
-      showToast(STRINGS.RENDER.INITIALIZING_RENDER_BATCH, 'info');
-      startRenderBtn.disabled = true;
-      if (cancelRenderBtn) cancelRenderBtn.disabled = false;
-      if (renderStatusEl) renderStatusEl.textContent = STRINGS.RENDER.STATUS_SCANNING_FOR_TAKES;
+      scanFoundCount = 0;
+      showToast(STRINGS.RENDER.SCANNING_TOAST, 'info');
+      scanRenderBtn.disabled = true;
+      if (renderStatusEl) renderStatusEl.textContent = STRINGS.RENDER.STATUS_SCANNING;
 
       const renderPayload = {
         render_directories: renderFolders,
@@ -507,12 +466,40 @@ export function initRenderUI(getRenderFolders, getExportDirs, onSettingsChange, 
         max_concurrent_renders: maxConcurrentVal,
       };
 
-      executeRenderBatch(renderPayload)
+      // Populates the real job table (below) as Queued rows via the
+      // render_jobs_snapshot event this emits — not a preview. Start Render
+      // Batch is what actually kicks off the scheduler; this only stages it,
+      // so there's a real window to review the batch or toggle Skip on an
+      // OBS-shaped job before anything runs.
+      queueRenderBatch(renderPayload)
+        .then((count) => {
+          showToast(STRINGS.RENDER.scannedTakesToast(count), count > 0 ? 'success' : 'info');
+          if (renderStatusEl) {
+            renderStatusEl.textContent = count > 0
+              ? STRINGS.RENDER.scanCompleteStatus(count)
+              : STRINGS.MAIN.statusGeneric(STRINGS.RENDER.NO_RENDER_TAKES_DETECTED);
+          }
+          if (count === 0) scanRenderBtn.disabled = false;
+        })
+        .catch((err) => {
+          showToast(STRINGS.RENDER.scanDirError(err), 'error');
+          if (renderStatusEl) renderStatusEl.textContent = STRINGS.RENDER.STATUS_SCAN_FAILED;
+          scanRenderBtn.disabled = false;
+        });
+    });
+  }
+
+  if (startRenderBtn) {
+    startRenderBtn.addEventListener('click', () => {
+      showToast(STRINGS.RENDER.INITIALIZING_RENDER_BATCH, 'info');
+      startRenderBtn.disabled = true;
+      if (cancelRenderBtn) cancelRenderBtn.disabled = false;
+
+      startQueuedRender()
         .then(() => {
           showToast(STRINGS.RENDER.RENDER_BATCH_QUEUED, 'success');
         })
         .catch((err) => {
-          console.error('IPC Execution Error (executeRenderBatch):', err);
           showToast(STRINGS.RENDER.renderBatchError(err), 'error');
           if (startRenderBtn) startRenderBtn.disabled = false;
           if (cancelRenderBtn) cancelRenderBtn.disabled = true;
