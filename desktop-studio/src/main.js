@@ -206,23 +206,21 @@ function applyCaptureModeUI() {
     label.classList.toggle('active', (label.dataset.captureMode === 'video') === video);
   });
 
-  // The codec only describes a video file, so it is disabled rather than
-  // hidden in the other modes — a control that vanishes reads as a bug, and
-  // keeping it visible shows what switching to Video would give you. Also
-  // why this is disabled rather than hidden like the OBS block below: OBS
-  // capture is expected to grow its own codec choice eventually (it can
-  // already ask for a container in Custom Output mode), so this control is
-  // shared infrastructure that is not yet wired to every mode it will
-  // eventually apply to — not a Video-only field the way OBS's settings are
-  // OBS-only.
+  // Hidden rather than disabled, in both other modes: frame-sequence mode
+  // has its own, unrelated answer to "what codec" — Render Studio's own
+  // codec picker, a different set of options (ProRes/DNxHR/H.264) for a
+  // different purpose (final delivery, not the capture-time lossless
+  // intermediate). OBS mode does not consume this setting today either. If
+  // OBS capture grows its own codec choice later (it can already ask for a
+  // container in Custom Output mode), this is where that would show — but
+  // "will eventually" is not "does now", and showing it today would claim a
+  // connection to OBS capture that does not exist yet.
   const codecGroup = document.querySelector('#capture-codec-group');
-  const codecSelect = document.querySelector('#config-capture-codec');
-  if (codecSelect) codecSelect.disabled = !video;
-  if (codecGroup) codecGroup.classList.toggle('disabled', !video);
+  if (codecGroup) codecGroup.style.display = video ? '' : 'none';
 
-  // The OBS block is hidden rather than disabled: unlike the codec it is a
-  // whole section of unrelated settings, and showing a dead connection form in
-  // frame-sequence mode would suggest OBS is involved when it is not.
+  // The OBS block follows the same rule: hidden rather than disabled,
+  // because showing a dead connection form in frame-sequence mode would
+  // suggest OBS is involved when it is not.
   const obsGroup = document.querySelector('#obs-settings-group');
   if (obsGroup) obsGroup.style.display = obs ? '' : 'none';
 
