@@ -1,0 +1,48 @@
+# Nothing previously ran cargo test/the e2e suite on a PR — every check on
+# this repo's history was run by hand, locally, before pushing. That means a
+# merge only ever verified what its author remembered to run. Runs on
+# windows-latest specifically, not the cheaper/faster ubuntu-latest: this
+# codebase carries real #[cfg(windows)]-gated code (see CLAUDE.md's WASM/
+# platform guardrails) and the app itself only ever runs on Windows, so a
+# green check on Linux wouldn't actually prove the paths that matter compile
+# or pass.
+name: CI
+
+on:
+  pull_request:
+    branches: [dev, main]
+
+jobs:
+  rust-tests:
+    name: Rust workspace tests
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo test --workspace
+        run: cargo test --workspace
+
+  frontend-tests:
+    name: Frontend e2e tests
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: desktop-studio
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: desktop-studio/package-lock.json
+
+      - run: npm ci
+
+      - run: npx playwright install --with-deps chromium
+
+      - run: npm run test:e2e
