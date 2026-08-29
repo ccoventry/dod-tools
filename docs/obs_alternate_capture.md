@@ -469,6 +469,19 @@ Recommendation: re-encode, and expose "leave the take as OBS wrote it" as the sk
 the user to change OBS's keyframe interval — see below. **Unless Custom Output is in play, in which
 case there is a better answer** — see the next section.
 
+**Scoped as [issue #82](https://github.com/ccoventry/dod-tools/issues/82), 2026-08-28 — read that
+before building this.** The recommendation above turned out to rest on a gap: `scan_folder_background`
+(`native/src/hlcr/scanner.rs`) hard-requires a `sound.wav` to discover a take at all, so an OBS take
+— which has no wav, its audio already being in the video — is never scanned into a `ClipData` and
+never reaches Render Studio's queue in the first place. `is_renderable_take`, built earlier in this
+same effort, does correctly recognize the shape, but that is the *Capture Studio verification* path,
+a different function from the *Render Studio scanner*. So this is three pieces, not one: scanner
+support for the shape, a render path with no separate wav to mux (`run_render_job` currently hard-fails
+without one), and the trim itself — which is the easy part once the other two exist. Two decisions
+locked in when this was scoped: `ClipData.wav_file` becomes `Option<String>` rather than staying a
+bare `String`, and "skip" still routes the take into the export pool (naming applied, same as a
+rendered take) just without re-encoding — not a no-op "mark it Rendered" with no file movement at all.
+
 ---
 
 ## Custom Output (FFmpeg): lossless capture, and exactly what it costs
