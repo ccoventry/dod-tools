@@ -43,12 +43,12 @@ jobs:
         run: |
           set -e
 
-          numbers=$(gh pr view "$PR_NUMBER" --json closingIssuesReferences \
+          numbers=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json closingIssuesReferences \
             -q '.closingIssuesReferences[].number')
 
           if [ -z "$numbers" ]; then
             echo "No native Development links on #$PR_NUMBER — falling back to commit subjects."
-            numbers=$(gh pr view "$PR_NUMBER" --json commits \
+            numbers=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json commits \
               -q '.commits[].messageHeadline' \
               | grep -oE '\(#[0-9]+\)' \
               | tr -d '()#' \
