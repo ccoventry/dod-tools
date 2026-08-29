@@ -208,7 +208,13 @@ function applyCaptureModeUI() {
 
   // The codec only describes a video file, so it is disabled rather than
   // hidden in the other modes — a control that vanishes reads as a bug, and
-  // keeping it visible shows what switching to Video would give you.
+  // keeping it visible shows what switching to Video would give you. Also
+  // why this is disabled rather than hidden like the OBS block below: OBS
+  // capture is expected to grow its own codec choice eventually (it can
+  // already ask for a container in Custom Output mode), so this control is
+  // shared infrastructure that is not yet wired to every mode it will
+  // eventually apply to — not a Video-only field the way OBS's settings are
+  // OBS-only.
   const codecGroup = document.querySelector('#capture-codec-group');
   const codecSelect = document.querySelector('#config-capture-codec');
   if (codecSelect) codecSelect.disabled = !video;
