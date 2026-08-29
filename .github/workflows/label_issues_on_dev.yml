@@ -1,55 +1,59 @@
 # `dev` isn't this repo's default branch (`main` is), so GitHub's own
 # closing-keyword auto-close never fires when a fix merges into `dev` — and
-# even once `dev` reaches `main`, this repo's commit convention is a bare
-# "(#NN)" in the subject line rather than "Fixes #NN", which GitHub's
-# keyword parser doesn't recognize either. Without this, a fixed issue just
+# even once `dev` reaches `main`, an issue only auto-closes if a real
+# closing keyword ("Fixes #NN"/"Closes #NN"/"Resolves #NN") was used
+# somewhere, which this repo's actual convention (a bare "(#NN)" in the
+# commit subject) doesn't satisfy either. Without this, a fixed issue just
 # stays open indefinitely. See issue #64/#66/#78/#80/#82's discussion.
 #
-# This labels an issue `on-dev` the moment a commit whose *subject line*
-# ends in "(#NN)" lands on `dev`, so a human can batch-close what's actually
-# done. Deliberately scoped to the subject line only: a bare "#NN" mention
-# in a commit *body* is routinely just a reference to related or still-open
-# work (e.g. "deferred to #84"), not a completion signal, and labeling on
-# that would mislabel it.
+# This labels an issue `on-dev` the moment the PR that fixes it merges into
+# `dev`, so a human can batch-close what's actually done. Two ways in:
+#
+#  1. GitHub's own Development-link data (closingIssuesReferences) — set by
+#     a real closing keyword in the PR body/commits, or a manual link via
+#     the PR's Development sidebar (how #66 got linked on PR #71). Native,
+#     precise, zero heuristics: if GitHub says a PR closes an issue, it does.
+#  2. Falling back to this PR's own commit subjects only when GitHub found
+#     no native link, since today's actual convention doesn't produce one.
+#     Deliberately scoped to subjects, not bodies: a bare "#NN" mention in a
+#     commit *body* is routinely just a reference to related or still-open
+#     work (e.g. "deferred to #84"), not a completion signal, and labeling
+#     on that would mislabel it.
 name: Label issues merged to dev
 
 on:
-  push:
+  pull_request:
+    types: [closed]
     branches: [dev]
 
 permissions:
   issues: write
-  contents: read
+  pull-requests: read
 
 jobs:
   label:
+    if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Label issues fixed by this push's commits
+      - name: Label issues fixed by this PR
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -e
-          before="${{ github.event.before }}"
-          after="${{ github.event.after }}"
-          # A brand-new branch (or a history-rewriting force-push) can leave
-          # `before` unreachable — fall back to just the tip commit rather
-          # than failing the run.
-          if git cat-file -e "$before" 2>/dev/null; then
-            range="$before..$after"
-          else
-            range="$after"
-          fi
 
-          numbers=$(git log "$range" --format=%s \
-            | grep -oE '\(#[0-9]+\)' \
-            | tr -d '()#' \
-            | sort -un)
+          numbers=$(gh pr view "$PR_NUMBER" --json closingIssuesReferences \
+            -q '.closingIssuesReferences[].number')
+
+          if [ -z "$numbers" ]; then
+            echo "No native Development links on #$PR_NUMBER — falling back to commit subjects."
+            numbers=$(gh pr view "$PR_NUMBER" --json commits \
+              -q '.commits[].messageHeadline' \
+              | grep -oE '\(#[0-9]+\)' \
+              | tr -d '()#' \
+              | sort -un)
+          fi
 
           for n in $numbers; do
             # repos/{owner}/{repo}/issues/N returns PRs too (with a
