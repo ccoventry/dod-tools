@@ -85,13 +85,14 @@ function applyCaptureModeUI() {
   document.querySelectorAll('.setting-label[data-capture-mode]').forEach((label) => {
     label.classList.toggle('active', (label.dataset.captureMode === 'video') === video);
   });
-  // The codec only describes a video file, so it is disabled rather than
-  // hidden in frame-sequence mode — a control that vanishes reads as a bug,
-  // and keeping it visible shows what switching to Video would give you.
+  // Hidden rather than disabled: frame-sequence mode has its own, unrelated
+  // answer to "what codec" — Render Studio's own codec picker, a completely
+  // different set of options (ProRes/DNxHR/H.264) for a completely different
+  // purpose (final delivery, not the capture-time lossless intermediate) —
+  // so a dimmed control here would not be previewing anything connected to
+  // the active mode, just sitting there disconnected from it.
   const codecGroup = document.querySelector('#capture-codec-group');
-  const codecSelect = document.querySelector('#config-capture-codec');
-  if (codecSelect) codecSelect.disabled = !video;
-  if (codecGroup) codecGroup.classList.toggle('disabled', !video);
+  if (codecGroup) codecGroup.style.display = video ? '' : 'none';
 }
 
 // ── HLAE's own FFmpeg ─────────────────────────────────────────────────────────
