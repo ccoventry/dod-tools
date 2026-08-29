@@ -311,6 +311,14 @@ export async function resetRenderJob(jobId) {
     });
 }
 
+export async function setRenderJobCodec(jobId, codec) {
+  return invoke("set_render_job_codec", { jobId, codec })
+    .catch((err) => {
+      console.error("IPC Execution Error (set_render_job_codec):", err);
+      throw err;
+    });
+}
+
 export async function getExportPoolFreeGb(directories) {
   return invoke("get_export_pool_free_gb", { directories })
     .catch((err) => {

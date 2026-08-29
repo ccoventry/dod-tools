@@ -27,16 +27,23 @@ pub async fn run_render_job(
     tx: mpsc::Sender<RenderUpdate>,
     cancel_rx: Arc<AtomicBool>,
 ) {
+    // "Skip" — leave an OBS take as OBS wrote it. No FFmpeg involved at all,
+    // just a copy into the export pool with the pipeline's naming applied.
+    let is_source_copy = config.target_codec == super::config::RenderCodec::SourceCopy;
     let ffmpeg_path = PathBuf::from(&config.ffmpeg_path);
     let fps = config.fps.to_string();
 
     let take_folder = PathBuf::from(&clip.take_folder);
-    let wav_file = take_folder.join(&clip.wav_file);
+    // `None` is an OBS take: its audio is already muxed into `video_file`,
+    // so there is nothing to join against a wav.
+    let wav_file: Option<PathBuf> = clip.wav_file.as_ref().map(|w| take_folder.join(w));
+    let is_hud = clip.clip_type == "hud_only";
 
     let is_global = config.ffmpeg_path == "ffmpeg";
 
-    // Initial validations
-    if !is_global && (!ffmpeg_path.exists() || !ffmpeg_path.is_file()) {
+    // Initial validations. Skip mode never spawns FFmpeg, so a misconfigured
+    // FFmpeg path must not block a plain file copy.
+    if !is_source_copy && !is_global && (!ffmpeg_path.exists() || !ffmpeg_path.is_file()) {
         let _ = tx.send(RenderUpdate::Finished(
             job_id.clone(),
             false,
@@ -52,12 +59,47 @@ pub async fn run_render_job(
         ));
         return;
     }
-    if !wav_file.exists() {
+    if let Some(wav) = &wav_file {
+        if !wav.exists() {
+            let _ = tx.send(RenderUpdate::Finished(
+                job_id.clone(),
+                false,
+                Some(format!("Audio file not found: {}", wav.display())),
+            ));
+            return;
+        }
+    }
+    // The alpha stream carries no sound of its own, so a HUD/alpha composite
+    // always needs a separate wav — an OBS take's muxed-in audio can't cover it.
+    if is_hud && wav_file.is_none() {
         let _ = tx.send(RenderUpdate::Finished(
             job_id.clone(),
             false,
-            Some(format!("Audio file not found: {}", wav_file.display())),
+            Some("HUD/alpha clips need a separate audio track (sound.wav), but this take has none.".to_string()),
         ));
+        return;
+    }
+    if clip.video_file.is_none() && wav_file.is_none() {
+        let _ = tx.send(RenderUpdate::Finished(
+            job_id.clone(),
+            false,
+            Some("No audio source for this take: no sound.wav and no audio-bearing video.".to_string()),
+        ));
+        return;
+    }
+    // Gated on the same predicate the Tauri layer uses to decide whether to
+    // offer the toggle at all (`clip_is_skip_eligible`), so this can never
+    // quietly diverge from what the frontend thinks is skippable — this is
+    // the actual enforcement, the frontend gate is only a convenience.
+    if is_source_copy && !super::scanner::clip_is_skip_eligible(&clip) {
+        let reason = if is_hud {
+            "Skip (keep original) isn't available for HUD/alpha clips — pick a codec to render them."
+        } else if clip.wav_file.is_some() {
+            "Skip (keep original) isn't available for a take with its own separate audio track — pick a codec to render it."
+        } else {
+            "Skip (keep original) requires a captured video file, but this take has none."
+        };
+        let _ = tx.send(RenderUpdate::Finished(job_id.clone(), false, Some(reason.to_string())));
         return;
     }
 
@@ -80,7 +122,6 @@ pub async fn run_render_job(
     }
 
     let clip_type = clip.clip_type.as_str();
-    let is_hud = clip_type == "hud_only";
 
     // ── JIT export-drive routing ──────────────────────────────────────────────
     // Iterate the priority pool and select the first directory that has at
@@ -115,6 +156,79 @@ pub async fn run_render_job(
         return;
     }
 
+    // Naming pieces shared by both the FFmpeg render path and the skip/copy
+    // path below, so a skipped take and a rendered one land under the same
+    // scheme — "where do I find my finished clips" stays answered the same
+    // way regardless of which option a take took.
+    let stream_type = if is_hud { "hud" } else { "all" };
+    let wav_part = match &clip.wav_file {
+        Some(wav) => {
+            let wav_stem = std::path::Path::new(wav).file_stem().unwrap_or_default().to_string_lossy().into_owned();
+            if wav_stem.to_lowercase() == "sound" { String::new() } else { format!("_{}", wav_stem) }
+        }
+        // An OBS take has no wav to derive a suffix from — base_name already
+        // carries the distinguishing "-obs" suffix the scanner gave it.
+        None => String::new(),
+    };
+    let timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_micros();
+    let hash_str = format!("{:04x}", timestamp % 0x10000);
+    // Reuses `take_folder` (already parsed from this same `clip.take_folder`
+    // string above) rather than re-parsing a second `PathBuf` from it.
+    let take_name = take_folder.file_name().unwrap_or_default().to_string_lossy();
+    let demo_name = take_folder.parent().and_then(|p| p.file_name()).unwrap_or_default().to_string_lossy();
+
+    if is_source_copy {
+        // Validated above: video_file and a non-hud clip_type are guaranteed here.
+        let video_name = clip.video_file.as_deref().unwrap_or_default();
+        let source_video = take_folder.join(&clip.img_folder).join(video_name);
+        if !source_video.is_file() {
+            let _ = tx.send(RenderUpdate::Finished(
+                job_id.clone(),
+                false,
+                Some(format!("Source video not found: {}", source_video.display())),
+            ));
+            return;
+        }
+        // Kept from whatever OBS wrote — renaming would make the file lie
+        // about its own container to every tool that reads it afterwards.
+        let ext = source_video.extension().map(|e| e.to_string_lossy().into_owned()).unwrap_or_else(|| "mp4".to_string());
+        let final_name = format!("{}_{}{}_{}_{}.{}", demo_name, take_name, wav_part, stream_type, hash_str, ext);
+        let out_file = output_folder.join(&final_name);
+        let out_file_str = out_file.to_string_lossy().into_owned();
+
+        if cancel_rx.load(Ordering::Relaxed) {
+            let _ = tx.send(RenderUpdate::Status(job_id.clone(), "Cancelled".to_string()));
+            let _ = tx.send(RenderUpdate::Finished(job_id, false, Some("Cancelled by user".to_string())));
+            return;
+        }
+        let _ = tx.send(RenderUpdate::Status(job_id.clone(), "Rendering".to_string()));
+        // Chunked rather than `tokio::fs::copy`, so Cancel actually lands
+        // during a large copy (Custom Output/lossless OBS captures — see
+        // docs/obs_alternate_capture.md — can run tens of GB) instead of
+        // being silently ignored until the whole file has already moved.
+        match copy_cancellable(&source_video, &out_file, &cancel_rx).await {
+            Ok(true) => {
+                let _ = tx.send(RenderUpdate::Status(job_id.clone(), "Cancelled".to_string()));
+                let _ = tx.send(RenderUpdate::Finished(job_id, false, Some("Cancelled by user".to_string())));
+            }
+            Ok(false) => {
+                let _ = tx.send(RenderUpdate::Status(job_id.clone(), "Finished".to_string()));
+                let _ = tx.send(RenderUpdate::Progress(job_id.clone(), 100));
+                let _ = tx.send(RenderUpdate::OutputPath(job_id.clone(), out_file_str));
+                let _ = tx.send(RenderUpdate::Finished(job_id, true, None));
+            }
+            Err(e) => {
+                let _ = tx.send(RenderUpdate::Status(job_id.clone(), "Error".to_string()));
+                let _ = tx.send(RenderUpdate::Finished(
+                    job_id,
+                    false,
+                    Some(format!("Failed to copy source video to export pool: {}", e)),
+                ));
+            }
+        }
+        return;
+    }
+
     // Extension decided in the same match as the codec args, not looked up
     // separately, so the two can't silently drift apart the way the old
     // string-keyed get_codec_preset() already had (it matched "h264" for
@@ -146,6 +260,22 @@ pub async fn run_render_job(
                 codec_args.extend_from_slice(&["-c:v", "dnxhd", "-profile:v", "dnxhr_hq", "-pix_fmt", "yuv422p"]);
                 ".mov"
             }
+            // `is_source_copy` already returned before this match — it has
+            // its own extension and never runs an FFmpeg encode at all. Not
+            // `unreachable!()`: release builds run with `panic = "abort"`
+            // (see `obs::session::ObsSession::stop_handle`'s doc comment), so
+            // a panic here would kill the whole render batch, not just this
+            // job, if some future edit ever broke that invariant. Failing
+            // loudly through the normal update channel costs nothing today
+            // and is safe if it ever turns out to be reachable.
+            super::config::RenderCodec::SourceCopy => {
+                let _ = tx.send(RenderUpdate::Finished(
+                    job_id.clone(),
+                    false,
+                    Some("Internal error: SourceCopy reached the FFmpeg codec path.".to_string()),
+                ));
+                return;
+            }
         }
     };
 
@@ -162,21 +292,6 @@ pub async fn run_render_job(
     } else {
         &["-c:a", "pcm_s16le"]
     };
-
-    let stream_type = if is_hud { "hud" } else { "all" };
-    let wav_stem = std::path::Path::new(&clip.wav_file).file_stem().unwrap_or_default().to_string_lossy();
-    let wav_part = if wav_stem.to_lowercase() == "sound" {
-        "".to_string()
-    } else {
-        format!("_{}", wav_stem)
-    };
-    
-    let timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_micros();
-    let hash_str = format!("{:04x}", timestamp % 0x10000);
-
-    let take_path = PathBuf::from(&clip.take_folder);
-    let take_name = take_path.file_name().unwrap_or_default().to_string_lossy();
-    let demo_name = take_path.parent().and_then(|p| p.file_name()).unwrap_or_default().to_string_lossy();
 
     let final_name = format!("{}_{}{}_{}_{}{}", demo_name, take_name, wav_part, stream_type, hash_str, file_ext);
     let out_file = output_folder.join(&final_name);
@@ -210,25 +325,34 @@ pub async fn run_render_job(
     // second number to disagree with.
     if let Some(video) = clip.video_file.as_deref() {
         if clip_type == "hud_only" {
+            let wav = clip.wav_file.as_deref().expect("validated above: HUD clips require a wav");
             hud_color_input = format!("{}/{}", clip.img_folder, video);
             hud_alpha_input = format!("{}/{}", alpha_folder, video);
             cmd_args.extend(vec![
                 "-i", &hud_color_input,
                 "-i", &hud_alpha_input,
                 "-thread_queue_size", "512",
-                "-i", &clip.wav_file,
+                "-i", wav,
                 "-filter_complex", "[1:v]extractplanes=r[alpha];[0:v][alpha]alphamerge[hud]",
                 "-map", "[hud]", "-map", "2:a",
             ]);
-        } else {
+        } else if let Some(wav) = clip.wav_file.as_deref() {
             video_input = format!("{}/{}", clip.img_folder, video);
             cmd_args.extend(vec![
                 "-i", &video_input,
                 "-thread_queue_size", "512",
-                "-i", &clip.wav_file,
+                "-i", wav,
             ]);
+        } else {
+            // An OBS take: the video already carries its own audio stream, so
+            // there is nothing to mux against. A single input with no `-map`
+            // needed — FFmpeg's default stream selection already picks one
+            // video and one audio stream out of it.
+            video_input = format!("{}/{}", clip.img_folder, video);
+            cmd_args.extend(vec!["-i", &video_input]);
         }
     } else if clip_type == "hud_only" {
+        let wav = clip.wav_file.as_deref().expect("validated above: HUD clips require a wav");
         hud_color_input = format!("{}/%05d.bmp", clip.img_folder);
         hud_alpha_input = format!("{}/%05d.bmp", alpha_folder);
         cmd_args.extend(vec![
@@ -238,11 +362,13 @@ pub async fn run_render_job(
             "-probesize", "32", "-analyzeduration", "0", "-thread_queue_size", "512",
             "-framerate", &fps, "-i", &hud_alpha_input,
             "-thread_queue_size", "512",
-            "-i", &clip.wav_file,
+            "-i", wav,
             "-filter_complex", "[1:v]extractplanes=r[alpha];[0:v][alpha]alphamerge[hud]",
             "-map", "[hud]", "-map", "2:a",
         ]);
     } else {
+        // BMP shape is never admitted without a wav — see `take_shape_is_renderable`.
+        let wav = clip.wav_file.as_deref().expect("validated above: BMP takes require a wav");
         img_input = format!("{}/%05d.bmp", clip.img_folder);
         cmd_args.extend(vec![
             // Skip probe/analyze on known BMP sequences; add read-ahead buffering.
@@ -250,7 +376,7 @@ pub async fn run_render_job(
             "-framerate", &fps,
             "-i", &img_input,
             "-thread_queue_size", "512",
-            "-i", &clip.wav_file,
+            "-i", wav,
         ]);
     }
 
@@ -456,6 +582,42 @@ pub fn hold_render_wake_lock() -> Option<RenderWakeLock> {
         .map(RenderWakeLock)
 }
 
+/// Copies `src` to `dst` in chunks, checking `cancel` between reads.
+///
+/// The "Skip" render path's only work is this copy, and a plain
+/// `tokio::fs::copy` has no hook to interrupt partway through — Cancel would
+/// silently do nothing until the whole file had already moved, unlike the
+/// FFmpeg path, which polls its cancel flag every 200ms and kills the child.
+///
+/// Returns `Ok(true)` if cancelled partway through, in which case the partial
+/// `dst` is removed before returning — a truncated file left behind under
+/// the pipeline's naming would look like a finished export.
+async fn copy_cancellable(src: &Path, dst: &Path, cancel: &AtomicBool) -> std::io::Result<bool> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let mut reader = tokio::fs::File::open(src).await?;
+    let mut writer = tokio::fs::File::create(dst).await?;
+    // 2 MiB, matching this codebase's stated heap-buffer payload limit
+    // (CLAUDE.md's Memory Safety rule) — still large enough that per-chunk
+    // overhead is negligible against the copy itself, and a cancel lands
+    // within a second or two even on a slow disk.
+    let mut buf = vec![0u8; 2 * 1024 * 1024];
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            drop(writer);
+            let _ = tokio::fs::remove_file(dst).await;
+            return Ok(true);
+        }
+        let n = reader.read(&mut buf).await?;
+        if n == 0 {
+            break;
+        }
+        writer.write_all(&buf[..n]).await?;
+    }
+    writer.flush().await?;
+    Ok(false)
+}
+
 #[allow(dead_code)]
 fn get_unique_filename(output_dir: &Path, base_name: &str, ext: &str) -> String {
     let mut counter = 1;
@@ -465,4 +627,257 @@ fn get_unique_filename(output_dir: &Path, base_name: &str, ext: &str) -> String 
         counter += 1;
     }
     final_name
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::hlcr::config::RenderCodec;
+
+    fn scratch(name: &str) -> PathBuf {
+        let p = std::env::temp_dir().join(format!("dod_renderer_test_{}_{}", name, std::process::id()));
+        let _ = std::fs::remove_dir_all(&p);
+        std::fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    fn source_copy_config(export_dir: &Path) -> RenderConfig {
+        RenderConfig {
+            ffmpeg_path: "ffmpeg".to_string(),
+            source_folder: String::new(),
+            export_directories: vec![export_dir.to_path_buf()],
+            fps: 300,
+            target_codec: RenderCodec::SourceCopy,
+            max_concurrent_renders: 1,
+        }
+    }
+
+    fn drain(rx: &mpsc::Receiver<RenderUpdate>) -> Vec<RenderUpdate> {
+        let mut out = Vec::new();
+        while let Ok(u) = rx.try_recv() {
+            out.push(u);
+        }
+        out
+    }
+
+    fn last_finished(updates: &[RenderUpdate]) -> Option<(bool, Option<String>)> {
+        updates.iter().rev().find_map(|u| match u {
+            RenderUpdate::Finished(_, success, err) => Some((*success, err.clone())),
+            _ => None,
+        })
+    }
+
+    /// The core of issue #82's "skip" path: an OBS take with no separate wav
+    /// (audio already muxed into the video) is routed into the export pool
+    /// as a plain copy — no FFmpeg spawn, original file left in place.
+    #[tokio::test]
+    async fn skip_copies_the_source_video_into_the_export_pool() {
+        let root = scratch("skip_ok");
+        let take_folder = root.join("take");
+        let stream = take_folder.join("all");
+        std::fs::create_dir_all(&stream).unwrap();
+        std::fs::write(stream.join("video.mp4"), b"fake obs video bytes").unwrap();
+        let export_dir = root.join("export");
+        std::fs::create_dir_all(&export_dir).unwrap();
+
+        let clip = ClipData {
+            take_folder: take_folder.to_string_lossy().into_owned(),
+            clip_type: "single".to_string(),
+            img_folder: "all".to_string(),
+            wav_file: None,
+            base_name: "demo-take-obs".to_string(),
+            frame_count: 0,
+            date: "-".to_string(),
+            video_file: Some("video.mp4".to_string()),
+            alpha_folder: None,
+        };
+
+        let (tx, rx) = mpsc::channel();
+        run_render_job("0".to_string(), clip, source_copy_config(&export_dir), tx, Arc::new(AtomicBool::new(false))).await;
+
+        let updates = drain(&rx);
+        assert_eq!(last_finished(&updates), Some((true, None)), "{:?}", updates);
+        let output_path = updates.iter().find_map(|u| match u {
+            RenderUpdate::OutputPath(_, p) => Some(p.clone()),
+            _ => None,
+        }).expect("OutputPath was not sent");
+        assert!(output_path.ends_with(".mp4"), "{}", output_path);
+        assert_eq!(std::fs::read(&output_path).unwrap(), b"fake obs video bytes");
+        // A copy, not a move — the original take is untouched.
+        assert!(stream.join("video.mp4").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// HUD/alpha compositing always needs the FFmpeg alpha-merge pass, so
+    /// skip cannot apply to it regardless of how the clip's audio arrived.
+    #[tokio::test]
+    async fn skip_is_refused_for_a_hud_clip() {
+        let root = scratch("skip_hud_refused");
+        let take_folder = root.join("take");
+        let stream = take_folder.join("hudcolor");
+        std::fs::create_dir_all(&stream).unwrap();
+        std::fs::write(stream.join("video.mp4"), b"x").unwrap();
+        let export_dir = root.join("export");
+        std::fs::create_dir_all(&export_dir).unwrap();
+
+        let clip = ClipData {
+            take_folder: take_folder.to_string_lossy().into_owned(),
+            clip_type: "hud_only".to_string(),
+            img_folder: "hudcolor".to_string(),
+            wav_file: None,
+            base_name: "demo-take-obs".to_string(),
+            frame_count: 0,
+            date: "-".to_string(),
+            video_file: Some("video.mp4".to_string()),
+            alpha_folder: Some("hudalpha".to_string()),
+        };
+
+        let (tx, rx) = mpsc::channel();
+        run_render_job("0".to_string(), clip, source_copy_config(&export_dir), tx, Arc::new(AtomicBool::new(false))).await;
+
+        let updates = drain(&rx);
+        match last_finished(&updates) {
+            Some((false, Some(_))) => {}
+            other => panic!("expected a rejection, got {:?}", other),
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A clip with neither a wav nor a captured video has no audio source at
+    /// all — this must fail loudly rather than render a silent clip.
+    #[tokio::test]
+    async fn a_clip_with_no_audio_source_at_all_is_refused() {
+        let root = scratch("no_audio_source");
+        let take_folder = root.join("take");
+        std::fs::create_dir_all(take_folder.join("all")).unwrap();
+        let export_dir = root.join("export");
+        std::fs::create_dir_all(&export_dir).unwrap();
+
+        let clip = ClipData {
+            take_folder: take_folder.to_string_lossy().into_owned(),
+            clip_type: "single".to_string(),
+            img_folder: "all".to_string(),
+            wav_file: None,
+            base_name: "demo-take-obs".to_string(),
+            frame_count: 0,
+            date: "-".to_string(),
+            video_file: None,
+            alpha_folder: None,
+        };
+
+        let (tx, rx) = mpsc::channel();
+        run_render_job("0".to_string(), clip, source_copy_config(&export_dir), tx, Arc::new(AtomicBool::new(false))).await;
+
+        let updates = drain(&rx);
+        match last_finished(&updates) {
+            Some((false, Some(_))) => {}
+            other => panic!("expected a rejection, got {:?}", other),
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Skip needs an actual captured video to copy — an OBS-shaped clip
+    /// missing its video file (moved, deleted) must fail rather than copy
+    /// nothing and report success.
+    #[tokio::test]
+    async fn skip_is_refused_when_the_source_video_is_missing() {
+        let root = scratch("skip_missing_video");
+        let take_folder = root.join("take");
+        std::fs::create_dir_all(take_folder.join("all")).unwrap();
+        let export_dir = root.join("export");
+        std::fs::create_dir_all(&export_dir).unwrap();
+
+        let clip = ClipData {
+            take_folder: take_folder.to_string_lossy().into_owned(),
+            clip_type: "single".to_string(),
+            img_folder: "all".to_string(),
+            wav_file: None,
+            base_name: "demo-take-obs".to_string(),
+            frame_count: 0,
+            date: "-".to_string(),
+            // Claims a video that was never written.
+            video_file: Some("video.mp4".to_string()),
+            alpha_folder: None,
+        };
+
+        let (tx, rx) = mpsc::channel();
+        run_render_job("0".to_string(), clip, source_copy_config(&export_dir), tx, Arc::new(AtomicBool::new(false))).await;
+
+        let updates = drain(&rx);
+        match last_finished(&updates) {
+            Some((false, Some(_))) => {}
+            other => panic!("expected a rejection, got {:?}", other),
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A clip with its own separate wav has something real to mux — skipping
+    /// it would silently discard that audio track rather than reflect it,
+    /// so `clip_is_skip_eligible` (shared with the Tauri per-job toggle gate)
+    /// must refuse it even if a caller forces `SourceCopy` anyway.
+    #[tokio::test]
+    async fn skip_is_refused_when_the_clip_still_has_a_separate_wav() {
+        let root = scratch("skip_has_wav");
+        let take_folder = root.join("take");
+        let stream = take_folder.join("all");
+        std::fs::create_dir_all(&stream).unwrap();
+        std::fs::write(stream.join("video.mp4"), b"x").unwrap();
+        std::fs::write(take_folder.join("sound.wav"), b"wav").unwrap();
+        let export_dir = root.join("export");
+        std::fs::create_dir_all(&export_dir).unwrap();
+
+        let clip = ClipData {
+            take_folder: take_folder.to_string_lossy().into_owned(),
+            clip_type: "single".to_string(),
+            img_folder: "all".to_string(),
+            wav_file: Some("sound.wav".to_string()),
+            base_name: "demo-take".to_string(),
+            frame_count: 0,
+            date: "-".to_string(),
+            video_file: Some("video.mp4".to_string()),
+            alpha_folder: None,
+        };
+
+        let (tx, rx) = mpsc::channel();
+        run_render_job("0".to_string(), clip, source_copy_config(&export_dir), tx, Arc::new(AtomicBool::new(false))).await;
+
+        let updates = drain(&rx);
+        match last_finished(&updates) {
+            Some((false, Some(_))) => {}
+            other => panic!("expected a rejection, got {:?}", other),
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// #80's sibling gap on the Skip path itself: a plain `tokio::fs::copy`
+    /// has no way to honor a mid-copy cancel. `copy_cancellable` must remove
+    /// whatever partial file it started, not leave a truncated one sitting
+    /// under the pipeline's naming looking like a finished export.
+    #[tokio::test]
+    async fn copy_cancellable_removes_the_partial_file_when_cancelled() {
+        let root = scratch("copy_cancel");
+        let src = root.join("src.bin");
+        std::fs::write(&src, vec![0u8; 1024]).unwrap();
+        let dst = root.join("dst.bin");
+        let cancel = AtomicBool::new(true);
+
+        let cancelled = copy_cancellable(&src, &dst, &cancel).await.unwrap();
+        assert!(cancelled);
+        assert!(!dst.exists(), "a cancelled copy must not leave a partial file behind");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn copy_cancellable_completes_normally_without_a_cancel() {
+        let root = scratch("copy_ok");
+        let src = root.join("src.bin");
+        std::fs::write(&src, b"hello world").unwrap();
+        let dst = root.join("dst.bin");
+        let cancel = AtomicBool::new(false);
+
+        let cancelled = copy_cancellable(&src, &dst, &cancel).await.unwrap();
+        assert!(!cancelled);
+        assert_eq!(std::fs::read(&dst).unwrap(), b"hello world");
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }

@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use native::hlcr::autosave::{RenderJob as AutosaveJob, RenderJobStatus as AutosaveJobStatus, RenderSessionData};
 use native::hlcr::config::{RenderCodec, RenderConfig};
 use native::hlcr::renderer::{hold_render_wake_lock, run_render_job, RenderUpdate, RenderWakeLock};
-use native::hlcr::scanner::{scan_folder_background, ClipData};
+use native::hlcr::scanner::{scan_folder_background, clip_is_skip_eligible, ClipData};
 use native::shared::paths::take_key;
 use native::log_markdown;
 use tauri::{AppHandle, Emitter};
@@ -27,7 +27,10 @@ pub struct SerializedRenderJob {
     pub take_folder: String,
     pub clip_type: String,
     pub img_folder: String,
-    pub wav_file: String,
+    /// `None` for an OBS take — its audio is already muxed into its video.
+    /// The frontend uses this to decide whether "Skip (keep original)" is an
+    /// offerable per-job option: only an OBS-shaped clip has anything to skip.
+    pub wav_file: Option<String>,
     pub base_name: String,
     pub frame_count: usize,
     pub date: String,
@@ -174,10 +177,20 @@ pub struct RenderJobView {
     /// this job has rendered, so "reveal in Explorer" works pre- and
     /// post-render.
     pub take_folder: String,
+    /// This job's codec as a `RenderCodec::to_str_id()` value — what
+    /// `set_render_job_codec` expects back, and what the frontend checks
+    /// against `"source_copy"` to show the Skip toggle as checked.
+    pub codec_id: String,
+    /// Whether "Skip (keep original)" is an offerable choice for this job —
+    /// only true for an OBS-shaped clip (its own muxed-in audio, not HUD/alpha,
+    /// a captured video). `set_render_job_codec` enforces the same rule; this
+    /// is what lets the frontend decide whether to show the toggle at all.
+    pub skip_available: bool,
 }
 
 impl RenderJobRuntime {
     fn to_view(&self) -> RenderJobView {
+        let is_source_copy = self.codec == RenderCodec::SourceCopy;
         RenderJobView {
             id: self.id.clone(),
             name: self.clip.base_name.clone(),
@@ -188,9 +201,17 @@ impl RenderJobRuntime {
             speed: self.speed.clone(),
             progress: self.progress,
             error_log: self.error_log.clone(),
-            settings_summary: format!("{} @ {}fps", self.codec.label(), self.fps),
+            // Skip mode never reads `fps` — showing it would imply a setting
+            // that has no effect on a plain file copy.
+            settings_summary: if is_source_copy {
+                self.codec.label().to_string()
+            } else {
+                format!("{} @ {}fps", self.codec.label(), self.fps)
+            },
             output_path: self.output_path.clone(),
             take_folder: self.clip.take_folder.clone(),
+            codec_id: self.codec.to_str_id().to_string(),
+            skip_available: clip_is_skip_eligible(&self.clip),
         }
     }
 }
@@ -554,6 +575,32 @@ pub async fn cancel_render_batch(state: tauri::State<'_, RenderManager>) -> Resu
     Ok(())
 }
 
+/// Changes one Queued job's codec — the VirtualDub-style per-job setting
+/// `RenderJobRuntime` already carries, exposed here specifically so a job can
+/// be flipped to/from `SourceCopy` ("Skip, keep original") before it starts.
+/// Refused once a job is no longer Queued: a running or finished job's
+/// settings are fixed, matching `reset_render_job`'s own doc comment on why
+/// per-job settings never change out from under a job in flight.
+#[tauri::command]
+pub async fn set_render_job_codec(app: AppHandle, state: tauri::State<'_, RenderManager>, job_id: String, codec: String) -> Result<(), String> {
+    let requested = RenderCodec::from_str_id(&codec);
+    let mut jobs = state.jobs.lock().unwrap();
+    let Some(job) = jobs.iter_mut().find(|j| j.id == job_id) else {
+        return Err(format!("No such job: {}", job_id));
+    };
+    if job.status != "Queued" {
+        return Err(format!("Job {} is {} — only a Queued job's codec can be changed", job_id, job.status));
+    }
+    if requested == RenderCodec::SourceCopy && !clip_is_skip_eligible(&job.clip) {
+        return Err("Skip (keep original) is only available for a captured OBS take (its own audio, not a HUD/alpha clip).".to_string());
+    }
+    job.codec = requested;
+    log_markdown(&format!("[render] set_render_job_codec {} -> {}", job_id, requested.to_str_id()));
+    drop(jobs);
+    emit_jobs_snapshot(&app, &state.jobs);
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn cancel_render_job(state: tauri::State<'_, RenderManager>, job_id: String) -> Result<(), String> {
     log_markdown(&format!("[render] cancel_render_job requested for {}", job_id));
@@ -687,10 +734,13 @@ pub fn recover_render_batch(state: tauri::State<'_, RenderManager>) -> Result<Ve
     let session: RenderSessionData = serde_json::from_str(&json).map_err(|e| e.to_string())?;
     // The autosave snapshot only ever recorded one session-wide codec/fps
     // (written once at batch start, before per-job settings existed) — every
-    // recovered job gets that same pair. A job individually reset to a
-    // different codec before a crash won't recover with that override; a
-    // known, pre-existing recovery-fidelity gap (see the doc comment below),
-    // not a regression from per-job settings.
+    // recovered job gets that same pair. A job individually changed before a
+    // crash — via `reset_render_job`'s codec/fps carry-over, or via
+    // `set_render_job_codec`'s "Skip" toggle — won't recover with that
+    // override; a known, pre-existing recovery-fidelity gap (see the doc
+    // comment below), not a regression from per-job settings. A recovered
+    // "Skip" job simply comes back as whatever `session.target_codec` was
+    // for the batch, and needs re-toggling by hand if that was Skip.
     let recovered_codec = RenderCodec::from_str_id(&session.target_codec);
     let recovered_fps = session.fps;
 
@@ -706,14 +756,20 @@ pub fn recover_render_batch(state: tauri::State<'_, RenderManager>) -> Result<Ve
                 take_folder: rj.take_folder.clone(),
                 clip_type: "single".to_string(),
                 img_folder: String::new(),
-                wav_file: "sound.wav".to_string(),
+                // The autosave snapshot stores take_folder/name/status only, so
+                // this reconstruction cannot know which kind of take it was —
+                // wav-and-frames or OBS-shaped — the same reason `img_folder`
+                // and `video_file` are blank below. Guessing `Some("sound.wav")`
+                // here used to be harmless when every take had one; now that an
+                // OBS take legitimately has none, guessing would misrepresent
+                // it. `None` matches the rest of this stub's "unknown, a
+                // re-scan is what fills it in" treatment, and fails at
+                // `run_render_job`'s clear "no audio source" guard instead of a
+                // misleading "sound.wav not found" if resumed without a rescan.
+                wav_file: None,
                 base_name: rj.name.clone(),
                 frame_count: 0,
                 date: String::new(),
-                // The autosave snapshot stores take_folder/name/status only, so
-                // this reconstruction cannot know which kind of take it was —
-                // the same reason `img_folder` is empty here. A re-scan is what
-                // fills either of them in.
                 video_file: None,
                 alpha_folder: None,
             },
