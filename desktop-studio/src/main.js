@@ -1564,7 +1564,7 @@ window.addEventListener("DOMContentLoaded", async () => {
         const outcome = await requestTrackedClearConfirmation(targets, { title: STRINGS.MAIN.CLEAR_SELECTED_TITLE, verb: STRINGS.MAIN.VERB_REMOVES, filterNote: hiddenNote, confirmLabel: STRINGS.MAIN.CLEAR_SELECTED_ANYWAY });
         if (!outcome) return;
         savedFirst = outcome === 'save-first';
-      } else if (!(await themedConfirm(STRINGS.MAIN.removeSelectedConfirm(targets.length, hiddenNote)))) {
+      } else if (!(await themedConfirm(STRINGS.MAIN.removeSelectedConfirm(targets.length, hiddenNote), { title: STRINGS.MAIN.CLEAR_SELECTED_TITLE }))) {
         return;
       }
       const removePaths = new Set(targets.map((d) => d.path));
@@ -1607,7 +1607,7 @@ window.addEventListener("DOMContentLoaded", async () => {
         const outcome = await requestTrackedClearConfirmation(targets, { title: STRINGS.MAIN.CLEAR_ALL_TITLE, verb: STRINGS.MAIN.VERB_REMOVES, filterNote: note, confirmLabel: STRINGS.MAIN.CLEAR_ALL_ANYWAY });
         if (!outcome) return;
         savedFirst = outcome === 'save-first';
-      } else if (!(await themedConfirm(STRINGS.MAIN.removeAllConfirm(targets.length, note)))) {
+      } else if (!(await themedConfirm(STRINGS.MAIN.removeAllConfirm(targets.length, note), { title: STRINGS.MAIN.CLEAR_ALL_TITLE }))) {
         return;
       }
       const removePaths = new Set(targets.map((d) => d.path));
