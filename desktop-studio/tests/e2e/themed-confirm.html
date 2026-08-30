@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<!--
+  Minimal harness for themed_confirm.js — see tests/e2e/README.md for the
+  general shape. themed_confirm.js has no Tauri dependency at all (it only
+  imports strings.js), so unlike render-studio.html this needs no IPC mocks:
+  just the modal markup it queries, copied from index.html's
+  #themed-confirm-modal block, plus a couple of trigger buttons a test can
+  click to exercise it end to end.
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>themed_confirm.js test harness</title>
+</head>
+<body>
+  <div id="themed-confirm-modal" class="modal" style="display: none;">
+    <div class="modal-content" style="max-width: 420px; padding: 20px;">
+      <h2 id="themed-confirm-title">Confirm</h2>
+      <p id="themed-confirm-message"></p>
+      <div style="display: flex; gap: 8px; margin-top: 16px; justify-content: flex-end;">
+        <button id="themed-confirm-ok-btn">Confirm</button>
+        <button id="themed-confirm-cancel-btn">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <button id="trigger-default-btn">Trigger (defaults)</button>
+  <button id="trigger-custom-btn">Trigger (custom labels)</button>
+  <div id="result"></div>
+
+  <script type="module">
+    import { initThemedConfirm, themedConfirm } from '/src/themed_confirm.js';
+
+    initThemedConfirm();
+
+    document.querySelector('#trigger-default-btn').addEventListener('click', async () => {
+      const result = await themedConfirm('Delete 3 files?');
+      document.querySelector('#result').textContent = String(result);
+    });
+
+    document.querySelector('#trigger-custom-btn').addEventListener('click', async () => {
+      const result = await themedConfirm('Remove this tracked demo?', {
+        title: 'Remove Demo',
+        confirmLabel: 'Remove',
+        cancelLabel: 'Keep It',
+      });
+      document.querySelector('#result').textContent = String(result);
+    });
+
+    window.__harnessReady = true;
+  </script>
+</body>
+</html>

@@ -748,6 +748,13 @@ export const STRINGS = {
     CANCEL_BUTTON: 'Cancel',
   },
 
+  // ── Generic themed Confirm/Cancel dialog (themed_confirm.js) ─────────────
+  THEMED_CONFIRM_MODAL: {
+    TITLE_DEFAULT: 'Confirm',
+    CONFIRM_BUTTON: 'Confirm',
+    CANCEL_BUTTON: 'Cancel',
+  },
+
   // ── main.js: sessions, settings dialogs, scan status, Clear actions ─────
   // Map library warnings. A demo names the map it was recorded on and stamps
   // that map's build alongside it, so "missing" and "wrong build" are different
