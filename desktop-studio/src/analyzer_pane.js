@@ -75,6 +75,11 @@ const quickLinkCountCache = new Map(); // path -> demo_count
 
 let currentFolderDemos = []; // DemoFileEntry[] for currentDir only
 let browserSelectedDemo = null;
+// Arrow-key cursor, separate from browserSelectedDemo (the actually-loaded
+// demo) — mirrors master_pane.js's keyboard-selected/table-row-selected
+// split so arrowing through the list previews a lightweight outline instead
+// of moving the same heavy "selected" fill Enter/click commits. #99.
+let browserCursorPath = null;
 let browserError = null;
 let demoFilterQuery = '';
 let demoFilterType = 'All';
@@ -469,6 +474,7 @@ async function setCurrentDir(path) {
 
   currentFolderDemos = listing.demos;
   browserSelectedDemo = null;
+  browserCursorPath = null;
 
   renderQuickLinksSection();
   await renderExplorerTree();
@@ -570,7 +576,9 @@ function renderDemoTable() {
 
   tbody.innerHTML = list.map((entry) => {
     const isSelected = entry.path === browserSelectedDemo;
-    return `<tr class="analyzer-demo-row ${isSelected ? 'selected' : ''}" data-path="${esc(entry.path)}" title="${esc(entry.path)}">
+    const isCursor = entry.path === browserCursorPath;
+    const classes = ['analyzer-demo-row', isSelected ? 'selected' : '', isCursor ? 'keyboard-selected' : ''].filter(Boolean).join(' ');
+    return `<tr class="${classes}" data-path="${esc(entry.path)}" title="${esc(entry.path)}">
       <td>${esc(entry.name)}</td>
       <td>${esc(demoTypeOf(entry))}</td>
       <td>${esc(entry.map_name || STRINGS.ANALYZER.EMPTY_DASH)}</td>
@@ -602,20 +610,25 @@ function initAnalyzerBrowserKeyboardNav() {
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault();
       const dir = e.key === 'ArrowDown' ? 1 : -1;
-      const idx = list.findIndex((d) => d.path === browserSelectedDemo);
+      // No cursor yet — start from wherever the actual selection already is,
+      // same fallback as master_pane.js, so arrowing away from a loaded demo
+      // moves one row from it instead of always restarting at the top.
+      const currentPath = browserCursorPath ?? browserSelectedDemo;
+      const idx = list.findIndex((d) => d.path === currentPath);
       const newIdx = idx === -1 ? (dir > 0 ? 0 : list.length - 1) : Math.min(list.length - 1, Math.max(0, idx + dir));
-      browserSelectedDemo = list[newIdx].path;
+      browserCursorPath = list[newIdx].path;
       renderDemoTable();
-      const row = document.querySelector(`#analyzer-demo-tbody tr[data-path="${CSS.escape(browserSelectedDemo)}"]`);
+      const row = document.querySelector(`#analyzer-demo-tbody tr[data-path="${CSS.escape(browserCursorPath)}"]`);
       row?.scrollIntoView({ block: 'nearest' });
-    } else if (e.key === 'Enter' && browserSelectedDemo) {
-      loadAnalyzerDemo(browserSelectedDemo);
-    } else if (e.key === 'Escape' && browserSelectedDemo) {
-      // Clears the row highlight/arrow-nav cursor only — it was never what
-      // loaded the currently-displayed demo (only Enter/click do that via
-      // loadAnalyzerDemo), so this can't lose or change anything shown. #28.
+    } else if (e.key === 'Enter') {
+      const target = browserCursorPath ?? browserSelectedDemo;
+      if (target) selectDemo(target);
+    } else if (e.key === 'Escape' && browserCursorPath) {
+      // Clears the arrow-nav cursor only — never what loaded the
+      // currently-displayed demo (only Enter/click do that via selectDemo),
+      // so this can't lose or change anything shown. #28.
       e.preventDefault();
-      browserSelectedDemo = null;
+      browserCursorPath = null;
       renderDemoTable();
     }
   });
