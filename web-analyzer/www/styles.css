@@ -1,0 +1,469 @@
+/* Subset of desktop-studio/src/styles.css — reset + :root tokens + only the
+   Demo Analyzer report-tab rules (no Explorer sidebar/browser styles, not
+   used in this single-file-drop build). Kept as a near-verbatim copy so the
+   ported report tabs render identically to the desktop app. */
+
+a, a:visited, a:hover, a:active {
+  color: inherit;
+  text-decoration: none;
+}
+
+button, input, select, textarea {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+input[type="checkbox"], input[type="radio"] {
+  appearance: auto;
+  -webkit-appearance: auto;
+  accent-color: var(--primary-accent);
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+}
+
+html {
+  line-height: 1.4;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 13px;
+  line-height: 1.4;
+  color: #d0d0d0;
+  background-color: #121212;
+
+  --bg-dark: #121212;
+  --bg-panel: #1e1e1e;
+  --bg-card: #252525;
+  --bg-input: #181818;
+  --border-color: #383838;
+  --border-accent: #555555;
+  --primary-accent: #2b5c8f;
+  --primary-hover: #3772b0;
+  --success-color: #388e3c;
+  --text-muted: #888888;
+}
+
+body {
+  min-height: 100vh;
+  width: 100%;
+  background: var(--bg-dark);
+  color: #d0d0d0;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 16px;
+  min-height: 100vh;
+}
+
+#app-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: 12px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+
+#app-header h1 {
+  font-size: 16px;
+  color: #fff;
+}
+
+#current-file {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+#dropzone {
+  border: 2px dashed var(--border-color);
+  border-radius: 4px;
+  padding: 24px;
+  text-align: center;
+  color: var(--text-muted);
+  cursor: pointer;
+  margin-bottom: 14px;
+  flex-shrink: 0;
+}
+
+#dropzone:hover, #dropzone.dragover {
+  border-color: var(--primary-accent);
+  color: #ccc;
+}
+
+.table-wrapper {
+  overflow-x: auto;
+  border: 1px solid var(--border-color);
+  border-radius: 2px;
+}
+
+.table-empty {
+  text-align: center;
+  color: var(--text-muted);
+  padding: 16px !important;
+}
+
+.flex-between {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.text-muted {
+  color: var(--text-muted);
+}
+
+/* ── Demo Analyzer report tabs ─────────────────────────────────────────────── */
+
+.analyzer-subtabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 6px;
+  margin-bottom: 10px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.analyzer-subtab-btn {
+  background: #222222;
+  color: #aaaaaa;
+  border: 1px solid var(--border-color);
+  border-radius: 2px;
+  padding: 4px 12px;
+  cursor: pointer;
+}
+
+.analyzer-subtab-btn.active {
+  background: var(--primary-accent);
+  color: #ffffff;
+  border-color: #4a82bd;
+}
+
+.analyzer-tab-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 2px;
+}
+
+.analyzer-empty {
+  color: var(--text-muted);
+  padding: 24px;
+  text-align: center;
+}
+
+.analyzer-heading {
+  font-size: 15px;
+  color: #fff;
+  margin-bottom: 10px;
+}
+
+.analyzer-section {
+  margin-bottom: 14px;
+}
+
+.analyzer-section-title {
+  font-size: 12px;
+  color: #ccc;
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 4px;
+  margin-bottom: 6px;
+}
+
+.analyzer-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 16px;
+}
+
+.analyzer-kv-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.analyzer-kv-table .kv-label {
+  color: var(--text-muted);
+  padding: 3px 10px 3px 0;
+  white-space: nowrap;
+  vertical-align: top;
+}
+
+.analyzer-kv-table .kv-value {
+  padding: 3px 0;
+  color: #eee;
+}
+
+.analyzer-kv-table thead th {
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border-color);
+  font-size: 11px;
+}
+
+.analyzer-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 12px;
+}
+
+.analyzer-table th {
+  background: #222222;
+  color: #aaaaaa;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border-color);
+  font-weight: 600;
+  position: sticky;
+  top: 0;
+}
+
+.analyzer-table td {
+  padding: 5px 8px;
+  border-bottom: 1px solid #282828;
+}
+
+.scoreboard-group-header td {
+  padding-top: 10px;
+  font-weight: 700;
+  border-bottom: 1px solid #333;
+}
+
+.scoreboard-spacer-row td {
+  padding: 2px;
+  border-bottom: none;
+}
+
+.scoreboard-player-row:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.analyzer-total-row td {
+  border-top: 1px solid var(--border-color);
+  font-weight: 600;
+  color: #ccc;
+}
+
+.analyzer-warning-banner {
+  background: rgba(251, 191, 36, 0.12);
+  border: 1px solid rgba(251, 191, 36, 0.4);
+  color: #fbbf24;
+  border-radius: 3px;
+  padding: 8px 12px;
+  font-size: 12px;
+  margin-bottom: 10px;
+}
+
+.analyzer-toolbar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.analyzer-hero-card {
+  border: 1.5px solid var(--border-color);
+  border-radius: 4px;
+  padding: 12px;
+  background: var(--bg-card);
+  margin-bottom: 12px;
+}
+
+.analyzer-hero-name {
+  font-size: 20px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.analyzer-hero-sub {
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  margin-top: 2px;
+}
+
+.analyzer-hero-links a {
+  color: #4a90e2;
+  text-decoration: underline;
+}
+
+.analyzer-hero-status {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-color);
+  font-size: 11px;
+  color: #ccc;
+}
+
+.analyzer-stat-cards {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.analyzer-stat-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  padding: 10px;
+}
+
+.stat-title {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.stat-value {
+  font-size: 20px;
+  font-weight: 700;
+  color: #fff;
+  margin-top: 4px;
+}
+
+.stat-badge {
+  font-size: 10.5px;
+  margin-top: 2px;
+}
+
+.analyzer-two-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.analyzer-progress {
+  display: inline-block;
+  width: 60px;
+  height: 6px;
+  background: #2a2a2a;
+  border-radius: 2px;
+  overflow: hidden;
+  vertical-align: middle;
+}
+
+.analyzer-progress-fill {
+  height: 100%;
+  background: var(--primary-accent);
+}
+
+.analyzer-progress-label {
+  font-size: 10.5px;
+  color: #999;
+  margin-left: 4px;
+}
+
+.killstreak-subrow td {
+  color: #999;
+  border-bottom: none;
+}
+
+.analyzer-collapsible {
+  margin-bottom: 10px;
+}
+
+.analyzer-collapsible summary {
+  cursor: pointer;
+  font-weight: 600;
+  padding: 6px 0;
+}
+
+.analyzer-timeline-legend {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+
+.analyzer-timeline-tooltip {
+  position: absolute;
+  pointer-events: none;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  padding: 4px 8px;
+  font-size: 11px;
+  white-space: nowrap;
+  z-index: 5;
+}
+
+.analyzer-weapon-filters {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+  font-size: 11px;
+}
+
+.weapon-filter-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.weapon-filter-toggle-all {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+}
+
+.weapon-filter-group label {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  white-space: nowrap;
+}
+
+.legend-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  margin-right: 5px;
+  vertical-align: middle;
+}
+
+.analyzer-chat-log {
+  max-height: 60vh;
+  overflow-y: auto;
+  background: #141414;
+  border: 1px solid var(--border-color);
+  border-radius: 2px;
+  padding: 6px 10px;
+}
+
+.analyzer-chat-row {
+  font-size: 12px;
+  padding: 2px 0;
+  line-height: 1.5;
+}
+
+.chat-timestamp {
+  color: #666;
+  font-family: monospace;
+  margin-right: 4px;
+}
