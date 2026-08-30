@@ -688,6 +688,8 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
   // Options fields above, just on Path Routing / Capture Output checkboxes.
   ['#config-add-condebug', '#config-auto-clear-logs', '#config-auto-clear-previews',
    '#config-auto-clear-temp-demos', '#config-save-local-patched',
+   '#config-notify-patching', '#config-notify-demo-loading', '#config-notify-captures-done',
+   '#config-notify-renders-done', '#config-notify-error',
    // A <select> fires `change`, not `input` — it belongs here rather than in
    // the list above, which is wired for text/number/checkbox inputs.
    '#config-capture-codec', '#config-capture-mode', '#config-obs-scene'].forEach(selector => {
@@ -728,7 +730,7 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
           const errorBody = STRINGS.CAPTURE.captureErrorToast(payload.status || STRINGS.CAPTURE.CAPTURE_ERROR_STATUS_DEFAULT);
           showToast(errorBody, "error");
           if (statusEl) statusEl.textContent = STRINGS.CAPTURE.captureErrorStatusText(payload.status || STRINGS.CAPTURE.CAPTURE_ERROR_TEXT_DEFAULT);
-          notify(STRINGS.NOTIFICATIONS.CAPTURES_ERROR_TITLE, errorBody);
+          notify('error', STRINGS.NOTIFICATIONS.CAPTURES_ERROR_TITLE, errorBody);
         } else if (payload.status === "Cancelled") {
           showToast(STRINGS.CAPTURE.BATCH_CANCELLED_TOAST, "info");
           if (progressBar) progressBar.style.width = '0%';
@@ -737,7 +739,7 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
           showToast(STRINGS.CAPTURE.BATCH_COMPLETED_TOAST, "success");
           if (progressBar) progressBar.style.width = '100%';
           if (statusEl) statusEl.textContent = STRINGS.CAPTURE.COMPLETED;
-          notify(STRINGS.NOTIFICATIONS.CAPTURES_DONE_TITLE, STRINGS.CAPTURE.BATCH_COMPLETED_TOAST);
+          notify('captures_done', STRINGS.NOTIFICATIONS.CAPTURES_DONE_TITLE, STRINGS.CAPTURE.BATCH_COMPLETED_TOAST);
         }
       }
     }).then(unlistenFn => {
@@ -757,6 +759,7 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
       if (payload.index === 1) clipsSoFar = 0;
       clipsSoFar += payload.clip_count || 0;
       notify(
+        'demo_loading',
         STRINGS.NOTIFICATIONS.demoLoadingTitle(payload.index, payload.total),
         STRINGS.NOTIFICATIONS.demoLoadingBody(payload.clip_count, clipsSoFar, payload.total_batch_clips)
       );
@@ -772,7 +775,7 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
   if (!unlistenPatchingStarted) {
     listen('capture_patching_started', (event) => {
       const total = (event.payload || {}).total || 0;
-      notify(STRINGS.NOTIFICATIONS.patchingStartedTitle(total), STRINGS.NOTIFICATIONS.PATCHING_STARTED_BODY);
+      notify('patching', STRINGS.NOTIFICATIONS.patchingStartedTitle(total), STRINGS.NOTIFICATIONS.PATCHING_STARTED_BODY);
     }).then(unlistenFn => {
       unlistenPatchingStarted = unlistenFn;
     }).catch(err => {
@@ -782,7 +785,7 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
   if (!unlistenPatchingFinished) {
     listen('capture_patching_finished', (event) => {
       const total = (event.payload || {}).total || 0;
-      notify(STRINGS.NOTIFICATIONS.PATCHING_FINISHED_TITLE, STRINGS.NOTIFICATIONS.patchingFinishedBody(total));
+      notify('patching', STRINGS.NOTIFICATIONS.PATCHING_FINISHED_TITLE, STRINGS.NOTIFICATIONS.patchingFinishedBody(total));
     }).then(unlistenFn => {
       unlistenPatchingFinished = unlistenFn;
     }).catch(err => {

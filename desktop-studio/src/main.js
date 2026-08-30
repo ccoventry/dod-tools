@@ -32,7 +32,7 @@ import { getCheckedDemoPaths, clearCheckedPaths, setCheckedDemoPaths, getVisible
 import { initErrorReporter } from './error_reporter.js';
 import { STRINGS } from './strings.js';
 import { applyStaticStrings } from './apply_strings.js';
-import { initOsNotifications } from './os_notifications.js';
+import { initOsNotifications, updateNotificationSettings } from './os_notifications.js';
 
 // Registered at module load, before DOMContentLoaded — so it's catching
 // from the earliest possible moment, not just once the app's own init
@@ -515,6 +515,15 @@ window.addEventListener("DOMContentLoaded", async () => {
     const autoClearPreviews = document.querySelector('#config-auto-clear-previews')?.checked || false;
     const autoClearTempDemos = document.querySelector('#config-auto-clear-temp-demos')?.checked || false;
 
+    // OS notification toggles (issue #98) — default on, matching decalFlush's
+    // `?? true` style above rather than `|| false`, which would silently
+    // disable them for anyone whose settings predate this field.
+    const notifyPatching = document.querySelector('#config-notify-patching')?.checked ?? true;
+    const notifyDemoLoading = document.querySelector('#config-notify-demo-loading')?.checked ?? true;
+    const notifyCapturesDone = document.querySelector('#config-notify-captures-done')?.checked ?? true;
+    const notifyRendersDone = document.querySelector('#config-notify-renders-done')?.checked ?? true;
+    const notifyError = document.querySelector('#config-notify-error')?.checked ?? true;
+
     const recordStartLead = parseFloat(document.querySelector('#config-record-start-lead')?.value) || 0.0;
     const recordStopTrail = parseFloat(document.querySelector('#config-record-stop-trail')?.value) || 0.0;
     const initialDelay = parseFloat(document.querySelector('#config-initial-delay')?.value) || 3.0;
@@ -555,6 +564,11 @@ window.addEventListener("DOMContentLoaded", async () => {
       auto_clear_logs: autoClearLogs,
       auto_clear_previews: autoClearPreviews,
       auto_clear_temp_demos: autoClearTempDemos,
+      notify_patching: notifyPatching,
+      notify_demo_loading: notifyDemoLoading,
+      notify_captures_done: notifyCapturesDone,
+      notify_renders_done: notifyRendersDone,
+      notify_error: notifyError,
       record_start_lead: recordStartLead,
       record_stop_trail: recordStopTrail,
       initial_delay: initialDelay,
@@ -570,6 +584,9 @@ window.addEventListener("DOMContentLoaded", async () => {
       render_export_dirs: renderExportDirs,
       studio_mode: studioMode
     };
+    // Reflects a just-flipped toggle immediately, rather than waiting on the
+    // save round-trip below to come back through a settings reload.
+    updateNotificationSettings(settingsPayload);
     try {
       await saveSettings(settingsPayload);
     } catch (err) {
@@ -581,6 +598,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   try {
     const settings = await getSettings();
     if (settings) {
+      updateNotificationSettings(settings);
       if (settings.hlae_path) {
         const inputEl = document.querySelector('#hlae-path-input');
         if (inputEl) inputEl.value = settings.hlae_path;
@@ -665,6 +683,16 @@ window.addEventListener("DOMContentLoaded", async () => {
       if (autoClearPreviewsEl) autoClearPreviewsEl.checked = !!settings.auto_clear_previews;
       const autoClearTempDemosEl = document.querySelector('#config-auto-clear-temp-demos');
       if (autoClearTempDemosEl) autoClearTempDemosEl.checked = !!settings.auto_clear_temp_demos;
+      const notifyPatchingEl = document.querySelector('#config-notify-patching');
+      if (notifyPatchingEl) notifyPatchingEl.checked = !!settings.notify_patching;
+      const notifyDemoLoadingEl = document.querySelector('#config-notify-demo-loading');
+      if (notifyDemoLoadingEl) notifyDemoLoadingEl.checked = !!settings.notify_demo_loading;
+      const notifyCapturesDoneEl = document.querySelector('#config-notify-captures-done');
+      if (notifyCapturesDoneEl) notifyCapturesDoneEl.checked = !!settings.notify_captures_done;
+      const notifyRendersDoneEl = document.querySelector('#config-notify-renders-done');
+      if (notifyRendersDoneEl) notifyRendersDoneEl.checked = !!settings.notify_renders_done;
+      const notifyErrorEl = document.querySelector('#config-notify-error');
+      if (notifyErrorEl) notifyErrorEl.checked = !!settings.notify_error;
       if (settings.record_start_lead) {
         const inputEl = document.querySelector('#config-record-start-lead');
         if (inputEl) inputEl.value = settings.record_start_lead;

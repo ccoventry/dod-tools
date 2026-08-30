@@ -303,6 +303,12 @@ export const STRINGS = {
     AUTO_CLEAR_PREVIEWS_LABEL: 'Auto-clear Previews',
     AUTO_CLEAR_TEMP_DEMOS_LABEL: 'Auto-clear Temp Demos',
     CLEAR_PREVIEWS_BUTTON: 'Clear Previews...',
+    NOTIFICATIONS_LABEL: 'Notifications:',
+    NOTIFY_PATCHING_LABEL: 'Patching Started/Complete',
+    NOTIFY_DEMO_LOADING_LABEL: 'Demo Loading (per demo)',
+    NOTIFY_CAPTURES_DONE_LABEL: 'Captures Done',
+    NOTIFY_RENDERS_DONE_LABEL: 'Renders Done',
+    NOTIFY_ERROR_LABEL: 'Errors',
     INIT_COMMANDS_LABEL: 'Initial Commands (run once at demo load):',
     ADD_INIT_COMMAND_BUTTON: '+ Add Initial Command',
     // Both lists on this tab are custom commands; only one is scheduled, so

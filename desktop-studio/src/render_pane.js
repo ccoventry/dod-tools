@@ -426,8 +426,9 @@ export function initRenderUI(getRenderFolders, getExportDirs, onSettingsChange, 
       const summary = summarizeBatchOutcome(finished, failed, cancelled);
       showToast(summary, level);
       if (level !== 'info') {
+        const kind = level === 'error' ? 'error' : 'renders_done';
         const title = level === 'error' ? STRINGS.NOTIFICATIONS.RENDERS_ERROR_TITLE : STRINGS.NOTIFICATIONS.RENDERS_DONE_TITLE;
-        notify(title, summary);
+        notify(kind, title, summary);
       }
     }
     if (renderStatusEl) renderStatusEl.textContent = STRINGS.RENDER.STATUS_FINISHED;

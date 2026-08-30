@@ -372,6 +372,31 @@
                   <button id="open-clear-previews-btn" data-str="CAPTURE_CONFIG.CLEAR_PREVIEWS_BUTTON">Clear Previews...</button>
                 </div>
               </div>
+              <!-- Windows toast notifications (issue #98) — silent by default,
+                   each stage independently switchable. -->
+              <div class="inline-controls">
+                <strong data-str="CAPTURE_CONFIG.NOTIFICATIONS_LABEL">Notifications:</strong>
+                <div class="control-group">
+                  <input type="checkbox" id="config-notify-patching" checked />
+                  <label for="config-notify-patching" data-str="CAPTURE_CONFIG.NOTIFY_PATCHING_LABEL">Patching Started/Complete</label>
+                </div>
+                <div class="control-group">
+                  <input type="checkbox" id="config-notify-demo-loading" checked />
+                  <label for="config-notify-demo-loading" data-str="CAPTURE_CONFIG.NOTIFY_DEMO_LOADING_LABEL">Demo Loading (per demo)</label>
+                </div>
+                <div class="control-group">
+                  <input type="checkbox" id="config-notify-captures-done" checked />
+                  <label for="config-notify-captures-done" data-str="CAPTURE_CONFIG.NOTIFY_CAPTURES_DONE_LABEL">Captures Done</label>
+                </div>
+                <div class="control-group">
+                  <input type="checkbox" id="config-notify-renders-done" checked />
+                  <label for="config-notify-renders-done" data-str="CAPTURE_CONFIG.NOTIFY_RENDERS_DONE_LABEL">Renders Done</label>
+                </div>
+                <div class="control-group">
+                  <input type="checkbox" id="config-notify-error" checked />
+                  <label for="config-notify-error" data-str="CAPTURE_CONFIG.NOTIFY_ERROR_LABEL">Errors</label>
+                </div>
+              </div>
             </div>
 
             <!-- Tab Content: Destinations — where captures are written.
