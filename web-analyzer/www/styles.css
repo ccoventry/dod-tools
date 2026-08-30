@@ -74,10 +74,32 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding-bottom: 12px;
-  margin-bottom: 12px;
-  border-bottom: 1px solid var(--border-color);
+  background: #181818;
+  border: 1px solid var(--border-color);
+  border-radius: 2px;
+  padding: 10px 14px;
+  margin-bottom: 14px;
   flex-shrink: 0;
+}
+
+/* egui Panel & Cards Styling — matches desktop-studio's .egui-panel/.egui-card */
+.egui-panel, .egui-card {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-color);
+  border-radius: 2px;
+  padding: 10px;
+}
+
+.panel-header {
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 6px;
+}
+
+.panel-header h2, .panel-header h3 {
+  font-size: 14px;
+  font-weight: 600;
+  color: #ffffff;
 }
 
 #app-header h1 {
@@ -128,6 +150,52 @@ body {
 
 .text-muted {
   color: var(--text-muted);
+}
+
+button {
+  background: #2a2a2a;
+  color: #dddddd;
+  border: 1px solid var(--border-color);
+  border-radius: 2px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  background: #383838;
+  border-color: var(--border-accent);
+  color: #ffffff;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+input[type="text"], select {
+  background: var(--bg-input);
+  color: #ffffff;
+  border: 1px solid var(--border-color);
+  border-radius: 2px;
+  padding: 4px 8px;
+  font-size: 12px;
+  outline: none;
+}
+
+input[type="text"]:focus, select:focus {
+  border-color: var(--primary-accent);
+}
+
+/* Custom dropdown chevron — the global `appearance: none` reset above strips
+   the native arrow with nothing to replace it. */
+select {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'><path d='M1 1l5 5 5-5' fill='none' stroke='%23aaaaaa' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  background-size: 10px 6px;
+  padding-right: 26px;
+  cursor: pointer;
 }
 
 /* ── Demo Analyzer report tabs ─────────────────────────────────────────────── */

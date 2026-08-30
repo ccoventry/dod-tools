@@ -16,17 +16,23 @@
     <div id="dropzone">Drop a .dem file here, or click to browse</div>
     <input type="file" id="file-input" accept=".dem" style="display:none;" />
 
-    <div class="analyzer-subtabs">
-      <button type="button" class="analyzer-subtab-btn active" data-subtab="summary">Summary</button>
-      <button type="button" class="analyzer-subtab-btn" data-subtab="scoreboard">Scoreboard</button>
-      <button type="button" class="analyzer-subtab-btn" data-subtab="player-details">Player Details</button>
-      <button type="button" class="analyzer-subtab-btn" data-subtab="team-details">Team Details</button>
-      <button type="button" class="analyzer-subtab-btn" data-subtab="timeline">Timeline</button>
-      <button type="button" class="analyzer-subtab-btn" data-subtab="rounds">Rounds</button>
-      <button type="button" class="analyzer-subtab-btn" data-subtab="chat">Chat Log</button>
-    </div>
+    <div class="egui-panel analyzer-report-panel">
+      <div class="panel-header">
+        <h3>Demo Analyzer</h3>
+      </div>
 
-    <div id="analyzer-tab-content" class="analyzer-tab-content"></div>
+      <div class="analyzer-subtabs">
+        <button type="button" class="analyzer-subtab-btn active" data-subtab="summary">Summary</button>
+        <button type="button" class="analyzer-subtab-btn" data-subtab="scoreboard">Scoreboard</button>
+        <button type="button" class="analyzer-subtab-btn" data-subtab="player-details">Player Details</button>
+        <button type="button" class="analyzer-subtab-btn" data-subtab="team-details">Team Details</button>
+        <button type="button" class="analyzer-subtab-btn" data-subtab="timeline">Timeline</button>
+        <button type="button" class="analyzer-subtab-btn" data-subtab="rounds">Rounds</button>
+        <button type="button" class="analyzer-subtab-btn" data-subtab="chat">Chat Log</button>
+      </div>
+
+      <div id="analyzer-tab-content" class="analyzer-tab-content"></div>
+    </div>
   </div>
 
   <script type="module" src="./main.js"></script>
