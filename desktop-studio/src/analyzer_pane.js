@@ -80,14 +80,12 @@ let browserSelectedDemo = null;
 // split so arrowing through the list previews a lightweight outline instead
 // of moving the same heavy "selected" fill Enter/click commits. #99.
 let browserCursorPath = null;
-// Explorer Tree arrow-key cursor — same cursor/commit split as
-// browserCursorPath above, but for the tree: Up/Down move this, Enter
-// commits via setCurrentDir. 'THIS_PC' is a sentinel for the root node,
-// which has no real path. #99.
-let treeCursorPath = null;
 // coldemoplayer-style focus scoping: click into a list and arrow keys
 // apply only to it. Defaults to 'demos' so arrow-nav keeps working
-// out-of-the-box exactly like before this existed. #99.
+// out-of-the-box exactly like before this existed. Only the Demo Browser
+// still uses a cursor/commit split (analyze_demo_full is a real parse worth
+// gating) — the Explorer Tree is instant-select, since browse_directory is
+// cheap. #99.
 let focusedList = 'demos';
 let browserError = null;
 let demoFilterQuery = '';
@@ -359,7 +357,6 @@ function treeRowHtml(entry) {
   const { path, name, demo_count } = entry;
   const isOpen = openTreeNodes.has(path);
   const isSelected = path === currentDir;
-  const isCursor = path === treeCursorPath;
   const showCount = getScanFoldersForDemos() && demo_count > 0;
   const icon = showCount ? '📂' : '📁';
   const label = showCount ? `${name} (${demo_count})` : name;
@@ -378,7 +375,7 @@ function treeRowHtml(entry) {
   }
 
   return `<div class="tree-node">
-    <div class="tree-row ${isSelected ? 'selected' : ''} ${isCursor ? 'keyboard-selected' : ''}">
+    <div class="tree-row ${isSelected ? 'selected' : ''}">
       <button class="tree-toggle" data-path="${esc(path)}">${arrow}</button>
       <span class="tree-label" data-path="${esc(path)}" title="${esc(path)}">${icon} ${esc(label)}</span>
     </div>
@@ -386,11 +383,12 @@ function treeRowHtml(entry) {
   </div>`;
 }
 
-// Flattens the currently-*visible* tree (This PC + open nodes only, in the
-// same order treeRowHtml renders them) so Up/Down can move the cursor
-// through it without querying the DOM. #99.
+// Flattens the currently-*visible*, navigable tree rows (open nodes only, in
+// the same order treeRowHtml renders them) so Up/Down can move the selection
+// through it without querying the DOM. This PC itself is excluded — it isn't
+// a real folder setCurrentDir can navigate to. #99.
 function flattenVisibleTreeRows() {
-  const rows = [{ path: 'THIS_PC' }];
+  const rows = [];
   if (thisPcOpen) {
     const walk = (entries) => {
       for (const entry of entries) {
@@ -406,11 +404,15 @@ function flattenVisibleTreeRows() {
   return rows;
 }
 
-// A drive root (e.g. "C:\") has no parent folder in the tree — its parent
-// is the This PC node. #99.
+// A drive root (e.g. "C:\") has no real parent folder to navigate to. #99.
+// parentDirOf slices off everything after the last separator, which for a
+// folder directly under a drive root yields a bare "C:" — one character
+// short of how driveRoots/dirCache actually key the root ("C:\\", see
+// native_roots() in dir_browser.rs) — so normalize that one case back to it.
 function treeParentOf(path) {
-  if (/^[A-Za-z]:\\?$/.test(path)) return 'THIS_PC';
-  return parentDirOf(path) || 'THIS_PC';
+  if (/^[A-Za-z]:\\?$/.test(path)) return null;
+  const parent = parentDirOf(path);
+  return parent && /^[A-Za-z]:$/.test(parent) ? `${parent}\\` : parent;
 }
 
 // Native Explorer Tree: drives -> subfolders, lazily loaded and cached per
@@ -429,9 +431,8 @@ async function renderExplorerTree() {
   }
 
   const thisPcArrow = thisPcOpen ? '⏷' : '⏵';
-  const thisPcCursor = treeCursorPath === 'THIS_PC' ? 'keyboard-selected' : '';
   container.innerHTML = `<div class="tree-node">
-    <div class="tree-row ${thisPcCursor}">
+    <div class="tree-row">
       <button class="tree-toggle" id="tree-this-pc-toggle">${thisPcArrow}</button>
       <span class="tree-label">${STRINGS.ANALYZER.THIS_PC_LABEL}</span>
     </div>
@@ -456,7 +457,7 @@ async function renderExplorerTree() {
 }
 
 // Shared by the toggle-button click handler above and the keyboard Right
-// key (treeCursorRight) so both open a node identically. #99.
+// key (treeRight) so both open a node identically. #99.
 async function openTreeNode(path) {
   if (openTreeNodes.has(path)) return;
   openTreeNodes.add(path);
@@ -472,7 +473,7 @@ async function openTreeNode(path) {
 }
 
 // Shared by the toggle-button click handler and the keyboard Left key
-// (treeCursorLeft). Key mechanic: collapsing a node you're currently inside
+// (treeLeft). Key mechanic: collapsing a node you're currently inside
 // navigates you up to it, rather than leaving you on a hidden selection —
 // matches dev/Windows Explorer both (tree.rs:373-383). #99.
 async function closeTreeNode(path) {
@@ -485,68 +486,50 @@ async function closeTreeNode(path) {
   renderExplorerTree();
 }
 
-function scrollTreeCursorIntoView() {
+function scrollTreeRowIntoView(path) {
   const container = document.querySelector('#analyzer-tree');
-  if (!container) return;
-  const selector = treeCursorPath === 'THIS_PC' ? '#tree-this-pc-toggle' : `.tree-label[data-path="${CSS.escape(treeCursorPath)}"]`;
-  container.querySelector(selector)?.closest('.tree-row')?.scrollIntoView({ block: 'nearest' });
+  if (!container || !path) return;
+  container.querySelector(`.tree-label[data-path="${CSS.escape(path)}"]`)?.closest('.tree-row')?.scrollIntoView({ block: 'nearest' });
 }
 
-function moveTreeCursor(dir) {
+// Instant select, no separate cursor: browse_directory is a cheap
+// non-recursive read_dir (no demo parsing), so there's no cost to gate
+// behind a commit step, unlike the Demo Browser's analyze_demo_full. #99.
+function moveTreeSelection(dir) {
   const rows = flattenVisibleTreeRows();
   if (rows.length === 0) return;
-  const curPath = treeCursorPath ?? currentDir ?? 'THIS_PC';
-  const idx = rows.findIndex((r) => r.path === curPath);
+  const idx = rows.findIndex((r) => r.path === currentDir);
   const newIdx = idx === -1 ? (dir > 0 ? 0 : rows.length - 1) : Math.min(rows.length - 1, Math.max(0, idx + dir));
-  treeCursorPath = rows[newIdx].path;
-  renderExplorerTree();
-  scrollTreeCursorIntoView();
+  const target = rows[newIdx].path;
+  if (target === currentDir) return;
+  setCurrentDir(target).then(() => scrollTreeRowIntoView(target));
 }
 
-// Right: instant, no commit step (pure UI-tree state, no IPC cost until the
-// node is actually opened) — expands the cursor's node, or if already open,
-// steps the cursor into its first child. #99.
-function treeCursorRight() {
-  const path = treeCursorPath ?? currentDir ?? 'THIS_PC';
-  if (path === 'THIS_PC') {
-    if (!thisPcOpen) { thisPcOpen = true; renderExplorerTree(); }
+// Right: expands the selected folder if closed, or steps the selection into
+// its first child if already open — matches Windows Explorer's tree view. #99.
+function treeRight() {
+  if (!currentDir) return;
+  if (!openTreeNodes.has(currentDir)) {
+    openTreeNode(currentDir);
     return;
   }
-  if (!openTreeNodes.has(path)) {
-    openTreeNode(path);
-    return;
-  }
-  const listing = dirCache.get(path);
+  const listing = dirCache.get(currentDir);
   if (listing && listing.subdirs.length > 0) {
-    treeCursorPath = listing.subdirs[0].path;
-    renderExplorerTree();
-    scrollTreeCursorIntoView();
+    const target = listing.subdirs[0].path;
+    setCurrentDir(target).then(() => scrollTreeRowIntoView(target));
   }
 }
 
-// Left: collapses the cursor's node if open, else moves the cursor up to
-// the parent — same instant/no-commit reasoning as Right. #99.
-function treeCursorLeft() {
-  const path = treeCursorPath ?? currentDir ?? 'THIS_PC';
-  if (path === 'THIS_PC') {
-    if (thisPcOpen) { thisPcOpen = false; renderExplorerTree(); }
+// Left: collapses the selected folder if open, else steps the selection up
+// to its parent. #99.
+function treeLeft() {
+  if (!currentDir) return;
+  if (openTreeNodes.has(currentDir)) {
+    closeTreeNode(currentDir);
     return;
   }
-  if (openTreeNodes.has(path)) {
-    closeTreeNode(path);
-    return;
-  }
-  treeCursorPath = treeParentOf(path);
-  renderExplorerTree();
-  scrollTreeCursorIntoView();
-}
-
-// Enter commits the tree cursor — calls browseDirectory over IPC via
-// setCurrentDir, same reasoning as the Demo Browser's commit step. #99.
-function treeCursorEnter() {
-  const path = treeCursorPath ?? currentDir;
-  if (!path || path === 'THIS_PC') return;
-  setCurrentDir(path);
+  const parent = treeParentOf(currentDir);
+  if (parent) setCurrentDir(parent).then(() => scrollTreeRowIntoView(parent));
 }
 
 async function forgetInvalidFolder(path) {
@@ -560,20 +543,17 @@ async function forgetInvalidFolder(path) {
 // (from a tree click *or* a Quick Links click) is what makes the tree
 // auto-expand down to the newly selected folder (tree.rs:358-368).
 async function setCurrentDir(path) {
-  let listing;
-  try {
-    listing = await browseDirectory(path);
-  } catch (err) {
-    browserError = String(err);
-    await forgetInvalidFolder(path);
-    renderQuickLinksSection();
-    renderDemoTable();
-    return;
-  }
-
-  dirCache.set(path, listing);
+  // currentDir (and the tree's ancestor-open state) update unconditionally,
+  // even when the folder below turns out to be unreadable — an inaccessible
+  // folder (permission denied, etc.) still exists and is still a real place
+  // in the tree, it just has no demos to list. Previously this only ran on
+  // success, so navigating onto a blocked folder left currentDir pointing at
+  // whatever came before it — every Up/Down/Left/Right computed "next from
+  // currentDir" landed back on the same blocked folder forever, arrow-key
+  // navigation couldn't move past it in either direction. #99.
   currentDir = path;
-  browserError = null;
+  browserSelectedDemo = null;
+  browserCursorPath = null;
 
   const ancestors = ancestorChain(path);
   ancestors.slice(0, -1).forEach((a) => openTreeNodes.add(a));
@@ -583,10 +563,22 @@ async function setCurrentDir(path) {
     }
   }));
 
+  let listing;
+  try {
+    listing = await browseDirectory(path);
+  } catch (err) {
+    browserError = String(err);
+    currentFolderDemos = [];
+    await forgetInvalidFolder(path);
+    renderQuickLinksSection();
+    await renderExplorerTree();
+    renderDemoTable();
+    return;
+  }
+
+  dirCache.set(path, listing);
+  browserError = null;
   currentFolderDemos = listing.demos;
-  browserSelectedDemo = null;
-  browserCursorPath = null;
-  treeCursorPath = null;
 
   renderQuickLinksSection();
   await renderExplorerTree();
@@ -740,16 +732,10 @@ function handleDemoTableKeydown(e) {
 }
 
 function handleTreeKeydown(e) {
-  if (e.key === 'ArrowDown') { e.preventDefault(); moveTreeCursor(1); }
-  else if (e.key === 'ArrowUp') { e.preventDefault(); moveTreeCursor(-1); }
-  else if (e.key === 'ArrowRight') { e.preventDefault(); treeCursorRight(); }
-  else if (e.key === 'ArrowLeft') { e.preventDefault(); treeCursorLeft(); }
-  else if (e.key === 'Enter') { treeCursorEnter(); }
-  else if (e.key === 'Escape' && treeCursorPath) {
-    e.preventDefault();
-    treeCursorPath = null;
-    renderExplorerTree();
-  }
+  if (e.key === 'ArrowDown') { e.preventDefault(); moveTreeSelection(1); }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); moveTreeSelection(-1); }
+  else if (e.key === 'ArrowRight') { e.preventDefault(); treeRight(); }
+  else if (e.key === 'ArrowLeft') { e.preventDefault(); treeLeft(); }
 }
 
 // Single global handler, dispatched by focusedList (coldemoplayer-style:
@@ -773,7 +759,6 @@ function initAnalyzerBrowser() {
       dirCache.clear();
       driveRoots = [];
       quickLinkCountCache.clear();
-      treeCursorPath = null;
       triggerLocalFoldersScan(true);
       renderExplorerTree();
       if (currentDir) setCurrentDir(currentDir);

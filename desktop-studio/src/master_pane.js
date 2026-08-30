@@ -106,52 +106,24 @@ export function initMasterPane(onDeleteDemo, onRequestTrackedDeleteConfirm) {
   }
 
   window.addEventListener('keydown', (e) => {
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
     const activeTab = document.querySelector('.nav-tab-btn.active')?.dataset.nav;
     if (activeTab !== 'workspace') return;
 
     const rows = Array.from(document.querySelectorAll('#master-demo-table-body tr'));
     if (!rows.length || rows[0].querySelector('.table-empty')) return;
 
-    // No cursor yet — start from wherever the actual selection already is
-    // (table-row-selected), not always row 0. Otherwise ArrowUp from a
-    // selected row later in the list is a no-op (currentIndex stays -1, and
-    // -1 > 0 is false) and ArrowDown jumps back to the top instead of moving
-    // one below the current selection.
-    let currentIndex = rows.findIndex(r => r.classList.contains('keyboard-selected'));
-    if (currentIndex === -1) {
-      currentIndex = rows.findIndex(r => r.classList.contains('table-row-selected'));
-    }
+    // Instant select, no separate cursor: selecting a row here just wires up
+    // currentOnSelectDemo from an already-in-memory `demo` object (no IPC),
+    // so there's no cost to gate behind a commit step. #99.
+    const currentIndex = rows.findIndex(r => r.classList.contains('table-row-selected'));
+    const dir = e.key === 'ArrowDown' ? 1 : -1;
+    const newIndex = currentIndex === -1 ? 0 : Math.min(rows.length - 1, Math.max(0, currentIndex + dir));
+    if (newIndex === currentIndex) return;
 
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      if (currentIndex < rows.length - 1) {
-        if (currentIndex >= 0) rows[currentIndex].classList.remove('keyboard-selected');
-        currentIndex++;
-        rows[currentIndex].classList.add('keyboard-selected');
-        rows[currentIndex].scrollIntoView({ block: 'nearest' });
-      }
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      if (currentIndex > 0) {
-        rows[currentIndex].classList.remove('keyboard-selected');
-        currentIndex--;
-        rows[currentIndex].classList.add('keyboard-selected');
-        rows[currentIndex].scrollIntoView({ block: 'nearest' });
-      }
-    } else if (e.key === 'Enter') {
-      if (currentIndex >= 0 && currentIndex < rows.length) {
-        e.preventDefault();
-        rows[currentIndex].click();
-      }
-    } else if (e.key === 'Escape') {
-      // Clears the keyboard-nav ring/cursor only — the actual selected demo
-      // (table-row-selected, driving Highlight Details) is untouched, same
-      // as arrow-key movement never committing anything until Enter. See #28.
-      if (currentIndex >= 0) {
-        e.preventDefault();
-        rows[currentIndex].classList.remove('keyboard-selected');
-      }
-    }
+    e.preventDefault();
+    rows[newIndex].click();
+    rows[newIndex].scrollIntoView({ block: 'nearest' });
   });
 }
 
