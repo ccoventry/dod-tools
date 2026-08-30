@@ -947,4 +947,15 @@ export const STRINGS = {
     VIEW_LOGS_BUTTON: 'View Logs',
     VIEW_LOGS_TITLE: "Open today's activity log in Explorer",
   },
+
+  // ── OS Toast Notifications (issue #98) ──────────────────────────────────
+  // Titles/bodies for os_notifications.js's notify() calls. Bodies reuse the
+  // existing CAPTURE/RENDER in-app-toast strings where the wording already
+  // fits, rather than duplicating near-identical copy.
+  NOTIFICATIONS: {
+    CAPTURES_DONE_TITLE: 'Captures complete',
+    CAPTURES_ERROR_TITLE: 'Capture error',
+    RENDERS_DONE_TITLE: 'Renders complete',
+    RENDERS_ERROR_TITLE: 'Render errors',
+  },
 };

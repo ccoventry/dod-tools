@@ -8,6 +8,7 @@ import { refreshCfgWarnings } from './cfg_warnings.js';
 import { refreshRollFloors } from './roll_floors.js';
 import { streakUid, recordTake } from './take_index.js';
 import { STRINGS } from './strings.js';
+import { notify } from './os_notifications.js';
 
 let unlistenCaptureStatus = null;
 // Tracks whether a batch is actively running so refreshLaunchGuard() never
@@ -721,8 +722,10 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
         if (currentOnBatchFinished) currentOnBatchFinished();
 
         if (payload.error) {
-          showToast(STRINGS.CAPTURE.captureErrorToast(payload.status || STRINGS.CAPTURE.CAPTURE_ERROR_STATUS_DEFAULT), "error");
+          const errorBody = STRINGS.CAPTURE.captureErrorToast(payload.status || STRINGS.CAPTURE.CAPTURE_ERROR_STATUS_DEFAULT);
+          showToast(errorBody, "error");
           if (statusEl) statusEl.textContent = STRINGS.CAPTURE.captureErrorStatusText(payload.status || STRINGS.CAPTURE.CAPTURE_ERROR_TEXT_DEFAULT);
+          notify(STRINGS.NOTIFICATIONS.CAPTURES_ERROR_TITLE, errorBody);
         } else if (payload.status === "Cancelled") {
           showToast(STRINGS.CAPTURE.BATCH_CANCELLED_TOAST, "info");
           if (progressBar) progressBar.style.width = '0%';
@@ -731,6 +734,7 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
           showToast(STRINGS.CAPTURE.BATCH_COMPLETED_TOAST, "success");
           if (progressBar) progressBar.style.width = '100%';
           if (statusEl) statusEl.textContent = STRINGS.CAPTURE.COMPLETED;
+          notify(STRINGS.NOTIFICATIONS.CAPTURES_DONE_TITLE, STRINGS.CAPTURE.BATCH_COMPLETED_TOAST);
         }
       }
     }).then(unlistenFn => {

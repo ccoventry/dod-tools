@@ -15,6 +15,7 @@ import {
 import { showToast } from './toast.js';
 import { streakUid, resolveTake } from './take_index.js';
 import { STRINGS } from './strings.js';
+import { notify } from './os_notifications.js';
 
 let jobs = []; // RenderJobView[] — latest snapshot from 'render_jobs_snapshot'
 
@@ -422,7 +423,12 @@ export function initRenderUI(getRenderFolders, getExportDirs, onSettingsChange, 
       // a deliberate partial cancel where the rest rendered is a success, not
       // an "info" event. Only a real failure is an error.
       const level = failed > 0 ? 'error' : (finished > 0 ? 'success' : 'info');
-      showToast(summarizeBatchOutcome(finished, failed, cancelled), level);
+      const summary = summarizeBatchOutcome(finished, failed, cancelled);
+      showToast(summary, level);
+      if (level !== 'info') {
+        const title = level === 'error' ? STRINGS.NOTIFICATIONS.RENDERS_ERROR_TITLE : STRINGS.NOTIFICATIONS.RENDERS_DONE_TITLE;
+        notify(title, summary);
+      }
     }
     if (renderStatusEl) renderStatusEl.textContent = STRINGS.RENDER.STATUS_FINISHED;
   });
