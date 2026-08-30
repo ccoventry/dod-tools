@@ -112,8 +112,16 @@ export function initMasterPane(onDeleteDemo, onRequestTrackedDeleteConfirm) {
     const rows = Array.from(document.querySelectorAll('#master-demo-table-body tr'));
     if (!rows.length || rows[0].querySelector('.table-empty')) return;
 
+    // No cursor yet — start from wherever the actual selection already is
+    // (table-row-selected), not always row 0. Otherwise ArrowUp from a
+    // selected row later in the list is a no-op (currentIndex stays -1, and
+    // -1 > 0 is false) and ArrowDown jumps back to the top instead of moving
+    // one below the current selection.
     let currentIndex = rows.findIndex(r => r.classList.contains('keyboard-selected'));
-    
+    if (currentIndex === -1) {
+      currentIndex = rows.findIndex(r => r.classList.contains('table-row-selected'));
+    }
+
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       if (currentIndex < rows.length - 1) {
