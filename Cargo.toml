@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["analysis", "dod", "native", "hl-demo-auditor", "benchmark", "desktop-studio/src-tauri"]
+members = ["analysis", "dod", "native", "hl-demo-auditor", "benchmark", "desktop-studio/src-tauri", "web-analyzer"]
 
 [workspace.package]
 edition = "2024"

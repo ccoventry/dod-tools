@@ -1,6 +1,9 @@
 # === Cargo / Rust ===
 /target/
 
+# === web-analyzer: wasm-bindgen output (generated at build time) ===
+web-analyzer/www/pkg/
+
 # === Temporary Debug / Scratch Files ===
 scratch/
 !scratch/debug.rs
