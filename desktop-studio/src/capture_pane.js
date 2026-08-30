@@ -671,7 +671,11 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
     const el = document.querySelector(selector);
     if (el) el.addEventListener('input', () => { refreshLaunchGuard(); notifySettingsChange(); });
   });
-  ['#config-initial-delay'].forEach(selector => {
+  // Same missing-wiring bug as the rest of this function, just on the OBS
+  // connection fields and the capture-mode selector — all three read at
+  // capture/save time but never saved on their own change, so edits looked
+  // like they took but silently reverted on the next launch/refresh.
+  ['#config-initial-delay', '#config-obs-host', '#config-obs-port', '#config-obs-password'].forEach(selector => {
     const el = document.querySelector(selector);
     if (el) el.addEventListener('input', () => notifySettingsChange());
   });
@@ -682,7 +686,7 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
    '#config-auto-clear-temp-demos', '#config-save-local-patched',
    // A <select> fires `change`, not `input` — it belongs here rather than in
    // the list above, which is wired for text/number/checkbox inputs.
-   '#config-capture-codec'].forEach(selector => {
+   '#config-capture-codec', '#config-capture-mode', '#config-obs-scene'].forEach(selector => {
     const el = document.querySelector(selector);
     if (el) el.addEventListener('change', () => notifySettingsChange());
   });
