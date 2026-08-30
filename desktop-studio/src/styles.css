@@ -1393,7 +1393,7 @@ button.primary-btn:hover:not(:disabled) {
 tr.keyboard-selected {
   outline: 1px solid #4a90e2;
   outline-offset: -1px;
-  background-color: rgba(74, 144, 226, 0.1) !important;
+  background-color: transparent !important;
 }
 
 /* Per-path problems in Path Routing. A quiet line under the row that caused it,
