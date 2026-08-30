@@ -957,6 +957,10 @@ export const STRINGS = {
     CAPTURES_ERROR_TITLE: 'Capture error',
     RENDERS_DONE_TITLE: 'Renders complete',
     RENDERS_ERROR_TITLE: 'Render errors',
+    patchingStartedTitle: (total) => `Patching ${total} demo${total === 1 ? '' : 's'}`,
+    PATCHING_STARTED_BODY: 'Preparing demos for capture…',
+    PATCHING_FINISHED_TITLE: 'Patching complete',
+    patchingFinishedBody: (total) => `${total} demo${total === 1 ? '' : 's'} ready — starting capture`,
     demoLoadingTitle: (index, total) => `Capturing demo ${index} of ${total}`,
     demoLoadingBody: (clipCount, clipsSoFar, totalBatchClips) => {
       const clipWord = clipCount === 1 ? 'clip' : 'clips';

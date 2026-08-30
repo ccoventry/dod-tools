@@ -746,6 +746,13 @@ pub async fn start_capture_batch_impl(
         // already produced — cheap, and lets the demo-loading notification
         // show "X of Y clips total" without any per-demo lookback.
         let total_batch_clips: u32 = patch_jobs.iter().map(|j| j.blocks.len() as u32).sum();
+        // One start + one end notification for the whole patching phase, not
+        // per-demo like capture_demo_loading -- decal clearing means patching
+        // is no longer instant, but a toast per demo patched would still be
+        // noise (see issue #98 discussion).
+        let _ = app_handle_clone.emit("capture_patching_started", serde_json::json!({
+            "total": total_patch_jobs,
+        }));
         for (idx, job) in patch_jobs.iter().enumerate() {
             if cancel_token_arc.load(std::sync::atomic::Ordering::Relaxed) {
                 let mut running = is_running_arc.lock().unwrap_or_else(|p| p.into_inner());
@@ -786,6 +793,10 @@ pub async fn start_capture_batch_impl(
                 return;
             }
         }
+
+        let _ = app_handle_clone.emit("capture_patching_finished", serde_json::json!({
+            "total": total_patch_jobs,
+        }));
 
         let capture_jobs: Vec<CaptureJob> = patch_jobs
             .into_iter()

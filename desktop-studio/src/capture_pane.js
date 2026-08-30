@@ -12,6 +12,8 @@ import { notify } from './os_notifications.js';
 
 let unlistenCaptureStatus = null;
 let unlistenDemoLoading = null;
+let unlistenPatchingStarted = null;
+let unlistenPatchingFinished = null;
 // Tracks whether a batch is actively running so refreshLaunchGuard() never
 // re-enables Start Capture out from under the capture_status "running" lock.
 let capturingInFlight = false;
@@ -762,6 +764,29 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
       unlistenDemoLoading = unlistenFn;
     }).catch(err => {
       console.error("Failed to register capture_demo_loading listener:", err);
+    });
+  }
+
+  // Patching phase start/end -- one toast each, not per-demo (see
+  // capture_demo_loading above for the per-demo one).
+  if (!unlistenPatchingStarted) {
+    listen('capture_patching_started', (event) => {
+      const total = (event.payload || {}).total || 0;
+      notify(STRINGS.NOTIFICATIONS.patchingStartedTitle(total), STRINGS.NOTIFICATIONS.PATCHING_STARTED_BODY);
+    }).then(unlistenFn => {
+      unlistenPatchingStarted = unlistenFn;
+    }).catch(err => {
+      console.error("Failed to register capture_patching_started listener:", err);
+    });
+  }
+  if (!unlistenPatchingFinished) {
+    listen('capture_patching_finished', (event) => {
+      const total = (event.payload || {}).total || 0;
+      notify(STRINGS.NOTIFICATIONS.PATCHING_FINISHED_TITLE, STRINGS.NOTIFICATIONS.patchingFinishedBody(total));
+    }).then(unlistenFn => {
+      unlistenPatchingFinished = unlistenFn;
+    }).catch(err => {
+      console.error("Failed to register capture_patching_finished listener:", err);
     });
   }
 
