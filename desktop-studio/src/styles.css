@@ -1281,6 +1281,13 @@ button.primary-btn:hover:not(:disabled) {
   color: #ffffff;
 }
 
+/* Arrow-key cursor — border only, no fill, matching tr.keyboard-selected. #99. */
+.tree-row.keyboard-selected .tree-label {
+  outline: 1px solid #4a90e2;
+  outline-offset: -1px;
+  background-color: transparent !important;
+}
+
 .tree-toggle {
   background: none;
   border: none;

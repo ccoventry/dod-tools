@@ -80,6 +80,15 @@ let browserSelectedDemo = null;
 // split so arrowing through the list previews a lightweight outline instead
 // of moving the same heavy "selected" fill Enter/click commits. #99.
 let browserCursorPath = null;
+// Explorer Tree arrow-key cursor — same cursor/commit split as
+// browserCursorPath above, but for the tree: Up/Down move this, Enter
+// commits via setCurrentDir. 'THIS_PC' is a sentinel for the root node,
+// which has no real path. #99.
+let treeCursorPath = null;
+// coldemoplayer-style focus scoping: click into a list and arrow keys
+// apply only to it. Defaults to 'demos' so arrow-nav keeps working
+// out-of-the-box exactly like before this existed. #99.
+let focusedList = 'demos';
 let browserError = null;
 let demoFilterQuery = '';
 let demoFilterType = 'All';
@@ -350,6 +359,7 @@ function treeRowHtml(entry) {
   const { path, name, demo_count } = entry;
   const isOpen = openTreeNodes.has(path);
   const isSelected = path === currentDir;
+  const isCursor = path === treeCursorPath;
   const showCount = getScanFoldersForDemos() && demo_count > 0;
   const icon = showCount ? '📂' : '📁';
   const label = showCount ? `${name} (${demo_count})` : name;
@@ -368,12 +378,39 @@ function treeRowHtml(entry) {
   }
 
   return `<div class="tree-node">
-    <div class="tree-row ${isSelected ? 'selected' : ''}">
+    <div class="tree-row ${isSelected ? 'selected' : ''} ${isCursor ? 'keyboard-selected' : ''}">
       <button class="tree-toggle" data-path="${esc(path)}">${arrow}</button>
       <span class="tree-label" data-path="${esc(path)}" title="${esc(path)}">${icon} ${esc(label)}</span>
     </div>
     ${childrenHtml}
   </div>`;
+}
+
+// Flattens the currently-*visible* tree (This PC + open nodes only, in the
+// same order treeRowHtml renders them) so Up/Down can move the cursor
+// through it without querying the DOM. #99.
+function flattenVisibleTreeRows() {
+  const rows = [{ path: 'THIS_PC' }];
+  if (thisPcOpen) {
+    const walk = (entries) => {
+      for (const entry of entries) {
+        rows.push({ path: entry.path });
+        if (openTreeNodes.has(entry.path)) {
+          const listing = dirCache.get(entry.path);
+          if (listing) walk(listing.subdirs);
+        }
+      }
+    };
+    walk(driveRoots);
+  }
+  return rows;
+}
+
+// A drive root (e.g. "C:\") has no parent folder in the tree — its parent
+// is the This PC node. #99.
+function treeParentOf(path) {
+  if (/^[A-Za-z]:\\?$/.test(path)) return 'THIS_PC';
+  return parentDirOf(path) || 'THIS_PC';
 }
 
 // Native Explorer Tree: drives -> subfolders, lazily loaded and cached per
@@ -392,8 +429,9 @@ async function renderExplorerTree() {
   }
 
   const thisPcArrow = thisPcOpen ? '⏷' : '⏵';
+  const thisPcCursor = treeCursorPath === 'THIS_PC' ? 'keyboard-selected' : '';
   container.innerHTML = `<div class="tree-node">
-    <div class="tree-row">
+    <div class="tree-row ${thisPcCursor}">
       <button class="tree-toggle" id="tree-this-pc-toggle">${thisPcArrow}</button>
       <span class="tree-label">${STRINGS.ANALYZER.THIS_PC_LABEL}</span>
     </div>
@@ -407,35 +445,108 @@ async function renderExplorerTree() {
   });
 
   container.querySelectorAll('.tree-toggle:not(#tree-this-pc-toggle)').forEach((btn) => {
-    btn.addEventListener('click', async () => {
+    btn.addEventListener('click', () => {
       const path = btn.dataset.path;
-      if (openTreeNodes.has(path)) {
-        openTreeNodes.delete(path);
-        // Key mechanic: collapsing a node you're currently inside navigates
-        // you up to it, rather than leaving you on a hidden selection —
-        // matches dev/Windows Explorer both (tree.rs:373-383).
-        if (isAncestorOf(path, currentDir)) {
-          await setCurrentDir(path);
-          return;
-        }
-        renderExplorerTree();
-      } else {
-        openTreeNodes.add(path);
-        renderExplorerTree();
-        if (!dirCache.has(path)) {
-          try {
-            dirCache.set(path, await browseDirectory(path));
-          } catch {
-            dirCache.set(path, { subdirs: [], demos: [] });
-          }
-          renderExplorerTree();
-        }
-      }
+      if (openTreeNodes.has(path)) closeTreeNode(path); else openTreeNode(path);
     });
   });
   container.querySelectorAll('.tree-label').forEach((el) => {
     el.addEventListener('click', () => setCurrentDir(el.dataset.path));
   });
+}
+
+// Shared by the toggle-button click handler above and the keyboard Right
+// key (treeCursorRight) so both open a node identically. #99.
+async function openTreeNode(path) {
+  if (openTreeNodes.has(path)) return;
+  openTreeNodes.add(path);
+  renderExplorerTree();
+  if (!dirCache.has(path)) {
+    try {
+      dirCache.set(path, await browseDirectory(path));
+    } catch {
+      dirCache.set(path, { subdirs: [], demos: [] });
+    }
+    renderExplorerTree();
+  }
+}
+
+// Shared by the toggle-button click handler and the keyboard Left key
+// (treeCursorLeft). Key mechanic: collapsing a node you're currently inside
+// navigates you up to it, rather than leaving you on a hidden selection —
+// matches dev/Windows Explorer both (tree.rs:373-383). #99.
+async function closeTreeNode(path) {
+  if (!openTreeNodes.has(path)) return;
+  openTreeNodes.delete(path);
+  if (isAncestorOf(path, currentDir)) {
+    await setCurrentDir(path);
+    return;
+  }
+  renderExplorerTree();
+}
+
+function scrollTreeCursorIntoView() {
+  const container = document.querySelector('#analyzer-tree');
+  if (!container) return;
+  const selector = treeCursorPath === 'THIS_PC' ? '#tree-this-pc-toggle' : `.tree-label[data-path="${CSS.escape(treeCursorPath)}"]`;
+  container.querySelector(selector)?.closest('.tree-row')?.scrollIntoView({ block: 'nearest' });
+}
+
+function moveTreeCursor(dir) {
+  const rows = flattenVisibleTreeRows();
+  if (rows.length === 0) return;
+  const curPath = treeCursorPath ?? currentDir ?? 'THIS_PC';
+  const idx = rows.findIndex((r) => r.path === curPath);
+  const newIdx = idx === -1 ? (dir > 0 ? 0 : rows.length - 1) : Math.min(rows.length - 1, Math.max(0, idx + dir));
+  treeCursorPath = rows[newIdx].path;
+  renderExplorerTree();
+  scrollTreeCursorIntoView();
+}
+
+// Right: instant, no commit step (pure UI-tree state, no IPC cost until the
+// node is actually opened) — expands the cursor's node, or if already open,
+// steps the cursor into its first child. #99.
+function treeCursorRight() {
+  const path = treeCursorPath ?? currentDir ?? 'THIS_PC';
+  if (path === 'THIS_PC') {
+    if (!thisPcOpen) { thisPcOpen = true; renderExplorerTree(); }
+    return;
+  }
+  if (!openTreeNodes.has(path)) {
+    openTreeNode(path);
+    return;
+  }
+  const listing = dirCache.get(path);
+  if (listing && listing.subdirs.length > 0) {
+    treeCursorPath = listing.subdirs[0].path;
+    renderExplorerTree();
+    scrollTreeCursorIntoView();
+  }
+}
+
+// Left: collapses the cursor's node if open, else moves the cursor up to
+// the parent — same instant/no-commit reasoning as Right. #99.
+function treeCursorLeft() {
+  const path = treeCursorPath ?? currentDir ?? 'THIS_PC';
+  if (path === 'THIS_PC') {
+    if (thisPcOpen) { thisPcOpen = false; renderExplorerTree(); }
+    return;
+  }
+  if (openTreeNodes.has(path)) {
+    closeTreeNode(path);
+    return;
+  }
+  treeCursorPath = treeParentOf(path);
+  renderExplorerTree();
+  scrollTreeCursorIntoView();
+}
+
+// Enter commits the tree cursor — calls browseDirectory over IPC via
+// setCurrentDir, same reasoning as the Demo Browser's commit step. #99.
+function treeCursorEnter() {
+  const path = treeCursorPath ?? currentDir;
+  if (!path || path === 'THIS_PC') return;
+  setCurrentDir(path);
 }
 
 async function forgetInvalidFolder(path) {
@@ -475,6 +586,7 @@ async function setCurrentDir(path) {
   currentFolderDemos = listing.demos;
   browserSelectedDemo = null;
   browserCursorPath = null;
+  treeCursorPath = null;
 
   renderQuickLinksSection();
   await renderExplorerTree();
@@ -597,6 +709,51 @@ function selectDemo(path) {
   loadAnalyzerDemo(path);
 }
 
+function handleDemoTableKeydown(e) {
+  const list = sortedFilteredDemos();
+  if (list.length === 0) return;
+
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    const dir = e.key === 'ArrowDown' ? 1 : -1;
+    // No cursor yet — start from wherever the actual selection already is,
+    // same fallback as master_pane.js, so arrowing away from a loaded demo
+    // moves one row from it instead of always restarting at the top.
+    const currentPath = browserCursorPath ?? browserSelectedDemo;
+    const idx = list.findIndex((d) => d.path === currentPath);
+    const newIdx = idx === -1 ? (dir > 0 ? 0 : list.length - 1) : Math.min(list.length - 1, Math.max(0, idx + dir));
+    browserCursorPath = list[newIdx].path;
+    renderDemoTable();
+    const row = document.querySelector(`#analyzer-demo-tbody tr[data-path="${CSS.escape(browserCursorPath)}"]`);
+    row?.scrollIntoView({ block: 'nearest' });
+  } else if (e.key === 'Enter') {
+    const target = browserCursorPath ?? browserSelectedDemo;
+    if (target) selectDemo(target);
+  } else if (e.key === 'Escape' && browserCursorPath) {
+    // Clears the arrow-nav cursor only — never what loaded the
+    // currently-displayed demo (only Enter/click do that via selectDemo),
+    // so this can't lose or change anything shown. #28.
+    e.preventDefault();
+    browserCursorPath = null;
+    renderDemoTable();
+  }
+}
+
+function handleTreeKeydown(e) {
+  if (e.key === 'ArrowDown') { e.preventDefault(); moveTreeCursor(1); }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); moveTreeCursor(-1); }
+  else if (e.key === 'ArrowRight') { e.preventDefault(); treeCursorRight(); }
+  else if (e.key === 'ArrowLeft') { e.preventDefault(); treeCursorLeft(); }
+  else if (e.key === 'Enter') { treeCursorEnter(); }
+  else if (e.key === 'Escape' && treeCursorPath) {
+    e.preventDefault();
+    treeCursorPath = null;
+    renderExplorerTree();
+  }
+}
+
+// Single global handler, dispatched by focusedList (coldemoplayer-style:
+// whichever of the Explorer Tree / Demos table was last clicked). #99.
 function initAnalyzerBrowserKeyboardNav() {
   document.addEventListener('keydown', (e) => {
     const pane = document.querySelector('#pane-demo-analyzer');
@@ -604,33 +761,8 @@ function initAnalyzerBrowserKeyboardNav() {
     const tag = document.activeElement && document.activeElement.tagName;
     if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
 
-    const list = sortedFilteredDemos();
-    if (list.length === 0) return;
-
-    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-      e.preventDefault();
-      const dir = e.key === 'ArrowDown' ? 1 : -1;
-      // No cursor yet — start from wherever the actual selection already is,
-      // same fallback as master_pane.js, so arrowing away from a loaded demo
-      // moves one row from it instead of always restarting at the top.
-      const currentPath = browserCursorPath ?? browserSelectedDemo;
-      const idx = list.findIndex((d) => d.path === currentPath);
-      const newIdx = idx === -1 ? (dir > 0 ? 0 : list.length - 1) : Math.min(list.length - 1, Math.max(0, idx + dir));
-      browserCursorPath = list[newIdx].path;
-      renderDemoTable();
-      const row = document.querySelector(`#analyzer-demo-tbody tr[data-path="${CSS.escape(browserCursorPath)}"]`);
-      row?.scrollIntoView({ block: 'nearest' });
-    } else if (e.key === 'Enter') {
-      const target = browserCursorPath ?? browserSelectedDemo;
-      if (target) selectDemo(target);
-    } else if (e.key === 'Escape' && browserCursorPath) {
-      // Clears the arrow-nav cursor only — never what loaded the
-      // currently-displayed demo (only Enter/click do that via selectDemo),
-      // so this can't lose or change anything shown. #28.
-      e.preventDefault();
-      browserCursorPath = null;
-      renderDemoTable();
-    }
+    if (focusedList === 'tree') handleTreeKeydown(e);
+    else handleDemoTableKeydown(e);
   });
 }
 
@@ -641,11 +773,16 @@ function initAnalyzerBrowser() {
       dirCache.clear();
       driveRoots = [];
       quickLinkCountCache.clear();
+      treeCursorPath = null;
       triggerLocalFoldersScan(true);
       renderExplorerTree();
       if (currentDir) setCurrentDir(currentDir);
     });
   }
+
+  // Focus-scoping: click into either list and arrow keys apply to it. #99.
+  document.querySelector('#analyzer-tree')?.addEventListener('click', () => { focusedList = 'tree'; });
+  document.querySelector('#analyzer-demo-table')?.addEventListener('click', () => { focusedList = 'demos'; });
 
   const scanFoldersCb = document.querySelector('#analyzer-scan-folders-for-demos');
   if (scanFoldersCb) {
