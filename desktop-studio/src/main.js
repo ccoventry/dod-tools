@@ -32,6 +32,7 @@ import { getCheckedDemoPaths, clearCheckedPaths, setCheckedDemoPaths, getVisible
 import { initErrorReporter } from './error_reporter.js';
 import { STRINGS } from './strings.js';
 import { applyStaticStrings } from './apply_strings.js';
+import { initOsNotifications } from './os_notifications.js';
 
 // Registered at module load, before DOMContentLoaded — so it's catching
 // from the earliest possible moment, not just once the app's own init
@@ -328,6 +329,11 @@ window.addEventListener("DOMContentLoaded", async () => {
   // [data-str-aria-label] element's text/attribute from STRINGS before any
   // other DOM-dependent init runs below.
   applyStaticStrings();
+
+  // Not awaited: the permission prompt (first run only) shouldn't block the
+  // rest of startup, and every call site in os_notifications.js already
+  // no-ops silently until permission is granted.
+  initOsNotifications();
 
   let scanPaths = [];
   // Analyzer Explorer sidebar's "Recent" quick-links tier — most-recent-first,
