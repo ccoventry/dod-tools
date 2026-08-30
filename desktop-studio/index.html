@@ -404,26 +404,14 @@
               <button id="add-custom-command-btn" data-str="CAPTURE_CONFIG.ADD_CUSTOM_COMMAND_BUTTON">+ Add Scheduled Command</button>
             </div>
 
-            <p id="disk-space-warning-banner" style="display: none; color: #f44336; font-weight: 600; margin-top: 10px; white-space: pre-line;"></p>
-            <div class="action-footer flex-between" style="margin-top: 12px; border-top: 1px solid #383838; padding-top: 10px;">
-              <div class="action-buttons">
-                <button id="start-capture-btn" class="primary-btn" data-str="CAPTURE_CONFIG.START_CAPTURE_BUTTON">Start Capture Batch</button>
-                <button id="cancel-batch-btn" disabled data-str="CAPTURE_CONFIG.CANCEL_BATCH_BUTTON">Cancel Batch</button>
-              </div>
-              <p id="batch-status" class="status-text" data-str="CAPTURE_CONFIG.STATUS_WAITING">Status: Waiting...</p>
-            </div>
-            <div id="capture-progress-container" class="progress-bar-container" style="display: none;">
-              <div id="capture-progress-bar" class="progress-bar-fill"></div>
-            </div>
-            <!-- Shown only while a batch is running. Not a setting — there is
-                 nothing here to configure, and no capture mode it does not
-                 apply to. It is a reminder, and the moment it is worth reading
-                 is the moment the user is about to go and do something else. -->
-            <p id="batch-focus-reminder" class="status-text" style="display: none; margin-top: 8px;"
-               data-str="CAPTURE_CONFIG.FOCUS_REMINDER">
-              Keep Day of Defeat focused — it stops fast-forwarding between clips when it loses
-              focus, and the batch takes far longer.
-            </p>
+            <!-- Start/Cancel Batch and everything read alongside them (status,
+                 progress, the focus reminder, the disk-space warning, the
+                 Capture Output Free/Required figures) live in
+                 #footer-capture-studio now, not here — batch control used to
+                 only be reachable from this Configuration subtab, so starting
+                 a capture meant switching away from Highlights (where the
+                 actual work of picking what to capture happens) every single
+                 time. The footer is visible across both subtabs. See #77. -->
           </div>
 
           <!-- Render Studio Panel -->
@@ -647,9 +635,29 @@
       <!-- Pinned Bottom Status Bar — unique content per tab, toggled by
            switchNavTab() (nav.js) the same way the tab panes themselves are. -->
       <footer id="pinned-action-bar">
-        <div id="footer-capture-studio" class="pinned-footer-content">
-          <div id="export-pool-free-indicator" data-str="MAIN.EXPORT_POOL_FREE_DEFAULT">Capture Output Free: 0.0 GB</div>
-          <div id="footer-required-space" data-str="CAPTURE_CONFIG.REQUIRED_SPACE_DEFAULT">Required: 0.00 GB</div>
+        <div id="footer-capture-studio" class="pinned-footer-content capture-studio-footer">
+          <div class="capture-studio-footer-row">
+            <div class="action-buttons">
+              <button id="start-capture-btn" class="primary-btn" data-str="CAPTURE_CONFIG.START_CAPTURE_BUTTON">Start Capture Batch</button>
+              <button id="cancel-batch-btn" disabled data-str="CAPTURE_CONFIG.CANCEL_BATCH_BUTTON">Cancel Batch</button>
+            </div>
+            <p id="batch-status" class="status-text" data-str="CAPTURE_CONFIG.STATUS_WAITING">Status: Waiting...</p>
+            <div id="export-pool-free-indicator" data-str="MAIN.EXPORT_POOL_FREE_DEFAULT">Capture Output Free: 0.0 GB</div>
+            <div id="footer-required-space" data-str="CAPTURE_CONFIG.REQUIRED_SPACE_DEFAULT">Required: 0.00 GB</div>
+          </div>
+          <p id="disk-space-warning-banner" style="display: none; color: #f44336; font-weight: 600; white-space: pre-line;"></p>
+          <div id="capture-progress-container" class="progress-bar-container" style="display: none;">
+            <div id="capture-progress-bar" class="progress-bar-fill"></div>
+          </div>
+          <!-- Shown only while a batch is running. Not a setting — there is
+               nothing here to configure, and no capture mode it does not
+               apply to. It is a reminder, and the moment it is worth reading
+               is the moment the user is about to go and do something else. -->
+          <p id="batch-focus-reminder" class="status-text" style="display: none;"
+             data-str="CAPTURE_CONFIG.FOCUS_REMINDER">
+            Keep Day of Defeat focused — it stops fast-forwarding between clips when it loses
+            focus, and the batch takes far longer.
+          </p>
         </div>
         <div id="footer-render-studio" class="pinned-footer-content" style="display: none;">
           <div id="render-footer-pool-free" data-str="RENDER.RENDER_POOL_FREE_DEFAULT">Export Pool Free: 0.0 GB</div>
@@ -699,6 +707,21 @@
           <button id="clear-all-save-first-btn" class="primary-btn" data-str="CLEAR_ALL_MODAL.SAVE_SESSION_FIRST_BUTTON">Save Session First</button>
           <button id="clear-all-confirm-btn" style="color: #ff5555; border-color: #ff5555;" data-str="CLEAR_ALL_MODAL.CLEAR_ANYWAY_DEFAULT">Clear Anyway</button>
           <button id="clear-all-cancel-btn" data-str="CLEAR_ALL_MODAL.CANCEL_BUTTON">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Generic themed Confirm/Cancel dialog — replaces the WebView2-native
+         confirm() dialog (clashes with the dark theme, unstyleable) at plain
+         delete-confirmation call sites that don't need Clear All's
+         Save-First escalation above. See issue #43. -->
+    <div id="themed-confirm-modal" class="modal" style="display: none;">
+      <div class="modal-content" style="max-width: 420px; padding: 20px;">
+        <h2 id="themed-confirm-title" data-str="THEMED_CONFIRM_MODAL.TITLE_DEFAULT">Confirm</h2>
+        <p id="themed-confirm-message"></p>
+        <div style="display: flex; gap: 8px; margin-top: 16px; justify-content: flex-end;">
+          <button id="themed-confirm-ok-btn" style="color: #ff5555; border-color: #ff5555;" data-str="THEMED_CONFIRM_MODAL.CONFIRM_BUTTON">Confirm</button>
+          <button id="themed-confirm-cancel-btn" data-str="THEMED_CONFIRM_MODAL.CANCEL_BUTTON">Cancel</button>
         </div>
       </div>
     </div>

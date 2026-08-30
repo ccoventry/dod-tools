@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DoD Tools — Demo Analyzer</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div id="app">
+    <div id="app-header">
+      <h1>DoD Tools — Demo Analyzer</h1>
+      <span id="current-file"></span>
+    </div>
+
+    <div id="dropzone">Drop a .dem file here, or click to browse</div>
+    <input type="file" id="file-input" accept=".dem" style="display:none;" />
+
+    <div class="egui-panel analyzer-report-panel">
+      <div class="panel-header">
+        <h3>Demo Analyzer</h3>
+      </div>
+
+      <div class="analyzer-subtabs">
+        <button type="button" class="analyzer-subtab-btn active" data-subtab="summary">Summary</button>
+        <button type="button" class="analyzer-subtab-btn" data-subtab="scoreboard">Scoreboard</button>
+        <button type="button" class="analyzer-subtab-btn" data-subtab="player-details">Player Details</button>
+        <button type="button" class="analyzer-subtab-btn" data-subtab="team-details">Team Details</button>
+        <button type="button" class="analyzer-subtab-btn" data-subtab="timeline">Timeline</button>
+        <button type="button" class="analyzer-subtab-btn" data-subtab="rounds">Rounds</button>
+        <button type="button" class="analyzer-subtab-btn" data-subtab="chat">Chat Log</button>
+      </div>
+
+      <div id="analyzer-tab-content" class="analyzer-tab-content"></div>
+    </div>
+  </div>
+
+  <script type="module" src="./main.js"></script>
+</body>
+</html>

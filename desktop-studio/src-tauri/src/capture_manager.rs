@@ -111,7 +111,7 @@ pub struct CapturePayload {
 }
 
 fn default_initial_delay() -> f32 { 3.0 }
-fn default_fast_forward_speed() -> f32 { 10.0 }
+fn default_fast_forward_speed() -> f32 { 0.05 }
 fn default_resolution_width() -> i32 { 1280 }
 fn default_resolution_height() -> i32 { 720 }
 fn default_add_condebug() -> bool { true }
@@ -1540,6 +1540,19 @@ mod tests {
             decal_flush: None,
             decal_ring_limit: None,
         }
+    }
+
+    /// `fast_forward_speed`'s serde default silently drifted to 10.0 here while
+    /// every other default (settings_manager, patch::types, the frontend's own
+    /// JS fallback) agrees on 0.05 — a 200x-too-fast fallback that only bites
+    /// a payload missing the field entirely (an old cached payload, a CLI/test
+    /// caller), but should still agree with everywhere else. See issue #29.
+    #[test]
+    fn test_capture_payload_fast_forward_speed_default_matches_settings_default() {
+        let mut value = serde_json::to_value(sample_payload()).unwrap();
+        value.as_object_mut().unwrap().remove("fast_forward_speed");
+        let payload: CapturePayload = serde_json::from_value(value).unwrap();
+        assert_eq!(payload.fast_forward_speed, 0.05);
     }
 
     /// Separate HUD and direct-to-video are both carried through to the patcher

@@ -22,6 +22,7 @@ import { renderDetailView, initDetailPane } from './detail_pane.js';
 import { initCaptureUI, getCommandsState, hydrateCommandsState, refreshLaunchGuard, refreshInitCommandWarnings } from './capture_pane.js';
 import { initRenderUI, checkRenderRecoveryOnStartup } from './render_pane.js';
 import { initAuditorPane } from './auditor_pane.js';
+import { initThemedConfirm, themedConfirm } from './themed_confirm.js';
 import { initAnalyzerPane } from './analyzer_pane.js';
 import { switchNavTab, setCaptureDetailSubtab } from './nav.js';
 import { showToast } from './toast.js';
@@ -93,20 +94,20 @@ function renderObsReport(report) {
   status.style.display = '';
 
   if (!report?.connected) {
-    status.textContent = report?.error || 'Could not reach OBS.';
+    status.textContent = report?.error || STRINGS.CAPTURE_CONFIG.OBS_UNREACHABLE;
     return;
   }
 
   const lines = [
-    `Connected — OBS ${report.obs_version} (obs-websocket ${report.websocket_version})`,
-    `Canvas ${report.canvas}, output ${report.output} @ ${Math.round(report.fps)} fps`,
-    `Recording to ${report.record_directory}`,
+    STRINGS.CAPTURE_CONFIG.obsConnectedSummary(report.obs_version, report.websocket_version),
+    STRINGS.CAPTURE_CONFIG.obsCanvasSummary(report.canvas, report.output, report.fps),
+    STRINGS.CAPTURE_CONFIG.obsRecordingToSummary(report.record_directory),
   ];
   if (report.missing_requests?.length) {
-    lines.push(`This OBS is missing: ${report.missing_requests.join(', ')} — capture cannot run.`);
+    lines.push(STRINGS.CAPTURE_CONFIG.obsMissingRequests(report.missing_requests));
   }
-  if (report.recording) lines.push('OBS is already recording — stop it before starting a batch.');
-  if (report.streaming) lines.push('OBS is streaming — dod-tools will not drive its recorder.');
+  if (report.recording) lines.push(STRINGS.CAPTURE_CONFIG.OBS_ALREADY_RECORDING);
+  if (report.streaming) lines.push(STRINGS.CAPTURE_CONFIG.OBS_ALREADY_STREAMING);
   for (const w of report.warnings || []) lines.push(w);
   status.textContent = lines.join('\n');
 
@@ -414,6 +415,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   }
 
   // Initialize modular UI panes
+  initThemedConfirm();
   initAuditorPane();
 
   async function pickTargetDrive() {
@@ -931,7 +933,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     } catch (e) {
       // Every invoke needs this: without it a Rust-side failure is swallowed
       // and the button simply appears to do nothing.
-      status.textContent = `OBS test failed: ${e}`;
+      status.textContent = STRINGS.CAPTURE_CONFIG.obsTestFailed(e);
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = label || STRINGS.CAPTURE_CONFIG.OBS_TEST_BUTTON; }
     }
@@ -1348,7 +1350,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     scanPaths,
     targetDrives,
     currentScannedDemos
-  }), persistAppSettings, onHighlightStatusChange, () => takeIndex);
+  }), persistAppSettings, onHighlightStatusChange, () => takeIndex, updateExportPoolIndicator);
 
   // Initialize Render Studio UI
   initRenderUI(() => renderFolders, () => renderExportDirs, persistAppSettings, {
@@ -1562,7 +1564,7 @@ window.addEventListener("DOMContentLoaded", async () => {
         const outcome = await requestTrackedClearConfirmation(targets, { title: STRINGS.MAIN.CLEAR_SELECTED_TITLE, verb: STRINGS.MAIN.VERB_REMOVES, filterNote: hiddenNote, confirmLabel: STRINGS.MAIN.CLEAR_SELECTED_ANYWAY });
         if (!outcome) return;
         savedFirst = outcome === 'save-first';
-      } else if (!(await confirm(STRINGS.MAIN.removeSelectedConfirm(targets.length, hiddenNote)))) {
+      } else if (!(await themedConfirm(STRINGS.MAIN.removeSelectedConfirm(targets.length, hiddenNote), { title: STRINGS.MAIN.CLEAR_SELECTED_TITLE }))) {
         return;
       }
       const removePaths = new Set(targets.map((d) => d.path));
@@ -1605,7 +1607,7 @@ window.addEventListener("DOMContentLoaded", async () => {
         const outcome = await requestTrackedClearConfirmation(targets, { title: STRINGS.MAIN.CLEAR_ALL_TITLE, verb: STRINGS.MAIN.VERB_REMOVES, filterNote: note, confirmLabel: STRINGS.MAIN.CLEAR_ALL_ANYWAY });
         if (!outcome) return;
         savedFirst = outcome === 'save-first';
-      } else if (!(await confirm(STRINGS.MAIN.removeAllConfirm(targets.length, note)))) {
+      } else if (!(await themedConfirm(STRINGS.MAIN.removeAllConfirm(targets.length, note), { title: STRINGS.MAIN.CLEAR_ALL_TITLE }))) {
         return;
       }
       const removePaths = new Set(targets.map((d) => d.path));

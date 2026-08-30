@@ -548,14 +548,17 @@ button.primary-btn:hover:not(:disabled) {
 }
 
 /* Pinned Bottom Status Bar — one child per tab (index.html), toggled by
-   switchNavTab() (nav.js); only the active tab's content is visible. */
+   switchNavTab() (nav.js); only the active tab's content is visible.
+   min-height rather than a fixed height: the Capture Studio footer grows
+   past one row while a batch is running or the disk-space warning is up
+   (see .capture-studio-footer below), and the bar has to grow with it. */
 #pinned-action-bar {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   background: #161616;
   border-top: 1px solid var(--border-color);
   padding: 6px 12px;
-  height: 40px;
+  min-height: 40px;
   flex-shrink: 0;
 }
 
@@ -563,6 +566,31 @@ button.primary-btn:hover:not(:disabled) {
   display: flex;
   align-items: center;
   gap: 16px;
+}
+
+/* Start/Cancel Batch and everything read alongside them moved here from the
+   Configuration subtab (#77) — reachable from Highlights too now, without
+   losing the disk-space warning/progress/focus-reminder rows that used to
+   stack below them in that panel. Column layout only for this one footer;
+   the others stay the single-row .pinned-footer-content above. */
+.capture-studio-footer {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  flex: 1;
+}
+
+.capture-studio-footer-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.capture-studio-footer .action-buttons {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 /* Sits outside the four .pinned-footer-content tabs above (index.html), so

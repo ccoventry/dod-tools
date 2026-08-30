@@ -4,7 +4,7 @@
 
 import { isDemoTracked, isRangeModified } from './take_index.js';
 import { logFrontendEvent } from './ipc_bridge.js';
-import { confirm } from '@tauri-apps/plugin-dialog';
+import { themedConfirm } from './themed_confirm.js';
 import { TRASH_ICON_SVG } from './list_editor.js';
 import { STRINGS } from './strings.js';
 
@@ -385,7 +385,7 @@ export function renderMasterList(demos, selectedDemoIdx, onSelectDemo) {
       if (demoIsTracked) {
         const proceed = currentOnRequestTrackedDeleteConfirm
           ? await currentOnRequestTrackedDeleteConfirm(demo)
-          : await confirm(STRINGS.WORKSPACE.removeDemoConfirm(demo.name || demo.path));
+          : await themedConfirm(STRINGS.WORKSPACE.removeDemoConfirm(demo.name || demo.path));
         if (!proceed) return;
       }
       // Re-resolve the index by identity rather than trusting the closured
