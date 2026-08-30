@@ -742,6 +742,10 @@ pub async fn start_capture_batch_impl(
         // the game's dod/ directory (it would otherwise fail with "file not
         // found" since output_demo never existed).
         let total_patch_jobs = patch_jobs.len() as u32;
+        // Known upfront from the same per-job block lists build_batch_queue
+        // already produced — cheap, and lets the demo-loading notification
+        // show "X of Y clips total" without any per-demo lookback.
+        let total_batch_clips: u32 = patch_jobs.iter().map(|j| j.blocks.len() as u32).sum();
         for (idx, job) in patch_jobs.iter().enumerate() {
             if cancel_token_arc.load(std::sync::atomic::Ordering::Relaxed) {
                 let mut running = is_running_arc.lock().unwrap_or_else(|p| p.into_inner());
@@ -829,6 +833,14 @@ pub async fn start_capture_batch_impl(
                             "total": total_jobs,
                             "name": name,
                             "status": "Finished"
+                        }));
+                    }
+                    EngineEvent::DemoLoading(job_idx, total, clip_count) => {
+                        let _ = app_emitter.emit("capture_demo_loading", serde_json::json!({
+                            "index": job_idx,
+                            "total": total,
+                            "clip_count": clip_count,
+                            "total_batch_clips": total_batch_clips,
                         }));
                     }
                     EngineEvent::Error(msg) => {

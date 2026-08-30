@@ -11,6 +11,7 @@ import { STRINGS } from './strings.js';
 import { notify } from './os_notifications.js';
 
 let unlistenCaptureStatus = null;
+let unlistenDemoLoading = null;
 // Tracks whether a batch is actively running so refreshLaunchGuard() never
 // re-enables Start Capture out from under the capture_status "running" lock.
 let capturingInFlight = false;
@@ -741,6 +742,26 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
       unlistenCaptureStatus = unlistenFn;
     }).catch(err => {
       console.error("Failed to register capture_status listener:", err);
+    });
+  }
+
+  // Per-demo progress, from the engine's own DEMO_START console marker —
+  // requires "Add condebug" on, silently never fires otherwise. Running
+  // clipsSoFar tally resets whenever index resets to 1 (a new batch started).
+  if (!unlistenDemoLoading) {
+    let clipsSoFar = 0;
+    listen('capture_demo_loading', (event) => {
+      const payload = event.payload || {};
+      if (payload.index === 1) clipsSoFar = 0;
+      clipsSoFar += payload.clip_count || 0;
+      notify(
+        STRINGS.NOTIFICATIONS.demoLoadingTitle(payload.index, payload.total),
+        STRINGS.NOTIFICATIONS.demoLoadingBody(payload.clip_count, clipsSoFar, payload.total_batch_clips)
+      );
+    }).then(unlistenFn => {
+      unlistenDemoLoading = unlistenFn;
+    }).catch(err => {
+      console.error("Failed to register capture_demo_loading listener:", err);
     });
   }
 

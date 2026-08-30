@@ -52,6 +52,11 @@ pub enum MarkerKind {
     BatchComplete,
     /// Periodic position report, emitted throughout regardless of blocks.
     Breadcrumb,
+    /// The first block of a demo in the batch — one per demo, at the very
+    /// start of its schedule. Carries (job_idx, total_jobs, clip_count) via
+    /// `Marker::demo_progress`, 1-based. See issue #98 — this is what a
+    /// "loading demo N of M" notification hooks onto.
+    DemoStart,
     /// Anything else the pipeline echoed — custom commands, chunk
     /// continuations. Carried rather than dropped so a caller can log it.
     Other,
@@ -68,6 +73,7 @@ impl MarkerKind {
             "FAST_FORWARD" => Self::FastForward,
             "BATCH_COMPLETE" => Self::BatchComplete,
             "BREADCRUMB" => Self::Breadcrumb,
+            "DEMO_START" => Self::DemoStart,
             _ => Self::Other,
         }
     }
@@ -80,6 +86,9 @@ pub struct Marker {
     /// The demo frame ordinal the echo names, when it names one.
     /// `BATCH_COMPLETE` and chunk continuations carry none.
     pub tick: Option<i64>,
+    /// (job_idx, total_jobs, clip_count), 1-based job_idx — only present on
+    /// `MarkerKind::DemoStart`, e.g. "DEMO_START 5 14 2".
+    pub demo_progress: Option<(u32, u32, u32)>,
     /// The text after the tag, for logging.
     pub label: String,
 }
@@ -177,8 +186,10 @@ fn parse_marker(line: &str) -> Option<Marker> {
     if label.is_empty() {
         return None;
     }
+    let kind = MarkerKind::parse(&label);
     Some(Marker {
-        kind: MarkerKind::parse(&label),
+        demo_progress: if kind == MarkerKind::DemoStart { parse_demo_progress(&label) } else { None },
+        kind,
         tick: parse_tick(&label),
         label,
     })
@@ -192,6 +203,16 @@ fn parse_tick(label: &str) -> Option<i64> {
         .find(|s| !s.is_empty())?
         .parse()
         .ok()
+}
+
+/// (job_idx, total_jobs, clip_count) from a `DEMO_START` label, e.g.
+/// "DEMO_START 5 14 2" -> (5, 14, 2).
+fn parse_demo_progress(label: &str) -> Option<(u32, u32, u32)> {
+    let mut nums = label
+        .split(|c: char| !c.is_ascii_digit())
+        .filter(|s| !s.is_empty())
+        .filter_map(|s| s.parse::<u32>().ok());
+    Some((nums.next()?, nums.next()?, nums.next()?))
 }
 
 #[cfg(test)]
@@ -216,12 +237,28 @@ mod tests {
             ("[dod-tools] FAST_FORWARD - Tick 93955", MarkerKind::FastForward, Some(93955)),
             ("[dod-tools] BREADCRUMB - Tick 45000", MarkerKind::Breadcrumb, Some(45000)),
             ("[dod-tools] BATCH_COMPLETE", MarkerKind::BatchComplete, None),
+            ("[dod-tools] DEMO_START 5 14 2", MarkerKind::DemoStart, None),
         ];
         for (line, kind, tick) in cases {
             let m = parse_marker(line).unwrap_or_else(|| panic!("no marker from {:?}", line));
             assert_eq!(m.kind, kind, "kind for {:?}", line);
             assert_eq!(m.tick, tick, "tick for {:?}", line);
         }
+    }
+
+    #[test]
+    fn demo_start_carries_job_idx_total_and_clip_count() {
+        let m = parse_marker("[dod-tools] DEMO_START 5 14 2").unwrap();
+        assert_eq!(m.kind, MarkerKind::DemoStart);
+        assert_eq!(m.demo_progress, Some((5, 14, 2)));
+    }
+
+    /// Only `DemoStart` carries a payload — every other kind's field stays
+    /// `None`, even one that happens to be all digits after the tag.
+    #[test]
+    fn non_demo_start_markers_carry_no_demo_progress() {
+        let m = parse_marker("[dod-tools] START_RECORD - Tick 88741").unwrap();
+        assert_eq!(m.demo_progress, None);
     }
 
     /// The engine prefixes its own text; the tag can sit mid-line.

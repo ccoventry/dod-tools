@@ -957,5 +957,11 @@ export const STRINGS = {
     CAPTURES_ERROR_TITLE: 'Capture error',
     RENDERS_DONE_TITLE: 'Renders complete',
     RENDERS_ERROR_TITLE: 'Render errors',
+    demoLoadingTitle: (index, total) => `Capturing demo ${index} of ${total}`,
+    demoLoadingBody: (clipCount, clipsSoFar, totalBatchClips) => {
+      const clipWord = clipCount === 1 ? 'clip' : 'clips';
+      const onThisDemo = `${clipCount} ${clipWord} on this demo`;
+      return totalBatchClips ? `${onThisDemo} · ${clipsSoFar} of ${totalBatchClips} clips total` : onThisDemo;
+    },
   },
 };

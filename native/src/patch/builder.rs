@@ -882,10 +882,24 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
 
         // Generate scheduled commands
         let mut scheduled_commands = Vec::new();
-        
+
         // Initialize Engine Speed after Initial Load Delay
         let initial_delay_ticks = (config.initial_delay * demo_fps) as i32;
         scheduled_commands.push((initial_delay_ticks, "sys_fast_forward".to_string()));
+
+        // One marker per demo, at its very first scheduled tick — the engine's
+        // own live signal that this demo has started playing. Read back by
+        // `native/src/obs/log_tail.rs` as `MarkerKind::DemoStart`, carrying
+        // (job_idx, total_jobs, clip_count) 1-based, and forwarded up as
+        // `EngineEvent::DemoLoading` for the "loading demo N of M" OS
+        // notification (issue #98). `merged_streaks.len()` is this job's
+        // final clip count, already settled by the merge loop above.
+        for (t, echo_cmd) in build_safe_echos(
+            initial_delay_ticks,
+            &format!("DEMO_START {} {} {}", job_idx + 1, total_jobs, merged_streaks.len()),
+        ) {
+            scheduled_commands.push((t, echo_cmd));
+        }
 
         for (i, streak) in merged_streaks.iter().enumerate() {
 
@@ -1833,6 +1847,39 @@ mod tests {
              so that highlight was never actually captured",
             record_stop
         );
+    }
+
+    #[test]
+    fn test_demo_start_marker_carries_job_idx_total_and_clip_count() {
+        // Two demos, one block each -> two real jobs (plus the primer at
+        // jobs[0], which carries no DEMO_START of its own — see issue #98).
+        let config = mock_config();
+        let mut raw_streaks = vec![streak_with_kills(1000, 1200, &[1000, 1200])];
+        let mut second_demo = streak_with_kills(1000, 1200, &[1000, 1200]);
+        second_demo.source_demo = "demo2.dem".to_string();
+        raw_streaks.push(second_demo);
+
+        let (jobs, _) = build_batch_queue(raw_streaks, &config, &std::collections::HashMap::new()).unwrap();
+        assert_eq!(jobs.len(), 3, "primer + one job per demo");
+        assert!(
+            jobs[0].scheduled_commands.iter().all(|(_, c)| !c.contains("DEMO_START")),
+            "the primer plays no real demo and must not announce one"
+        );
+
+        for (job, expected_idx) in [(&jobs[1], 1), (&jobs[2], 2)] {
+            let echo = job
+                .scheduled_commands
+                .iter()
+                .find(|(_, c)| c.contains("DEMO_START"))
+                .map(|(_, c)| c.clone())
+                .unwrap_or_else(|| panic!("job {:?} has no DEMO_START echo", job.output_demo));
+            assert!(
+                echo.contains(&format!("DEMO_START {} 2 1", expected_idx)),
+                "expected job idx {} of 2, 1 clip in {:?}",
+                expected_idx,
+                echo
+            );
+        }
     }
 
     /// Ticks at which a given command is scheduled, in order.
