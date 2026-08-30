@@ -198,6 +198,15 @@ export const STRINGS = {
     OBS_SCENE_CURRENT: 'Use current scene',
     OBS_TEST_BUTTON: 'Test Connection',
     OBS_TESTING: 'Connecting…',
+    OBS_UNREACHABLE: 'Could not reach OBS.',
+    obsConnectedSummary: (obsVersion, websocketVersion) =>
+        `Connected — OBS ${obsVersion} (obs-websocket ${websocketVersion})`,
+    obsCanvasSummary: (canvas, output, fps) => `Canvas ${canvas}, output ${output} @ ${Math.round(fps)} fps`,
+    obsRecordingToSummary: (directory) => `Recording to ${directory}`,
+    obsMissingRequests: (requests) => `This OBS is missing: ${requests.join(', ')} — capture cannot run.`,
+    OBS_ALREADY_RECORDING: 'OBS is already recording — stop it before starting a batch.',
+    OBS_ALREADY_STREAMING: 'OBS is streaming — dod-tools will not drive its recorder.',
+    obsTestFailed: (err) => `OBS test failed: ${err}`,
     OBS_ENABLE_HINT:
         'OBS Studio 28+ has obs-websocket built in. Enable it under Tools → WebSocket Server Settings — the checkbox at the top of that dialog is the switch, not the Connect Info panel.',
     // ── Orphaned recording left by a previous run ───────────────────────────
