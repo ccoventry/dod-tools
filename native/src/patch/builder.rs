@@ -882,10 +882,35 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
 
         // Generate scheduled commands
         let mut scheduled_commands = Vec::new();
-        
+
         // Initialize Engine Speed after Initial Load Delay
         let initial_delay_ticks = (config.initial_delay * demo_fps) as i32;
         scheduled_commands.push((initial_delay_ticks, "sys_fast_forward".to_string()));
+
+        // One marker per demo, at its very first scheduled tick — the engine's
+        // own live signal that this demo has started playing. Read back by
+        // `native/src/obs/log_tail.rs` as `MarkerKind::DemoStart`, carrying
+        // (job_idx, total_jobs, clip_count) 1-based, and forwarded up as
+        // `EngineEvent::DemoLoading` for the "loading demo N of M" OS
+        // notification (issue #98). `merged_streaks.len()` is this job's
+        // final clip count, already settled by the merge loop above.
+        for (t, echo_cmd) in build_safe_echos(
+            initial_delay_ticks,
+            &format!("DEMO_START {} {} {}", job_idx + 1, total_jobs, merged_streaks.len()),
+        ) {
+            scheduled_commands.push((t, echo_cmd));
+        }
+
+        // Fast-forward towards clip 1 starts at the very same tick as
+        // DEMO_START above — playback has nothing to do before it. Read back
+        // as `MarkerKind::NextClip` for the "fast-forwarding to clip N of M"
+        // OS notification (issue #98).
+        for (t, echo_cmd) in build_safe_echos(
+            initial_delay_ticks,
+            &format!("NEXT_CLIP {} {} {} {}", job_idx + 1, total_jobs, 1, merged_streaks.len()),
+        ) {
+            scheduled_commands.push((t, echo_cmd));
+        }
 
         for (i, streak) in merged_streaks.iter().enumerate() {
 
@@ -1074,6 +1099,19 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
                 scheduled_commands.push((s_end, "sys_fast_forward".to_string()));
                 for (t, echo_cmd) in build_safe_echos(s_end, &format!("FAST_FORWARD - Tick {}", s_end)) {
                     scheduled_commands.push((t, echo_cmd));
+                }
+                // `chained_to_previous.get(i + 1)` also returns the "false"
+                // default when there simply is no block i+1 (the last block
+                // in the demo) -- that's not a real next clip to announce, so
+                // this needs its own bounds check rather than reusing
+                // `!next_block_chained` alone.
+                if i + 1 < merged_streaks.len() {
+                    for (t, echo_cmd) in build_safe_echos(
+                        s_end,
+                        &format!("NEXT_CLIP {} {} {} {}", job_idx + 1, total_jobs, i + 2, merged_streaks.len()),
+                    ) {
+                        scheduled_commands.push((t, echo_cmd));
+                    }
                 }
             }
 
@@ -1833,6 +1871,86 @@ mod tests {
              so that highlight was never actually captured",
             record_stop
         );
+    }
+
+    #[test]
+    fn test_demo_start_marker_carries_job_idx_total_and_clip_count() {
+        // Two demos, one block each -> two real jobs (plus the primer at
+        // jobs[0], which carries no DEMO_START of its own — see issue #98).
+        let config = mock_config();
+        let mut raw_streaks = vec![streak_with_kills(1000, 1200, &[1000, 1200])];
+        let mut second_demo = streak_with_kills(1000, 1200, &[1000, 1200]);
+        second_demo.source_demo = "demo2.dem".to_string();
+        raw_streaks.push(second_demo);
+
+        let (jobs, _) = build_batch_queue(raw_streaks, &config, &std::collections::HashMap::new()).unwrap();
+        assert_eq!(jobs.len(), 3, "primer + one job per demo");
+        assert!(
+            jobs[0].scheduled_commands.iter().all(|(_, c)| !c.contains("DEMO_START")),
+            "the primer plays no real demo and must not announce one"
+        );
+
+        for (job, expected_idx) in [(&jobs[1], 1), (&jobs[2], 2)] {
+            let echo = job
+                .scheduled_commands
+                .iter()
+                .find(|(_, c)| c.contains("DEMO_START"))
+                .map(|(_, c)| c.clone())
+                .unwrap_or_else(|| panic!("job {:?} has no DEMO_START echo", job.output_demo));
+            assert!(
+                echo.contains(&format!("DEMO_START {} 2 1", expected_idx)),
+                "expected job idx {} of 2, 1 clip in {:?}",
+                expected_idx,
+                echo
+            );
+        }
+    }
+
+    #[test]
+    fn test_next_clip_marker_announces_clip_1_and_each_later_non_chained_clip() {
+        // Two demos, two non-overlapping (non-chained) clips each -> NEXT_CLIP
+        // for clip 1 alongside DEMO_START, NEXT_CLIP for clip 2 alongside the
+        // Stage-4 FAST_FORWARD, and nothing after the last clip in the demo.
+        let config = mock_config();
+        let mut raw_streaks = vec![
+            streak_with_kills(1000, 1200, &[1000, 1200]),
+            streak_with_kills(5000, 5200, &[5000, 5200]),
+        ];
+        let mut second_demo = streak_with_kills(1000, 1200, &[1000, 1200]);
+        second_demo.source_demo = "demo2.dem".to_string();
+        let mut second_demo_b = streak_with_kills(5000, 5200, &[5000, 5200]);
+        second_demo_b.source_demo = "demo2.dem".to_string();
+        raw_streaks.push(second_demo);
+        raw_streaks.push(second_demo_b);
+
+        let (jobs, _) = build_batch_queue(raw_streaks, &config, &std::collections::HashMap::new()).unwrap();
+        assert_eq!(jobs.len(), 3, "primer + one job per demo");
+
+        for (job, expected_job_idx) in [(&jobs[1], 1), (&jobs[2], 2)] {
+            let next_clip_echoes: Vec<&String> = job
+                .scheduled_commands
+                .iter()
+                .filter(|(_, c)| c.contains("NEXT_CLIP"))
+                .map(|(_, c)| c)
+                .collect();
+            assert_eq!(
+                next_clip_echoes.len(), 2,
+                "expected one NEXT_CLIP for clip 1 and one for clip 2, got {:?}",
+                next_clip_echoes
+            );
+            assert!(
+                next_clip_echoes.iter().any(|c| c.contains(&format!("NEXT_CLIP {} 2 1 2", expected_job_idx))),
+                "missing clip-1-of-2 NEXT_CLIP for job {} in {:?}",
+                expected_job_idx,
+                next_clip_echoes
+            );
+            assert!(
+                next_clip_echoes.iter().any(|c| c.contains(&format!("NEXT_CLIP {} 2 2 2", expected_job_idx))),
+                "missing clip-2-of-2 NEXT_CLIP for job {} in {:?}",
+                expected_job_idx,
+                next_clip_echoes
+            );
+        }
     }
 
     /// Ticks at which a given command is scheduled, in order.

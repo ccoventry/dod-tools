@@ -32,6 +32,7 @@ import { getCheckedDemoPaths, clearCheckedPaths, setCheckedDemoPaths, getVisible
 import { initErrorReporter } from './error_reporter.js';
 import { STRINGS } from './strings.js';
 import { applyStaticStrings } from './apply_strings.js';
+import { initOsNotifications, updateNotificationSettings } from './os_notifications.js';
 
 // Registered at module load, before DOMContentLoaded — so it's catching
 // from the earliest possible moment, not just once the app's own init
@@ -329,6 +330,11 @@ window.addEventListener("DOMContentLoaded", async () => {
   // other DOM-dependent init runs below.
   applyStaticStrings();
 
+  // Not awaited: the permission prompt (first run only) shouldn't block the
+  // rest of startup, and every call site in os_notifications.js already
+  // no-ops silently until permission is granted.
+  initOsNotifications();
+
   let scanPaths = [];
   // Analyzer Explorer sidebar's "Recent" quick-links tier — most-recent-first,
   // capped at 10, pushed via recordDemoFolderVisit() below whenever browsing
@@ -354,6 +360,11 @@ window.addEventListener("DOMContentLoaded", async () => {
   // rendering, so status can auto-advance even after a restart or re-scan
   // replaced the original streak objects. Persisted in the project file.
   let takeIndex = {};
+  // True whenever project state (scanned demos, takeIndex, scanPaths) has
+  // changed since the last successful save or load — gates the "unsaved
+  // changes" prompt on window close. Cleared by saveProjectSession() and
+  // Load Session; set by markProjectDirty() at every mutation site.
+  let hasUnsavedChanges = false;
   // Connected-workspace mode (Phase 4): "quick-clip" (nothing persists,
   // blunt clearing, re-scan replaces demos wholesale) or "workspace"
   // (project file + take index persist, clearing protects tracked demos,
@@ -401,17 +412,34 @@ window.addEventListener("DOMContentLoaded", async () => {
     return uids;
   }
 
+  // Whether saveProjectSession() would actually have something to write: a
+  // non-empty queue is always savable, but so is an emptied one once a
+  // session file exists to write it back to — clearing everything is a
+  // real, meaningful change relative to that file, not a no-op.
+  function hasSavableProject() {
+    return currentScannedDemos.length > 0 || !!currentSessionPath;
+  }
+
   function updateSessionFileIndicator() {
     const el = document.querySelector('#session-file-indicator');
     if (!el) return;
+    const dirtySuffix = hasUnsavedChanges ? ' • unsaved' : '';
     if (currentSessionPath) {
       const filename = currentSessionPath.split(/[\\/]/).pop() || currentSessionPath;
-      el.textContent = filename;
+      el.textContent = filename + dirtySuffix;
       el.title = currentSessionPath;
     } else {
-      el.textContent = STRINGS.NAV.NO_SESSION_LOADED;
+      el.textContent = STRINGS.NAV.NO_SESSION_LOADED + dirtySuffix;
       el.title = '';
     }
+  }
+
+  // Marks Capture Studio's project state as changed since the last save —
+  // called at every mutation site for currentScannedDemos/takeIndex/
+  // scanPaths. Gates the close-window "unsaved changes" prompt below.
+  function markProjectDirty() {
+    hasUnsavedChanges = true;
+    updateSessionFileIndicator();
   }
 
   // Initialize modular UI panes
@@ -492,6 +520,16 @@ window.addEventListener("DOMContentLoaded", async () => {
     const autoClearPreviews = document.querySelector('#config-auto-clear-previews')?.checked || false;
     const autoClearTempDemos = document.querySelector('#config-auto-clear-temp-demos')?.checked || false;
 
+    // OS notification toggles (issue #98) — default on, matching decalFlush's
+    // `?? true` style above rather than `|| false`, which would silently
+    // disable them for anyone whose settings predate this field.
+    const notifyPatching = document.querySelector('#config-notify-patching')?.checked ?? true;
+    const notifyDemoLoading = document.querySelector('#config-notify-demo-loading')?.checked ?? true;
+    const notifyBetweenClips = document.querySelector('#config-notify-between-clips')?.checked ?? true;
+    const notifyCapturesDone = document.querySelector('#config-notify-captures-done')?.checked ?? true;
+    const notifyRendersDone = document.querySelector('#config-notify-renders-done')?.checked ?? true;
+    const notifyError = document.querySelector('#config-notify-error')?.checked ?? true;
+
     const recordStartLead = parseFloat(document.querySelector('#config-record-start-lead')?.value) || 0.0;
     const recordStopTrail = parseFloat(document.querySelector('#config-record-stop-trail')?.value) || 0.0;
     const initialDelay = parseFloat(document.querySelector('#config-initial-delay')?.value) || 3.0;
@@ -532,6 +570,12 @@ window.addEventListener("DOMContentLoaded", async () => {
       auto_clear_logs: autoClearLogs,
       auto_clear_previews: autoClearPreviews,
       auto_clear_temp_demos: autoClearTempDemos,
+      notify_patching: notifyPatching,
+      notify_demo_loading: notifyDemoLoading,
+      notify_between_clips: notifyBetweenClips,
+      notify_captures_done: notifyCapturesDone,
+      notify_renders_done: notifyRendersDone,
+      notify_error: notifyError,
       record_start_lead: recordStartLead,
       record_stop_trail: recordStopTrail,
       initial_delay: initialDelay,
@@ -546,6 +590,9 @@ window.addEventListener("DOMContentLoaded", async () => {
       render_export_dirs: renderExportDirs,
       studio_mode: studioMode
     };
+    // Reflects a just-flipped toggle immediately, rather than waiting on the
+    // save round-trip below to come back through a settings reload.
+    updateNotificationSettings(settingsPayload);
     try {
       await saveSettings(settingsPayload);
     } catch (err) {
@@ -557,6 +604,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   try {
     const settings = await getSettings();
     if (settings) {
+      updateNotificationSettings(settings);
       if (settings.hlae_path) {
         const inputEl = document.querySelector('#hlae-path-input');
         if (inputEl) inputEl.value = settings.hlae_path;
@@ -641,6 +689,18 @@ window.addEventListener("DOMContentLoaded", async () => {
       if (autoClearPreviewsEl) autoClearPreviewsEl.checked = !!settings.auto_clear_previews;
       const autoClearTempDemosEl = document.querySelector('#config-auto-clear-temp-demos');
       if (autoClearTempDemosEl) autoClearTempDemosEl.checked = !!settings.auto_clear_temp_demos;
+      const notifyPatchingEl = document.querySelector('#config-notify-patching');
+      if (notifyPatchingEl) notifyPatchingEl.checked = !!settings.notify_patching;
+      const notifyDemoLoadingEl = document.querySelector('#config-notify-demo-loading');
+      if (notifyDemoLoadingEl) notifyDemoLoadingEl.checked = !!settings.notify_demo_loading;
+      const notifyBetweenClipsEl = document.querySelector('#config-notify-between-clips');
+      if (notifyBetweenClipsEl) notifyBetweenClipsEl.checked = !!settings.notify_between_clips;
+      const notifyCapturesDoneEl = document.querySelector('#config-notify-captures-done');
+      if (notifyCapturesDoneEl) notifyCapturesDoneEl.checked = !!settings.notify_captures_done;
+      const notifyRendersDoneEl = document.querySelector('#config-notify-renders-done');
+      if (notifyRendersDoneEl) notifyRendersDoneEl.checked = !!settings.notify_renders_done;
+      const notifyErrorEl = document.querySelector('#config-notify-error');
+      if (notifyErrorEl) notifyErrorEl.checked = !!settings.notify_error;
       if (settings.record_start_lead) {
         const inputEl = document.querySelector('#config-record-start-lead');
         if (inputEl) inputEl.value = settings.record_start_lead;
@@ -720,9 +780,17 @@ window.addEventListener("DOMContentLoaded", async () => {
   // only inline in the button's click handler. Returns whether it actually
   // wrote a file (false on "nothing to save" or a cancelled Save-As dialog).
   async function saveProjectSession() {
-    if (currentScannedDemos.length === 0) {
+    if (!hasSavableProject()) {
       showToast(STRINGS.MAIN.NOTHING_TO_SAVE, 'info');
       return false;
+    }
+    // Already matches what's on disk — skip the write and the misleading
+    // "saved" toast, but still report success so callers that gate on the
+    // return value (Clear All's Save-First, the close-window prompt) treat
+    // this the same as an actual save rather than a failure.
+    if (!hasUnsavedChanges) {
+      showToast(STRINGS.MAIN.ALREADY_SAVED, 'info');
+      return true;
     }
     try {
       // Once a session's been loaded or saved once in this window, keep
@@ -752,6 +820,7 @@ window.addEventListener("DOMContentLoaded", async () => {
       }, null, 2);
       await invoke('save_project_session', { path: filePath, contents: projectData });
       currentSessionPath = filePath;
+      hasUnsavedChanges = false;
       updateSessionFileIndicator();
       showToast(STRINGS.MAIN.projectSavedToast(filePath), 'success');
       // Saving a project file is what makes a window a Workspace — a save
@@ -779,6 +848,17 @@ window.addEventListener("DOMContentLoaded", async () => {
   const loadProjectBtn = document.querySelector('#load-project-btn');
   if (loadProjectBtn) {
     loadProjectBtn.addEventListener('click', async () => {
+      // Loading replaces currentScannedDemos/takeIndex wholesale — same
+      // data-loss risk as closing the window, so it gets the same prompt
+      // before that happens. Identical guard to the window-close handler
+      // below, reusing the same modal (requestUnsavedChangesConfirmation,
+      // hoisted function declaration defined later in this scope).
+      if (hasUnsavedChanges && hasSavableProject()) {
+        const outcome = await requestUnsavedChangesConfirmation();
+        if (!outcome) return; // Cancel — abort the load, keep current state
+        // 'save' already wrote the file inside the modal's Save button
+        // handler; 'discard' falls through to load over it either way.
+      }
       try {
         const selected = await open({
           multiple: false,
@@ -789,6 +869,7 @@ window.addEventListener("DOMContentLoaded", async () => {
           const data = JSON.parse(content);
           if (data) {
             currentSessionPath = selected;
+            hasUnsavedChanges = false;
             updateSessionFileIndicator();
             // Loading a persistent project file is what makes a window a
             // Workspace, regardless of what `data.mode` says (a hand-edited
@@ -1131,6 +1212,7 @@ window.addEventListener("DOMContentLoaded", async () => {
       // footer is also updated on the Complete scan_progress event, but set
       // it here in case the event arrives before renderMasterList finishes.
       updateDemoFooter(currentScannedDemos);
+      if (newlyScanned.length > 0) markProjectDirty();
       showToast(STRINGS.MAIN.scanCompleteToast(newlyScanned.length), 'success');
       selectedDemoIdx = newlyScanned.length > 0
         ? currentScannedDemos.indexOf(newlyScanned[0])
@@ -1175,6 +1257,7 @@ window.addEventListener("DOMContentLoaded", async () => {
           files.forEach(f => {
             if (!scanPaths.includes(f)) {
               scanPaths.push(f);
+              markProjectDirty();
             }
           });
           await persistAppSettings();
@@ -1202,6 +1285,7 @@ window.addEventListener("DOMContentLoaded", async () => {
           const folder = Array.isArray(selected) ? selected[0] : selected;
           if (!scanPaths.includes(folder)) {
             scanPaths.push(folder);
+            markProjectDirty();
             await persistAppSettings();
             await triggerAutoScan([folder]);
           }
@@ -1301,6 +1385,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   // own, so re-render both — the Master Queue for its Pending/Captured/
   // Rendered counts, and the detail view for the per-row status dropdowns.
   const onHighlightStatusChange = () => {
+    markProjectDirty();
     renderMasterList(currentScannedDemos, selectedDemoIdx);
     if (selectedDemoIdx !== null && currentScannedDemos[selectedDemoIdx]) {
       renderDetailView(currentScannedDemos[selectedDemoIdx], selectedDemoIdx);
@@ -1341,8 +1426,37 @@ window.addEventListener("DOMContentLoaded", async () => {
   const appWindow = getCurrentWindow();
   appWindow.onCloseRequested(async (event) => {
     event.preventDefault();
+    // Capture Studio project state (scanned demos, takeIndex, scanPaths)
+    // changed since the last save — offer to save, discard, or cancel the
+    // close before losing it. See markProjectDirty() call sites above.
+    // Gated on hasSavableProject() too, matching saveProjectSession()'s own
+    // guard — without this, clearing a *fresh, never-saved* queue to empty
+    // then closing would show the prompt but "Save & Close" would just hit
+    // the "Nothing to save" toast and leave the modal stuck open. Emptying
+    // a queue that *did* come from a loaded session is still real, savable
+    // work (writes the now-empty project back), so that case still prompts.
+    if (hasUnsavedChanges && hasSavableProject()) {
+      const outcome = await requestUnsavedChangesConfirmation();
+      if (!outcome) return; // Cancel — leave the window open
+      // 'save' already wrote the file inside the modal's Save button
+      // handler; 'discard' falls through to close as-is either way.
+    }
     await persistAppSettings();
     await appWindow.destroy();
+  });
+
+  // Page-level reload (F5, Ctrl+R, or any other in-place navigation) doesn't
+  // go through Tauri's onCloseRequested above at all — it's a WebView2
+  // navigation, not a window close — so it needs its own guard. Unlike the
+  // themed modal above, beforeunload's confirmation dialog is browser-native
+  // and cannot be styled or given custom button text (a deliberate web
+  // platform restriction against sites faking dialogs); setting returnValue
+  // is what triggers it, and its own text is what's shown, not this string.
+  window.addEventListener('beforeunload', (event) => {
+    if (hasUnsavedChanges && hasSavableProject()) {
+      event.preventDefault();
+      event.returnValue = '';
+    }
   });
 
   // Delete callback: remove a demo from the active scan list and re-render.
@@ -1354,6 +1468,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   // deleted row wasn't the selected one and the selection should have held.
   const onDeleteDemo = (deletedOriginalIdx, updatedDemos) => {
     currentScannedDemos = updatedDemos;
+    markProjectDirty();
     // If the deleted demo was the selected one, clear the detail view.
     if (selectedDemoIdx === deletedOriginalIdx) {
       selectedDemoIdx = currentScannedDemos.length > 0 ? 0 : null;
@@ -1383,6 +1498,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   function replaceScannedDemos(newDemos) {
     const previouslySelectedDemo = selectedDemoIdx !== null ? currentScannedDemos[selectedDemoIdx] : null;
     currentScannedDemos = newDemos;
+    markProjectDirty();
     const preservedIdx = previouslySelectedDemo ? currentScannedDemos.indexOf(previouslySelectedDemo) : -1;
     selectedDemoIdx = preservedIdx !== -1 ? preservedIdx : (currentScannedDemos.length > 0 ? 0 : null);
     clearCheckedPaths();
@@ -1500,6 +1616,38 @@ window.addEventListener("DOMContentLoaded", async () => {
     });
   }
 
+  // Unsaved-changes prompt, shown by the window close handler above whenever
+  // hasUnsavedChanges is set. Same Promise-resolution shape as the modal
+  // above, but its own two-way branch ('save'/'discard') since closing is a
+  // binary "keep the work or don't" rather than a "confirm a removal."
+  let pendingUnsavedChangesResolve = null;
+  const unsavedChangesModal = document.querySelector('#unsaved-changes-modal');
+
+  function requestUnsavedChangesConfirmation() {
+    if (unsavedChangesModal) unsavedChangesModal.style.display = 'flex';
+    return new Promise(resolve => { pendingUnsavedChangesResolve = resolve; });
+  }
+
+  if (unsavedChangesModal) {
+    document.querySelector('#unsaved-changes-cancel-btn')?.addEventListener('click', () => {
+      unsavedChangesModal.style.display = 'none';
+      pendingUnsavedChangesResolve?.(false);
+      pendingUnsavedChangesResolve = null;
+    });
+    document.querySelector('#unsaved-changes-discard-btn')?.addEventListener('click', () => {
+      unsavedChangesModal.style.display = 'none';
+      pendingUnsavedChangesResolve?.('discard');
+      pendingUnsavedChangesResolve = null;
+    });
+    document.querySelector('#unsaved-changes-save-btn')?.addEventListener('click', async () => {
+      const saved = await saveProjectSession();
+      if (!saved) return; // Save-As cancelled/failed — leave the modal open
+      unsavedChangesModal.style.display = 'none';
+      pendingUnsavedChangesResolve?.('save');
+      pendingUnsavedChangesResolve = null;
+    });
+  }
+
   // Clear Selected — removes checked rows regardless of status, same in
   // both modes (the user explicitly checked them). Whenever any checked
   // demo is tracked, escalate from a plain confirm() to the shared modal.
@@ -1610,11 +1758,19 @@ window.addEventListener("DOMContentLoaded", async () => {
     hlPathInput.addEventListener('change', () => refreshInitCommandWarnings());
   }
   initDetailPane(() => currentScannedDemos, () => {
-    // Fired on both streak selection and status edits — selection moves
-    // required capture bytes (refreshLaunchGuard) and both move the Master
-    // Queue's Highlights/Pending/Captured/Rendered columns (renderMasterList).
+    // Fired on every detail-pane re-render, not just edits (also runs when
+    // switching the selected demo, or after a capture/render completes) —
+    // selection moves required capture bytes (refreshLaunchGuard) and status
+    // moves the Master Queue's Highlights/Pending/Captured/Rendered columns
+    // (renderMasterList), both cheap enough to just always re-derive here.
+    // Must NOT mark the project dirty — see onDirty below for that.
     refreshLaunchGuard({ targetDrives, currentScannedDemos });
     renderMasterList(currentScannedDemos, selectedDemoIdx);
+  }, () => {
+    // Fired only from an actual highlights-table field edit (selection,
+    // kill range, status, notes) — all of it is part of the `demos` written
+    // by saveProjectSession(), so all of it marks the project dirty.
+    markProjectDirty();
   });
 
   // Demo Analyzer's Explorer sidebar Pinned tier shares the same
@@ -1676,8 +1832,15 @@ window.addEventListener("DOMContentLoaded", async () => {
     const isCtrlS = (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's';
     const isCtrlN = (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'n';
     const isCtrlW = (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'w';
+    // WebView2 keeps the browser's reload shortcuts live by default — a
+    // desktop app has no "refresh the page" affordance at all, so these are
+    // swallowed unconditionally rather than routed through the dirty-state
+    // check the beforeunload listener below does for any other reload path
+    // (e.g. devtools once opened — the context menu's own Reload entry is
+    // gone entirely, see the contextmenu listener further down).
+    const isReload = e.key === 'F5' || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'r');
 
-    if (isCtrlO || isCtrlS || isCtrlN || isCtrlW) {
+    if (isCtrlO || isCtrlS || isCtrlN || isCtrlW || isReload) {
       e.preventDefault();
     }
 
@@ -1691,4 +1854,11 @@ window.addEventListener("DOMContentLoaded", async () => {
       if (isCtrlS) document.querySelector('#save-project-btn')?.click();
     }
   });
+
+  // WebView2's native right-click menu (Reload/Inspect/browser Cut-Copy-
+  // Paste) reads as a web page, not an app — suppressed entirely. Doesn't
+  // affect actual clipboard functionality: Ctrl+C/X/V are OS-level keyboard
+  // bindings that don't route through this menu, so text fields keep normal
+  // copy/paste with no menu at all.
+  window.addEventListener('contextmenu', (e) => e.preventDefault());
 });

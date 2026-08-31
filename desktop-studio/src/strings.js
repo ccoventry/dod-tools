@@ -153,6 +153,7 @@ export const STRINGS = {
     TAB_CAPTURE_OUTPUT: 'Destinations',
     TAB_CUSTOM_COMMANDS: 'Commands',
     TAB_RENDER_OUTPUT: 'Render Settings',
+    TAB_NOTIFICATIONS: 'Notifications',
     HLAE_EXEC_LABEL: 'HLAE Executable:',
     HLAE_EXEC_PLACEHOLDER: 'Path to hlae.exe',
     HL_EXEC_LABEL: 'Half-Life Executable:',
@@ -307,6 +308,18 @@ export const STRINGS = {
     AUTO_CLEAR_PREVIEWS_LABEL: 'Auto-clear Previews',
     AUTO_CLEAR_TEMP_DEMOS_LABEL: 'Auto-clear Temp Demos',
     CLEAR_PREVIEWS_BUTTON: 'Clear Previews...',
+    NOTIFY_PATCHING_LABEL: 'Patching Started/Complete',
+    NOTIFY_PATCHING_TITLE: 'One notification when patching begins, one when your demos are ready and capture is about to start. Not per-demo — decal clearing makes patching take real time now, but a toast per demo patched would be noise.',
+    NOTIFY_DEMO_LOADING_LABEL: 'Demo Loading',
+    NOTIFY_DEMO_LOADING_TITLE: 'Fires each time a new demo starts playing during capture, showing which demo and how many clips are on it. Requires "Add Condebug" to be on — silently never fires otherwise. Automatically skipped when Fast-Forward to Clip is also on, since that notification covers the same ground with more detail.',
+    NOTIFY_BETWEEN_CLIPS_LABEL: 'Fast-Forward to Clip',
+    NOTIFY_BETWEEN_CLIPS_TITLE: 'Fires as playback starts fast-forwarding toward each clip, including the first one in a demo. Requires "Add Condebug" to be on — silently never fires otherwise.',
+    NOTIFY_CAPTURES_DONE_LABEL: 'Captures Done',
+    NOTIFY_CAPTURES_DONE_TITLE: 'Fires once when the whole capture batch finishes.',
+    NOTIFY_RENDERS_DONE_LABEL: 'Renders Done',
+    NOTIFY_RENDERS_DONE_TITLE: 'Fires once when the whole render batch finishes.',
+    NOTIFY_ERROR_LABEL: 'Errors',
+    NOTIFY_ERROR_TITLE: 'Fires immediately if a patch, capture, or render step fails.',
     INIT_COMMANDS_LABEL: 'Initial Commands (run once at demo load):',
     ADD_INIT_COMMAND_BUTTON: '+ Add Initial Command',
     // Both lists on this tab are custom commands; only one is scheduled, so
@@ -755,6 +768,15 @@ export const STRINGS = {
     CANCEL_BUTTON: 'Cancel',
   },
 
+  // ── Unsaved-changes prompt on window close (Capture Studio) ─────────────
+  UNSAVED_CHANGES_MODAL: {
+    TITLE: 'Unsaved Changes',
+    MESSAGE: 'Capture Studio has unsaved changes. Save your session before closing?',
+    SAVE_BUTTON: 'Save & Close',
+    DISCARD_BUTTON: 'Close Without Saving',
+    CANCEL_BUTTON: 'Cancel',
+  },
+
   // ── main.js: sessions, settings dialogs, scan status, Clear actions ─────
   // Map library warnings. A demo names the map it was recorded on and stamps
   // that map's build alongside it, so "missing" and "wrong build" are different
@@ -851,6 +873,7 @@ export const STRINGS = {
     DEMO_FILES_FILTER_NAME: 'Demo Files',
 
     NOTHING_TO_SAVE: 'Nothing to save yet — add demo files or load a session first.',
+    ALREADY_SAVED: 'Already saved — no changes since the last save.',
     projectSavedToast: (path) => `Project session saved successfully to ${path}`,
     SAVE_PROJECT_ERROR: 'Error saving project session.',
     loadedDemosToast: (count) => `Loaded ${count} demos from project file`,
@@ -945,5 +968,32 @@ export const STRINGS = {
   FOOTER: {
     VIEW_LOGS_BUTTON: 'View Logs',
     VIEW_LOGS_TITLE: "Open today's activity log in Explorer",
+  },
+
+  // ── OS Toast Notifications (issue #98) ──────────────────────────────────
+  // Titles/bodies for os_notifications.js's notify() calls. Bodies reuse the
+  // existing CAPTURE/RENDER in-app-toast strings where the wording already
+  // fits, rather than duplicating near-identical copy.
+  NOTIFICATIONS: {
+    CAPTURES_DONE_TITLE: 'Captures complete',
+    CAPTURES_ERROR_TITLE: 'Capture error',
+    RENDERS_DONE_TITLE: 'Renders complete',
+    RENDERS_ERROR_TITLE: 'Render errors',
+    patchingStartedTitle: (total) => `Patching ${total} demo${total === 1 ? '' : 's'}`,
+    PATCHING_STARTED_BODY: 'Preparing demos for capture…',
+    PATCHING_FINISHED_TITLE: 'Patching complete',
+    patchingFinishedBody: (total) => `${total} demo${total === 1 ? '' : 's'} ready — starting capture`,
+    // Shared by both the demo-loading and fast-forward-to-clip toasts —
+    // same demo, same title, whichever of the two actually fires.
+    demoLoadingTitle: (index, total) => `Viewing demo ${index} of ${total}`,
+    demoLoadingBody: (clipCount, clipsSoFar, totalBatchClips) => {
+      const clipWord = clipCount === 1 ? 'clip' : 'clips';
+      const onThisDemo = `${clipCount} ${clipWord} on this demo`;
+      return totalBatchClips ? `${onThisDemo} · ${clipsSoFar} of ${totalBatchClips} clips total` : onThisDemo;
+    },
+    fastForwardToClipBody: (clipIndex, clipCountThisDemo, clipsSoFar, totalBatchClips) => {
+      const onThisDemo = `Fast-forwarding to clip ${clipIndex} of ${clipCountThisDemo}`;
+      return totalBatchClips ? `${onThisDemo} · ${clipsSoFar} of ${totalBatchClips} clips total` : onThisDemo;
+    },
   },
 };

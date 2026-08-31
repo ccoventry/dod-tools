@@ -166,6 +166,7 @@
               <button class="config-tab-btn" data-tab="tab-custom-commands" data-str="CAPTURE_CONFIG.TAB_CUSTOM_COMMANDS">Commands</button>
               <button class="config-tab-btn" data-tab="tab-drive-overrides" data-str="CAPTURE_CONFIG.TAB_CAPTURE_OUTPUT">Destinations</button>
               <button class="config-tab-btn" data-tab="tab-render-output" data-str="CAPTURE_CONFIG.TAB_RENDER_OUTPUT">Render Output</button>
+              <button class="config-tab-btn" data-tab="tab-notifications" data-str="CAPTURE_CONFIG.TAB_NOTIFICATIONS">Notifications</button>
             </div>
 
             <!-- Tab Content: Path Routing -->
@@ -451,6 +452,55 @@
               <div class="input-row" style="margin-top: 4px; align-items: center;">
                 <strong data-str="RENDER.TOTAL_EXPORT_POOL_FREE_LABEL">Total Export Pool Free:</strong>
                 <span id="render-export-pool-free" data-str="RENDER.EXPORT_POOL_FREE_DEFAULT">0.0 GB</span>
+              </div>
+            </div>
+
+            <!-- Tab Content: Windows toast notifications (issue #98) — silent
+                 by default, each stage independently switchable. -->
+            <div id="tab-notifications" class="config-tab-content" style="display: none;">
+              <div class="notification-settings-grid">
+                <div class="setting-toggle">
+                  <span class="setting-label"><span data-str="CAPTURE_CONFIG.NOTIFY_PATCHING_LABEL">Patching Started/Complete</span><span class="info-icon" data-str-title="CAPTURE_CONFIG.NOTIFY_PATCHING_TITLE" title=""><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span></span>
+                  <label class="setting-switch">
+                    <input type="checkbox" id="config-notify-patching" checked />
+                    <span class="setting-switch-slider"></span>
+                  </label>
+                </div>
+                <div class="setting-toggle">
+                  <span class="setting-label"><span data-str="CAPTURE_CONFIG.NOTIFY_DEMO_LOADING_LABEL">Demo Loading</span><span class="info-icon" data-str-title="CAPTURE_CONFIG.NOTIFY_DEMO_LOADING_TITLE" title=""><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span></span>
+                  <label class="setting-switch">
+                    <input type="checkbox" id="config-notify-demo-loading" checked />
+                    <span class="setting-switch-slider"></span>
+                  </label>
+                </div>
+                <div class="setting-toggle">
+                  <span class="setting-label"><span data-str="CAPTURE_CONFIG.NOTIFY_BETWEEN_CLIPS_LABEL">Fast-Forward to Clip</span><span class="info-icon" data-str-title="CAPTURE_CONFIG.NOTIFY_BETWEEN_CLIPS_TITLE" title=""><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span></span>
+                  <label class="setting-switch">
+                    <input type="checkbox" id="config-notify-between-clips" checked />
+                    <span class="setting-switch-slider"></span>
+                  </label>
+                </div>
+                <div class="setting-toggle">
+                  <span class="setting-label"><span data-str="CAPTURE_CONFIG.NOTIFY_CAPTURES_DONE_LABEL">Captures Done</span><span class="info-icon" data-str-title="CAPTURE_CONFIG.NOTIFY_CAPTURES_DONE_TITLE" title=""><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span></span>
+                  <label class="setting-switch">
+                    <input type="checkbox" id="config-notify-captures-done" checked />
+                    <span class="setting-switch-slider"></span>
+                  </label>
+                </div>
+                <div class="setting-toggle">
+                  <span class="setting-label"><span data-str="CAPTURE_CONFIG.NOTIFY_RENDERS_DONE_LABEL">Renders Done</span><span class="info-icon" data-str-title="CAPTURE_CONFIG.NOTIFY_RENDERS_DONE_TITLE" title=""><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span></span>
+                  <label class="setting-switch">
+                    <input type="checkbox" id="config-notify-renders-done" checked />
+                    <span class="setting-switch-slider"></span>
+                  </label>
+                </div>
+                <div class="setting-toggle">
+                  <span class="setting-label"><span data-str="CAPTURE_CONFIG.NOTIFY_ERROR_LABEL">Errors</span><span class="info-icon" data-str-title="CAPTURE_CONFIG.NOTIFY_ERROR_TITLE" title=""><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span></span>
+                  <label class="setting-switch">
+                    <input type="checkbox" id="config-notify-error" checked />
+                    <span class="setting-switch-slider"></span>
+                  </label>
+                </div>
               </div>
             </div>
 
@@ -747,6 +797,21 @@
           <button id="clear-all-save-first-btn" class="primary-btn" data-str="CLEAR_ALL_MODAL.SAVE_SESSION_FIRST_BUTTON">Save Session First</button>
           <button id="clear-all-confirm-btn" style="color: #ff5555; border-color: #ff5555;" data-str="CLEAR_ALL_MODAL.CLEAR_ANYWAY_DEFAULT">Clear Anyway</button>
           <button id="clear-all-cancel-btn" data-str="CLEAR_ALL_MODAL.CANCEL_BUTTON">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Unsaved-changes prompt shown when closing the window with dirty
+         Capture Studio project state (main.js's onCloseRequested handler).
+         Same three-button shape as #clear-all-modal above. -->
+    <div id="unsaved-changes-modal" class="modal" style="display: none;">
+      <div class="modal-content" style="max-width: 480px; padding: 20px;">
+        <h2 id="unsaved-changes-title" data-str="UNSAVED_CHANGES_MODAL.TITLE">Unsaved Changes</h2>
+        <p id="unsaved-changes-summary" data-str="UNSAVED_CHANGES_MODAL.MESSAGE">Capture Studio has unsaved changes. Save your session before closing?</p>
+        <div style="display: flex; gap: 8px; margin-top: 16px; justify-content: flex-end; flex-wrap: wrap;">
+          <button id="unsaved-changes-save-btn" class="primary-btn" data-str="UNSAVED_CHANGES_MODAL.SAVE_BUTTON">Save & Close</button>
+          <button id="unsaved-changes-discard-btn" style="color: #ff5555; border-color: #ff5555;" data-str="UNSAVED_CHANGES_MODAL.DISCARD_BUTTON">Close Without Saving</button>
+          <button id="unsaved-changes-cancel-btn" data-str="UNSAVED_CHANGES_MODAL.CANCEL_BUTTON">Cancel</button>
         </div>
       </div>
     </div>

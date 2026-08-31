@@ -17,6 +17,16 @@ pub enum EngineEvent {
     /// Posted when the cancellation token is raised mid-batch.
     /// Signals the GUI to reset the running flag and show a cancelled message.
     Cancelled,
+    /// A demo in the batch has started playing, read from its `DEMO_START`
+    /// console marker: (job_idx, total_jobs, clip_count), 1-based job_idx.
+    /// Requires `-condebug` (see the tailer spawn below) — silently never
+    /// fires otherwise. See issue #98.
+    DemoLoading(u32, u32, u32),
+    /// Playback is about to fast-forward towards a specific clip, read from
+    /// its `NEXT_CLIP` console marker: (job_idx, total_jobs, clip_idx,
+    /// clip_count), all 1-based. Same -condebug requirement as DemoLoading.
+    /// See issue #98.
+    FastForwardToClip(u32, u32, u32, u32),
 }
 
 /// Longest a batch may go without a console marker before OBS mode calls it
@@ -523,7 +533,15 @@ pub fn spawn_capture_engine(
                         return;
                     }
                 }
+            }
 
+            // The console-log marker stream isn't OBS-specific: OBS mode needs
+            // it to drive recording, but `DEMO_START` (per-demo progress, see
+            // `EngineEvent::DemoLoading`) matters in every mode. So this reads
+            // whenever the engine will actually be writing the log, which
+            // needs only -condebug, not OBS. Without -condebug, no tailer runs
+            // and DemoLoading simply never fires — see its doc comment.
+            if config.add_condebug {
                 // The log is deleted at the end of a batch, not the start, so a
                 // file left by a previous run is normal and its markers are
                 // history. `LogTailer::at_end` is what stops a stale
@@ -657,14 +675,24 @@ pub fn spawn_capture_engine(
                 // over a 17-block batch, so a 500 ms poll below would be far
                 // too coarse to act on them — hence the shorter sleep chosen
                 // for OBS mode at the end of this loop.
-                if let Some(session) = obs_session.as_mut() {
-                    for marker in marker_rx.try_iter() {
-                        let now = std::time::Instant::now();
-                        if let Some(previous) = last_marker_at {
-                            longest_marker_gap = longest_marker_gap.max(now - previous);
-                        }
-                        last_marker_at = Some(now);
+                for marker in marker_rx.try_iter() {
+                    let now = std::time::Instant::now();
+                    if let Some(previous) = last_marker_at {
+                        longest_marker_gap = longest_marker_gap.max(now - previous);
+                    }
+                    last_marker_at = Some(now);
+                    if let Some(session) = obs_session.as_mut() {
                         session.on_marker(&marker);
+                    }
+                    if marker.kind == crate::obs::MarkerKind::DemoStart {
+                        if let Some((job_idx, total, clips)) = marker.demo_progress {
+                            let _ = tx.send(EngineEvent::DemoLoading(job_idx, total, clips));
+                        }
+                    }
+                    if marker.kind == crate::obs::MarkerKind::NextClip {
+                        if let Some((job_idx, total, clip_idx, clip_count)) = marker.next_clip_progress {
+                            let _ = tx.send(EngineEvent::FastForwardToClip(job_idx, total, clip_idx, clip_count));
+                        }
                     }
                 }
 

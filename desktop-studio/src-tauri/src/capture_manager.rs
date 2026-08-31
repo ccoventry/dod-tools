@@ -742,6 +742,17 @@ pub async fn start_capture_batch_impl(
         // the game's dod/ directory (it would otherwise fail with "file not
         // found" since output_demo never existed).
         let total_patch_jobs = patch_jobs.len() as u32;
+        // Known upfront from the same per-job block lists build_batch_queue
+        // already produced — cheap, and lets the demo-loading notification
+        // show "X of Y clips total" without any per-demo lookback.
+        let total_batch_clips: u32 = patch_jobs.iter().map(|j| j.blocks.len() as u32).sum();
+        // One start + one end notification for the whole patching phase, not
+        // per-demo like capture_demo_loading -- decal clearing means patching
+        // is no longer instant, but a toast per demo patched would still be
+        // noise (see issue #98 discussion).
+        let _ = app_handle_clone.emit("capture_patching_started", serde_json::json!({
+            "total": total_patch_jobs,
+        }));
         for (idx, job) in patch_jobs.iter().enumerate() {
             if cancel_token_arc.load(std::sync::atomic::Ordering::Relaxed) {
                 let mut running = is_running_arc.lock().unwrap_or_else(|p| p.into_inner());
@@ -783,6 +794,10 @@ pub async fn start_capture_batch_impl(
             }
         }
 
+        let _ = app_handle_clone.emit("capture_patching_finished", serde_json::json!({
+            "total": total_patch_jobs,
+        }));
+
         let capture_jobs: Vec<CaptureJob> = patch_jobs
             .into_iter()
             .map(|job| CaptureJob { patched_demo_path: job.output_demo })
@@ -800,6 +815,12 @@ pub async fn start_capture_batch_impl(
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let mut total_jobs: u32 = 0;
             let mut current_idx: u32 = 0;
+            // Running tally of clips captured through and including the
+            // current demo -- updated once per DemoLoading (never per
+            // FastForwardToClip), so every fast-forward-to-clip notification
+            // within a demo reports the same "X of Y clips total" the
+            // demo-loading toast itself would have shown. See issue #98.
+            let mut clips_so_far: u32 = 0;
             while let Ok(event) = engine_rx.recv() {
                 match event {
                     EngineEvent::Starting(total) => {
@@ -829,6 +850,26 @@ pub async fn start_capture_batch_impl(
                             "total": total_jobs,
                             "name": name,
                             "status": "Finished"
+                        }));
+                    }
+                    EngineEvent::DemoLoading(job_idx, total, clip_count) => {
+                        clips_so_far += clip_count;
+                        let _ = app_emitter.emit("capture_demo_loading", serde_json::json!({
+                            "index": job_idx,
+                            "total": total,
+                            "clip_count": clip_count,
+                            "clips_so_far": clips_so_far,
+                            "total_batch_clips": total_batch_clips,
+                        }));
+                    }
+                    EngineEvent::FastForwardToClip(job_idx, total, clip_idx, clip_count_this_demo) => {
+                        let _ = app_emitter.emit("capture_fast_forward_to_clip", serde_json::json!({
+                            "demo_index": job_idx,
+                            "demo_total": total,
+                            "clip_index": clip_idx,
+                            "clip_count_this_demo": clip_count_this_demo,
+                            "clips_so_far": clips_so_far,
+                            "total_batch_clips": total_batch_clips,
                         }));
                     }
                     EngineEvent::Error(msg) => {

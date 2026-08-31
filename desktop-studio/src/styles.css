@@ -166,11 +166,36 @@ body {
   white-space: nowrap;
 }
 
-.studio-mode-toggle,
-.setting-toggle {
+/* Notification settings tab (issue #98) — two columns where they fit,
+   collapsing to one on a narrow window. */
+.notification-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(180px, 1fr));
+  gap: 14px 32px;
+}
+
+@media (max-width: 480px) {
+  .notification-settings-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.studio-mode-toggle {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+/* Own rule rather than sharing .studio-mode-toggle's: the switch needs to
+   right-align within the row (so every switch in the notification-settings
+   grid lines up column-wise regardless of label length), which the
+   two-sided Quick-Clip/Workspace toggle does not want. */
+.setting-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
 }
 
 .studio-mode-label,
@@ -180,6 +205,25 @@ body {
   cursor: pointer;
   user-select: none;
   white-space: nowrap;
+}
+
+.info-icon {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 5px;
+  color: var(--text-muted);
+  cursor: help;
+  opacity: 0.7;
+  vertical-align: -1px;
+}
+
+.info-icon svg {
+  display: block;
+}
+
+.info-icon:hover {
+  opacity: 1;
+  color: #ffffff;
 }
 
 .studio-mode-label.active,
