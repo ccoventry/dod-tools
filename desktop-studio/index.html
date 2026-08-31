@@ -40,9 +40,26 @@
         </div>
       </header>
 
+      <!-- In-workflow phase switch: dev never had "Batch Capture Config" as its
+           own top-level destination — export/timing/drive/custom-command config
+           was a phase inside the single continuous Studio workflow
+           (SelectTab::Highlights / Configuration), not a place you navigate
+           away to. Render Studio's own top-level tab was folded in here the
+           same way for #81. This bar only appears while on the Studio tab.
+           Lives outside #main-content-split's two-pane split (not inside
+           #pane-details-config) so its position never shifts when a subtab
+           hides #pane-workspace — the buttons stay in the same place across
+           all three subtabs instead of jumping with whatever panes happen to
+           be visible beneath them. -->
+      <div id="capture-detail-subtabs" class="capture-detail-subtabs">
+        <button class="capture-detail-subtab-btn active" data-capture-subtab="highlights" data-str="HIGHLIGHTS.SUBTAB_HIGHLIGHTS">Capture</button>
+        <button class="capture-detail-subtab-btn" data-capture-subtab="render" data-str="HIGHLIGHTS.SUBTAB_RENDER">Render</button>
+        <button class="capture-detail-subtab-btn" data-capture-subtab="configuration" data-str="HIGHLIGHTS.SUBTAB_CONFIGURATION">Configuration</button>
+      </div>
+
       <!-- Main Split Content Area -->
       <main id="main-content-split">
-        
+
         <!-- Left / Top Split Pane: Workspace Setup & Master Demo Queue -->
         <section id="pane-workspace" class="content-pane">
           <div class="egui-panel">
@@ -100,18 +117,6 @@
 
         <!-- Right / Bottom Split Pane: Detail View & Configuration Panels -->
         <section id="pane-details-config" class="content-pane">
-
-          <!-- In-workflow phase switch: dev never had "Batch Capture Config" as its
-               own top-level destination — export/timing/drive/custom-command config
-               was a phase inside the single continuous Studio workflow
-               (SelectTab::Highlights / Configuration), not a place you navigate
-               away to. Render Studio's own top-level tab was folded in here the
-               same way for #81. This bar only appears while on the Studio tab. -->
-          <div id="capture-detail-subtabs" class="capture-detail-subtabs">
-            <button class="capture-detail-subtab-btn active" data-capture-subtab="highlights" data-str="HIGHLIGHTS.SUBTAB_HIGHLIGHTS">Highlights</button>
-            <button class="capture-detail-subtab-btn" data-capture-subtab="render" data-str="HIGHLIGHTS.SUBTAB_RENDER">Render</button>
-            <button class="capture-detail-subtab-btn" data-capture-subtab="configuration" data-str="HIGHLIGHTS.SUBTAB_CONFIGURATION">Configuration</button>
-          </div>
 
           <!-- Detail View: Highlight Rules -->
           <div id="detail-pane" class="egui-panel">

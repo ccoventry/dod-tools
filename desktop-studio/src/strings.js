@@ -76,7 +76,9 @@ export const STRINGS = {
 
   // ── Highlight Details (detail_pane.js) + Advanced Diagnostics ───────────
   HIGHLIGHTS: {
-    SUBTAB_HIGHLIGHTS: 'Highlights',
+    // Placeholder naming — "Capture"/"Render" is a stand-in until better
+    // names are picked (per #81 discussion), not a final decision.
+    SUBTAB_HIGHLIGHTS: 'Capture',
     SUBTAB_RENDER: 'Render',
     SUBTAB_CONFIGURATION: 'Configuration',
     DEFAULT_TITLE: 'Highlight Details',

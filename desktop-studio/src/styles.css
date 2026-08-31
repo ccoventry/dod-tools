@@ -766,6 +766,9 @@ button.primary-btn:hover:not(:disabled) {
   display: flex;
   gap: 4px;
   flex-shrink: 0;
+  padding: 8px 12px;
+  background: #181818;
+  border-bottom: 1px solid var(--border-color);
 }
 
 .capture-detail-subtab-btn {

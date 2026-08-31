@@ -23,11 +23,13 @@ function applyCaptureDetailSubtabDisplay() {
   const showHighlights = activeCaptureDetailSubtab === 'highlights';
   const showRender = activeCaptureDetailSubtab === 'render';
 
-  // The left master-demo-queue list is Capture-specific — Render works off
-  // its own scanned take list, so it stays hidden on the Render subtab the
-  // same way it already did back when Render was its own top-level nav tab
-  // (a deliberate call to avoid a layout regression, not an oversight).
-  if (workspacePane) workspacePane.style.display = showRender ? 'none' : 'flex';
+  // The left master-demo-queue list is only relevant while picking which
+  // demo's highlights to look at — Render works off its own scanned take
+  // list, and Configuration is settings, not something you cross-reference
+  // against the queue. Both get the same full-width treatment Render
+  // already had (a deliberate call, not a layout regression): only
+  // Highlights keeps the master-queue pane visible alongside it.
+  if (workspacePane) workspacePane.style.display = showHighlights ? 'flex' : 'none';
   if (detailPane) detailPane.style.display = showHighlights ? 'block' : 'none';
   if (advancedPanel) advancedPanel.style.display = showHighlights ? 'block' : 'none';
   if (exportPanel) exportPanel.style.display = (!showHighlights && !showRender) ? 'block' : 'none';
