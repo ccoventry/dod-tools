@@ -17,6 +17,16 @@ pub struct ClipData {
     pub wav_file: Option<String>,
     pub base_name: String,
     pub frame_count: usize,
+    /// Frame resolution — `0` means unknown (e.g. an autosave-recovered stub
+    /// that never had a real scan, or a stream whose dimensions couldn't be
+    /// read). Used by `run_render_job`'s JIT drive-reservation estimate, not
+    /// by the encode itself (FFmpeg reads the actual frame dimensions
+    /// straight off the source). `#[serde(default)]` so autosaves written
+    /// before this existed keep loading.
+    #[serde(default)]
+    pub width: u32,
+    #[serde(default)]
+    pub height: u32,
     pub date: String,
     /// The video file inside `img_folder`, when the take was captured through
     /// `mirv_movie_ffmpeg` instead of as a frame sequence. `None` is a BMP take.
@@ -226,6 +236,98 @@ fn avi_frame_count(path: &Path) -> Option<usize> {
 
     let frames = if stream_length > 0 { stream_length } else { total_frames };
     Some(frames as usize)
+}
+
+/// An AVI's frame resolution, read from the video stream's `strf`
+/// (`BITMAPINFOHEADER`) chunk — a separate chunk walk from `avi_frame_count`
+/// rather than folding into it, so that function's existing return shape and
+/// tests stay untouched. `biHeight` is signed and negative for a top-down
+/// bitmap, hence the `.abs()`.
+fn avi_dimensions(path: &Path) -> Option<(u32, u32)> {
+    use std::io::Read;
+
+    let mut file = std::fs::File::open(path).ok()?;
+    let mut buf = vec![0u8; AVI_HEADER_SCAN_BYTES];
+    let read = file.read(&mut buf).ok()?;
+    buf.truncate(read);
+
+    if buf.len() < 12 || &buf[0..4] != b"RIFF" || &buf[8..12] != b"AVI " {
+        return None;
+    }
+
+    let u32_at = |b: &[u8], at: usize| -> Option<u32> {
+        b.get(at..at + 4)
+            .map(|s| u32::from_le_bytes([s[0], s[1], s[2], s[3]]))
+    };
+    let i32_at = |b: &[u8], at: usize| -> Option<i32> {
+        b.get(at..at + 4)
+            .map(|s| i32::from_le_bytes([s[0], s[1], s[2], s[3]]))
+    };
+
+    let mut pos = 12usize;
+    // `strf` describes whatever `strl`/`strh` it follows — this is only ever
+    // set true right after a video `strh`, so the very next `strf` this
+    // walk sees is guaranteed to be the video stream's, not audio's.
+    let mut awaiting_video_strf = false;
+    while pos + 8 <= buf.len() {
+        let id = &buf[pos..pos + 4];
+        let size = u32_at(&buf, pos + 4)? as usize;
+        let body = pos + 8;
+
+        match id {
+            b"LIST" => {
+                pos = body + 4;
+                continue;
+            }
+            b"strh" => {
+                awaiting_video_strf = buf.get(body..body + 4) == Some(b"vids");
+            }
+            b"strf" if awaiting_video_strf => {
+                let width = u32_at(&buf, body + 4)?;
+                let height = i32_at(&buf, body + 8)?.unsigned_abs();
+                return Some((width, height));
+            }
+            _ => {}
+        }
+
+        pos = body + size + (size & 1);
+    }
+    None
+}
+
+/// A BMP frame sequence's resolution, read from the first frame's own
+/// 54-byte header (`BITMAPFILEHEADER` + `BITMAPINFOHEADER`) — width/height
+/// are little-endian `i32` at offsets 18/22. Same file `get_clip_date`
+/// already opens for its metadata, and the same bounded-read shape as
+/// `avi_frame_count` above.
+fn read_bmp_dimensions(folder: &Path) -> Option<(u32, u32)> {
+    use std::io::Read;
+
+    let mut file = std::fs::File::open(folder.join("00000.bmp")).ok()?;
+    let mut buf = [0u8; 54];
+    file.read_exact(&mut buf).ok()?;
+
+    let i32_at = |at: usize| -> i32 {
+        i32::from_le_bytes([buf[at], buf[at + 1], buf[at + 2], buf[at + 3]])
+    };
+    let width = i32_at(18);
+    let height = i32_at(22);
+    if width <= 0 || height == 0 {
+        return None;
+    }
+    Some((width as u32, height.unsigned_abs()))
+}
+
+/// A stream folder's frame resolution, whichever shape it was captured in —
+/// mirrors `stream_frame_count`'s own AVI-vs-BMP branch. `(0, 0)` means
+/// unknown (e.g. an OBS MP4/MKV take, whose container walk isn't worth doing
+/// just for this — see `stream_frame_count`'s own reasoning); callers treat
+/// that as "fall back to a conservative estimate" rather than a hard error.
+fn stream_dimensions(folder: &Path) -> (u32, u32) {
+    if let Some(video) = stream_video_path(folder) {
+        return avi_dimensions(&video).unwrap_or((0, 0));
+    }
+    read_bmp_dimensions(folder).unwrap_or((0, 0))
 }
 
 /// Frames in a stream folder, whichever shape it was captured in.
@@ -483,6 +585,7 @@ pub fn scan_folder_background(
                 let hud_color_folder = folder_names.get("hudcolor").unwrap();
                 let hud_alpha_folder = folder_names.get("hudalpha").unwrap();
                 let frame_count = stream_frame_count(all_folder);
+                let (width, height) = stream_dimensions(all_folder);
                 let date = get_clip_date(all_folder);
 
                 // `take_shape_is_renderable` above only asked whether *some*
@@ -505,6 +608,8 @@ pub fn scan_folder_background(
                         wav_file: wav_to_use.clone(),
                         base_name: base_name.clone(),
                         frame_count,
+                        width,
+                        height,
                         date: date.clone(),
                         video_file: stream_video(all_folder),
                         alpha_folder: None,
@@ -525,6 +630,8 @@ pub fn scan_folder_background(
                             wav_file: wav_to_use.clone(),
                             base_name: base_name.clone(),
                             frame_count,
+                            width,
+                            height,
                             date: date.clone(),
                             video_file: stream_video(hud_color_folder),
                             alpha_folder: Some(on_disk_name(hud_alpha_folder)),
@@ -558,6 +665,7 @@ pub fn scan_folder_background(
                     }
                 }
                 let frame_count = stream_frame_count(&img_folder);
+                let (width, height) = stream_dimensions(&img_folder);
                 let folder_name = img_folder.file_name().unwrap_or_default().to_string_lossy().into_owned();
                 let date = get_clip_date(&img_folder);
                 let clip = ClipData {
@@ -567,6 +675,8 @@ pub fn scan_folder_background(
                     wav_file: wav_to_use.clone(),
                     base_name: base_name.clone(),
                     frame_count,
+                    width,
+                    height,
                     date,
                     video_file: stream_video(&img_folder),
                     alpha_folder: None,

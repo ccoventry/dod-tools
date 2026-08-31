@@ -1,5 +1,6 @@
 #![cfg(not(target_arch = "wasm32"))]
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -20,12 +21,64 @@ pub enum RenderUpdate {
     Finished(String, bool, Option<String>), // (job_id, success, error_log)
 }
 
+/// Safe, deliberately conservative upper bound on the bytes a render job
+/// will need on its export drive — used only to size the JIT reservation in
+/// `run_render_job` below, never to predict the real (compressed) output.
+/// Raw, uncompressed frame-sequence size (mirrors the AOT capture
+/// allocator's own estimate, `patch::builder::block_estimates`): every codec
+/// this app renders to compresses well below this in practice, so it's
+/// loose but always safe. Falls back to a fixed conservative figure when a
+/// clip's resolution is unknown (`ClipData::width`/`height` are `0` — e.g.
+/// an autosave-recovered stub, or a take whose container isn't cheap to
+/// read dimensions from) rather than reserving nothing for it.
+fn estimate_reservation_bytes(clip: &ClipData) -> u64 {
+    const UNKNOWN_RESOLUTION_FALLBACK_BYTES: u64 = 2 * 1024 * 1024 * 1024; // 2 GiB
+    if clip.width == 0 || clip.height == 0 {
+        return UNKNOWN_RESOLUTION_FALLBACK_BYTES;
+    }
+    clip.width as u64 * clip.height as u64 * 3 * clip.frame_count as u64
+}
+
+/// RAII release for a JIT export-drive reservation claimed in
+/// `run_render_job`'s routing block below. `run_render_job` has many early
+/// returns after a drive is selected (success, error, cancellation) —
+/// releasing on `Drop` means every one of them releases correctly, including
+/// any added later, without a release call having to be hand-placed at each.
+struct ReservationGuard {
+    ledger: Arc<Mutex<HashMap<PathBuf, u64>>>,
+    dir: PathBuf,
+    amount: u64,
+    // For the matching [render-reservation] claim log below — a future
+    // "render says it can't find space but the drive looks fine" report is
+    // the difference between guessing and reading exactly what the ledger
+    // saw, at the cost of one log line per job.
+    job_id: String,
+}
+
+impl Drop for ReservationGuard {
+    fn drop(&mut self) {
+        let mut ledger = self.ledger.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(reserved) = ledger.get_mut(&self.dir) {
+            *reserved = reserved.saturating_sub(self.amount);
+        }
+        let remaining = ledger.get(&self.dir).copied().unwrap_or(0);
+        crate::log_markdown(&format!(
+            "[render-reservation] job {} released {:.2} GB on {:?} ({:.2} GB still reserved by other jobs)",
+            self.job_id,
+            self.amount as f64 / (1024.0 * 1024.0 * 1024.0),
+            self.dir,
+            remaining as f64 / (1024.0 * 1024.0 * 1024.0),
+        ));
+    }
+}
+
 pub async fn run_render_job(
     job_id: String,
     clip: ClipData,
     config: RenderConfig,
     tx: mpsc::Sender<RenderUpdate>,
     cancel_rx: Arc<AtomicBool>,
+    reservations: Arc<Mutex<HashMap<PathBuf, u64>>>,
 ) {
     // "Skip" — leave an OBS take as OBS wrote it. No FFmpeg involved at all,
     // just a copy into the export pool with the pipeline's naming applied.
@@ -124,14 +177,54 @@ pub async fn run_render_job(
     let clip_type = clip.clip_type.as_str();
 
     // ── JIT export-drive routing ──────────────────────────────────────────────
-    // Iterate the priority pool and select the first directory that has at
-    // least 2 GiB of free space to safely hold the encoded output.
-    const EXPORT_THRESHOLD: u64 = 20 * 1024 * 1024 * 1024; // 20 GiB — safe buffer for 300 FPS ProRes
+    // Select the first directory with enough room for *this specific job* —
+    // "enough room" meaning live free space minus whatever other
+    // concurrently-running jobs have already provisionally reserved on that
+    // same drive (`reservations`), not just the live free-space number
+    // alone. Without that ledger, several jobs starting in the same
+    // scheduler tick can all see the same live free-space number and all
+    // pick the same drive before any of them has written a byte — the flat
+    // 20 GiB threshold this replaced was only ever sized to be safe for one
+    // job at a time. See docs/capture-render-studio-merge-scope.md §4.
+    const SAFETY_MARGIN_BYTES: u64 = 1024 * 1024 * 1024; // 1 GiB
+    // SourceCopy's answer is exact — it's just a file copy, so its real size
+    // is already sitting on disk. Every other job gets the conservative
+    // estimate above.
+    let reservation_estimate = if is_source_copy {
+        let video_name = clip.video_file.as_deref().unwrap_or_default();
+        std::fs::metadata(take_folder.join(&clip.img_folder).join(video_name))
+            .map(|m| m.len())
+            .unwrap_or_else(|_| estimate_reservation_bytes(&clip))
+    } else {
+        estimate_reservation_bytes(&clip)
+    };
+
     let mut selected_export_dir: Option<PathBuf> = None;
-    for dir in &config.export_directories {
-        if crate::sys::disk::get_available_bytes(dir) > EXPORT_THRESHOLD {
-            selected_export_dir = Some(dir.clone());
-            break;
+    {
+        let mut ledger = reservations.lock().unwrap_or_else(|p| p.into_inner());
+        for dir in &config.export_directories {
+            let live_free = crate::sys::disk::get_available_bytes(dir);
+            let already_reserved = *ledger.get(dir).unwrap_or(&0);
+            if live_free.saturating_sub(already_reserved) > reservation_estimate + SAFETY_MARGIN_BYTES {
+                *ledger.entry(dir.clone()).or_insert(0) += reservation_estimate;
+                selected_export_dir = Some(dir.clone());
+                // Shows this job's own estimate against what else was already
+                // reserved on this drive *before* this job's own addition, so
+                // concurrent jobs' numbers are directly comparable in the log —
+                // this is what made it possible to confirm live, under a real
+                // concurrent batch, that the ledger correctly reflects other
+                // in-flight jobs' reservations rather than every job seeing the
+                // same live free-space number.
+                crate::log_markdown(&format!(
+                    "[render-reservation] job {} reserved {:.2} GB on {:?} (already had {:.2} GB reserved by other jobs, {:.2} GB live free)",
+                    job_id,
+                    reservation_estimate as f64 / (1024.0 * 1024.0 * 1024.0),
+                    dir,
+                    already_reserved as f64 / (1024.0 * 1024.0 * 1024.0),
+                    live_free as f64 / (1024.0 * 1024.0 * 1024.0),
+                ));
+                break;
+            }
         }
     }
     if selected_export_dir.is_none() && !config.export_directories.is_empty() {
@@ -139,12 +232,21 @@ pub async fn run_render_job(
             job_id.clone(),
             false,
             Some(format!(
-                "JIT routing failed: all {} export drive(s) have less than 2 GiB free. Render halted.",
-                config.export_directories.len()
+                "JIT routing failed: all {} export drive(s) have less than {:.1} GiB free once other in-flight renders' reservations are accounted for. Render halted.",
+                config.export_directories.len(),
+                (reservation_estimate + SAFETY_MARGIN_BYTES) as f64 / (1024.0 * 1024.0 * 1024.0)
             )),
         ));
         return;
     }
+    // Releases this job's reservation on every remaining exit path below —
+    // see `ReservationGuard`'s own doc comment.
+    let _reservation_guard = selected_export_dir.as_ref().map(|dir| ReservationGuard {
+        ledger: reservations.clone(),
+        dir: dir.clone(),
+        amount: reservation_estimate,
+        job_id: job_id.clone(),
+    });
 
     let output_folder = selected_export_dir.unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
     if let Err(e) = std::fs::create_dir_all(&output_folder) {
@@ -687,13 +789,15 @@ mod tests {
             wav_file: None,
             base_name: "demo-take-obs".to_string(),
             frame_count: 0,
+            width: 0,
+            height: 0,
             date: "-".to_string(),
             video_file: Some("video.mp4".to_string()),
             alpha_folder: None,
         };
 
         let (tx, rx) = mpsc::channel();
-        run_render_job("0".to_string(), clip, source_copy_config(&export_dir), tx, Arc::new(AtomicBool::new(false))).await;
+        run_render_job("0".to_string(), clip, source_copy_config(&export_dir), tx, Arc::new(AtomicBool::new(false)), Arc::new(Mutex::new(HashMap::new()))).await;
 
         let updates = drain(&rx);
         assert_eq!(last_finished(&updates), Some((true, None)), "{:?}", updates);
@@ -727,13 +831,15 @@ mod tests {
             wav_file: None,
             base_name: "demo-take-obs".to_string(),
             frame_count: 0,
+            width: 0,
+            height: 0,
             date: "-".to_string(),
             video_file: Some("video.mp4".to_string()),
             alpha_folder: Some("hudalpha".to_string()),
         };
 
         let (tx, rx) = mpsc::channel();
-        run_render_job("0".to_string(), clip, source_copy_config(&export_dir), tx, Arc::new(AtomicBool::new(false))).await;
+        run_render_job("0".to_string(), clip, source_copy_config(&export_dir), tx, Arc::new(AtomicBool::new(false)), Arc::new(Mutex::new(HashMap::new()))).await;
 
         let updates = drain(&rx);
         match last_finished(&updates) {
@@ -760,13 +866,15 @@ mod tests {
             wav_file: None,
             base_name: "demo-take-obs".to_string(),
             frame_count: 0,
+            width: 0,
+            height: 0,
             date: "-".to_string(),
             video_file: None,
             alpha_folder: None,
         };
 
         let (tx, rx) = mpsc::channel();
-        run_render_job("0".to_string(), clip, source_copy_config(&export_dir), tx, Arc::new(AtomicBool::new(false))).await;
+        run_render_job("0".to_string(), clip, source_copy_config(&export_dir), tx, Arc::new(AtomicBool::new(false)), Arc::new(Mutex::new(HashMap::new()))).await;
 
         let updates = drain(&rx);
         match last_finished(&updates) {
@@ -794,6 +902,8 @@ mod tests {
             wav_file: None,
             base_name: "demo-take-obs".to_string(),
             frame_count: 0,
+            width: 0,
+            height: 0,
             date: "-".to_string(),
             // Claims a video that was never written.
             video_file: Some("video.mp4".to_string()),
@@ -801,7 +911,7 @@ mod tests {
         };
 
         let (tx, rx) = mpsc::channel();
-        run_render_job("0".to_string(), clip, source_copy_config(&export_dir), tx, Arc::new(AtomicBool::new(false))).await;
+        run_render_job("0".to_string(), clip, source_copy_config(&export_dir), tx, Arc::new(AtomicBool::new(false)), Arc::new(Mutex::new(HashMap::new()))).await;
 
         let updates = drain(&rx);
         match last_finished(&updates) {
@@ -833,13 +943,15 @@ mod tests {
             wav_file: Some("sound.wav".to_string()),
             base_name: "demo-take".to_string(),
             frame_count: 0,
+            width: 0,
+            height: 0,
             date: "-".to_string(),
             video_file: Some("video.mp4".to_string()),
             alpha_folder: None,
         };
 
         let (tx, rx) = mpsc::channel();
-        run_render_job("0".to_string(), clip, source_copy_config(&export_dir), tx, Arc::new(AtomicBool::new(false))).await;
+        run_render_job("0".to_string(), clip, source_copy_config(&export_dir), tx, Arc::new(AtomicBool::new(false)), Arc::new(Mutex::new(HashMap::new()))).await;
 
         let updates = drain(&rx);
         match last_finished(&updates) {

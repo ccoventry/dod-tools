@@ -18,8 +18,7 @@ export const STRINGS = {
   // ── Top Navigation / Header ─────────────────────────────────────────────
   NAV: {
     APP_TITLE: 'DoD Tools Studio',
-    CAPTURE_STUDIO_TAB: 'Capture Studio',
-    RENDER_STUDIO_TAB: 'Render Studio',
+    STUDIO_TAB: 'Studio',
     DEMO_AUDITOR_TAB: 'Demo Auditor',
     DEMO_ANALYZER_TAB: 'Demo Analyzer',
     QUICK_CLIP_LABEL: 'Quick-Clip',
@@ -59,7 +58,7 @@ export const STRINGS = {
     TABLE_HEADER_CAPTURED: 'Captured',
     TABLE_HEADER_RENDERED: 'Rendered',
     TABLE_HEADER_ACTIONS: 'Actions',
-    TABLE_EMPTY_NO_DEMOS: "No demos scanned yet. Add a directory and click 'Scan Demos'.",
+    TABLE_EMPTY_NO_DEMOS: "No demos scanned yet. Use '+ Add Demo Files' or '+ Add Folder' to get started.",
     TABLE_EMPTY_NO_DEMOS_IN_DIRS: 'No demos found in specified directories.',
     TABLE_EMPTY_NO_MATCH_SEARCH: 'No demos match your search.',
     DEMO_LIST_FOOTER_DEFAULT: 'Loaded Demos: 0 | Total Highlights: 0',
@@ -77,7 +76,10 @@ export const STRINGS = {
 
   // ── Highlight Details (detail_pane.js) + Advanced Diagnostics ───────────
   HIGHLIGHTS: {
-    SUBTAB_HIGHLIGHTS: 'Highlights',
+    // Placeholder naming — "Capture"/"Render" is a stand-in until better
+    // names are picked (per #81 discussion), not a final decision.
+    SUBTAB_HIGHLIGHTS: 'Capture',
+    SUBTAB_RENDER: 'Render',
     SUBTAB_CONFIGURATION: 'Configuration',
     DEFAULT_TITLE: 'Highlight Details',
     detailTitle: (name) => `Highlight Details: ${name}`,
@@ -150,6 +152,7 @@ export const STRINGS = {
     TAB_PIPELINE: 'Pipeline',
     TAB_CAPTURE_OUTPUT: 'Destinations',
     TAB_CUSTOM_COMMANDS: 'Commands',
+    TAB_RENDER_OUTPUT: 'Render Settings',
     TAB_NOTIFICATIONS: 'Notifications',
     HLAE_EXEC_LABEL: 'HLAE Executable:',
     HLAE_EXEC_PLACEHOLDER: 'Path to hlae.exe',
@@ -300,6 +303,7 @@ export const STRINGS = {
       'Frames per second written to the recorded video. Nothing to do with the demo\'s own tickrate, which is a property of how the demo was recorded and is not adjustable here.',
     OUTPUT_DIR_PLACEHOLDER: 'Capture output directory path...',
     ADD_DIRECTORY_BUTTON: 'Add Directory',
+    DESTINATIONS_HELP_TEXT: 'Captures are written here, and Render Studio scans these same locations for takes to render.',
     AUTO_CLEAR_LOGS_LABEL: 'Auto-clear Logs',
     AUTO_CLEAR_PREVIEWS_LABEL: 'Auto-clear Previews',
     AUTO_CLEAR_TEMP_DEMOS_LABEL: 'Auto-clear Temp Demos',
@@ -399,9 +403,6 @@ export const STRINGS = {
   // ── Render Studio panel + render_pane.js ─────────────────────────────────
   RENDER: {
     PANEL_TITLE: 'Render Studio',
-    PATH_PLACEHOLDER: 'Enter render directory path...',
-    ADD_FOLDER_BUTTON: 'Add Render Folder',
-    BROWSE_FOLDER_BUTTON: 'Browse Render Folder',
     CODEC_LABEL: 'Codec:',
     CODEC_PRORES: 'ProRes 422 HQ',
     CODEC_DNXHR: 'DNxHR HQ',
@@ -410,7 +411,6 @@ export const STRINGS = {
     SOURCE_FPS_LABEL: 'Source FPS:',
     MAX_CONCURRENT_LABEL: 'Max Concurrent Renders:',
     EXPORT_DIR_PLACEHOLDER: 'Add export drive/folder...',
-    RENDER_FOLDER_ROW_PLACEHOLDER: 'Render directory path...',
     EXPORT_DIR_ROW_PLACEHOLDER: 'Export drive/folder path...',
     ADD_DRIVE_BUTTON: 'Add Drive',
     BROWSE_DRIVE_BUTTON: 'Browse Drive',
@@ -423,7 +423,7 @@ export const STRINGS = {
     TABLE_HEADER_FRAMES: 'Frames',
     TABLE_HEADER_DATE: 'Date',
     TABLE_HEADER_SETTINGS: 'Settings',
-    TABLE_HEADER_SETTINGS_TITLE: "Codec/FPS this job is queued to render with — its own setting, not necessarily what the panel above currently shows",
+    TABLE_HEADER_SETTINGS_TITLE: "Codec/FPS this job is queued to render with — its own setting, not necessarily what Configuration currently shows",
     TABLE_HEADER_STATUS: 'Status',
     TABLE_HEADER_SPEED: 'Speed',
     TABLE_HEADER_PROGRESS: 'Progress',
@@ -860,7 +860,6 @@ export const STRINGS = {
 
   MAIN: {
     SELECT_CAPTURE_OUTPUT_DIR_TITLE: 'Select Capture Output Directory',
-    SELECT_RENDER_DIR_TITLE: 'Select Render Directory',
     SELECT_RENDER_EXPORT_DIR_TITLE: 'Select Render Export Directory',
     SAVE_PROJECT_SESSION_TITLE: 'Save Studio Project Session',
     SELECT_HLAE_EXE_TITLE: 'Select HLAE Executable (hlae.exe)',

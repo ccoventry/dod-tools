@@ -149,7 +149,7 @@ test.describe('scan stages a batch, Start is a separate step', () => {
   test('clicking Scan calls queue_render_batch and populates the job table, without starting the batch', async ({ page }) => {
     await gotoHarness(page);
     await page.evaluate(() => {
-      window.__testRenderFolders = ['C:\\captures'];
+      window.__testCaptureLocations = ['C:\\captures'];
       window.__mockInvokeHandlers['queue_render_batch'] = () => {
         window.__mockEmit('render_jobs_snapshot', [
           {
