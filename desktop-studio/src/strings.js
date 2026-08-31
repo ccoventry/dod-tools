@@ -755,6 +755,15 @@ export const STRINGS = {
     CANCEL_BUTTON: 'Cancel',
   },
 
+  // ── Unsaved-changes prompt on window close (Capture Studio) ─────────────
+  UNSAVED_CHANGES_MODAL: {
+    TITLE: 'Unsaved Changes',
+    MESSAGE: 'Capture Studio has unsaved changes. Save your session before closing?',
+    SAVE_BUTTON: 'Save & Close',
+    DISCARD_BUTTON: 'Close Without Saving',
+    CANCEL_BUTTON: 'Cancel',
+  },
+
   // ── main.js: sessions, settings dialogs, scan status, Clear actions ─────
   // Map library warnings. A demo names the map it was recorded on and stamps
   // that map's build alongside it, so "missing" and "wrong build" are different
@@ -852,6 +861,7 @@ export const STRINGS = {
     DEMO_FILES_FILTER_NAME: 'Demo Files',
 
     NOTHING_TO_SAVE: 'Nothing to save yet — add demo files or load a session first.',
+    ALREADY_SAVED: 'Already saved — no changes since the last save.',
     projectSavedToast: (path) => `Project session saved successfully to ${path}`,
     SAVE_PROJECT_ERROR: 'Error saving project session.',
     loadedDemosToast: (count) => `Loaded ${count} demos from project file`,
