@@ -832,6 +832,17 @@ window.addEventListener("DOMContentLoaded", async () => {
   const loadProjectBtn = document.querySelector('#load-project-btn');
   if (loadProjectBtn) {
     loadProjectBtn.addEventListener('click', async () => {
+      // Loading replaces currentScannedDemos/takeIndex wholesale — same
+      // data-loss risk as closing the window, so it gets the same prompt
+      // before that happens. Identical guard to the window-close handler
+      // below, reusing the same modal (requestUnsavedChangesConfirmation,
+      // hoisted function declaration defined later in this scope).
+      if (hasUnsavedChanges && hasSavableProject()) {
+        const outcome = await requestUnsavedChangesConfirmation();
+        if (!outcome) return; // Cancel — abort the load, keep current state
+        // 'save' already wrote the file inside the modal's Save button
+        // handler; 'discard' falls through to load over it either way.
+      }
       try {
         const selected = await open({
           multiple: false,
@@ -1430,6 +1441,20 @@ window.addEventListener("DOMContentLoaded", async () => {
     await appWindow.destroy();
   });
 
+  // Page-level reload (F5, Ctrl+R, or any other in-place navigation) doesn't
+  // go through Tauri's onCloseRequested above at all — it's a WebView2
+  // navigation, not a window close — so it needs its own guard. Unlike the
+  // themed modal above, beforeunload's confirmation dialog is browser-native
+  // and cannot be styled or given custom button text (a deliberate web
+  // platform restriction against sites faking dialogs); setting returnValue
+  // is what triggers it, and its own text is what's shown, not this string.
+  window.addEventListener('beforeunload', (event) => {
+    if (hasUnsavedChanges && hasSavableProject()) {
+      event.preventDefault();
+      event.returnValue = '';
+    }
+  });
+
   // Delete callback: remove a demo from the active scan list and re-render.
   // Called by master_pane.js when the 🗑 button is clicked on a row. Returns
   // the new selectedDemoIdx so the caller's own renderMasterList call can
@@ -1729,11 +1754,19 @@ window.addEventListener("DOMContentLoaded", async () => {
     hlPathInput.addEventListener('change', () => refreshInitCommandWarnings());
   }
   initDetailPane(() => currentScannedDemos, () => {
-    // Fired on both streak selection and status edits — selection moves
-    // required capture bytes (refreshLaunchGuard) and both move the Master
-    // Queue's Highlights/Pending/Captured/Rendered columns (renderMasterList).
+    // Fired on every detail-pane re-render, not just edits (also runs when
+    // switching the selected demo, or after a capture/render completes) —
+    // selection moves required capture bytes (refreshLaunchGuard) and status
+    // moves the Master Queue's Highlights/Pending/Captured/Rendered columns
+    // (renderMasterList), both cheap enough to just always re-derive here.
+    // Must NOT mark the project dirty — see onDirty below for that.
     refreshLaunchGuard({ targetDrives, currentScannedDemos });
     renderMasterList(currentScannedDemos, selectedDemoIdx);
+  }, () => {
+    // Fired only from an actual highlights-table field edit (selection,
+    // kill range, status, notes) — all of it is part of the `demos` written
+    // by saveProjectSession(), so all of it marks the project dirty.
+    markProjectDirty();
   });
 
   // Demo Analyzer's Explorer sidebar Pinned tier shares the same
