@@ -95,12 +95,41 @@ one job at a time, not however many race onto a drive together.
 **Decision:** fix this as part of the merge, not urgently but folded into
 this scope rather than filed separately. Fix shape: a small shared
 in-memory reservation ledger (e.g. `Arc<Mutex<HashMap<PathBuf, u64>>>`) —
-each job provisionally reserves its take's raw-BMP byte size (the same safe
-upper bound from §3) against the shared ledger when it claims a drive, and
-releases the reservation when the job finishes. The bound being loose barely
-matters here, since the reservation is only held for the few minutes that
-job is actually encoding, unlike a full-batch AOT plan which would hold it
-for the whole queue's lifetime.
+each job provisionally reserves a byte estimate against the shared ledger
+when it claims a drive, and releases the reservation when the job finishes.
+Being loose barely matters here, since the reservation is only held for the
+few minutes that job is actually encoding, unlike a full-batch AOT plan
+which would hold it for the whole queue's lifetime.
+
+That per-job estimate should be **dynamic, not the flat 20 GiB threshold** —
+a 5-second 720p clip and a 2-minute clip shouldn't reserve the same amount.
+Same math Capture's AOT allocator already uses (`builder.rs:795-801`),
+applied per render clip instead of per capture block:
+
+```
+raw_bytes ≈ width × height × 3 (24-bit RGB) × frame_count
+```
+
+`ClipData.frame_count` (`scanner.rs:19`) is already scanned per-take —
+nothing new needed there. Resolution isn't currently tracked anywhere on the
+render side (`RenderConfig` has no resolution field, `config.rs:22-32`) —
+FFmpeg just reads each BMP's own dimensions at encode time — so this needs
+one small addition: read one BMP's header (54 bytes, not the whole image)
+at scan time and store width/height on `ClipData` alongside `frame_count`.
+This estimate then replaces the flat `EXPORT_THRESHOLD` pre-check too: gate
+on "does this drive have at least *this clip's* estimate + a safety margin"
+rather than a one-size-fits-all 20 GiB, which today can both reject a drive
+that has plenty of room for a short clip and under-reserve for a long one.
+
+Worth being precise about what this still is: it borrows AOT's *estimation
+math*, not AOT's *upfront whole-batch planning*. It's decided per-job, at
+the moment that job starts (not all at once before the batch begins), the
+estimate is a deliberate overestimate of the real (compressed) output
+rather than an exact figure, the ledger churns continuously as jobs start
+and finish rather than being computed once, and it needs real thread-safety
+(concurrent claim/release) that AOT's single synchronous pass never had to
+deal with. Still fundamentally JIT — just an accurate, race-safe JIT
+instead of a flat threshold with no cross-job awareness at all.
 
 ## 5. Quick-Clip / Workspace mode
 
