@@ -1828,8 +1828,15 @@ window.addEventListener("DOMContentLoaded", async () => {
     const isCtrlS = (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's';
     const isCtrlN = (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'n';
     const isCtrlW = (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'w';
+    // WebView2 keeps the browser's reload shortcuts live by default — a
+    // desktop app has no "refresh the page" affordance at all, so these are
+    // swallowed unconditionally rather than routed through the dirty-state
+    // check the beforeunload listener below does for any other reload path
+    // (e.g. devtools once opened — the context menu's own Reload entry is
+    // gone entirely, see the contextmenu listener further down).
+    const isReload = e.key === 'F5' || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'r');
 
-    if (isCtrlO || isCtrlS || isCtrlN || isCtrlW) {
+    if (isCtrlO || isCtrlS || isCtrlN || isCtrlW || isReload) {
       e.preventDefault();
     }
 
@@ -1843,4 +1850,11 @@ window.addEventListener("DOMContentLoaded", async () => {
       if (isCtrlS) document.querySelector('#save-project-btn')?.click();
     }
   });
+
+  // WebView2's native right-click menu (Reload/Inspect/browser Cut-Copy-
+  // Paste) reads as a web page, not an app — suppressed entirely. Doesn't
+  // affect actual clipboard functionality: Ctrl+C/X/V are OS-level keyboard
+  // bindings that don't route through this menu, so text fields keep normal
+  // copy/paste with no menu at all.
+  window.addEventListener('contextmenu', (e) => e.preventDefault());
 });
