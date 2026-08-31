@@ -2,7 +2,7 @@
 //
 // Calls into native::hlcr's real render pipeline (renderer.rs/config.rs/
 // autosave.rs/scanner.rs — byte-identical to dev, previously orphaned, see
-// docs/tauri_parity_audit.md Area 5) instead of the from-scratch
+// docs/archive/tauri_parity_audit.md Area 5) instead of the from-scratch
 // reimplementation this module used to carry. Owns the Tauri-side
 // orchestration dev's now-deleted `hlcr/ui.rs` used to provide: concurrent
 // job scheduling, a JIT multi-drive export pool, per-job progress/state,
@@ -24,7 +24,7 @@ use tauri::{AppHandle, Emitter};
 
 /// Codec is a string id ("prores" | "dnxhr" | "h264" | "h264_nvenc") mapped
 /// to `RenderCodec` via `RenderCodec::from_str_id` — see
-/// docs/tauri_parity_audit.md Area 5 for why `h264`/software libx264 exists
+/// docs/archive/tauri_parity_audit.md Area 5 for why `h264`/software libx264 exists
 /// alongside dev's NVENC-only H.264 variant.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RenderBatchPayload {

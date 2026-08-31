@@ -8,7 +8,7 @@
 // which is exactly what the line-of-sight test rejects — so the demos that fail
 // generate tens of thousands of candidates and keep none of them. The map's own
 // geometry is the one surface source that owes nothing to what happened in the
-// match. See `docs/decal_flush_bsp_surfaces.md`.
+// match. See `docs/archive/decal_flush_bsp_surfaces.md`.
 //
 // It answers two questions, and only parses what they need. Lighting,
 // clipnodes, marksurfaces and entities are skipped entirely.

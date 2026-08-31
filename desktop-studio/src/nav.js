@@ -6,7 +6,7 @@
 // In-workflow Capture Studio phase — dev's SelectTab::Highlights/Configuration
 // live inside the single continuous Capture Studio destination, not as a
 // separate top-level nav tab ("Batch Capture Config" was DRIFT, see
-// docs/tauri_parity_audit.md Area 1). 'highlights' shows the Master Queue's
+// docs/archive/tauri_parity_audit.md Area 1). 'highlights' shows the Master Queue's
 // detail view + advanced diagnostics; 'configuration' shows Path
 // Routing/Timing/Capture Output/Custom Commands.
 let activeCaptureDetailSubtab = 'highlights';

@@ -339,7 +339,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   // Analyzer Explorer sidebar's "Recent" quick-links tier — most-recent-first,
   // capped at 10, pushed via recordDemoFolderVisit() below whenever browsing
   // into a folder yields a non-empty demo listing. Mirrors dev's
-  // `settings.demo_folder_history` (see docs/tauri_parity_audit.md Area 3).
+  // `settings.demo_folder_history` (see docs/archive/tauri_parity_audit.md Area 3).
   let demoFolderHistory = [];
   // Gates the Analyzer Explorer tree's per-subfolder demo-count badge.
   // Mirrors dev's `settings.scan_folders_for_demos`, default false.

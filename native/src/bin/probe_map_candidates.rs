@@ -1,6 +1,6 @@
 //! How many flush positions a map can supply from its own geometry alone.
 //!
-//! Stage 3 of `docs/decal_flush_bsp_surfaces.md`. Every other source of flush
+//! Stage 3 of `docs/archive/decal_flush_bsp_surfaces.md`. Every other source of flush
 //! coordinates is drawn from what people did in a match, so a map nobody has
 //! captured yet supplies nothing; this asks what the map itself is worth,
 //! without a demo, a camera path or a coordinate store anywhere in the picture.

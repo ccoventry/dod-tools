@@ -1,6 +1,6 @@
 //! Checks the BSP parser against coordinates the engine provably accepted.
 //!
-//! Stage 2 of `docs/decal_flush_bsp_surfaces.md`, kept because it is the only
+//! Stage 2 of `docs/archive/decal_flush_bsp_surfaces.md`, kept because it is the only
 //! honest test the map geometry has. Every harvested decal in a demo is a point
 //! the engine created a decal at, so running thousands of them against the
 //! parsed geometry validates the lump offsets, edge winding, coordinate space

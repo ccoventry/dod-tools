@@ -4,7 +4,7 @@ Status (2026-08-17): **research only, nothing implemented yet.** The user's
 independent Python/PySide6 rewrite of the render tool lives in the sibling
 repo `../HLCR` (`ui/main_window.py`, `ui/styles.py`, `workers/render_job.py`,
 `workers/scanner.py`, `core/*.py`) and is referenced once already in
-`tauri_parity_audit.md` (§5, the H.264 codec-default decision). The user
+`archive/tauri_parity_audit.md` (§5, the H.264 codec-default decision). The user
 wants dod-tools' Render Studio tab (`desktop-studio/index.html`'s
 `#render-studio-panel`, `desktop-studio/src/render_pane.js`, backed by
 `native/src/hlcr/` + `desktop-studio/src-tauri`'s `render_manager.rs`) to
@@ -13,7 +13,7 @@ research pass produced, so whoever picks this up doesn't have to re-derive
 it. Not triaged into Medium/Low priority yet — do that once the user picks
 which of these they actually want.
 
-Classification borrows `tauri_parity_audit.md`'s convention: **GAP** (HLCR
+Classification borrows `archive/tauri_parity_audit.md`'s convention: **GAP** (HLCR
 has it, dod-tools doesn't), **DELTA** (both have it, shaped/behaving
 differently), **DOD-TOOLS-ONLY** (dod-tools has something HLCR lacks —
 don't regress these while porting).
@@ -145,4 +145,4 @@ picks a subset (the multi-select/delete/sort/skip-rendered table upgrades
 are probably the highest-value, most self-contained slice), triage those
 into `engineering_backlog.md`'s Medium/Low Priority lists individually,
 the same way the Capture Studio parity gaps were triaged from
-`tauri_parity_audit.md`.
+`archive/tauri_parity_audit.md`.
