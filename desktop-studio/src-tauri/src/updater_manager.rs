@@ -52,10 +52,7 @@ pub async fn check_for_update(
         .build()
         .map_err(|e| format!("Failed to build updater: {}", e))?;
 
-    let update = updater
-        .check()
-        .await
-        .map_err(|e| format!("Update check failed: {}", e))?;
+    let update = updater.check().await.map_err(|e| e.to_string())?;
 
     match update {
         Some(update) => {
@@ -110,7 +107,7 @@ pub async fn download_and_install_update(
             },
         )
         .await
-        .map_err(|e| format!("Update download/install failed: {}", e))?;
+        .map_err(|e| e.to_string())?;
 
     Ok(())
 }
