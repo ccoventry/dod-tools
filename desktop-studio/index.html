@@ -163,8 +163,8 @@
               <button class="config-tab-btn" data-tab="tab-output-format" data-str="CAPTURE_CONFIG.TAB_OUTPUT_FORMAT">Output Format</button>
               <button class="config-tab-btn" data-tab="tab-timing-options" data-str="CAPTURE_CONFIG.TAB_TIMING_OPTIONS">Timing</button>
               <button class="config-tab-btn" data-tab="tab-pipeline" data-str="CAPTURE_CONFIG.TAB_PIPELINE">Pipeline</button>
-              <button class="config-tab-btn" data-tab="tab-drive-overrides" data-str="CAPTURE_CONFIG.TAB_CAPTURE_OUTPUT">Destinations</button>
               <button class="config-tab-btn" data-tab="tab-custom-commands" data-str="CAPTURE_CONFIG.TAB_CUSTOM_COMMANDS">Commands</button>
+              <button class="config-tab-btn" data-tab="tab-drive-overrides" data-str="CAPTURE_CONFIG.TAB_CAPTURE_OUTPUT">Destinations</button>
               <button class="config-tab-btn" data-tab="tab-render-output" data-str="CAPTURE_CONFIG.TAB_RENDER_OUTPUT">Render Output</button>
             </div>
 
@@ -381,20 +381,6 @@
               </div>
             </div>
 
-            <!-- Tab Content: Destinations — where captures are written, and
-                 also what Render Studio scans for takes to render (one
-                 shared location list, not two — see #81).
-                 (id kept as tab-drive-overrides: internal hook, not user-visible) -->
-            <div id="tab-drive-overrides" class="config-tab-content" style="display: none;">
-              <p style="font-size: 12px; color: var(--text-muted); margin: 0 0 8px;" data-str="CAPTURE_CONFIG.DESTINATIONS_HELP_TEXT">Captures are written here, and Render Studio scans these same locations for takes to render.</p>
-              <div class="input-row">
-                <input type="text" id="drive-path-input" data-str-placeholder="CAPTURE_CONFIG.OUTPUT_DIR_PLACEHOLDER" placeholder="Capture output directory path..." style="flex: 1;" />
-                <button id="add-drive-btn" data-str="CAPTURE_CONFIG.ADD_DIRECTORY_BUTTON">Add Directory</button>
-                <button id="browse-drive-btn" data-str="CAPTURE_CONFIG.BROWSE_BUTTON">Browse</button>
-              </div>
-              <div id="target-drive-list" class="list-editor-list"></div>
-            </div>
-
             <!-- Tab Content: Initial + Scheduled Commands -->
             <div id="tab-custom-commands" class="config-tab-content" style="display: none;">
               <div class="input-row">
@@ -412,6 +398,20 @@
               </div>
               <div id="custom-commands-list" class="list-editor-list"></div>
               <button id="add-custom-command-btn" data-str="CAPTURE_CONFIG.ADD_CUSTOM_COMMAND_BUTTON">+ Add Scheduled Command</button>
+            </div>
+
+            <!-- Tab Content: Destinations — where captures are written, and
+                 also what Render Studio scans for takes to render (one
+                 shared location list, not two — see #81).
+                 (id kept as tab-drive-overrides: internal hook, not user-visible) -->
+            <div id="tab-drive-overrides" class="config-tab-content" style="display: none;">
+              <p style="font-size: 12px; color: var(--text-muted); margin: 0 0 8px;" data-str="CAPTURE_CONFIG.DESTINATIONS_HELP_TEXT">Captures are written here, and Render Studio scans these same locations for takes to render.</p>
+              <div class="input-row">
+                <input type="text" id="drive-path-input" data-str-placeholder="CAPTURE_CONFIG.OUTPUT_DIR_PLACEHOLDER" placeholder="Capture output directory path..." style="flex: 1;" />
+                <button id="add-drive-btn" data-str="CAPTURE_CONFIG.ADD_DIRECTORY_BUTTON">Add Directory</button>
+                <button id="browse-drive-btn" data-str="CAPTURE_CONFIG.BROWSE_BUTTON">Browse</button>
+              </div>
+              <div id="target-drive-list" class="list-editor-list"></div>
             </div>
 
             <!-- Tab Content: Render Studio's settings — codec/FPS/concurrency

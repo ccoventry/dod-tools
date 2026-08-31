@@ -152,7 +152,7 @@ export const STRINGS = {
     TAB_PIPELINE: 'Pipeline',
     TAB_CAPTURE_OUTPUT: 'Destinations',
     TAB_CUSTOM_COMMANDS: 'Commands',
-    TAB_RENDER_OUTPUT: 'Render Output',
+    TAB_RENDER_OUTPUT: 'Render Settings',
     HLAE_EXEC_LABEL: 'HLAE Executable:',
     HLAE_EXEC_PLACEHOLDER: 'Path to hlae.exe',
     HL_EXEC_LABEL: 'Half-Life Executable:',

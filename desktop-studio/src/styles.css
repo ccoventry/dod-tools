@@ -137,6 +137,15 @@ body {
   border-color: #4a82bd;
 }
 
+/* Same button:hover:not(:disabled) specificity override as
+   .capture-detail-subtab-btn.active:hover below — without this the active
+   top-level tab's blue background flips to the generic hover gray. */
+.nav-tab-btn.active:hover {
+  background: var(--primary-accent);
+  color: #ffffff;
+  border-color: #4a82bd;
+}
+
 .nav-actions {
   display: flex;
   align-items: center;
@@ -525,6 +534,14 @@ button.primary-btn:hover:not(:disabled) {
   border-color: #4a82bd;
 }
 
+/* Same button:hover:not(:disabled) specificity override as the other
+   .active:hover tab-button rules in this file. */
+.config-tab-btn.active:hover {
+  background: var(--primary-accent);
+  color: #ffffff;
+  border-color: #4a82bd;
+}
+
 .config-tab-content {
   display: none;
 }
@@ -764,6 +781,7 @@ button.primary-btn:hover:not(:disabled) {
 
 .capture-detail-subtabs {
   display: flex;
+  justify-content: center;
   gap: 4px;
   flex-shrink: 0;
   padding: 8px 12px;
@@ -780,6 +798,16 @@ button.primary-btn:hover:not(:disabled) {
 }
 
 .capture-detail-subtab-btn.active {
+  background: var(--primary-accent);
+  color: #ffffff;
+  border-color: #4a82bd;
+}
+
+/* Matches button.primary-btn:hover's own override below — the generic
+   button:hover:not(:disabled) rule outranks a plain two-class selector
+   here because :not() carries its argument's specificity, so without this
+   the active tab's blue background would flip to the generic hover gray. */
+.capture-detail-subtab-btn.active:hover {
   background: var(--primary-accent);
   color: #ffffff;
   border-color: #4a82bd;
@@ -805,6 +833,14 @@ button.primary-btn:hover:not(:disabled) {
 }
 
 .analyzer-subtab-btn.active {
+  background: var(--primary-accent);
+  color: #ffffff;
+  border-color: #4a82bd;
+}
+
+/* Same button:hover:not(:disabled) specificity override as the other
+   .active:hover tab-button rules in this file. */
+.analyzer-subtab-btn.active:hover {
   background: var(--primary-accent);
   color: #ffffff;
   border-color: #4a82bd;
