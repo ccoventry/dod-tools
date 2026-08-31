@@ -8,8 +8,13 @@ import { refreshCfgWarnings } from './cfg_warnings.js';
 import { refreshRollFloors } from './roll_floors.js';
 import { streakUid, recordTake } from './take_index.js';
 import { STRINGS } from './strings.js';
+import { notify, isNotificationEnabled } from './os_notifications.js';
 
 let unlistenCaptureStatus = null;
+let unlistenDemoLoading = null;
+let unlistenFastForwardToClip = null;
+let unlistenPatchingStarted = null;
+let unlistenPatchingFinished = null;
 // Tracks whether a batch is actively running so refreshLaunchGuard() never
 // re-enables Start Capture out from under the capture_status "running" lock.
 let capturingInFlight = false;
@@ -684,6 +689,8 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
   // Options fields above, just on Path Routing / Capture Output checkboxes.
   ['#config-add-condebug', '#config-auto-clear-logs', '#config-auto-clear-previews',
    '#config-auto-clear-temp-demos', '#config-save-local-patched',
+   '#config-notify-patching', '#config-notify-demo-loading', '#config-notify-between-clips',
+   '#config-notify-captures-done', '#config-notify-renders-done', '#config-notify-error',
    // A <select> fires `change`, not `input` — it belongs here rather than in
    // the list above, which is wired for text/number/checkbox inputs.
    '#config-capture-codec', '#config-capture-mode', '#config-obs-scene'].forEach(selector => {
@@ -721,8 +728,10 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
         if (currentOnBatchFinished) currentOnBatchFinished();
 
         if (payload.error) {
-          showToast(STRINGS.CAPTURE.captureErrorToast(payload.status || STRINGS.CAPTURE.CAPTURE_ERROR_STATUS_DEFAULT), "error");
+          const errorBody = STRINGS.CAPTURE.captureErrorToast(payload.status || STRINGS.CAPTURE.CAPTURE_ERROR_STATUS_DEFAULT);
+          showToast(errorBody, "error");
           if (statusEl) statusEl.textContent = STRINGS.CAPTURE.captureErrorStatusText(payload.status || STRINGS.CAPTURE.CAPTURE_ERROR_TEXT_DEFAULT);
+          notify('error', STRINGS.NOTIFICATIONS.CAPTURES_ERROR_TITLE, errorBody);
         } else if (payload.status === "Cancelled") {
           showToast(STRINGS.CAPTURE.BATCH_CANCELLED_TOAST, "info");
           if (progressBar) progressBar.style.width = '0%';
@@ -731,12 +740,77 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
           showToast(STRINGS.CAPTURE.BATCH_COMPLETED_TOAST, "success");
           if (progressBar) progressBar.style.width = '100%';
           if (statusEl) statusEl.textContent = STRINGS.CAPTURE.COMPLETED;
+          notify('captures_done', STRINGS.NOTIFICATIONS.CAPTURES_DONE_TITLE, STRINGS.CAPTURE.BATCH_COMPLETED_TOAST);
         }
       }
     }).then(unlistenFn => {
       unlistenCaptureStatus = unlistenFn;
     }).catch(err => {
       console.error("Failed to register capture_status listener:", err);
+    });
+  }
+
+  // Per-demo progress, from the engine's own DEMO_START console marker —
+  // requires "Add condebug" on, silently never fires otherwise. clips_so_far
+  // is computed server-side (capture_manager.rs), so this listener does no
+  // running-total bookkeeping of its own.
+  if (!unlistenDemoLoading) {
+    listen('capture_demo_loading', (event) => {
+      const payload = event.payload || {};
+      // The upcoming "fast-forwarding to clip 1" toast carries the same
+      // title plus more detail — skip this one so they don't double up,
+      // when that notification is actually on to cover it.
+      if (isNotificationEnabled('between_clips')) return;
+      notify(
+        'demo_loading',
+        STRINGS.NOTIFICATIONS.demoLoadingTitle(payload.index, payload.total),
+        STRINGS.NOTIFICATIONS.demoLoadingBody(payload.clip_count, payload.clips_so_far, payload.total_batch_clips)
+      );
+    }).then(unlistenFn => {
+      unlistenDemoLoading = unlistenFn;
+    }).catch(err => {
+      console.error("Failed to register capture_demo_loading listener:", err);
+    });
+  }
+
+  // Fast-forward-to-clip progress, from the engine's own NEXT_CLIP console
+  // marker — same -condebug requirement as demo-loading above. Fires for
+  // clip 1 too (see the demo-loading listener's own suppression above).
+  if (!unlistenFastForwardToClip) {
+    listen('capture_fast_forward_to_clip', (event) => {
+      const payload = event.payload || {};
+      notify(
+        'between_clips',
+        STRINGS.NOTIFICATIONS.demoLoadingTitle(payload.demo_index, payload.demo_total),
+        STRINGS.NOTIFICATIONS.fastForwardToClipBody(payload.clip_index, payload.clip_count_this_demo, payload.clips_so_far, payload.total_batch_clips)
+      );
+    }).then(unlistenFn => {
+      unlistenFastForwardToClip = unlistenFn;
+    }).catch(err => {
+      console.error("Failed to register capture_fast_forward_to_clip listener:", err);
+    });
+  }
+
+  // Patching phase start/end -- one toast each, not per-demo (see
+  // capture_demo_loading above for the per-demo one).
+  if (!unlistenPatchingStarted) {
+    listen('capture_patching_started', (event) => {
+      const total = (event.payload || {}).total || 0;
+      notify('patching', STRINGS.NOTIFICATIONS.patchingStartedTitle(total), STRINGS.NOTIFICATIONS.PATCHING_STARTED_BODY);
+    }).then(unlistenFn => {
+      unlistenPatchingStarted = unlistenFn;
+    }).catch(err => {
+      console.error("Failed to register capture_patching_started listener:", err);
+    });
+  }
+  if (!unlistenPatchingFinished) {
+    listen('capture_patching_finished', (event) => {
+      const total = (event.payload || {}).total || 0;
+      notify('patching', STRINGS.NOTIFICATIONS.PATCHING_FINISHED_TITLE, STRINGS.NOTIFICATIONS.patchingFinishedBody(total));
+    }).then(unlistenFn => {
+      unlistenPatchingFinished = unlistenFn;
+    }).catch(err => {
+      console.error("Failed to register capture_patching_finished listener:", err);
     });
   }
 

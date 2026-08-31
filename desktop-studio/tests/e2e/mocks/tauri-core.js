@@ -22,3 +22,10 @@ export function invoke(cmd, args) {
   // just because a test did not bother to stub them.
   return Promise.resolve(undefined);
 }
+
+// Only needed so `@tauri-apps/plugin-notification`'s static import of this
+// symbol resolves during bundling — no test currently exercises a plugin
+// event listener, so this never needs to actually invoke `cb`.
+export function addPluginListener(plugin, event, cb) {
+  return Promise.resolve({ plugin, event, channelId: 0, unregister: () => Promise.resolve() });
+}
