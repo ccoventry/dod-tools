@@ -48,6 +48,11 @@ struct ReservationGuard {
     ledger: Arc<Mutex<HashMap<PathBuf, u64>>>,
     dir: PathBuf,
     amount: u64,
+    // For the matching [render-reservation] claim log below — a future
+    // "render says it can't find space but the drive looks fine" report is
+    // the difference between guessing and reading exactly what the ledger
+    // saw, at the cost of one log line per job.
+    job_id: String,
 }
 
 impl Drop for ReservationGuard {
@@ -56,6 +61,14 @@ impl Drop for ReservationGuard {
         if let Some(reserved) = ledger.get_mut(&self.dir) {
             *reserved = reserved.saturating_sub(self.amount);
         }
+        let remaining = ledger.get(&self.dir).copied().unwrap_or(0);
+        crate::log_markdown(&format!(
+            "[render-reservation] job {} released {:.2} GB on {:?} ({:.2} GB still reserved by other jobs)",
+            self.job_id,
+            self.amount as f64 / (1024.0 * 1024.0 * 1024.0),
+            self.dir,
+            remaining as f64 / (1024.0 * 1024.0 * 1024.0),
+        ));
     }
 }
 
@@ -195,6 +208,21 @@ pub async fn run_render_job(
             if live_free.saturating_sub(already_reserved) > reservation_estimate + SAFETY_MARGIN_BYTES {
                 *ledger.entry(dir.clone()).or_insert(0) += reservation_estimate;
                 selected_export_dir = Some(dir.clone());
+                // Shows this job's own estimate against what else was already
+                // reserved on this drive *before* this job's own addition, so
+                // concurrent jobs' numbers are directly comparable in the log —
+                // this is what made it possible to confirm live, under a real
+                // concurrent batch, that the ledger correctly reflects other
+                // in-flight jobs' reservations rather than every job seeing the
+                // same live free-space number.
+                crate::log_markdown(&format!(
+                    "[render-reservation] job {} reserved {:.2} GB on {:?} (already had {:.2} GB reserved by other jobs, {:.2} GB live free)",
+                    job_id,
+                    reservation_estimate as f64 / (1024.0 * 1024.0 * 1024.0),
+                    dir,
+                    already_reserved as f64 / (1024.0 * 1024.0 * 1024.0),
+                    live_free as f64 / (1024.0 * 1024.0 * 1024.0),
+                ));
                 break;
             }
         }
@@ -217,6 +245,7 @@ pub async fn run_render_job(
         ledger: reservations.clone(),
         dir: dir.clone(),
         amount: reservation_estimate,
+        job_id: job_id.clone(),
     });
 
     let output_folder = selected_export_dir.unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
