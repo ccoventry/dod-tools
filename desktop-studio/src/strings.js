@@ -958,6 +958,8 @@ export const STRINGS = {
     previewScanFailed: (err) => `Preview scan failed: ${err}`,
     previewDeletionFailed: (err) => `Preview deletion failed: ${err}`,
     logFileOpenFailed: (err) => `Could not open the log file: ${err}`,
+    updateCheckFailed: (err) => `Update check failed: ${err}`,
+    updateInstallFailed: (err) => `Update install failed: ${err}`,
   },
 
   // ── error_reporter.js: the one user-facing crash toast ───────────────────
@@ -969,6 +971,31 @@ export const STRINGS = {
   FOOTER: {
     VIEW_LOGS_BUTTON: 'View Logs',
     VIEW_LOGS_TITLE: "Open today's activity log in Explorer",
+    CHECK_UPDATES_BUTTON: 'Check for Updates',
+    CHECK_UPDATES_TITLE: 'Check for app updates',
+    UPDATE_AVAILABLE_BUTTON: 'Update Available',
+    UPDATE_AVAILABLE_TITLE: 'A new version is ready — click to install it.',
+  },
+
+  // ── Update check/install modal (issue #133) ──────────────────────────────
+  UPDATE_MODAL: {
+    TITLE: 'Check for Updates',
+    CHANNEL_LABEL: 'Update Channel:',
+    CHANNEL_STABLE: 'Stable (from main)',
+    CHANNEL_DEV: 'Dev (from dev, on-demand builds)',
+    AUTO_CHECK_LABEL: 'Automatically Check on Startup',
+    NOTIFY_LABEL: 'OS Notification on Found',
+    NOTIFY_TITLE: 'Fires an OS toast when a background or manual check finds a newer version.',
+    CHECK_NOW_BUTTON: 'Check for Updates Now',
+    DOWNLOAD_INSTALL_BUTTON: 'Download & Install',
+    RESTART_BUTTON: 'Restart to Apply',
+    CLOSE_BUTTON: 'Close',
+    STATUS_CHECKING: 'Checking for updates…',
+    STATUS_UP_TO_DATE: 'Up to date.',
+    STATUS_AVAILABLE: (v) => `Update available: v${v}`,
+    STATUS_DOWNLOADING: 'Downloading update…',
+    STATUS_READY: 'Update downloaded — restart to apply.',
+    STATUS_CHECK_FAILED: (err) => `Update check failed: ${err}`,
   },
 
   // ── OS Toast Notifications (issue #98) ──────────────────────────────────

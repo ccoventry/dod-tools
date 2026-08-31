@@ -719,6 +719,7 @@
         <div id="footer-demo-analyzer" class="pinned-footer-content" style="display: none;">
           <div id="footer-analyzer-current-file" data-str="ANALYZER.NO_DEMO_LOADED">No demo loaded</div>
         </div>
+        <button id="update-check-btn" class="view-logs-btn" data-str="FOOTER.CHECK_UPDATES_BUTTON" data-str-title="FOOTER.CHECK_UPDATES_TITLE" title="Check for app updates">Check for Updates</button>
         <button id="view-logs-btn" class="view-logs-btn" data-str="FOOTER.VIEW_LOGS_BUTTON" data-str-title="FOOTER.VIEW_LOGS_TITLE" title="Open today's activity log in Explorer">View Logs</button>
       </footer>
 
@@ -849,6 +850,52 @@
         <div style="display: flex; gap: 8px; margin-top: 16px; justify-content: flex-end; flex-wrap: wrap;">
           <button id="clear-previews-delete-btn" style="color: #ff5555; border-color: #ff5555;" disabled data-str="CLEAR_PREVIEWS_MODAL.DELETE_SELECTED_BUTTON">Delete Selected</button>
           <button id="clear-previews-close-btn" data-str="CLEAR_PREVIEWS_MODAL.CLOSE_BUTTON">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Update check/install (issue #133) — reachable from the footer's
+         Check for Updates button on every tab, not nested in Configuration
+         (which only exists under Capture Studio). The two channels are
+         entirely separate GitHub Releases (see updater_manager.rs); this
+         select only changes which manifest URL gets polled. -->
+    <div id="update-modal" class="modal" style="display: none;">
+      <div class="modal-content" style="max-width: 480px; padding: 20px;">
+        <h2 data-str="UPDATE_MODAL.TITLE">Check for Updates</h2>
+        <div class="input-row">
+          <label for="config-update-channel" data-str="UPDATE_MODAL.CHANNEL_LABEL">Update Channel:</label>
+          <select id="config-update-channel">
+            <option value="stable" data-str="UPDATE_MODAL.CHANNEL_STABLE">Stable (from main)</option>
+            <option value="dev" data-str="UPDATE_MODAL.CHANNEL_DEV">Dev (from dev, on-demand builds)</option>
+          </select>
+        </div>
+        <div class="notification-settings-grid" style="margin-top: 8px;">
+          <div class="setting-toggle">
+            <span class="setting-label" data-str="UPDATE_MODAL.AUTO_CHECK_LABEL">Automatically Check on Startup</span>
+            <label class="setting-switch">
+              <input type="checkbox" id="config-auto-check-updates" checked />
+              <span class="setting-switch-slider"></span>
+            </label>
+          </div>
+          <div class="setting-toggle">
+            <span class="setting-label"><span data-str="UPDATE_MODAL.NOTIFY_LABEL">OS Notification on Found</span><span class="info-icon" data-str-title="UPDATE_MODAL.NOTIFY_TITLE" title=""><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span></span>
+            <label class="setting-switch">
+              <input type="checkbox" id="config-notify-updates" checked />
+              <span class="setting-switch-slider"></span>
+            </label>
+          </div>
+        </div>
+        <div class="input-row" style="margin-top: 12px; align-items: center; gap: 10px;">
+          <button id="check-updates-now-btn" data-str="UPDATE_MODAL.CHECK_NOW_BUTTON">Check for Updates Now</button>
+          <span id="update-status-text" data-str="UPDATE_MODAL.STATUS_UP_TO_DATE">Up to date.</span>
+        </div>
+        <div id="update-progress-container" style="display: none; margin-top: 8px;">
+          <progress id="update-progress-bar" max="100" value="0" style="width: 100%;"></progress>
+        </div>
+        <div style="display: flex; gap: 8px; margin-top: 16px; justify-content: flex-end;">
+          <button id="download-install-update-btn" style="display: none;" data-str="UPDATE_MODAL.DOWNLOAD_INSTALL_BUTTON">Download & Install</button>
+          <button id="restart-to-apply-btn" style="display: none;" data-str="UPDATE_MODAL.RESTART_BUTTON">Restart to Apply</button>
+          <button id="update-modal-close-btn" data-str="UPDATE_MODAL.CLOSE_BUTTON">Close</button>
         </div>
       </div>
     </div>
