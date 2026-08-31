@@ -340,8 +340,8 @@ window.addEventListener("DOMContentLoaded", async () => {
   let scanFoldersForDemos = false;
   // Analyzer Explorer sidebar's drag-to-resize width (analyzer_pane.js).
   let analyzerExplorerWidth = 260;
+  // Doubles as Render Studio's scan-input locations — see initRenderUI below.
   let targetDrives = [];
-  let renderFolders = [];
   let renderExportDirs = []; // JIT multi-drive export pool for Render Studio
   let currentScannedDemos = [];
   let selectedDemoIdx = null;
@@ -427,15 +427,6 @@ window.addEventListener("DOMContentLoaded", async () => {
     }
   }
 
-  async function pickRenderFolder() {
-    try {
-      return await open({ directory: true, multiple: false, title: STRINGS.MAIN.SELECT_RENDER_DIR_TITLE });
-    } catch (err) {
-      console.error("Error opening render directory dialog:", err);
-      return null;
-    }
-  }
-
   async function pickRenderExportDir() {
     try {
       return await open({ directory: true, multiple: false, title: STRINGS.MAIN.SELECT_RENDER_EXPORT_DIR_TITLE });
@@ -445,9 +436,10 @@ window.addEventListener("DOMContentLoaded", async () => {
     }
   }
 
-  // Shared editable-list widget (list_editor.js) for the three folder/drive
-  // pools — Capture Output, Render Folders, and Render Studio's Export
-  // Drives all get add/edit/remove/reorder/browse from one implementation.
+  // Shared editable-list widget (list_editor.js) for the two folder/drive
+  // pools — Capture Locations (doubles as Render Studio's scan input) and
+  // Render Studio's Export Drives — get add/edit/remove/reorder/browse from
+  // one implementation.
   const driveOverridesEditor = createListEditor({
     container: document.querySelector('#target-drive-list'),
     getItems: () => targetDrives,
@@ -459,15 +451,6 @@ window.addEventListener("DOMContentLoaded", async () => {
       persistAppSettings();
       refreshLaunchGuard({ targetDrives, currentScannedDemos });
     },
-  });
-
-  const renderFoldersEditor = createListEditor({
-    container: document.querySelector('#render-folder-list'),
-    getItems: () => renderFolders,
-    fields: [{ key: 'value', type: 'text', primitive: true, placeholder: STRINGS.RENDER.RENDER_FOLDER_ROW_PLACEHOLDER }],
-    unique: true,
-    browse: pickRenderFolder,
-    onChange: () => persistAppSettings(),
   });
 
   const renderExportDirsEditor = createListEditor({
@@ -557,7 +540,6 @@ window.addEventListener("DOMContentLoaded", async () => {
       init_commands,
       custom_commands,
       save_local_patched_copy: saveLocalPatchedCopy,
-      render_folders: renderFolders,
       render_codec: renderCodec,
       render_fps: renderFps,
       render_max_concurrent: renderMaxConcurrent,
@@ -703,10 +685,6 @@ window.addEventListener("DOMContentLoaded", async () => {
         targetDrives = [...settings.target_drives];
         driveOverridesEditor.render();
         updateExportPoolIndicator();
-      }
-      if (Array.isArray(settings.render_folders) && settings.render_folders.length > 0) {
-        renderFolders = [...settings.render_folders];
-        renderFoldersEditor.render();
       }
       if (Array.isArray(settings.render_export_dirs) && settings.render_export_dirs.length > 0) {
         renderExportDirs = [...settings.render_export_dirs];
@@ -1268,23 +1246,6 @@ window.addEventListener("DOMContentLoaded", async () => {
     });
   }
 
-  // Render folders management
-  document.querySelector('#add-render-folder-btn').addEventListener('click', () => {
-    const inputEl = document.querySelector('#render-path-input');
-    const path = inputEl.value.trim();
-    if (path && renderFoldersEditor.addItem(path)) {
-      inputEl.value = "";
-    }
-  });
-
-  const browseRenderFolderBtn = document.querySelector('#browse-render-folder-btn');
-  if (browseRenderFolderBtn) {
-    browseRenderFolderBtn.addEventListener('click', async () => {
-      const selected = await pickRenderFolder();
-      if (selected) renderFoldersEditor.addItem(selected);
-    });
-  }
-
   // JIT multi-drive export pool for Render Studio
   const addRenderExportDirBtn = document.querySelector('#add-render-export-dir-btn');
   if (addRenderExportDirBtn) {
@@ -1352,16 +1313,21 @@ window.addEventListener("DOMContentLoaded", async () => {
     currentScannedDemos
   }), persistAppSettings, onHighlightStatusChange, () => takeIndex, updateExportPoolIndicator);
 
-  // Initialize Render Studio UI
-  initRenderUI(() => renderFolders, () => renderExportDirs, persistAppSettings, {
+  // Initialize Render Studio UI. First arg doubles as Render's scan-input
+  // locations — see the driveOverridesEditor/targetDrives comment above.
+  initRenderUI(() => targetDrives, () => renderExportDirs, persistAppSettings, {
     getTakeIndex: () => takeIndex,
     getAllDemos: () => currentScannedDemos,
     onStatusChange: onHighlightStatusChange
   });
 
   // Render-batch crash-recovery prompt — checked once on startup, same
-  // pattern as dev's StartupState::PendingRenderRecovery.
-  checkRenderRecoveryOnStartup(() => switchNavTab('render-studio'));
+  // pattern as dev's StartupState::PendingRenderRecovery. Render is now a
+  // subtab of the single 'workspace' nav destination, not its own navKey.
+  checkRenderRecoveryOnStartup(() => {
+    switchNavTab('workspace');
+    setCaptureDetailSubtab('render');
+  });
 
   checkObsOrphanOnStartup();
 

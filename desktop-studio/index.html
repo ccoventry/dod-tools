@@ -19,8 +19,7 @@
           <span class="brand-title" data-str="NAV.APP_TITLE">DoD Tools Studio</span>
         </div>
         <div class="nav-tabs">
-          <button class="nav-tab-btn active" data-nav="workspace" data-str="NAV.CAPTURE_STUDIO_TAB">Capture Studio</button>
-          <button class="nav-tab-btn" data-nav="render-studio" data-str="NAV.RENDER_STUDIO_TAB">Render Studio</button>
+          <button class="nav-tab-btn active" data-nav="workspace" data-str="NAV.STUDIO_TAB">Studio</button>
           <button class="nav-tab-btn" data-nav="demo-auditor" data-str="NAV.DEMO_AUDITOR_TAB">Demo Auditor</button>
           <button class="nav-tab-btn" data-nav="demo-analyzer" data-str="NAV.DEMO_ANALYZER_TAB">Demo Analyzer</button>
         </div>
@@ -90,7 +89,7 @@
                 </thead>
                 <tbody id="master-demo-table-body">
                   <tr>
-                    <td colspan="7" class="table-empty" data-str="WORKSPACE.TABLE_EMPTY_NO_DEMOS">No demos scanned yet. Add a directory and click 'Scan Demos'.</td>
+                    <td colspan="7" class="table-empty" data-str="WORKSPACE.TABLE_EMPTY_NO_DEMOS">No demos scanned yet. Use '+ Add Demo Files' or '+ Add Folder' to get started.</td>
                   </tr>
                 </tbody>
               </table>
@@ -104,11 +103,13 @@
 
           <!-- In-workflow phase switch: dev never had "Batch Capture Config" as its
                own top-level destination — export/timing/drive/custom-command config
-               was a phase inside the single continuous Capture Studio workflow
+               was a phase inside the single continuous Studio workflow
                (SelectTab::Highlights / Configuration), not a place you navigate
-               away to. This bar only appears while on the Capture Studio tab. -->
+               away to. Render Studio's own top-level tab was folded in here the
+               same way for #81. This bar only appears while on the Studio tab. -->
           <div id="capture-detail-subtabs" class="capture-detail-subtabs">
             <button class="capture-detail-subtab-btn active" data-capture-subtab="highlights" data-str="HIGHLIGHTS.SUBTAB_HIGHLIGHTS">Highlights</button>
+            <button class="capture-detail-subtab-btn" data-capture-subtab="render" data-str="HIGHLIGHTS.SUBTAB_RENDER">Render</button>
             <button class="capture-detail-subtab-btn" data-capture-subtab="configuration" data-str="HIGHLIGHTS.SUBTAB_CONFIGURATION">Configuration</button>
           </div>
 
@@ -159,6 +160,7 @@
               <button class="config-tab-btn" data-tab="tab-pipeline" data-str="CAPTURE_CONFIG.TAB_PIPELINE">Pipeline</button>
               <button class="config-tab-btn" data-tab="tab-drive-overrides" data-str="CAPTURE_CONFIG.TAB_CAPTURE_OUTPUT">Destinations</button>
               <button class="config-tab-btn" data-tab="tab-custom-commands" data-str="CAPTURE_CONFIG.TAB_CUSTOM_COMMANDS">Commands</button>
+              <button class="config-tab-btn" data-tab="tab-render-output" data-str="CAPTURE_CONFIG.TAB_RENDER_OUTPUT">Render Output</button>
             </div>
 
             <!-- Tab Content: Path Routing -->
@@ -374,9 +376,12 @@
               </div>
             </div>
 
-            <!-- Tab Content: Destinations — where captures are written.
+            <!-- Tab Content: Destinations — where captures are written, and
+                 also what Render Studio scans for takes to render (one
+                 shared location list, not two — see #81).
                  (id kept as tab-drive-overrides: internal hook, not user-visible) -->
             <div id="tab-drive-overrides" class="config-tab-content" style="display: none;">
+              <p style="font-size: 12px; color: var(--text-muted); margin: 0 0 8px;" data-str="CAPTURE_CONFIG.DESTINATIONS_HELP_TEXT">Captures are written here, and Render Studio scans these same locations for takes to render.</p>
               <div class="input-row">
                 <input type="text" id="drive-path-input" data-str-placeholder="CAPTURE_CONFIG.OUTPUT_DIR_PLACEHOLDER" placeholder="Capture output directory path..." style="flex: 1;" />
                 <button id="add-drive-btn" data-str="CAPTURE_CONFIG.ADD_DIRECTORY_BUTTON">Add Directory</button>
@@ -404,6 +409,46 @@
               <button id="add-custom-command-btn" data-str="CAPTURE_CONFIG.ADD_CUSTOM_COMMAND_BUTTON">+ Add Scheduled Command</button>
             </div>
 
+            <!-- Tab Content: Render Studio's settings — codec/FPS/concurrency
+                 and its JIT multi-drive export pool. Lives here rather than
+                 in the Render Studio panel itself, mirroring how this
+                 Configuration subtab already holds Capture's own Destinations/
+                 Timing/Commands settings separately from Capture's Highlights
+                 workflow tab. -->
+            <div id="tab-render-output" class="config-tab-content" style="display: none;">
+              <div class="inline-controls">
+                <div class="control-group">
+                  <label for="render-codec-select" data-str="RENDER.CODEC_LABEL">Codec:</label>
+                  <select id="render-codec-select">
+                    <option value="prores" data-str="RENDER.CODEC_PRORES">ProRes 422 HQ</option>
+                    <option value="dnxhr" data-str="RENDER.CODEC_DNXHR">DNxHR HQ</option>
+                    <option value="h264" data-str="RENDER.CODEC_H264">H.264 (Software, MP4)</option>
+                    <option value="h264_nvenc" data-str="RENDER.CODEC_H264_NVENC">H.264 (NVENC GPU, MP4)</option>
+                  </select>
+                </div>
+                <div class="control-group">
+                  <label for="render-fps-input" data-str="RENDER.SOURCE_FPS_LABEL">Source FPS:</label>
+                  <input type="number" id="render-fps-input" value="300" min="1" max="1000" style="width: 70px;" />
+                </div>
+                <div class="control-group">
+                  <label for="render-max-concurrent-input" data-str="RENDER.MAX_CONCURRENT_LABEL">Max Concurrent Renders:</label>
+                  <input type="number" id="render-max-concurrent-input" value="2" min="1" max="8" style="width: 60px;" />
+                </div>
+              </div>
+
+              <!-- JIT multi-drive export pool — first drive with 20GB+ free wins per job. -->
+              <div class="input-row" style="margin-top: 6px;">
+                <input type="text" id="render-export-dir-input" data-str-placeholder="RENDER.EXPORT_DIR_PLACEHOLDER" placeholder="Add export drive/folder..." style="flex: 1;" />
+                <button id="add-render-export-dir-btn" data-str="RENDER.ADD_DRIVE_BUTTON">Add Drive</button>
+                <button id="browse-render-export-btn" data-str="RENDER.BROWSE_DRIVE_BUTTON">Browse Drive</button>
+              </div>
+              <div id="render-export-dir-list" class="list-editor-list"></div>
+              <div class="input-row" style="margin-top: 4px; align-items: center;">
+                <strong data-str="RENDER.TOTAL_EXPORT_POOL_FREE_LABEL">Total Export Pool Free:</strong>
+                <span id="render-export-pool-free" data-str="RENDER.EXPORT_POOL_FREE_DEFAULT">0.0 GB</span>
+              </div>
+            </div>
+
             <!-- Start/Cancel Batch and everything read alongside them (status,
                  progress, the focus reminder, the disk-space warning, the
                  Capture Output Free/Required figures) live in
@@ -414,49 +459,14 @@
                  time. The footer is visible across both subtabs. See #77. -->
           </div>
 
-          <!-- Render Studio Panel -->
+          <!-- Render Studio Panel — pure workflow (scan + job table), same
+               role Highlights plays for Capture: its settings (codec, FPS,
+               max concurrent, export drives) live in Configuration's
+               "Render Output" sub-tab instead, mirroring how Capture's own
+               settings live there rather than next to its job list. -->
           <div id="render-studio-panel" class="egui-panel">
             <div class="panel-header">
               <h2 data-str="RENDER.PANEL_TITLE">Render Studio</h2>
-            </div>
-            <div class="input-row">
-              <input type="text" id="render-path-input" data-str-placeholder="RENDER.PATH_PLACEHOLDER" placeholder="Enter render directory path..." style="flex: 1;" />
-              <button id="add-render-folder-btn" data-str="RENDER.ADD_FOLDER_BUTTON">Add Render Folder</button>
-              <button id="browse-render-folder-btn" data-str="RENDER.BROWSE_FOLDER_BUTTON">Browse Render Folder</button>
-            </div>
-            <div id="render-folder-list" class="list-editor-list"></div>
-
-            <!-- Render Configuration -->
-            <div class="inline-controls" style="margin-top: 8px;">
-              <div class="control-group">
-                <label for="render-codec-select" data-str="RENDER.CODEC_LABEL">Codec:</label>
-                <select id="render-codec-select">
-                  <option value="prores" data-str="RENDER.CODEC_PRORES">ProRes 422 HQ</option>
-                  <option value="dnxhr" data-str="RENDER.CODEC_DNXHR">DNxHR HQ</option>
-                  <option value="h264" data-str="RENDER.CODEC_H264">H.264 (Software, MP4)</option>
-                  <option value="h264_nvenc" data-str="RENDER.CODEC_H264_NVENC">H.264 (NVENC GPU, MP4)</option>
-                </select>
-              </div>
-              <div class="control-group">
-                <label for="render-fps-input" data-str="RENDER.SOURCE_FPS_LABEL">Source FPS:</label>
-                <input type="number" id="render-fps-input" value="300" min="1" max="1000" style="width: 70px;" />
-              </div>
-              <div class="control-group">
-                <label for="render-max-concurrent-input" data-str="RENDER.MAX_CONCURRENT_LABEL">Max Concurrent Renders:</label>
-                <input type="number" id="render-max-concurrent-input" value="2" min="1" max="8" style="width: 60px;" />
-              </div>
-            </div>
-
-            <!-- JIT multi-drive export pool — first drive with 20GB+ free wins per job. -->
-            <div class="input-row" style="margin-top: 6px;">
-              <input type="text" id="render-export-dir-input" data-str-placeholder="RENDER.EXPORT_DIR_PLACEHOLDER" placeholder="Add export drive/folder..." style="flex: 1;" />
-              <button id="add-render-export-dir-btn" data-str="RENDER.ADD_DRIVE_BUTTON">Add Drive</button>
-              <button id="browse-render-export-btn" data-str="RENDER.BROWSE_DRIVE_BUTTON">Browse Drive</button>
-            </div>
-            <div id="render-export-dir-list" class="list-editor-list"></div>
-            <div class="input-row" style="margin-top: 4px; align-items: center;">
-              <strong data-str="RENDER.TOTAL_EXPORT_POOL_FREE_LABEL">Total Export Pool Free:</strong>
-              <span id="render-export-pool-free" data-str="RENDER.EXPORT_POOL_FREE_DEFAULT">0.0 GB</span>
             </div>
 
             <div class="action-row" style="margin-top: 8px;">
@@ -474,7 +484,7 @@
                     <th data-str="RENDER.TABLE_HEADER_STREAM">Stream</th>
                     <th data-str="RENDER.TABLE_HEADER_FRAMES">Frames</th>
                     <th data-str="RENDER.TABLE_HEADER_DATE">Date</th>
-                    <th data-str-title="RENDER.TABLE_HEADER_SETTINGS_TITLE" data-str="RENDER.TABLE_HEADER_SETTINGS" title="Codec/FPS this job is queued to render with — its own setting, not necessarily what the panel above currently shows">Settings</th>
+                    <th data-str-title="RENDER.TABLE_HEADER_SETTINGS_TITLE" data-str="RENDER.TABLE_HEADER_SETTINGS" title="Codec/FPS this job is queued to render with — its own setting, not necessarily what Configuration currently shows">Settings</th>
                     <th data-str="RENDER.TABLE_HEADER_STATUS">Status</th>
                     <th data-str="RENDER.TABLE_HEADER_SPEED">Speed</th>
                     <th style="width: 140px;" data-str="RENDER.TABLE_HEADER_PROGRESS">Progress</th>
