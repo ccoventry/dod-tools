@@ -12,12 +12,21 @@ let currentDemoIdx = null;
 let currentGetAllDemos = null;
 // Optional callback supplied by main.js — re-runs capture_pane.js's disk
 // space launch guard, since toggling a streak's selection changes the
-// required-bytes side of that comparison.
+// required-bytes side of that comparison. Fired on every renderDetailView()
+// call, including pure re-renders (selecting a different demo, a capture/
+// render finishing) — NOT a signal that something was edited. See
+// currentOnDirty below for that.
 let currentOnSelectionChange = null;
+// Optional callback supplied by main.js — marks the project dirty. Fired
+// only from the actual field-edit listeners below (checkbox, kill range,
+// status, notes), never from a plain re-render, so loading a session or
+// switching the selected demo doesn't falsely flag unsaved changes.
+let currentOnDirty = null;
 
-export function initDetailPane(getAllDemos, onSelectionChange) {
+export function initDetailPane(getAllDemos, onSelectionChange, onDirty) {
   currentGetAllDemos = getAllDemos;
   currentOnSelectionChange = onSelectionChange || null;
+  currentOnDirty = onDirty || null;
 
   // The timeline canvas now lives inside the collapsed-by-default Advanced
   // Diagnostics <details> block, so it has 0 clientWidth/clientHeight (and
@@ -511,6 +520,8 @@ export function renderDetailView(demo, selectedDemoIdx) {
       streak.selected = e.target.checked;
       renderTimeline(currentDemo);
       updatePreviewButtonStates();
+      if (currentOnSelectionChange) currentOnSelectionChange();
+      if (currentOnDirty) currentOnDirty();
     });
 
     const startInput = tr.querySelector('.kr-start-input');
@@ -521,6 +532,7 @@ export function renderDetailView(demo, selectedDemoIdx) {
       updateStreakVisuals(streak);
       renderDetailView(currentDemo, currentDemoIdx);
       if (currentOnSelectionChange) currentOnSelectionChange();
+      if (currentOnDirty) currentOnDirty();
     });
     endInput.addEventListener('change', () => {
       const v = Math.max(Math.min(parseInt(endInput.value, 10) - 1, maxKillIdx), streak.start_index);
@@ -528,6 +540,7 @@ export function renderDetailView(demo, selectedDemoIdx) {
       updateStreakVisuals(streak);
       renderDetailView(currentDemo, currentDemoIdx);
       if (currentOnSelectionChange) currentOnSelectionChange();
+      if (currentOnDirty) currentOnDirty();
     });
 
     const resetBtn = tr.querySelector('.kr-reset-btn');
@@ -538,6 +551,7 @@ export function renderDetailView(demo, selectedDemoIdx) {
         updateStreakVisuals(streak);
         renderDetailView(currentDemo, currentDemoIdx);
         if (currentOnSelectionChange) currentOnSelectionChange();
+        if (currentOnDirty) currentOnDirty();
       });
     }
 
@@ -546,6 +560,7 @@ export function renderDetailView(demo, selectedDemoIdx) {
       streak.status = e.target.value;
       statusSelect.style.color = statusColors[e.target.value] || '#888';
       if (currentOnSelectionChange) currentOnSelectionChange();
+      if (currentOnDirty) currentOnDirty();
     });
 
     const notesInput = tr.querySelector('.streak-notes-input');
@@ -558,6 +573,7 @@ export function renderDetailView(demo, selectedDemoIdx) {
     // Queue table on every character, matching the Kill Range inputs above.
     notesInput.addEventListener('change', () => {
       if (currentOnSelectionChange) currentOnSelectionChange();
+      if (currentOnDirty) currentOnDirty();
     });
 
     tbody.appendChild(tr);
