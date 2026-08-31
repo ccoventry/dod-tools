@@ -815,6 +815,12 @@ pub async fn start_capture_batch_impl(
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let mut total_jobs: u32 = 0;
             let mut current_idx: u32 = 0;
+            // Running tally of clips captured through and including the
+            // current demo -- updated once per DemoLoading (never per
+            // FastForwardToClip), so every fast-forward-to-clip notification
+            // within a demo reports the same "X of Y clips total" the
+            // demo-loading toast itself would have shown. See issue #98.
+            let mut clips_so_far: u32 = 0;
             while let Ok(event) = engine_rx.recv() {
                 match event {
                     EngineEvent::Starting(total) => {
@@ -847,10 +853,22 @@ pub async fn start_capture_batch_impl(
                         }));
                     }
                     EngineEvent::DemoLoading(job_idx, total, clip_count) => {
+                        clips_so_far += clip_count;
                         let _ = app_emitter.emit("capture_demo_loading", serde_json::json!({
                             "index": job_idx,
                             "total": total,
                             "clip_count": clip_count,
+                            "clips_so_far": clips_so_far,
+                            "total_batch_clips": total_batch_clips,
+                        }));
+                    }
+                    EngineEvent::FastForwardToClip(job_idx, total, clip_idx, clip_count_this_demo) => {
+                        let _ = app_emitter.emit("capture_fast_forward_to_clip", serde_json::json!({
+                            "demo_index": job_idx,
+                            "demo_total": total,
+                            "clip_index": clip_idx,
+                            "clip_count_this_demo": clip_count_this_demo,
+                            "clips_so_far": clips_so_far,
                             "total_batch_clips": total_batch_clips,
                         }));
                     }

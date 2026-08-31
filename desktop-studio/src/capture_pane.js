@@ -8,10 +8,11 @@ import { refreshCfgWarnings } from './cfg_warnings.js';
 import { refreshRollFloors } from './roll_floors.js';
 import { streakUid, recordTake } from './take_index.js';
 import { STRINGS } from './strings.js';
-import { notify } from './os_notifications.js';
+import { notify, isNotificationEnabled } from './os_notifications.js';
 
 let unlistenCaptureStatus = null;
 let unlistenDemoLoading = null;
+let unlistenFastForwardToClip = null;
 let unlistenPatchingStarted = null;
 let unlistenPatchingFinished = null;
 // Tracks whether a batch is actively running so refreshLaunchGuard() never
@@ -688,8 +689,8 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
   // Options fields above, just on Path Routing / Capture Output checkboxes.
   ['#config-add-condebug', '#config-auto-clear-logs', '#config-auto-clear-previews',
    '#config-auto-clear-temp-demos', '#config-save-local-patched',
-   '#config-notify-patching', '#config-notify-demo-loading', '#config-notify-captures-done',
-   '#config-notify-renders-done', '#config-notify-error',
+   '#config-notify-patching', '#config-notify-demo-loading', '#config-notify-between-clips',
+   '#config-notify-captures-done', '#config-notify-renders-done', '#config-notify-error',
    // A <select> fires `change`, not `input` — it belongs here rather than in
    // the list above, which is wired for text/number/checkbox inputs.
    '#config-capture-codec', '#config-capture-mode', '#config-obs-scene'].forEach(selector => {
@@ -750,23 +751,43 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
   }
 
   // Per-demo progress, from the engine's own DEMO_START console marker —
-  // requires "Add condebug" on, silently never fires otherwise. Running
-  // clipsSoFar tally resets whenever index resets to 1 (a new batch started).
+  // requires "Add condebug" on, silently never fires otherwise. clips_so_far
+  // is computed server-side (capture_manager.rs), so this listener does no
+  // running-total bookkeeping of its own.
   if (!unlistenDemoLoading) {
-    let clipsSoFar = 0;
     listen('capture_demo_loading', (event) => {
       const payload = event.payload || {};
-      if (payload.index === 1) clipsSoFar = 0;
-      clipsSoFar += payload.clip_count || 0;
+      // The upcoming "fast-forwarding to clip 1" toast carries the same
+      // title plus more detail — skip this one so they don't double up,
+      // when that notification is actually on to cover it.
+      if (isNotificationEnabled('between_clips')) return;
       notify(
         'demo_loading',
         STRINGS.NOTIFICATIONS.demoLoadingTitle(payload.index, payload.total),
-        STRINGS.NOTIFICATIONS.demoLoadingBody(payload.clip_count, clipsSoFar, payload.total_batch_clips)
+        STRINGS.NOTIFICATIONS.demoLoadingBody(payload.clip_count, payload.clips_so_far, payload.total_batch_clips)
       );
     }).then(unlistenFn => {
       unlistenDemoLoading = unlistenFn;
     }).catch(err => {
       console.error("Failed to register capture_demo_loading listener:", err);
+    });
+  }
+
+  // Fast-forward-to-clip progress, from the engine's own NEXT_CLIP console
+  // marker — same -condebug requirement as demo-loading above. Fires for
+  // clip 1 too (see the demo-loading listener's own suppression above).
+  if (!unlistenFastForwardToClip) {
+    listen('capture_fast_forward_to_clip', (event) => {
+      const payload = event.payload || {};
+      notify(
+        'between_clips',
+        STRINGS.NOTIFICATIONS.demoLoadingTitle(payload.demo_index, payload.demo_total),
+        STRINGS.NOTIFICATIONS.fastForwardToClipBody(payload.clip_index, payload.clip_count_this_demo, payload.clips_so_far, payload.total_batch_clips)
+      );
+    }).then(unlistenFn => {
+      unlistenFastForwardToClip = unlistenFn;
+    }).catch(err => {
+      console.error("Failed to register capture_fast_forward_to_clip listener:", err);
     });
   }
 

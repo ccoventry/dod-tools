@@ -901,6 +901,17 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
             scheduled_commands.push((t, echo_cmd));
         }
 
+        // Fast-forward towards clip 1 starts at the very same tick as
+        // DEMO_START above — playback has nothing to do before it. Read back
+        // as `MarkerKind::NextClip` for the "fast-forwarding to clip N of M"
+        // OS notification (issue #98).
+        for (t, echo_cmd) in build_safe_echos(
+            initial_delay_ticks,
+            &format!("NEXT_CLIP {} {} {} {}", job_idx + 1, total_jobs, 1, merged_streaks.len()),
+        ) {
+            scheduled_commands.push((t, echo_cmd));
+        }
+
         for (i, streak) in merged_streaks.iter().enumerate() {
 
 
@@ -1088,6 +1099,19 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
                 scheduled_commands.push((s_end, "sys_fast_forward".to_string()));
                 for (t, echo_cmd) in build_safe_echos(s_end, &format!("FAST_FORWARD - Tick {}", s_end)) {
                     scheduled_commands.push((t, echo_cmd));
+                }
+                // `chained_to_previous.get(i + 1)` also returns the "false"
+                // default when there simply is no block i+1 (the last block
+                // in the demo) -- that's not a real next clip to announce, so
+                // this needs its own bounds check rather than reusing
+                // `!next_block_chained` alone.
+                if i + 1 < merged_streaks.len() {
+                    for (t, echo_cmd) in build_safe_echos(
+                        s_end,
+                        &format!("NEXT_CLIP {} {} {} {}", job_idx + 1, total_jobs, i + 2, merged_streaks.len()),
+                    ) {
+                        scheduled_commands.push((t, echo_cmd));
+                    }
                 }
             }
 
@@ -1878,6 +1902,53 @@ mod tests {
                 "expected job idx {} of 2, 1 clip in {:?}",
                 expected_idx,
                 echo
+            );
+        }
+    }
+
+    #[test]
+    fn test_next_clip_marker_announces_clip_1_and_each_later_non_chained_clip() {
+        // Two demos, two non-overlapping (non-chained) clips each -> NEXT_CLIP
+        // for clip 1 alongside DEMO_START, NEXT_CLIP for clip 2 alongside the
+        // Stage-4 FAST_FORWARD, and nothing after the last clip in the demo.
+        let config = mock_config();
+        let mut raw_streaks = vec![
+            streak_with_kills(1000, 1200, &[1000, 1200]),
+            streak_with_kills(5000, 5200, &[5000, 5200]),
+        ];
+        let mut second_demo = streak_with_kills(1000, 1200, &[1000, 1200]);
+        second_demo.source_demo = "demo2.dem".to_string();
+        let mut second_demo_b = streak_with_kills(5000, 5200, &[5000, 5200]);
+        second_demo_b.source_demo = "demo2.dem".to_string();
+        raw_streaks.push(second_demo);
+        raw_streaks.push(second_demo_b);
+
+        let (jobs, _) = build_batch_queue(raw_streaks, &config, &std::collections::HashMap::new()).unwrap();
+        assert_eq!(jobs.len(), 3, "primer + one job per demo");
+
+        for (job, expected_job_idx) in [(&jobs[1], 1), (&jobs[2], 2)] {
+            let next_clip_echoes: Vec<&String> = job
+                .scheduled_commands
+                .iter()
+                .filter(|(_, c)| c.contains("NEXT_CLIP"))
+                .map(|(_, c)| c)
+                .collect();
+            assert_eq!(
+                next_clip_echoes.len(), 2,
+                "expected one NEXT_CLIP for clip 1 and one for clip 2, got {:?}",
+                next_clip_echoes
+            );
+            assert!(
+                next_clip_echoes.iter().any(|c| c.contains(&format!("NEXT_CLIP {} 2 1 2", expected_job_idx))),
+                "missing clip-1-of-2 NEXT_CLIP for job {} in {:?}",
+                expected_job_idx,
+                next_clip_echoes
+            );
+            assert!(
+                next_clip_echoes.iter().any(|c| c.contains(&format!("NEXT_CLIP {} 2 2 2", expected_job_idx))),
+                "missing clip-2-of-2 NEXT_CLIP for job {} in {:?}",
+                expected_job_idx,
+                next_clip_echoes
             );
         }
     }

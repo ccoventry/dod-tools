@@ -12,6 +12,7 @@ let permissionGranted = false;
 let enabledFlags = {
   patching: true,
   demo_loading: true,
+  between_clips: true,
   captures_done: true,
   renders_done: true,
   error: true,
@@ -33,10 +34,19 @@ export function updateNotificationSettings(settings) {
   enabledFlags = {
     patching: settings.notify_patching !== false,
     demo_loading: settings.notify_demo_loading !== false,
+    between_clips: settings.notify_between_clips !== false,
     captures_done: settings.notify_captures_done !== false,
     renders_done: settings.notify_renders_done !== false,
     error: settings.notify_error !== false,
   };
+}
+
+// Lets a listener check another notification kind's toggle before deciding
+// whether to fire its own — e.g. the demo-loading toast skips itself when
+// between-clips notifications are also on, since the upcoming "fast-forwarding
+// to clip 1" toast covers the same ground with more detail.
+export function isNotificationEnabled(kind) {
+  return !!enabledFlags[kind];
 }
 
 export function notify(kind, title, body) {

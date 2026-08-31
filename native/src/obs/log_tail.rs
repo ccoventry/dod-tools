@@ -57,6 +57,13 @@ pub enum MarkerKind {
     /// `Marker::demo_progress`, 1-based. See issue #98 — this is what a
     /// "loading demo N of M" notification hooks onto.
     DemoStart,
+    /// Playback is about to fast-forward towards a specific upcoming clip —
+    /// one per clip, fired alongside `DemoStart` for clip 1 and alongside
+    /// `FastForward` for every later clip that isn't chained to the one
+    /// before it (a chained pair never fast-forwards between them, so there
+    /// is nothing to announce). Carries (job_idx, total_jobs, clip_idx,
+    /// clip_count) via `Marker::next_clip_progress`, 1-based. See issue #98.
+    NextClip,
     /// Anything else the pipeline echoed — custom commands, chunk
     /// continuations. Carried rather than dropped so a caller can log it.
     Other,
@@ -74,6 +81,7 @@ impl MarkerKind {
             "BATCH_COMPLETE" => Self::BatchComplete,
             "BREADCRUMB" => Self::Breadcrumb,
             "DEMO_START" => Self::DemoStart,
+            "NEXT_CLIP" => Self::NextClip,
             _ => Self::Other,
         }
     }
@@ -89,6 +97,9 @@ pub struct Marker {
     /// (job_idx, total_jobs, clip_count), 1-based job_idx — only present on
     /// `MarkerKind::DemoStart`, e.g. "DEMO_START 5 14 2".
     pub demo_progress: Option<(u32, u32, u32)>,
+    /// (job_idx, total_jobs, clip_idx, clip_count), 1-based — only present on
+    /// `MarkerKind::NextClip`, e.g. "NEXT_CLIP 5 14 2 3".
+    pub next_clip_progress: Option<(u32, u32, u32, u32)>,
     /// The text after the tag, for logging.
     pub label: String,
 }
@@ -189,6 +200,7 @@ fn parse_marker(line: &str) -> Option<Marker> {
     let kind = MarkerKind::parse(&label);
     Some(Marker {
         demo_progress: if kind == MarkerKind::DemoStart { parse_demo_progress(&label) } else { None },
+        next_clip_progress: if kind == MarkerKind::NextClip { parse_next_clip_progress(&label) } else { None },
         kind,
         tick: parse_tick(&label),
         label,
@@ -215,6 +227,16 @@ fn parse_demo_progress(label: &str) -> Option<(u32, u32, u32)> {
     Some((nums.next()?, nums.next()?, nums.next()?))
 }
 
+/// (job_idx, total_jobs, clip_idx, clip_count) from a `NEXT_CLIP` label, e.g.
+/// "NEXT_CLIP 5 14 2 3" -> (5, 14, 2, 3).
+fn parse_next_clip_progress(label: &str) -> Option<(u32, u32, u32, u32)> {
+    let mut nums = label
+        .split(|c: char| !c.is_ascii_digit())
+        .filter(|s| !s.is_empty())
+        .filter_map(|s| s.parse::<u32>().ok());
+    Some((nums.next()?, nums.next()?, nums.next()?, nums.next()?))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -238,6 +260,7 @@ mod tests {
             ("[dod-tools] BREADCRUMB - Tick 45000", MarkerKind::Breadcrumb, Some(45000)),
             ("[dod-tools] BATCH_COMPLETE", MarkerKind::BatchComplete, None),
             ("[dod-tools] DEMO_START 5 14 2", MarkerKind::DemoStart, None),
+            ("[dod-tools] NEXT_CLIP 5 14 2 3", MarkerKind::NextClip, None),
         ];
         for (line, kind, tick) in cases {
             let m = parse_marker(line).unwrap_or_else(|| panic!("no marker from {:?}", line));
@@ -259,6 +282,14 @@ mod tests {
     fn non_demo_start_markers_carry_no_demo_progress() {
         let m = parse_marker("[dod-tools] START_RECORD - Tick 88741").unwrap();
         assert_eq!(m.demo_progress, None);
+    }
+
+    #[test]
+    fn next_clip_carries_job_idx_total_clip_idx_and_clip_count() {
+        let m = parse_marker("[dod-tools] NEXT_CLIP 5 14 2 3").unwrap();
+        assert_eq!(m.kind, MarkerKind::NextClip);
+        assert_eq!(m.next_clip_progress, Some((5, 14, 2, 3)));
+        assert_eq!(m.demo_progress, None, "NextClip must not also carry demo_progress");
     }
 
     /// The engine prefixes its own text; the tag can sit mid-line.

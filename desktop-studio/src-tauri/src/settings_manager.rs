@@ -130,6 +130,8 @@ pub struct AppSettings {
     pub notify_patching: bool,
     #[serde(default = "default_notify_demo_loading")]
     pub notify_demo_loading: bool,
+    #[serde(default = "default_notify_between_clips")]
+    pub notify_between_clips: bool,
     #[serde(default = "default_notify_captures_done")]
     pub notify_captures_done: bool,
     #[serde(default = "default_notify_renders_done")]
@@ -159,6 +161,7 @@ fn default_obs_port() -> u16 { 4455 }
 fn default_studio_mode() -> String { "quick-clip".to_string() }
 fn default_notify_patching() -> bool { true }
 fn default_notify_demo_loading() -> bool { true }
+fn default_notify_between_clips() -> bool { true }
 fn default_notify_captures_done() -> bool { true }
 fn default_notify_renders_done() -> bool { true }
 fn default_notify_error() -> bool { true }
@@ -220,6 +223,7 @@ impl Default for AppSettings {
             studio_mode: default_studio_mode(),
             notify_patching: default_notify_patching(),
             notify_demo_loading: default_notify_demo_loading(),
+            notify_between_clips: default_notify_between_clips(),
             notify_captures_done: default_notify_captures_done(),
             notify_renders_done: default_notify_renders_done(),
             notify_error: default_notify_error(),

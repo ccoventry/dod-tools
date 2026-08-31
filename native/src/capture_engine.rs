@@ -22,6 +22,11 @@ pub enum EngineEvent {
     /// Requires `-condebug` (see the tailer spawn below) — silently never
     /// fires otherwise. See issue #98.
     DemoLoading(u32, u32, u32),
+    /// Playback is about to fast-forward towards a specific clip, read from
+    /// its `NEXT_CLIP` console marker: (job_idx, total_jobs, clip_idx,
+    /// clip_count), all 1-based. Same -condebug requirement as DemoLoading.
+    /// See issue #98.
+    FastForwardToClip(u32, u32, u32, u32),
 }
 
 /// Longest a batch may go without a console marker before OBS mode calls it
@@ -682,6 +687,11 @@ pub fn spawn_capture_engine(
                     if marker.kind == crate::obs::MarkerKind::DemoStart {
                         if let Some((job_idx, total, clips)) = marker.demo_progress {
                             let _ = tx.send(EngineEvent::DemoLoading(job_idx, total, clips));
+                        }
+                    }
+                    if marker.kind == crate::obs::MarkerKind::NextClip {
+                        if let Some((job_idx, total, clip_idx, clip_count)) = marker.next_clip_progress {
+                            let _ = tx.send(EngineEvent::FastForwardToClip(job_idx, total, clip_idx, clip_count));
                         }
                     }
                 }

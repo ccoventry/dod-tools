@@ -150,6 +150,7 @@ export const STRINGS = {
     TAB_PIPELINE: 'Pipeline',
     TAB_CAPTURE_OUTPUT: 'Destinations',
     TAB_CUSTOM_COMMANDS: 'Commands',
+    TAB_NOTIFICATIONS: 'Notifications',
     HLAE_EXEC_LABEL: 'HLAE Executable:',
     HLAE_EXEC_PLACEHOLDER: 'Path to hlae.exe',
     HL_EXEC_LABEL: 'Half-Life Executable:',
@@ -303,12 +304,18 @@ export const STRINGS = {
     AUTO_CLEAR_PREVIEWS_LABEL: 'Auto-clear Previews',
     AUTO_CLEAR_TEMP_DEMOS_LABEL: 'Auto-clear Temp Demos',
     CLEAR_PREVIEWS_BUTTON: 'Clear Previews...',
-    NOTIFICATIONS_LABEL: 'Notifications:',
     NOTIFY_PATCHING_LABEL: 'Patching Started/Complete',
-    NOTIFY_DEMO_LOADING_LABEL: 'Demo Loading (per demo)',
+    NOTIFY_PATCHING_TITLE: 'One notification when patching begins, one when your demos are ready and capture is about to start. Not per-demo — decal clearing makes patching take real time now, but a toast per demo patched would be noise.',
+    NOTIFY_DEMO_LOADING_LABEL: 'Demo Loading',
+    NOTIFY_DEMO_LOADING_TITLE: 'Fires each time a new demo starts playing during capture, showing which demo and how many clips are on it. Requires "Add Condebug" to be on — silently never fires otherwise. Automatically skipped when Fast-Forward to Clip is also on, since that notification covers the same ground with more detail.',
+    NOTIFY_BETWEEN_CLIPS_LABEL: 'Fast-Forward to Clip',
+    NOTIFY_BETWEEN_CLIPS_TITLE: 'Fires as playback starts fast-forwarding toward each clip, including the first one in a demo. Requires "Add Condebug" to be on — silently never fires otherwise.',
     NOTIFY_CAPTURES_DONE_LABEL: 'Captures Done',
+    NOTIFY_CAPTURES_DONE_TITLE: 'Fires once when the whole capture batch finishes.',
     NOTIFY_RENDERS_DONE_LABEL: 'Renders Done',
+    NOTIFY_RENDERS_DONE_TITLE: 'Fires once when the whole render batch finishes.',
     NOTIFY_ERROR_LABEL: 'Errors',
+    NOTIFY_ERROR_TITLE: 'Fires immediately if a patch, capture, or render step fails.',
     INIT_COMMANDS_LABEL: 'Initial Commands (run once at demo load):',
     ADD_INIT_COMMAND_BUTTON: '+ Add Initial Command',
     // Both lists on this tab are custom commands; only one is scheduled, so
@@ -967,10 +974,16 @@ export const STRINGS = {
     PATCHING_STARTED_BODY: 'Preparing demos for capture…',
     PATCHING_FINISHED_TITLE: 'Patching complete',
     patchingFinishedBody: (total) => `${total} demo${total === 1 ? '' : 's'} ready — starting capture`,
-    demoLoadingTitle: (index, total) => `Capturing demo ${index} of ${total}`,
+    // Shared by both the demo-loading and fast-forward-to-clip toasts —
+    // same demo, same title, whichever of the two actually fires.
+    demoLoadingTitle: (index, total) => `Viewing demo ${index} of ${total}`,
     demoLoadingBody: (clipCount, clipsSoFar, totalBatchClips) => {
       const clipWord = clipCount === 1 ? 'clip' : 'clips';
       const onThisDemo = `${clipCount} ${clipWord} on this demo`;
+      return totalBatchClips ? `${onThisDemo} · ${clipsSoFar} of ${totalBatchClips} clips total` : onThisDemo;
+    },
+    fastForwardToClipBody: (clipIndex, clipCountThisDemo, clipsSoFar, totalBatchClips) => {
+      const onThisDemo = `Fast-forwarding to clip ${clipIndex} of ${clipCountThisDemo}`;
       return totalBatchClips ? `${onThisDemo} · ${clipsSoFar} of ${totalBatchClips} clips total` : onThisDemo;
     },
   },

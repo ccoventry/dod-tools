@@ -520,6 +520,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     // disable them for anyone whose settings predate this field.
     const notifyPatching = document.querySelector('#config-notify-patching')?.checked ?? true;
     const notifyDemoLoading = document.querySelector('#config-notify-demo-loading')?.checked ?? true;
+    const notifyBetweenClips = document.querySelector('#config-notify-between-clips')?.checked ?? true;
     const notifyCapturesDone = document.querySelector('#config-notify-captures-done')?.checked ?? true;
     const notifyRendersDone = document.querySelector('#config-notify-renders-done')?.checked ?? true;
     const notifyError = document.querySelector('#config-notify-error')?.checked ?? true;
@@ -566,6 +567,7 @@ window.addEventListener("DOMContentLoaded", async () => {
       auto_clear_temp_demos: autoClearTempDemos,
       notify_patching: notifyPatching,
       notify_demo_loading: notifyDemoLoading,
+      notify_between_clips: notifyBetweenClips,
       notify_captures_done: notifyCapturesDone,
       notify_renders_done: notifyRendersDone,
       notify_error: notifyError,
@@ -687,6 +689,8 @@ window.addEventListener("DOMContentLoaded", async () => {
       if (notifyPatchingEl) notifyPatchingEl.checked = !!settings.notify_patching;
       const notifyDemoLoadingEl = document.querySelector('#config-notify-demo-loading');
       if (notifyDemoLoadingEl) notifyDemoLoadingEl.checked = !!settings.notify_demo_loading;
+      const notifyBetweenClipsEl = document.querySelector('#config-notify-between-clips');
+      if (notifyBetweenClipsEl) notifyBetweenClipsEl.checked = !!settings.notify_between_clips;
       const notifyCapturesDoneEl = document.querySelector('#config-notify-captures-done');
       if (notifyCapturesDoneEl) notifyCapturesDoneEl.checked = !!settings.notify_captures_done;
       const notifyRendersDoneEl = document.querySelector('#config-notify-renders-done');
