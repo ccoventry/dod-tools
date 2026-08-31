@@ -9,6 +9,7 @@
 // a `.render_autosave.json` crash-recovery lockfile, and a wake lock held
 // for the batch's duration.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -159,6 +160,13 @@ pub struct RenderManager {
     /// without a fresh scan+payload (mirrors dev's `start_rendering()`
     /// operating on `self.jobs` directly, independent of the scan step).
     last_config: Arc<Mutex<Option<RenderConfig>>>,
+    /// JIT export-drive reservation ledger — bytes each concurrently-running
+    /// `run_render_job` has provisionally claimed per drive, so one job's
+    /// drive check accounts for what other in-flight jobs have already
+    /// claimed instead of only seeing the drive's live free-space number
+    /// (which several jobs starting in the same scheduler tick would all
+    /// see as identical). See docs/capture-render-studio-merge-scope.md §4.
+    export_reservations: Arc<Mutex<HashMap<PathBuf, u64>>>,
 }
 
 struct SchedulerHandles {
@@ -167,6 +175,7 @@ struct SchedulerHandles {
     global_cancel: Arc<AtomicBool>,
     wake_lock: Arc<Mutex<Option<RenderWakeLock>>>,
     render_session: Arc<Mutex<Option<RenderSessionData>>>,
+    export_reservations: Arc<Mutex<HashMap<PathBuf, u64>>>,
 }
 
 impl RenderManager {
@@ -178,6 +187,7 @@ impl RenderManager {
             wake_lock: Arc::new(Mutex::new(None)),
             render_session: Arc::new(Mutex::new(None)),
             last_config: Arc::new(Mutex::new(None)),
+            export_reservations: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -188,6 +198,7 @@ impl RenderManager {
             global_cancel: self.global_cancel.clone(),
             wake_lock: self.wake_lock.clone(),
             render_session: self.render_session.clone(),
+            export_reservations: self.export_reservations.clone(),
         }
     }
 }
@@ -384,8 +395,9 @@ fn spawn_scheduler(app: AppHandle, handles: SchedulerHandles, config: RenderConf
                             job_config.fps = job.fps;
                             job_config.max_concurrent_renders = effective_concurrent;
                             let tx2 = tx.clone();
+                            let reservations = handles.export_reservations.clone();
                             tokio::spawn(async move {
-                                run_render_job(job_id, clip, job_config, tx2, cancel_flag).await;
+                                run_render_job(job_id, clip, job_config, tx2, cancel_flag, reservations).await;
                             });
                             started += 1;
                         }
@@ -761,6 +773,8 @@ pub fn recover_render_batch(state: tauri::State<'_, RenderManager>) -> Result<Ve
                 wav_file: None,
                 base_name: rj.name.clone(),
                 frame_count: 0,
+                width: 0,
+                height: 0,
                 date: String::new(),
                 video_file: None,
                 alpha_folder: None,
