@@ -20,8 +20,10 @@ function applyCaptureDetailSubtabDisplay() {
   const renderPanel = document.querySelector('#render-studio-panel');
   const footerCaptureStudio = document.querySelector('#footer-capture-studio');
   const footerRenderStudio = document.querySelector('#footer-render-studio');
+  const footerConfiguration = document.querySelector('#footer-configuration');
   const showHighlights = activeCaptureDetailSubtab === 'highlights';
   const showRender = activeCaptureDetailSubtab === 'render';
+  const showConfiguration = !showHighlights && !showRender;
 
   // The left master-demo-queue list is only relevant while picking which
   // demo's highlights to look at — Render works off its own scanned take
@@ -32,10 +34,11 @@ function applyCaptureDetailSubtabDisplay() {
   if (workspacePane) workspacePane.style.display = showHighlights ? 'flex' : 'none';
   if (detailPane) detailPane.style.display = showHighlights ? 'block' : 'none';
   if (advancedPanel) advancedPanel.style.display = showHighlights ? 'block' : 'none';
-  if (exportPanel) exportPanel.style.display = (!showHighlights && !showRender) ? 'block' : 'none';
+  if (exportPanel) exportPanel.style.display = showConfiguration ? 'block' : 'none';
   if (renderPanel) renderPanel.style.display = showRender ? 'block' : 'none';
-  if (footerCaptureStudio) footerCaptureStudio.style.display = showRender ? 'none' : 'flex';
+  if (footerCaptureStudio) footerCaptureStudio.style.display = showHighlights ? 'flex' : 'none';
   if (footerRenderStudio) footerRenderStudio.style.display = showRender ? 'flex' : 'none';
+  if (footerConfiguration) footerConfiguration.style.display = showConfiguration ? 'flex' : 'none';
 
   document.querySelectorAll('.capture-detail-subtab-btn').forEach((btn) => {
     btn.classList.toggle('active', btn.dataset.captureSubtab === activeCaptureDetailSubtab);
@@ -67,10 +70,11 @@ export function switchNavTab(navKey) {
 
   const footerCaptureStudio = document.querySelector('#footer-capture-studio');
   const footerRenderStudio = document.querySelector('#footer-render-studio');
+  const footerConfiguration = document.querySelector('#footer-configuration');
   const footerDemoAuditor = document.querySelector('#footer-demo-auditor');
   const footerDemoAnalyzer = document.querySelector('#footer-demo-analyzer');
 
-  [footerCaptureStudio, footerRenderStudio, footerDemoAuditor, footerDemoAnalyzer]
+  [footerCaptureStudio, footerRenderStudio, footerConfiguration, footerDemoAuditor, footerDemoAnalyzer]
     .forEach((el) => { if (el) el.style.display = 'none'; });
 
   // Quick-Clip/Workspace mode and session Save/Load are a Capture+Render

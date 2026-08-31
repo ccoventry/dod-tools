@@ -651,14 +651,22 @@
            switchNavTab() (nav.js) the same way the tab panes themselves are. -->
       <footer id="pinned-action-bar">
         <div id="footer-capture-studio" class="pinned-footer-content capture-studio-footer">
-          <div class="capture-studio-footer-row">
-            <div class="action-buttons">
-              <button id="start-capture-btn" class="primary-btn" data-str="CAPTURE_CONFIG.START_CAPTURE_BUTTON">Start Capture Batch</button>
-              <button id="cancel-batch-btn" disabled data-str="CAPTURE_CONFIG.CANCEL_BATCH_BUTTON">Cancel Batch</button>
+          <!-- Grid, not flex: puts export-pool-free-indicator in a true
+               center column regardless of how wide the left/right groups
+               are, rather than just being the next item in a packed flex
+               row. See .footer-row-grid-centered in styles.css. -->
+          <div class="capture-studio-footer-row footer-row-grid-centered">
+            <div class="footer-row-left">
+              <div class="action-buttons">
+                <button id="start-capture-btn" class="primary-btn" data-str="CAPTURE_CONFIG.START_CAPTURE_BUTTON">Start Capture Batch</button>
+                <button id="cancel-batch-btn" disabled data-str="CAPTURE_CONFIG.CANCEL_BATCH_BUTTON">Cancel Batch</button>
+              </div>
+              <p id="batch-status" class="status-text" data-str="CAPTURE_CONFIG.STATUS_WAITING">Status: Waiting...</p>
             </div>
-            <p id="batch-status" class="status-text" data-str="CAPTURE_CONFIG.STATUS_WAITING">Status: Waiting...</p>
-            <div id="export-pool-free-indicator" data-str="MAIN.EXPORT_POOL_FREE_DEFAULT">Capture Output Free: 0.0 GB</div>
-            <div id="footer-required-space" data-str="CAPTURE_CONFIG.REQUIRED_SPACE_DEFAULT">Required: 0.00 GB</div>
+            <div class="footer-row-center">
+              <div id="export-pool-free-indicator" data-str="MAIN.EXPORT_POOL_FREE_DEFAULT">Capture Output Free: 0.0 GB</div>
+              <div id="footer-required-space" data-str="CAPTURE_CONFIG.REQUIRED_SPACE_DEFAULT">Required: 0.00 GB</div>
+            </div>
           </div>
           <p id="disk-space-warning-banner" style="display: none; color: #f44336; font-weight: 600; white-space: pre-line;"></p>
           <div id="capture-progress-container" class="progress-bar-container" style="display: none;">
@@ -674,10 +682,27 @@
             focus, and the batch takes far longer.
           </p>
         </div>
+        <!-- footer-row-grid-centered lives on this inner div, not
+             #footer-render-studio itself — nav.js sets that element's
+             display via inline style (display:flex/none to show/hide the
+             whole footer), and an inline style always beats a class rule
+             regardless of specificity, so a grid class placed directly on
+             it would get silently overridden the moment the tab switches.
+             Matches the same inner-wrapper pattern the Capture footer row
+             above already uses for the same reason. -->
         <div id="footer-render-studio" class="pinned-footer-content" style="display: none;">
-          <div id="render-footer-pool-free" data-str="RENDER.RENDER_POOL_FREE_DEFAULT">Export Pool Free: 0.0 GB</div>
-          <div id="render-footer-queue-summary" data-str="RENDER.QUEUE_SUMMARY_DEFAULT">0 queued &middot; 0 rendering &middot; 0 done</div>
+          <div class="footer-row-grid-centered" style="flex: 1;">
+            <div id="render-footer-queue-summary" data-str="RENDER.QUEUE_SUMMARY_DEFAULT">0 queued &middot; 0 rendering &middot; 0 done</div>
+            <div id="render-footer-pool-free" data-str="RENDER.RENDER_POOL_FREE_DEFAULT">Export Pool Free: 0.0 GB</div>
+          </div>
         </div>
+        <!-- Intentionally empty for now — showing Capture's Start/Cancel Batch
+             footer here was misleading once Configuration also held Render's
+             settings (nudges "Start Capture Batch" while editing Render
+             Settings). #pinned-action-bar's min-height keeps the bar's
+             height stable with nothing in here; fill in with something
+             Configuration-specific later if a need comes up. -->
+        <div id="footer-configuration" class="pinned-footer-content" style="display: none;"></div>
         <div id="footer-demo-auditor" class="pinned-footer-content" style="display: none;">
           <div id="footer-audit-summary" data-str="AUDITOR.FOOTER_DEFAULT">Duplicates Found: 0 | Wasted Space: 0.00 GB</div>
         </div>
