@@ -99,7 +99,11 @@ pub struct AppSettings {
     #[serde(default = "default_fast_forward_speed")]
     pub fast_forward_speed: f32,
     /// Capture Output pool — required, no fallback (see capture_pane.js's
-    /// refreshLaunchGuard/buildCapturePayload).
+    /// refreshLaunchGuard/buildCapturePayload). Doubles as Render Studio's
+    /// scan-input locations (see render_pane.js's initRenderUI call) — the
+    /// two used to be separately-configured lists (`render_folders`) until
+    /// that redundancy was found to leave any capture written to a drive
+    /// only in this list invisible to Render Studio's scan.
     #[serde(default)]
     pub target_drives: Vec<String>,
     #[serde(default)]
@@ -108,8 +112,6 @@ pub struct AppSettings {
     pub custom_commands: Vec<CustomCommandPayload>,
     #[serde(default)]
     pub save_local_patched_copy: bool,
-    #[serde(default)]
-    pub render_folders: Vec<String>,
     #[serde(default = "default_render_codec")]
     pub render_codec: String,
     #[serde(default = "default_render_fps")]
@@ -215,7 +217,6 @@ impl Default for AppSettings {
             init_commands: vec!["r_decals 256".to_string(), "mirv_fov 90".to_string()],
             custom_commands: Vec::new(),
             save_local_patched_copy: false,
-            render_folders: Vec::new(),
             render_codec: default_render_codec(),
             render_fps: default_render_fps(),
             render_max_concurrent: default_render_max_concurrent(),

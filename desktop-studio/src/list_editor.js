@@ -1,8 +1,9 @@
 // Shared editable row-list widget.
 //
-// Backs Capture Output, Render Folders, Render Studio's Export Drives,
-// Init Commands, and Custom Commands so all five lists share one
-// add/edit/remove/reorder implementation instead of five hand-rolled ones.
+// Backs Capture Locations (also Render Studio's scan input), Render
+// Studio's Export Drives, Init Commands, and Custom Commands so all four
+// lists share one add/edit/remove/reorder implementation instead of four
+// hand-rolled ones.
 // Items are either plain values (`fields[0].primitive: true`, e.g. a path
 // string) or objects keyed by each field's `key`.
 

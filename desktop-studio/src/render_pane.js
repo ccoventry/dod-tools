@@ -322,7 +322,7 @@ export async function checkRenderRecoveryOnStartup(onRecovered) {
   }, { once: true });
 }
 
-export function initRenderUI(getRenderFolders, getExportDirs, onSettingsChange, takeTracking) {
+export function initRenderUI(getCaptureLocations, getExportDirs, onSettingsChange, takeTracking) {
   const scanRenderBtn = document.querySelector('#scan-render-btn');
   const startRenderBtn = document.querySelector('#start-render-btn');
   const cancelRenderBtn = document.querySelector('#cancel-render-btn');
@@ -445,8 +445,8 @@ export function initRenderUI(getRenderFolders, getExportDirs, onSettingsChange, 
     });
 
     scanRenderBtn.addEventListener('click', () => {
-      const renderFolders = getRenderFolders ? getRenderFolders() : [];
-      if (!renderFolders || renderFolders.length === 0) {
+      const captureLocations = getCaptureLocations ? getCaptureLocations() : [];
+      if (!captureLocations || captureLocations.length === 0) {
         showToast(STRINGS.RENDER.ADD_RENDER_DIR_REQUIRED, 'error');
         return;
       }
@@ -465,7 +465,7 @@ export function initRenderUI(getRenderFolders, getExportDirs, onSettingsChange, 
       if (renderStatusEl) renderStatusEl.textContent = STRINGS.RENDER.STATUS_SCANNING;
 
       const renderPayload = {
-        render_directories: renderFolders,
+        render_directories: captureLocations,
         codec: codecVal,
         fps: fpsVal,
         ffmpeg_path: ffmpegPathVal || null,

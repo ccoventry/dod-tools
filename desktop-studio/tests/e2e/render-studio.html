@@ -72,14 +72,16 @@
     import { initRenderUI, checkRenderRecoveryOnStartup } from '../../src/render_pane.js';
 
     // Test-controlled inputs, set via page.evaluate before Scan/Start is
-    // clicked — mirrors what main.js's own closures over `renderFolders`/
-    // `renderExportDirs` arrays provide to the real panel.
-    window.__testRenderFolders = [];
+    // clicked — mirrors what main.js's own closures over `targetDrives`/
+    // `renderExportDirs` arrays provide to the real panel (Render Studio's
+    // scan input is the same shared Capture Locations list Capture Studio
+    // writes to, not its own separate list — see #81).
+    window.__testCaptureLocations = [];
     window.__testExportDirs = [];
     window.__testSettingsChangeCount = 0;
 
     initRenderUI(
-      () => window.__testRenderFolders,
+      () => window.__testCaptureLocations,
       () => window.__testExportDirs,
       () => { window.__testSettingsChangeCount += 1; },
       null, // takeTracking — the highlight/take-index integration is out of

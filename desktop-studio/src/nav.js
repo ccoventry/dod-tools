@@ -3,23 +3,42 @@
 // "View Match Telemetry" button jumping to the Demo Analyzer tab) can call it
 // without creating a circular import with main.js.
 
-// In-workflow Capture Studio phase — dev's SelectTab::Highlights/Configuration
-// live inside the single continuous Capture Studio destination, not as a
-// separate top-level nav tab ("Batch Capture Config" was DRIFT, see
-// docs/tauri_parity_audit.md Area 1). 'highlights' shows the Master Queue's
-// detail view + advanced diagnostics; 'configuration' shows Path
-// Routing/Timing/Capture Output/Custom Commands.
+// In-workflow Studio phase — dev's SelectTab::Highlights/Configuration live
+// inside the single continuous Studio destination, not as separate top-level
+// nav tabs ("Batch Capture Config" was DRIFT, see docs/tauri_parity_audit.md
+// Area 1; Render Studio's own top-level tab was folded in the same way for
+// #81). 'highlights' shows the Master Queue's detail view + advanced
+// diagnostics; 'render' shows the Render Studio job panel; 'configuration'
+// shows Path Routing/Timing/Destinations/Custom Commands/Render Output.
 let activeCaptureDetailSubtab = 'highlights';
 
 function applyCaptureDetailSubtabDisplay() {
+  const workspacePane = document.querySelector('#pane-workspace');
   const detailPane = document.querySelector('#detail-pane');
   const advancedPanel = document.querySelector('#advanced-diagnostics-details');
   const exportPanel = document.querySelector('#export-config-panel');
+  const renderPanel = document.querySelector('#render-studio-panel');
+  const footerCaptureStudio = document.querySelector('#footer-capture-studio');
+  const footerRenderStudio = document.querySelector('#footer-render-studio');
+  const footerConfiguration = document.querySelector('#footer-configuration');
   const showHighlights = activeCaptureDetailSubtab === 'highlights';
+  const showRender = activeCaptureDetailSubtab === 'render';
+  const showConfiguration = !showHighlights && !showRender;
 
+  // The left master-demo-queue list is only relevant while picking which
+  // demo's highlights to look at — Render works off its own scanned take
+  // list, and Configuration is settings, not something you cross-reference
+  // against the queue. Both get the same full-width treatment Render
+  // already had (a deliberate call, not a layout regression): only
+  // Highlights keeps the master-queue pane visible alongside it.
+  if (workspacePane) workspacePane.style.display = showHighlights ? 'flex' : 'none';
   if (detailPane) detailPane.style.display = showHighlights ? 'block' : 'none';
   if (advancedPanel) advancedPanel.style.display = showHighlights ? 'block' : 'none';
-  if (exportPanel) exportPanel.style.display = showHighlights ? 'none' : 'block';
+  if (exportPanel) exportPanel.style.display = showConfiguration ? 'block' : 'none';
+  if (renderPanel) renderPanel.style.display = showRender ? 'block' : 'none';
+  if (footerCaptureStudio) footerCaptureStudio.style.display = showHighlights ? 'flex' : 'none';
+  if (footerRenderStudio) footerRenderStudio.style.display = showRender ? 'flex' : 'none';
+  if (footerConfiguration) footerConfiguration.style.display = showConfiguration ? 'flex' : 'none';
 
   document.querySelectorAll('.capture-detail-subtab-btn').forEach((btn) => {
     btn.classList.toggle('active', btn.dataset.captureSubtab === activeCaptureDetailSubtab);
@@ -51,10 +70,11 @@ export function switchNavTab(navKey) {
 
   const footerCaptureStudio = document.querySelector('#footer-capture-studio');
   const footerRenderStudio = document.querySelector('#footer-render-studio');
+  const footerConfiguration = document.querySelector('#footer-configuration');
   const footerDemoAuditor = document.querySelector('#footer-demo-auditor');
   const footerDemoAnalyzer = document.querySelector('#footer-demo-analyzer');
 
-  [footerCaptureStudio, footerRenderStudio, footerDemoAuditor, footerDemoAnalyzer]
+  [footerCaptureStudio, footerRenderStudio, footerConfiguration, footerDemoAuditor, footerDemoAnalyzer]
     .forEach((el) => { if (el) el.style.display = 'none'; });
 
   // Quick-Clip/Workspace mode and session Save/Load are a Capture+Render
@@ -65,19 +85,16 @@ export function switchNavTab(navKey) {
   // otherwise collapses to two children and shoves the tabs to the far edge.
   const navActions = document.querySelector('.nav-actions');
   if (navActions) {
-    navActions.style.visibility = (navKey === 'workspace' || navKey === 'render-studio') ? 'visible' : 'hidden';
+    navActions.style.visibility = navKey === 'workspace' ? 'visible' : 'hidden';
   }
 
   if (navKey === 'workspace') {
-    if (workspacePane) workspacePane.style.display = 'flex';
     if (detailsPane) detailsPane.style.display = 'flex';
     if (captureSubtabsBar) captureSubtabsBar.style.display = 'flex';
+    // Owns workspacePane/detailPane/advancedPanel/exportPanel/renderPanel
+    // and the footer swap — Highlights/Render/Configuration are now all
+    // subtabs of this one navKey, not separate top-level destinations.
     applyCaptureDetailSubtabDisplay();
-    if (footerCaptureStudio) footerCaptureStudio.style.display = 'flex';
-  } else if (navKey === 'render-studio') {
-    if (detailsPane) detailsPane.style.display = 'flex';
-    if (renderPanel) renderPanel.style.display = 'block';
-    if (footerRenderStudio) footerRenderStudio.style.display = 'flex';
   } else if (navKey === 'demo-auditor') {
     if (auditorPane) auditorPane.style.display = 'flex';
     if (footerDemoAuditor) footerDemoAuditor.style.display = 'flex';
