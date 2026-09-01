@@ -225,6 +225,16 @@ select {
   border-color: #4a82bd;
 }
 
+/* button:hover:not(:disabled) above outranks .analyzer-subtab-btn.active on
+   specificity alone (a type selector + two pseudo-classes beats two plain
+   classes), so hovering the selected tab was overriding it back to grey.
+   One more class-level selector (the :hover here) is enough to win. */
+.analyzer-subtab-btn.active:hover {
+  background: var(--primary-accent);
+  color: #ffffff;
+  border-color: #4a82bd;
+}
+
 .analyzer-tab-content {
   flex: 1;
   overflow-y: auto;
