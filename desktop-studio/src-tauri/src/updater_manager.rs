@@ -49,6 +49,11 @@ pub async fn check_for_update(
         .updater_builder()
         .endpoints(vec![endpoint])
         .map_err(|e| format!("Failed to set updater endpoint: {}", e))?
+        // Default semver comparison only offers upgrades, but a channel is a
+        // deliberate choice, not a version target — switching from dev back
+        // to stable is a legitimate "downgrade" (dev's version number is
+        // always ahead) that should still be offered, not silently blocked.
+        .version_comparator(|current, remote| remote.version != current)
         .build()
         .map_err(|e| format!("Failed to build updater: {}", e))?;
 
