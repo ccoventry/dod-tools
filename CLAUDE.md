@@ -66,7 +66,7 @@ Cargo workspace (`Cargo.toml`, resolver "3", edition 2024) containing the follow
 - **Diagnostics:** Never output raw compiler logs. Provide concise, single-sentence failure summaries and direct mechanical fixes.
 - **Execution Bypass:** Use `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` for blocked scripts. For unsigned binaries blocked by WDAC, execute via `run.ps1` to sequence process stops, build steps, and signature updates.
 
-### GitHub Issue/PR Linking
+### GitHub Issues & PRs
 - **After creating a PR**, check whether a GitHub issue already exists for the same work. If one does, link it to the PR via GraphQL, not just a `Closes #NN` line in the PR body — that text alone does not populate the issue's `closedByPullRequestsReferences`, so a "yes there's a PR" check on the issue can miss it:
       PR_ID=$(gh api repos/<owner>/<repo>/pulls/<pr-number> --jq .node_id)
       ISSUE_ID=$(gh api repos/<owner>/<repo>/issues/<issue-number> --jq .node_id)
@@ -77,6 +77,7 @@ Cargo workspace (`Cargo.toml`, resolver "3", edition 2024) containing the follow
           }
         }' -f prId="$PR_ID" -f issueId="$ISSUE_ID"
   Still include `Closes #NN` in the PR body too — the GraphQL call is in addition to that, not a replacement for it.
+- **Do not create an issue after every PR as a matter of habit.** A PR that fixes something noticed and resolved in the same pass needs no separate paper trail — the PR description already is that record, and an issue closed minutes later by the very PR that created it is noise. Only file one for work you are deliberately *not* doing right now: something noticed but out of scope for the current PR, or a fix knowingly deferred rather than made. That is the actual signal — deferral, not the mere absence of a pre-existing issue.
 
 ---
 
