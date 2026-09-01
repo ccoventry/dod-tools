@@ -1,17 +1,30 @@
 name: Release desktop-studio (Stable)
 
-# Manual only — cutting a stable release is a deliberate action taken after
-# promoting dev to main, not something that fires on every push. See issue
-# #133 and desktop-studio/src-tauri/src/updater_manager.rs: this workflow's
-# GitHub Release is exactly what the app's "stable" update channel polls, via
-# GitHub's `/releases/latest` alias (works because this release is neither a
-# draft nor a prerelease).
+# Fires automatically on every push to main — in this repo's flow, main is
+# ruleset-protected (PR-only, non-fast-forward), so every push is really a
+# dev->main release-cutover merge; there's no other kind of push that lands
+# here. See issue #133 and desktop-studio/src-tauri/src/updater_manager.rs:
+# this workflow's GitHub Release is exactly what the app's "stable" update
+# channel polls, via GitHub's `/releases/latest` alias (works because this
+# release is neither a draft nor a prerelease).
+#
+# Versioning: Cargo.toml's checked-in version is read for its major.minor
+# only — the patch number is computed by finding the highest existing
+# `v<major>.<minor>.*` tag and incrementing it (0 if none exist yet), so a
+# routine merge to main just becomes the next patch with no manual step.
+# Bumping to a new minor/major (0.1 -> 0.2, or eventually 0.x -> 1.0) is
+# just editing Cargo.toml's version as part of the release PR — there's no
+# existing tag under the new prefix yet, so the next patch computes to 0.
+# workflow_dispatch's version input is a manual override for the rare case
+# that needs one; leave it blank to use the same auto-computed version.
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to release (e.g. 0.11.0 — no leading 'v')"
-        required: true
+        description: "Override version (e.g. 0.11.0 — no leading 'v'). Leave blank to auto-compute the next patch under Cargo.toml's major.minor."
+        required: false
 
 permissions:
   contents: write
@@ -24,6 +37,22 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: main
+          fetch-depth: 0 # full tag history — needed to find the last patch under this major.minor
+
+      - name: Compute release version
+        id: version
+        shell: bash
+        env:
+          MANUAL_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          if [ -n "$MANUAL_VERSION" ]; then
+            echo "RELEASE_VERSION=${MANUAL_VERSION}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          MAJOR_MINOR=$(grep -m1 '^version = ' desktop-studio/src-tauri/Cargo.toml | sed -E 's/version = "([0-9]+\.[0-9]+)\.[0-9]+.*/\1/')
+          LATEST_PATCH=$(git tag -l "v${MAJOR_MINOR}.*" | sed -E "s/^v${MAJOR_MINOR}\.//" | sort -n | tail -1)
+          NEXT_PATCH=$(( ${LATEST_PATCH:--1} + 1 ))
+          echo "RELEASE_VERSION=${MAJOR_MINOR}.${NEXT_PATCH}" >> "$GITHUB_OUTPUT"
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -45,13 +74,12 @@ jobs:
 
       # Stamps this run's version into the two Tauri-side manifests. Not
       # committed back — the repo's checked-in version stays whatever it was;
-      # only this build (and the release it produces) carries the bumped
-      # number. There is no automated version-bump tooling in this repo yet,
-      # so the version to release is a manual decision each time.
+      # only this build (and the release it produces) carries the computed
+      # number.
       - name: Set release version
         shell: bash
         env:
-          RELEASE_VERSION: ${{ github.event.inputs.version }}
+          RELEASE_VERSION: ${{ steps.version.outputs.RELEASE_VERSION }}
         run: |
           node -e "
             const fs = require('fs');
@@ -76,8 +104,8 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: desktop-studio
-          tagName: v${{ github.event.inputs.version }}
-          releaseName: "DoD Tools Studio v${{ github.event.inputs.version }}"
+          tagName: v${{ steps.version.outputs.RELEASE_VERSION }}
+          releaseName: "DoD Tools Studio v${{ steps.version.outputs.RELEASE_VERSION }}"
           releaseBody: "See assets below to download."
           releaseDraft: false
           prerelease: false
