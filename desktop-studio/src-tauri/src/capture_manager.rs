@@ -108,6 +108,13 @@ pub struct CapturePayload {
     /// Decal ring size the flush pins `r_decals` to. Absent means the default.
     #[serde(default)]
     pub decal_ring_limit: Option<u32>,
+    /// `.cfg` name execed at HLAE/hl.exe launch, before the demo loads (see
+    /// issue #149). Maps to `PatcherConfig::movie_config`, which already
+    /// implements this launch-time exec — desktop-studio just hadn't wired
+    /// a setting to it. Only applies to the capture batch launch, not to
+    /// `launch_standalone_game`.
+    #[serde(default)]
+    pub launch_config: String,
 }
 
 fn default_initial_delay() -> f32 { 3.0 }
@@ -269,6 +276,7 @@ fn config_from_payload(payload: &CapturePayload) -> PatcherConfig {
     // Capture Output is the sole (required) source of output directories —
     // the frontend already blocks the batch if `drives` is empty.
     cfg.primary_media_dir = payload.drives.first().map(std::path::PathBuf::from);
+    cfg.movie_config = payload.launch_config.clone();
     // Last, so it sees every field the payload set: reconciles the capture mode
     // with the legacy `ffmpeg_capture` flag and applies what the mode implies.
     // Everything downstream branches on `capture_mode`, so this must run before
@@ -1580,6 +1588,7 @@ mod tests {
             ],
             decal_flush: None,
             decal_ring_limit: None,
+            launch_config: "helper_launch_cfg".to_string(),
         }
     }
 
@@ -1627,6 +1636,9 @@ mod tests {
         assert_eq!(cfg.session_id, "session_test");
         assert_eq!(cfg.init_commands, vec!["exec autoexec".to_string()]);
         assert_eq!(cfg.capture_directories, vec![PathBuf::from("D:/capture")]);
+        // Maps to PatcherConfig::movie_config, the field capture_engine.rs
+        // already folds into `+exec <name>.cfg` at HLAE launch (issue #149).
+        assert_eq!(cfg.movie_config, "helper_launch_cfg");
     }
 
     #[test]

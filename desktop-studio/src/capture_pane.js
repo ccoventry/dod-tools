@@ -946,6 +946,8 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
     const saveLocalPatchedCopyVal = document.querySelector("#config-save-local-patched")?.checked || false;
     const addCondebugVal = document.querySelector("#config-add-condebug")?.checked || false;
 
+    const launchConfigVal = document.querySelector("#config-launch-config")?.value?.trim() || "";
+
     const autoClearLogsVal = document.querySelector("#config-auto-clear-logs")?.checked || false;
     const autoClearPreviewsVal = document.querySelector("#config-auto-clear-previews")?.checked || false;
     const autoClearTempDemosVal = document.querySelector("#config-auto-clear-temp-demos")?.checked || false;
@@ -1013,6 +1015,7 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
       session_id: sessionId,
       init_commands: initCommandsPayload,
       custom_commands: customCommandsPayload,
+      launch_config: launchConfigVal,
     };
   }
 

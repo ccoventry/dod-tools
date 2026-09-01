@@ -403,6 +403,17 @@
             <!-- Tab Content: Initial + Scheduled Commands -->
             <div id="tab-custom-commands" class="config-tab-content" style="display: none;">
               <div class="input-row">
+                <label for="config-launch-config" data-str="CAPTURE_CONFIG.LAUNCH_CONFIG_LABEL">Launch Config:</label>
+                <input type="text" id="config-launch-config" data-str-placeholder="CAPTURE_CONFIG.LAUNCH_CONFIG_PLACEHOLDER" placeholder="Optional .cfg name, e.g. myconfig" style="flex: 1;" />
+              </div>
+              <!-- exec doesn't work from Initial Commands below — those are
+                   patched into the demo as STUFFTEXT frames, and GoldSrc
+                   refuses to exec from inside a played-back demo. This field
+                   folds into the HLAE/hl.exe launch args instead, where
+                   +exec runs before the demo even loads. See issue #149. -->
+              <p class="setting-hint" data-str="CAPTURE_CONFIG.LAUNCH_CONFIG_HINT">Runs once before the demo loads, as part of the HLAE/hl.exe launch — use this for exec &lt;yourconfig.cfg&gt;. Initial Commands below run during demo playback and cannot exec.</p>
+
+              <div class="input-row" style="margin-top: 16px;">
                 <strong data-str="CAPTURE_CONFIG.INIT_COMMANDS_LABEL">Initial Commands (run once at demo load):</strong>
               </div>
               <!-- Populated by cfg_warnings.js when the game's own config files

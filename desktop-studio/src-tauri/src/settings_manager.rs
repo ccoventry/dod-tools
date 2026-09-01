@@ -143,6 +143,14 @@ pub struct AppSettings {
     pub update_channel: String,
     #[serde(default = "default_auto_check_updates")]
     pub auto_check_updates: bool,
+    /// `.cfg` name execed at HLAE/hl.exe launch, before the demo loads —
+    /// where `exec <cfg>` actually works (see issue #149). Distinct from
+    /// `init_commands`, which are patched into the demo as STUFFTEXT frames
+    /// and cannot exec anything. Does NOT apply to the standalone Launch
+    /// Game button — that path is for opening HLAE+DoD quickly without a
+    /// capture batch queued, not for driving one.
+    #[serde(default)]
+    pub launch_config: String,
 }
 
 fn default_resolution_width() -> i32 { 1280 }
@@ -235,6 +243,7 @@ impl Default for AppSettings {
             notify_updates: default_notify_updates(),
             update_channel: default_update_channel(),
             auto_check_updates: default_auto_check_updates(),
+            launch_config: String::new(),
         }
     }
 }

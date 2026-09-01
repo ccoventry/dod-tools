@@ -510,6 +510,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     const renderMaxConcurrent = parseInt(document.querySelector('#render-max-concurrent-input')?.value, 10) || 2;
 
     const { init_commands, custom_commands } = getCommandsState();
+    const launchConfig = document.querySelector('#config-launch-config')?.value?.trim() || '';
 
     const settingsPayload = {
       hlae_path: hlaePath,
@@ -554,6 +555,7 @@ window.addEventListener("DOMContentLoaded", async () => {
       target_drives: targetDrives,
       init_commands,
       custom_commands,
+      launch_config: launchConfig,
       save_local_patched_copy: saveLocalPatchedCopy,
       render_codec: renderCodec,
       render_fps: renderFps,
@@ -727,6 +729,8 @@ window.addEventListener("DOMContentLoaded", async () => {
         renderExportDirs = [...settings.render_export_dirs];
         renderExportDirsEditor.render();
       }
+      const launchConfigEl = document.querySelector('#config-launch-config');
+      if (launchConfigEl) launchConfigEl.value = settings.launch_config || '';
       hydrateCommandsState(settings.init_commands, settings.custom_commands);
       // Both halves of the question are now in the DOM: the game path, and the
       // commands that will run against whatever its configs set.
