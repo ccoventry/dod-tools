@@ -778,7 +778,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   // Wires the Updates tab's buttons regardless of whether settings loaded —
   // only the startup auto-check itself is conditional on settings being
   // present. Not awaited: a background check shouldn't block startup.
-  initUpdater(settings);
+  initUpdater(settings, persistAppSettings);
   applyStudioModeUI();
 
   const studioModeSwitchInput = document.querySelector('#studio-mode-switch-input');

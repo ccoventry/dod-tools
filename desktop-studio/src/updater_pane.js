@@ -118,8 +118,14 @@ async function beginDownloadAndInstall() {
  *  unless `settings.auto_check_updates` is off, or this is a local/debug
  *  build — runs one background check on startup against
  *  `settings.update_channel`. Called once from main.js's DOMContentLoaded,
- *  after settings have loaded (not awaited — fire-and-forget). */
-export async function initUpdater(settings) {
+ *  after settings have loaded (not awaited — fire-and-forget).
+ *
+ *  `persistSettings` is main.js's persistAppSettings — every other settings
+ *  control in the app calls it on change (it's also what refreshes
+ *  os_notifications.js's live enabledFlags, per its own comment), but these
+ *  three never had a listener wired, so toggling them did nothing until
+ *  whatever next unrelated action happened to trigger a save. */
+export async function initUpdater(settings, persistSettings) {
   const modal = document.querySelector('#update-modal');
   displayCurrentVersion();
 
@@ -131,14 +137,25 @@ export async function initUpdater(settings) {
     if (modal) modal.style.display = 'none';
   });
 
+  for (const id of ['#config-update-channel', '#config-auto-check-updates', '#config-notify-updates']) {
+    document.querySelector(id)?.addEventListener('change', () => persistSettings?.());
+  }
+
   document.querySelector('#check-updates-now-btn')
     ?.addEventListener('click', () => checkForUpdatesNow());
 
   document.querySelector('#download-install-update-btn')
     ?.addEventListener('click', () => beginDownloadAndInstall());
 
-  document.querySelector('#restart-to-apply-btn')
-    ?.addEventListener('click', () => restartApp());
+  document.querySelector('#restart-to-apply-btn')?.addEventListener('click', async () => {
+    // app.restart() is a hard process restart — it never goes through the
+    // window's onCloseRequested handler (main.js), which is the only other
+    // place settings get saved. Without this, anything changed since the
+    // last real save (not just in this modal) is silently lost the moment
+    // the app relaunches.
+    await persistSettings?.();
+    restartApp();
+  });
 
   listen('update_download_progress', (event) => {
     const { downloaded, total } = event.payload || {};
