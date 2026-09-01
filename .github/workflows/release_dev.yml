@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version this build is heading toward (e.g. 0.11.0 — no leading 'v'); the actual build gets '-dev.<run number>' appended so it always compares as newer than the last dev build and never collides with a stable release of the same number."
+        description: "Version this build is heading toward (e.g. 0.11.0 — no leading 'v'); the actual build gets '-<run number>' appended so it always compares as newer than the last dev build and never collides with a stable release of the same number."
         required: true
 
 permissions:
@@ -51,22 +51,25 @@ jobs:
         run: npm ci
 
       # Same manual, not-committed-back version stamp as release_stable.yml,
-      # plus a `-dev.<run number>` suffix — unique per run, always newer than
-      # the plain version alone (semver pre-release identifiers sort below
-      # the release they're attached to, so this only ever offers itself as
-      # an update to someone already on an older dev build, never to someone
-      # on the matching stable release), and monotonically increasing (unlike
-      # a git short-sha, which sorts alphabetically, not chronologically).
-      # Must be numeric-only: the MSI bundler rejects any pre-release
-      # identifier containing letters (confirmed by a real failed build —
-      # `-dev.<short-sha>` broke `tauri build` with "optional pre-release
-      # identifier in app version must be numeric-only ... for msi target").
+      # plus a `-<run number>` suffix — unique per run, always newer than the
+      # plain version alone (semver pre-release identifiers sort below the
+      # release they're attached to, so this only ever offers itself as an
+      # update to someone already on an older dev build, never to someone on
+      # the matching stable release), and monotonically increasing (unlike a
+      # git short-sha, which sorts alphabetically, not chronologically).
+      # Must be a single, purely-numeric identifier: the MSI/WiX bundler only
+      # accepts one pre-release segment and rejects it outright if any part
+      # of it isn't numeric — confirmed by two real failed builds, first with
+      # `-dev.<short-sha>` ("must be numeric-only ... for msi target"), then
+      # again with the two-segment `-dev.<run number>` (still rejected, since
+      # the non-numeric `dev` segment is still present — see
+      # https://github.com/tauri-apps/tauri/discussions/7600).
       - name: Set dev build version
         shell: bash
         env:
           RELEASE_VERSION: ${{ github.event.inputs.version }}
         run: |
-          DEV_VERSION="${RELEASE_VERSION}-dev.${GITHUB_RUN_NUMBER}"
+          DEV_VERSION="${RELEASE_VERSION}-${GITHUB_RUN_NUMBER}"
           node -e "
             const fs = require('fs');
             const version = process.env.DEV_VERSION;
