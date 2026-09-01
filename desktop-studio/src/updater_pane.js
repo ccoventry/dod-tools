@@ -1,5 +1,5 @@
 import { listen } from '@tauri-apps/api/event';
-import { checkForUpdate, downloadAndInstallUpdate, restartApp } from './ipc_bridge.js';
+import { checkForUpdate, downloadAndInstallUpdate, restartApp, getAppVersion } from './ipc_bridge.js';
 import { notify } from './os_notifications.js';
 import { STRINGS } from './strings.js';
 
@@ -30,6 +30,18 @@ function setFooterButtonState(updateAvailable) {
     btn.style.color = '';
     btn.style.borderColor = '';
   }
+}
+
+// Fetched once at startup rather than re-read per update check — the
+// running app's own version never changes without a restart, so there's
+// nothing to keep re-fetching.
+async function displayCurrentVersion() {
+  const version = await getAppVersion();
+  if (!version) return;
+  const footerLabel = document.querySelector('#app-version-label');
+  if (footerLabel) footerLabel.textContent = STRINGS.FOOTER.appVersionLabel(version);
+  const modalLabel = document.querySelector('#update-modal-current-version');
+  if (modalLabel) modalLabel.textContent = STRINGS.UPDATE_MODAL.currentVersionLabel(version);
 }
 
 export async function checkForUpdatesNow(channel = currentChannel()) {
@@ -84,6 +96,7 @@ async function beginDownloadAndInstall() {
  *  DOMContentLoaded, after settings have loaded. */
 export function initUpdater(settings) {
   const modal = document.querySelector('#update-modal');
+  displayCurrentVersion();
 
   document.querySelector('#update-check-btn')?.addEventListener('click', () => {
     if (modal) modal.style.display = 'flex';

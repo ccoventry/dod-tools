@@ -974,11 +974,13 @@ export const STRINGS = {
     CHECK_UPDATES_TITLE: 'Check for app updates',
     UPDATE_AVAILABLE_BUTTON: 'Update Available',
     UPDATE_AVAILABLE_TITLE: 'A new version is ready — click to install it.',
+    appVersionLabel: (v) => `v${v}`,
   },
 
   // ── Update check/install modal (issue #133) ──────────────────────────────
   UPDATE_MODAL: {
     TITLE: 'Check for Updates',
+    currentVersionLabel: (v) => `Current version: v${v}`,
     CHANNEL_LABEL: 'Update Channel:',
     CHANNEL_STABLE: 'Stable (from main)',
     CHANNEL_DEV: 'Dev (from dev, on-demand builds)',

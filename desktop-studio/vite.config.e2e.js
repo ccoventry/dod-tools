@@ -16,6 +16,7 @@ export default defineConfig({
     alias: {
       '@tauri-apps/api/core': path.resolve(__dirname, 'tests/e2e/mocks/tauri-core.js'),
       '@tauri-apps/api/event': path.resolve(__dirname, 'tests/e2e/mocks/tauri-event.js'),
+      '@tauri-apps/api/app': path.resolve(__dirname, 'tests/e2e/mocks/tauri-app.js'),
     },
   },
 });
