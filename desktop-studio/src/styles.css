@@ -664,6 +664,57 @@ button.primary-btn:hover:not(:disabled) {
   gap: 4px;
 }
 
+.setting-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 8px;
+}
+
+/* Timing diagram (#150) — a sorted event table anchored at the first kill
+   (0.0s), reviving the pre-Tauri egui build's "Mock Execution Timeline"
+   (see index.html's comment above .timing-diagram). Illustrative, not to
+   scale; only the relative-time column updates live as the fields change. */
+.timing-diagram {
+  margin-top: 6px;
+  max-width: 420px;
+}
+
+.timing-diagram-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.timing-diagram-table th {
+  text-align: left;
+  color: var(--text-muted);
+  font-weight: 600;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.timing-diagram-table td {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border-color);
+  white-space: nowrap;
+}
+
+.timing-diagram-table tr:last-child td {
+  border-bottom: none;
+}
+
+.timing-diagram-time {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+
+/* The two fixed kill anchors (0.0s and the illustrative streak end) stand
+   out from the four fields' derived offsets around them. */
+.timing-diagram-anchor td {
+  color: #ffffff;
+  font-weight: 600;
+}
+
 /* Pinned Bottom Status Bar — one child per tab (index.html), toggled by
    switchNavTab() (nav.js); only the active tab's content is visible.
    min-height rather than a fixed height: the Capture Studio footer grows
