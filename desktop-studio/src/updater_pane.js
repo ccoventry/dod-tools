@@ -39,10 +39,15 @@ async function displayCurrentVersion() {
   const version = await getAppVersion();
   if (!version) return;
   // Dev channel versions carry a `-<run number>` suffix (see
-  // release_dev.yml); a stable release never has a `-` at all.
+  // release_dev.yml); a stable release never has a `-` at all. But
+  // `npm run tauri dev` builds straight from the checked-in Cargo.toml, so
+  // it has no suffix either — import.meta.env.DEV (true only under the Vite
+  // dev server, false for any real `tauri build` output) is what actually
+  // tells a local debug session apart from a real stable release.
   const [baseVersion, suffix] = version.split(/-(.+)/);
+  const buildKind = import.meta.env.DEV ? 'local' : suffix ? 'dev' : 'stable';
   const footerLabel = document.querySelector('#app-version-label');
-  if (footerLabel) footerLabel.textContent = STRINGS.FOOTER.appVersionLabel(baseVersion, !!suffix);
+  if (footerLabel) footerLabel.textContent = STRINGS.FOOTER.appVersionLabel(baseVersion, buildKind);
   const modalLabel = document.querySelector('#update-modal-current-version');
   if (modalLabel) modalLabel.textContent = STRINGS.UPDATE_MODAL.currentVersionLabel(version);
 }

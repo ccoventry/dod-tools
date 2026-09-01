@@ -975,8 +975,13 @@ export const STRINGS = {
     UPDATE_AVAILABLE_BUTTON: 'Update Available',
     UPDATE_AVAILABLE_TITLE: 'A new version is ready — click to install it.',
     // baseVersion excludes the dev channel's `-<run number>` suffix — the
-    // footer just needs "is this a dev build", not which exact run.
-    appVersionLabel: (baseVersion, isDev) => `v${baseVersion}${isDev ? ' | dev build' : ''}`,
+    // footer just needs "what kind of build is this", not which exact run.
+    // buildKind: 'local' (npm run tauri dev), 'dev' (release_dev.yml), or
+    // anything else for a real stable build (no tag).
+    appVersionLabel: (baseVersion, buildKind) => {
+      const tag = buildKind === 'local' ? ' | local build' : buildKind === 'dev' ? ' | dev build' : '';
+      return `v${baseVersion}${tag}`;
+    },
   },
 
   // ── Update check/install modal (issue #133) ──────────────────────────────
