@@ -32,6 +32,15 @@ function setFooterButtonState(updateAvailable) {
   }
 }
 
+// A local dev-server session or a debug-profile bundle never carries a real
+// channel version, so any comparison against a published manifest reads as
+// "different" essentially always — for a local session in particular,
+// that's actively backwards (it's typically running the newest code,
+// ahead of anything published), not just a noisy false positive.
+async function isLocalOrDebugBuild() {
+  return import.meta.env.DEV || (await isDebugBuild());
+}
+
 // Fetched once at startup rather than re-read per update check — the
 // running app's own version never changes without a restart, so there's
 // nothing to keep re-fetching.
@@ -106,10 +115,11 @@ async function beginDownloadAndInstall() {
 
 /** Wires the footer's Check for Updates button and the standalone update
  *  modal's controls, listens for download progress/completion, and —
- *  unless `settings.auto_check_updates` is off — runs one background check
- *  on startup against `settings.update_channel`. Called once from main.js's
- *  DOMContentLoaded, after settings have loaded. */
-export function initUpdater(settings) {
+ *  unless `settings.auto_check_updates` is off, or this is a local/debug
+ *  build — runs one background check on startup against
+ *  `settings.update_channel`. Called once from main.js's DOMContentLoaded,
+ *  after settings have loaded (not awaited — fire-and-forget). */
+export async function initUpdater(settings) {
   const modal = document.querySelector('#update-modal');
   displayCurrentVersion();
 
@@ -153,5 +163,6 @@ export function initUpdater(settings) {
   });
 
   if (settings?.auto_check_updates === false) return;
+  if (await isLocalOrDebugBuild()) return;
   checkForUpdatesNow(settings?.update_channel || 'stable');
 }
