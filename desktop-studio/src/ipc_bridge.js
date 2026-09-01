@@ -523,6 +523,18 @@ export async function getAppVersion() {
   });
 }
 
+/** Whether this binary was compiled with debug_assertions on — true for
+ *  `tauri build --debug` (a real installed bundle, unlike `npm run tauri
+ *  dev`), false for a genuine `--release` build. Best-effort, same as
+ *  getAppVersion(): a mislabeled build kind isn't worth interrupting the
+ *  user over. */
+export async function isDebugBuild() {
+  return invoke("is_debug_build").catch((err) => {
+    console.error("IPC Execution Error (is_debug_build):", err);
+    return false;
+  });
+}
+
 export async function restartApp() {
   return invoke("restart_app")
     .catch((err) => {

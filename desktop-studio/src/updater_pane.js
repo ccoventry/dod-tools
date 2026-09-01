@@ -1,5 +1,5 @@
 import { listen } from '@tauri-apps/api/event';
-import { checkForUpdate, downloadAndInstallUpdate, restartApp, getAppVersion } from './ipc_bridge.js';
+import { checkForUpdate, downloadAndInstallUpdate, restartApp, getAppVersion, isDebugBuild } from './ipc_bridge.js';
 import { notify } from './os_notifications.js';
 import { STRINGS } from './strings.js';
 
@@ -39,13 +39,20 @@ async function displayCurrentVersion() {
   const version = await getAppVersion();
   if (!version) return;
   // Dev channel versions carry a `-<run number>` suffix (see
-  // release_dev.yml); a stable release never has a `-` at all. But
-  // `npm run tauri dev` builds straight from the checked-in Cargo.toml, so
-  // it has no suffix either — import.meta.env.DEV (true only under the Vite
-  // dev server, false for any real `tauri build` output) is what actually
-  // tells a local debug session apart from a real stable release.
+  // release_dev.yml); a stable release never has a `-` at all. But two
+  // other cases read identically to that check alone: `npm run tauri dev`
+  // (import.meta.env.DEV, true only under the Vite dev server) and
+  // `tauri build --debug` (a real bundled install, just not a release-
+  // profile binary — cfg!(debug_assertions), read via is_debug_build()).
   const [baseVersion, suffix] = version.split(/-(.+)/);
-  const buildKind = import.meta.env.DEV ? 'local' : suffix ? 'dev' : 'stable';
+  let buildKind;
+  if (import.meta.env.DEV) {
+    buildKind = 'local';
+  } else if (await isDebugBuild()) {
+    buildKind = 'debug';
+  } else {
+    buildKind = suffix ? 'dev' : 'stable';
+  }
   const footerLabel = document.querySelector('#app-version-label');
   if (footerLabel) footerLabel.textContent = STRINGS.FOOTER.appVersionLabel(baseVersion, buildKind);
   const modalLabel = document.querySelector('#update-modal-current-version');

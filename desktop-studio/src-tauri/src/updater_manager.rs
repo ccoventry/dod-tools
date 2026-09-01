@@ -117,6 +117,16 @@ pub async fn download_and_install_update(
     Ok(())
 }
 
+/// `cfg!(debug_assertions)` is compile-time info baked into the binary — the
+/// frontend has no other way to tell a `tauri build --debug` bundle (still a
+/// real installed build, unlike `npm run tauri dev`) apart from a genuine
+/// `--release` build, since both go through the same production Vite build
+/// and report `import.meta.env.DEV === false`.
+#[tauri::command]
+pub fn is_debug_build() -> bool {
+    cfg!(debug_assertions)
+}
+
 #[tauri::command]
 pub fn restart_app(app: AppHandle) {
     app.restart();

@@ -976,11 +976,12 @@ export const STRINGS = {
     UPDATE_AVAILABLE_TITLE: 'A new version is ready — click to install it.',
     // baseVersion excludes the dev channel's `-<run number>` suffix — the
     // footer just needs "what kind of build is this", not which exact run.
-    // buildKind: 'local' (npm run tauri dev), 'dev' (release_dev.yml), or
-    // anything else for a real stable build (no tag).
+    // buildKind: 'local' (npm run tauri dev), 'debug' (tauri build --debug —
+    // a real bundle, just not a release-profile one), 'dev'
+    // (release_dev.yml), or anything else for a real stable build (no tag).
     appVersionLabel: (baseVersion, buildKind) => {
-      const tag = buildKind === 'local' ? ' | local build' : buildKind === 'dev' ? ' | dev build' : '';
-      return `v${baseVersion}${tag}`;
+      const tags = { local: ' | local build', debug: ' | debug build', dev: ' | dev build' };
+      return `v${baseVersion}${tags[buildKind] || ''}`;
     },
   },
 
