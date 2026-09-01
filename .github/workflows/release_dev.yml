@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version this build is heading toward (e.g. 0.11.0 — no leading 'v'); the actual build gets '-dev.<short-sha>' appended so it always compares as newer than the last dev build and never collides with a stable release of the same number."
+        description: "Version this build is heading toward (e.g. 0.11.0 — no leading 'v'); the actual build gets '-dev.<run number>' appended so it always compares as newer than the last dev build and never collides with a stable release of the same number."
         required: true
 
 permissions:
@@ -51,18 +51,22 @@ jobs:
         run: npm ci
 
       # Same manual, not-committed-back version stamp as release_stable.yml,
-      # plus a `-dev.<short-sha>` suffix — unique per run and always newer
-      # than the plain version alone (semver pre-release identifiers sort
-      # below the release they're attached to, so this only ever offers
-      # itself as an update to someone already on an older dev build, never
-      # to someone on the matching stable release).
+      # plus a `-dev.<run number>` suffix — unique per run, always newer than
+      # the plain version alone (semver pre-release identifiers sort below
+      # the release they're attached to, so this only ever offers itself as
+      # an update to someone already on an older dev build, never to someone
+      # on the matching stable release), and monotonically increasing (unlike
+      # a git short-sha, which sorts alphabetically, not chronologically).
+      # Must be numeric-only: the MSI bundler rejects any pre-release
+      # identifier containing letters (confirmed by a real failed build —
+      # `-dev.<short-sha>` broke `tauri build` with "optional pre-release
+      # identifier in app version must be numeric-only ... for msi target").
       - name: Set dev build version
         shell: bash
         env:
           RELEASE_VERSION: ${{ github.event.inputs.version }}
         run: |
-          SHORT_SHA=$(git rev-parse --short HEAD)
-          DEV_VERSION="${RELEASE_VERSION}-dev.${SHORT_SHA}"
+          DEV_VERSION="${RELEASE_VERSION}-dev.${GITHUB_RUN_NUMBER}"
           node -e "
             const fs = require('fs');
             const version = process.env.DEV_VERSION;
