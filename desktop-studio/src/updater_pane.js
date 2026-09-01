@@ -38,8 +38,11 @@ function setFooterButtonState(updateAvailable) {
 async function displayCurrentVersion() {
   const version = await getAppVersion();
   if (!version) return;
+  // Dev channel versions carry a `-<run number>` suffix (see
+  // release_dev.yml); a stable release never has a `-` at all.
+  const [baseVersion, suffix] = version.split(/-(.+)/);
   const footerLabel = document.querySelector('#app-version-label');
-  if (footerLabel) footerLabel.textContent = STRINGS.FOOTER.appVersionLabel(version);
+  if (footerLabel) footerLabel.textContent = STRINGS.FOOTER.appVersionLabel(baseVersion, !!suffix);
   const modalLabel = document.querySelector('#update-modal-current-version');
   if (modalLabel) modalLabel.textContent = STRINGS.UPDATE_MODAL.currentVersionLabel(version);
 }

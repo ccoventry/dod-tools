@@ -974,7 +974,9 @@ export const STRINGS = {
     CHECK_UPDATES_TITLE: 'Check for app updates',
     UPDATE_AVAILABLE_BUTTON: 'Update Available',
     UPDATE_AVAILABLE_TITLE: 'A new version is ready — click to install it.',
-    appVersionLabel: (v) => `v${v}`,
+    // baseVersion excludes the dev channel's `-<run number>` suffix — the
+    // footer just needs "is this a dev build", not which exact run.
+    appVersionLabel: (baseVersion, isDev) => `v${baseVersion}${isDev ? ' | dev build' : ''}`,
   },
 
   // ── Update check/install modal (issue #133) ──────────────────────────────
