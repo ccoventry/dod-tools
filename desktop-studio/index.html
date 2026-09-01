@@ -759,8 +759,21 @@
         <div id="footer-demo-analyzer" class="pinned-footer-content" style="display: none;">
           <div id="footer-analyzer-current-file" data-str="ANALYZER.NO_DEMO_LOADED">No demo loaded</div>
         </div>
-        <button id="update-check-btn" class="view-logs-btn" data-str="FOOTER.CHECK_UPDATES_BUTTON" data-str-title="FOOTER.CHECK_UPDATES_TITLE" title="Check for app updates">Check for Updates</button>
-        <button id="view-logs-btn" class="view-logs-btn" data-str="FOOTER.VIEW_LOGS_BUTTON" data-str-title="FOOTER.VIEW_LOGS_TITLE" title="Open today's activity log in Explorer">View Logs</button>
+        <!-- One shared margin-left: auto on this wrapper, not on the buttons
+             individually — a per-button auto margin only pushes as far
+             right as whatever free space is left after the active
+             .pinned-footer-content sibling claims its own share (which
+             differs per tab: some have flex: 1, some are content-sized, one
+             is empty), so the group visibly drifted depending which tab was
+             active. Grouping makes the trailing block right-align as one
+             unit regardless of the sibling, and gap gives consistent
+             spacing between its children instead of relying on button
+             padding alone. -->
+        <div class="footer-trailing-actions">
+          <span id="app-version-label" class="app-version-label"></span>
+          <button id="update-check-btn" class="view-logs-btn" data-str="FOOTER.CHECK_UPDATES_BUTTON" data-str-title="FOOTER.CHECK_UPDATES_TITLE" title="Check for app updates">Check for Updates</button>
+          <button id="view-logs-btn" class="view-logs-btn" data-str="FOOTER.VIEW_LOGS_BUTTON" data-str-title="FOOTER.VIEW_LOGS_TITLE" title="Open today's activity log in Explorer">View Logs</button>
+        </div>
       </footer>
 
     </div>
@@ -902,6 +915,7 @@
     <div id="update-modal" class="modal" style="display: none;">
       <div class="modal-content" style="max-width: 480px; padding: 20px;">
         <h2 data-str="UPDATE_MODAL.TITLE">Check for Updates</h2>
+        <p id="update-modal-current-version" class="status-text" style="margin: -4px 0 8px;"></p>
         <div class="input-row">
           <label for="config-update-channel" data-str="UPDATE_MODAL.CHANNEL_LABEL">Update Channel:</label>
           <select id="config-update-channel">

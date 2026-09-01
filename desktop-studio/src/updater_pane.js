@@ -1,5 +1,5 @@
 import { listen } from '@tauri-apps/api/event';
-import { checkForUpdate, downloadAndInstallUpdate, restartApp } from './ipc_bridge.js';
+import { checkForUpdate, downloadAndInstallUpdate, restartApp, getAppVersion, isDebugBuild } from './ipc_bridge.js';
 import { notify } from './os_notifications.js';
 import { STRINGS } from './strings.js';
 
@@ -30,6 +30,42 @@ function setFooterButtonState(updateAvailable) {
     btn.style.color = '';
     btn.style.borderColor = '';
   }
+}
+
+// A local dev-server session or a debug-profile bundle never carries a real
+// channel version, so any comparison against a published manifest reads as
+// "different" essentially always — for a local session in particular,
+// that's actively backwards (it's typically running the newest code,
+// ahead of anything published), not just a noisy false positive.
+async function isLocalOrDebugBuild() {
+  return import.meta.env.DEV || (await isDebugBuild());
+}
+
+// Fetched once at startup rather than re-read per update check — the
+// running app's own version never changes without a restart, so there's
+// nothing to keep re-fetching.
+async function displayCurrentVersion() {
+  const version = await getAppVersion();
+  if (!version) return;
+  // Dev channel versions carry a `-<run number>` suffix (see
+  // release_dev.yml); a stable release never has a `-` at all. But two
+  // other cases read identically to that check alone: `npm run tauri dev`
+  // (import.meta.env.DEV, true only under the Vite dev server) and
+  // `tauri build --debug` (a real bundled install, just not a release-
+  // profile binary — cfg!(debug_assertions), read via is_debug_build()).
+  const [baseVersion, suffix] = version.split(/-(.+)/);
+  let buildKind;
+  if (import.meta.env.DEV) {
+    buildKind = 'local';
+  } else if (await isDebugBuild()) {
+    buildKind = 'debug';
+  } else {
+    buildKind = suffix ? 'dev' : 'stable';
+  }
+  const footerLabel = document.querySelector('#app-version-label');
+  if (footerLabel) footerLabel.textContent = STRINGS.FOOTER.appVersionLabel(baseVersion, buildKind);
+  const modalLabel = document.querySelector('#update-modal-current-version');
+  if (modalLabel) modalLabel.textContent = STRINGS.UPDATE_MODAL.currentVersionLabel(version);
 }
 
 export async function checkForUpdatesNow(channel = currentChannel()) {
@@ -79,11 +115,13 @@ async function beginDownloadAndInstall() {
 
 /** Wires the footer's Check for Updates button and the standalone update
  *  modal's controls, listens for download progress/completion, and —
- *  unless `settings.auto_check_updates` is off — runs one background check
- *  on startup against `settings.update_channel`. Called once from main.js's
- *  DOMContentLoaded, after settings have loaded. */
-export function initUpdater(settings) {
+ *  unless `settings.auto_check_updates` is off, or this is a local/debug
+ *  build — runs one background check on startup against
+ *  `settings.update_channel`. Called once from main.js's DOMContentLoaded,
+ *  after settings have loaded (not awaited — fire-and-forget). */
+export async function initUpdater(settings) {
   const modal = document.querySelector('#update-modal');
+  displayCurrentVersion();
 
   document.querySelector('#update-check-btn')?.addEventListener('click', () => {
     if (modal) modal.style.display = 'flex';
@@ -125,5 +163,6 @@ export function initUpdater(settings) {
   });
 
   if (settings?.auto_check_updates === false) return;
+  if (await isLocalOrDebugBuild()) return;
   checkForUpdatesNow(settings?.update_channel || 'stable');
 }
