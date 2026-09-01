@@ -152,9 +152,111 @@ body {
   gap: 6px;
 }
 
+
 .nav-actions button {
   white-space: nowrap;
   flex-shrink: 0;
+}
+
+/* ── File/Help menu bar (#122) — custom dropdown, not a native OS menu; see
+   the comment above .nav-menubar in index.html for why. */
+
+.nav-menubar {
+  display: flex;
+  gap: 2px;
+  margin-left: 8px;
+}
+
+.menu-dropdown {
+  position: relative;
+}
+
+.menu-dropdown-btn {
+  background: transparent;
+  color: #aaaaaa;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  padding: 4px 8px;
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.menu-dropdown-btn:hover,
+.menu-dropdown.open .menu-dropdown-btn {
+  background: #222222;
+  border-color: var(--border-color);
+  color: #ffffff;
+}
+
+.menu-update-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #5fb85f;
+}
+
+.menu-dropdown-panel {
+  display: none;
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  /* max-content, not min-width alone — a flex column with width:100% items
+     is circular (100% of a not-yet-known auto width) and browsers resolve it
+     by falling back to the narrowest fit, clipping a longer row's shortcut
+     hint clean off. max-content sizes the panel to its widest row first, so
+     every row's space-between then has real room to push into. */
+  width: max-content;
+  min-width: 180px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-color);
+  border-radius: 2px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  z-index: 500;
+  flex-direction: column;
+  padding: 4px;
+}
+
+.menu-dropdown.open .menu-dropdown-panel {
+  display: flex;
+}
+
+.menu-dropdown-item {
+  /* No explicit width — .menu-dropdown-panel is flex-direction: column with
+     the default align-items: stretch, which already fills the cross axis;
+     an explicit 100% here fed back into the panel's own width: max-content
+     computation and made it size to the narrowest row instead of the
+     widest, clipping a longer row's shortcut hint clean off. */
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  background: transparent;
+  color: #d0d0d0;
+  border: none;
+  border-radius: 2px;
+  padding: 6px 10px;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.menu-dropdown-item:hover {
+  background: var(--primary-accent);
+  color: #ffffff;
+}
+
+.menu-shortcut-hint {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.menu-dropdown-item:hover .menu-shortcut-hint {
+  color: #e0e0e0;
 }
 
 .session-file-indicator {
@@ -180,16 +282,6 @@ body {
   }
 }
 
-.studio-mode-toggle {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-/* Own rule rather than sharing .studio-mode-toggle's: the switch needs to
-   right-align within the row (so every switch in the notification-settings
-   grid lines up column-wise regardless of label length), which the
-   two-sided Quick-Clip/Workspace toggle does not want. */
 .setting-toggle {
   display: flex;
   align-items: center;
@@ -198,7 +290,6 @@ body {
   width: 100%;
 }
 
-.studio-mode-label,
 .setting-label {
   font-size: 11px;
   color: var(--text-muted);
@@ -226,13 +317,11 @@ body {
   color: #ffffff;
 }
 
-.studio-mode-label.active,
 .setting-label.active {
   color: #ffffff;
   font-weight: 600;
 }
 
-.studio-mode-switch,
 .setting-switch {
   position: relative;
   display: inline-block;
@@ -242,14 +331,12 @@ body {
   flex-shrink: 0;
 }
 
-.studio-mode-switch input,
 .setting-switch input {
   opacity: 0;
   width: 0;
   height: 0;
 }
 
-.studio-mode-switch-slider,
 .setting-switch-slider {
   position: absolute;
   inset: 0;
@@ -258,7 +345,6 @@ body {
   transition: background 0.15s;
 }
 
-.studio-mode-switch-slider::before,
 .setting-switch-slider::before {
   content: "";
   position: absolute;
@@ -271,31 +357,17 @@ body {
   transition: transform 0.15s;
 }
 
-.studio-mode-switch input:checked + .studio-mode-switch-slider,
 .setting-switch input:checked + .setting-switch-slider {
   background: var(--primary-accent);
 }
 
-.studio-mode-switch input:checked + .studio-mode-switch-slider::before,
 .setting-switch input:checked + .setting-switch-slider::before {
   transform: translateX(15px);
 }
 
-/* Fixed width sized to the longer of its two labels ("Save as Workspace…"
-   vs "Save Session") so toggling studio mode doesn't change this button's
-   footprint — #top-navbar's space-between layout would otherwise visibly
-   shift the centered nav tabs every time the label length changed. */
-#save-project-btn {
-  width: 132px;
-  text-align: center;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* Narrow windows: the explanatory caption is already gone (moved to the
-   mode-label/switch title tooltips), so this mostly protects the session
-   filename and nav tab padding from crowding the mode toggle out. */
+/* Narrow windows: nav tab padding is what actually crowds at this width now
+   that Save/Load Session live in the File menu (#122) rather than directly
+   in #top-navbar's space-between row. */
 @media (max-width: 900px) {
   #top-navbar {
     padding: 4px 8px;
@@ -309,22 +381,6 @@ body {
 
   .nav-actions {
     gap: 4px;
-  }
-
-  .nav-actions button {
-    padding: 4px 6px;
-    font-size: 11px;
-  }
-
-  #save-project-btn {
-    width: 108px;
-  }
-
-  /* The session filename is the first thing to go — it's already echoed by
-     save-project-btn's label ("Save as Workspace…" vs "Save Session") and
-     the window's min-width (800px) doesn't leave room for both. */
-  .session-file-indicator {
-    display: none;
   }
 }
 
@@ -692,37 +748,6 @@ button.primary-btn:hover:not(:disabled) {
   display: flex;
   align-items: center;
   gap: 16px;
-}
-
-/* Sits outside the four .pinned-footer-content tabs above (index.html), so
-   it stays put regardless of which one switchNavTab() has toggled visible —
-   the wrapper's own margin-left: auto (below) pushes the whole group to the
-   far right of #pinned-action-bar's flex row without needing a copy in each
-   per-tab footer. */
-.view-logs-btn {
-  font-size: 11px;
-  padding: 3px 8px;
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-
-/* Groups Check for Updates/View Logs/the version label as one flex item so
-   they right-align together regardless of how much space the active
-   .pinned-footer-content sibling claims (varies per tab — see index.html's
-   comment above this element), instead of each button fending for its own
-   margin-left: auto against a different neighbor on every tab. */
-.footer-trailing-actions {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-shrink: 0;
-}
-
-.app-version-label {
-  font-size: 11px;
-  color: var(--text-muted);
-  white-space: nowrap;
 }
 
 #export-pool-free-indicator,

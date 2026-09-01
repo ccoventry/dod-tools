@@ -121,11 +121,6 @@ pub struct AppSettings {
     /// JIT multi-drive export pool for Render Studio.
     #[serde(default)]
     pub render_export_dirs: Vec<String>,
-    /// Connected-workspace mode: "quick-clip" (nothing persists, blunt
-    /// clearing) or "workspace" (project file + take index persist, clearing
-    /// protects tracked demos). See docs/engineering_backlog.md Phase 4.
-    #[serde(default = "default_studio_mode")]
-    pub studio_mode: String,
     /// OS toast notification toggles (issue #98) — each stage independently
     /// switchable, not one global mute.
     #[serde(default = "default_notify_patching")]
@@ -168,7 +163,6 @@ fn default_capture_mode() -> String {
 }
 fn default_obs_host() -> String { "127.0.0.1".to_string() }
 fn default_obs_port() -> u16 { 4455 }
-fn default_studio_mode() -> String { "quick-clip".to_string() }
 fn default_notify_patching() -> bool { true }
 fn default_notify_demo_loading() -> bool { true }
 fn default_notify_between_clips() -> bool { true }
@@ -232,7 +226,6 @@ impl Default for AppSettings {
             render_fps: default_render_fps(),
             render_max_concurrent: default_render_max_concurrent(),
             render_export_dirs: Vec::new(),
-            studio_mode: default_studio_mode(),
             notify_patching: default_notify_patching(),
             notify_demo_loading: default_notify_demo_loading(),
             notify_between_clips: default_notify_between_clips(),
@@ -325,9 +318,6 @@ mod tests {
 
         assert_eq!(settings.hlae_path, "C:/hlae/hlae.exe");
         assert_eq!(settings.capture_fps, 300);
-        // Pre-Phase-4 settings.json files have no studio_mode key at all —
-        // must default to Quick-Clip rather than fail deserialization.
-        assert_eq!(settings.studio_mode, "quick-clip");
     }
 
     #[test]
@@ -341,6 +331,5 @@ mod tests {
         assert_eq!(restored.capture_fps, original.capture_fps);
         assert_eq!(restored.fast_forward_speed, original.fast_forward_speed);
         assert_eq!(restored.render_codec, original.render_codec);
-        assert_eq!(restored.studio_mode, original.studio_mode);
     }
 }

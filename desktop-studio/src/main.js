@@ -34,6 +34,7 @@ import { STRINGS } from './strings.js';
 import { applyStaticStrings } from './apply_strings.js';
 import { initOsNotifications, updateNotificationSettings } from './os_notifications.js';
 import { initUpdater, checkForUpdatesNow } from './updater_pane.js';
+import { initAppMenu } from './app_menu.js';
 
 // Registered at module load, before DOMContentLoaded — so it's catching
 // from the earliest possible moment, not just once the app's own init
@@ -366,43 +367,6 @@ window.addEventListener("DOMContentLoaded", async () => {
   // changes" prompt on window close. Cleared by saveProjectSession() and
   // Load Session; set by markProjectDirty() at every mutation site.
   let hasUnsavedChanges = false;
-  // Connected-workspace mode (Phase 4): "quick-clip" (nothing persists,
-  // blunt clearing, re-scan replaces demos wholesale) or "workspace"
-  // (project file + take index persist, clearing protects tracked demos,
-  // re-scan merges by uid). Defaults to Quick-Clip on a fresh install —
-  // Load Session or "Save as Workspace..." are what switch it to Workspace.
-  let studioMode = 'quick-clip';
-
-  const STUDIO_MODE_CAPTIONS = {
-    'quick-clip': STRINGS.NAV.QUICK_CLIP_CAPTION,
-    'workspace': STRINGS.NAV.WORKSPACE_CAPTION,
-  };
-
-  function applyStudioModeUI() {
-    const switchInput = document.querySelector('#studio-mode-switch-input');
-    if (switchInput) switchInput.checked = studioMode === 'workspace';
-    document.querySelectorAll('.studio-mode-label').forEach(label => {
-      label.classList.toggle('active', label.dataset.mode === studioMode);
-    });
-    const captionEl = document.querySelector('#studio-mode-caption');
-    if (captionEl) captionEl.textContent = STUDIO_MODE_CAPTIONS[studioMode] || '';
-    const saveBtnEl = document.querySelector('#save-project-btn');
-    if (saveBtnEl) {
-      saveBtnEl.textContent = studioMode === 'quick-clip' ? STRINGS.NAV.SAVE_AS_WORKSPACE_BUTTON : STRINGS.NAV.SAVE_SESSION_BUTTON;
-      saveBtnEl.title = studioMode === 'quick-clip'
-        ? STRINGS.NAV.SAVE_AS_WORKSPACE_TITLE
-        : STRINGS.NAV.SAVE_SESSION_TITLE;
-    }
-  }
-
-  function setStudioMode(mode) {
-    if (mode !== 'quick-clip' && mode !== 'workspace') return;
-    if (studioMode === mode) return;
-    studioMode = mode;
-    applyStudioModeUI();
-    persistAppSettings();
-  }
-
   /** Every highlight's durable uid across every currently-scanned demo — the
    *  "still exists" set pruneTakeIndex() checks the take index against on save. */
   function collectAllUids() {
@@ -594,8 +558,7 @@ window.addEventListener("DOMContentLoaded", async () => {
       render_codec: renderCodec,
       render_fps: renderFps,
       render_max_concurrent: renderMaxConcurrent,
-      render_export_dirs: renderExportDirs,
-      studio_mode: studioMode
+      render_export_dirs: renderExportDirs
     };
     // Reflects a just-flipped toggle immediately, rather than waiting on the
     // save round-trip below to come back through a settings reload.
@@ -768,9 +731,6 @@ window.addEventListener("DOMContentLoaded", async () => {
       // Both halves of the question are now in the DOM: the game path, and the
       // commands that will run against whatever its configs set.
       refreshInitCommandWarnings();
-      if (settings.studio_mode === 'workspace' || settings.studio_mode === 'quick-clip') {
-        studioMode = settings.studio_mode;
-      }
     }
   } catch (err) {
     console.error("Error loading startup settings:", err);
@@ -779,19 +739,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   // only the startup auto-check itself is conditional on settings being
   // present. Not awaited: a background check shouldn't block startup.
   initUpdater(settings, persistAppSettings);
-  applyStudioModeUI();
-
-  const studioModeSwitchInput = document.querySelector('#studio-mode-switch-input');
-  if (studioModeSwitchInput) {
-    studioModeSwitchInput.addEventListener('change', (e) => {
-      setStudioMode(e.target.checked ? 'workspace' : 'quick-clip');
-    });
-  }
-  // Clicking either label also flips the switch — matches how most
-  // dual-label toggle switches behave, not just the slider itself.
-  document.querySelectorAll('.studio-mode-label').forEach(label => {
-    label.addEventListener('click', () => setStudioMode(label.dataset.mode));
-  });
+  initAppMenu();
 
   // Save Project Session — also called from the Clear All modal's "Save
   // Session First" action, so it lives here as a plain function rather than
@@ -831,9 +779,8 @@ window.addEventListener("DOMContentLoaded", async () => {
         // Pruned against what's actually still scanned so the index
         // doesn't accumulate uids for demos removed from the project.
         takeIndex: pruneTakeIndex(takeIndex, collectAllUids()),
-        // Informational — Load Session always forces Workspace mode
-        // regardless of this value, since loading a persistent file is
-        // itself the thing that makes a window a Workspace.
+        // Kept for older-file/older-version compatibility — nothing on the
+        // reading side branches on it any more (Quick-Clip mode is gone).
         mode: 'workspace'
       }, null, 2);
       await invoke('save_project_session', { path: filePath, contents: projectData });
@@ -841,9 +788,6 @@ window.addEventListener("DOMContentLoaded", async () => {
       hasUnsavedChanges = false;
       updateSessionFileIndicator();
       showToast(STRINGS.MAIN.projectSavedToast(filePath), 'success');
-      // Saving a project file is what makes a window a Workspace — a save
-      // from Quick-Clip mode is exactly the "Save as Workspace..." action.
-      setStudioMode('workspace');
       return true;
     } catch (err) {
       console.error("Save project error:", err);
@@ -889,10 +833,10 @@ window.addEventListener("DOMContentLoaded", async () => {
             currentSessionPath = selected;
             hasUnsavedChanges = false;
             updateSessionFileIndicator();
-            // Loading a persistent project file is what makes a window a
-            // Workspace, regardless of what `data.mode` says (a hand-edited
-            // or older file might omit it or say otherwise).
-            setStudioMode('workspace');
+            // Load Session is reachable from any tab (#122) — jump to Studio
+            // so the loaded project is actually visible, same cross-tab-jump
+            // pattern as detail_pane.js's "View Match Telemetry" button.
+            switchNavTab('workspace');
             clearCheckedPaths();
             if (data.hlaePath) {
               const hlaeInput = document.querySelector('#hlae-path-input');
@@ -930,6 +874,27 @@ window.addEventListener("DOMContentLoaded", async () => {
       }
     });
   }
+
+  // New Session (#122/#149) — resets to the same blank state the app starts
+  // in: no session file, no demos, no take index. Reuses replaceScannedDemos
+  // (defined below, hoisted) for the demo-queue reset — same as Clear All —
+  // then overrides the dirty flag it sets, since a brand new untitled
+  // session has nothing to prompt about saving.
+  async function newSession() {
+    if (hasUnsavedChanges && hasSavableProject()) {
+      const outcome = await requestUnsavedChangesConfirmation();
+      if (!outcome) return; // Cancel — abort, keep current state
+    }
+    replaceScannedDemos([]);
+    currentSessionPath = null;
+    takeIndex = {};
+    hasUnsavedChanges = false;
+    updateSessionFileIndicator();
+    switchNavTab('workspace');
+    showToast(STRINGS.MAIN.NEW_SESSION_TOAST, 'success');
+  }
+
+  document.querySelector('#new-session-btn')?.addEventListener('click', () => newSession());
 
   // Executable & Path Browse Dialog Pickers
   const hlaeBrowseBtn = document.querySelector('#hlae-browse-btn');
@@ -1212,15 +1177,11 @@ window.addEventListener("DOMContentLoaded", async () => {
       newlyScanned.forEach((demo) => {
         const existingIdx = indexByPath.get(demo.path);
         if (existingIdx !== undefined) {
-          // Workspace mode: a re-scan produces brand new streak objects, so
-          // replacing outright would wipe every status, selection, note and
-          // Kill Range edit on this demo — carry that user-owned state
-          // across by highlight uid. Quick-Clip mode intentionally keeps the
-          // old blunt behavior (nothing is meant to survive a re-scan there
-          // anyway) — simpler and matches "nothing persists" for that mode.
-          currentScannedDemos[existingIdx] = studioMode === 'workspace'
-            ? preserveHighlightState(currentScannedDemos[existingIdx], demo)
-            : demo;
+          // A re-scan produces brand new streak objects, so replacing
+          // outright would wipe every status, selection, note and Kill
+          // Range edit on this demo — carry that user-owned state across by
+          // highlight uid instead.
+          currentScannedDemos[existingIdx] = preserveHighlightState(currentScannedDemos[existingIdx], demo);
         } else {
           indexByPath.set(demo.path, currentScannedDemos.length);
           currentScannedDemos.push(demo);
@@ -1537,12 +1498,10 @@ window.addEventListener("DOMContentLoaded", async () => {
       : '';
   }
 
-  // Clear Untracked — removes only demos with no tracked work (isDemoTracked),
-  // same in both modes. Its own name already means "never touches tracked
-  // demos," so unlike Clear All there's nothing mode-dependent to decide
-  // here — Quick-Clip doesn't need a separate blunt-wipe branch. Scoped to
-  // the currently search-filtered demos, matching the select-all checkbox —
-  // a demo hidden by the search box is left untouched no matter its status.
+  // Clear Untracked — removes only demos with no tracked work (isDemoTracked).
+  // Scoped to the currently search-filtered demos, matching the select-all
+  // checkbox — a demo hidden by the search box is left untouched no matter
+  // its status.
   const clearUntrackedBtn = document.querySelector('#clear-untracked-btn');
   if (clearUntrackedBtn) {
     clearUntrackedBtn.addEventListener('click', () => {
@@ -1714,13 +1673,10 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   // Clear All — escalates to the shared modal (enumerating what would be
   // lost, offering to save first) whenever something tracked is actually at
-  // risk, same threshold as Clear Selected/row delete — in *either* mode.
-  // Quick-Clip only ever meant "nothing persists to disk automatically," not
-  // "no warning before losing work you set five seconds ago," so this no
-  // longer branches on studioMode at all. Also scoped to the search filter,
-  // same as the other two Clear actions — "All" means "all visible," with
-  // an explicit callout whenever that's fewer than the full queue, so it
-  // never silently does less than its name implies.
+  // risk, same threshold as Clear Selected/row delete. Also scoped to the
+  // search filter, same as the other two Clear actions — "All" means "all
+  // visible," with an explicit callout whenever that's fewer than the full
+  // queue, so it never silently does less than its name implies.
   const clearAllBtn = document.querySelector('#clear-all-btn');
   if (clearAllBtn) {
     clearAllBtn.addEventListener('click', async () => {
@@ -1845,7 +1801,6 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   // Context-Aware Shortcut Dispatcher
   window.addEventListener('keydown', (e) => {
-    const activeTab = document.querySelector('.nav-tab-btn.active')?.dataset.nav;
     const isCtrlO = (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'o';
     const isCtrlS = (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's';
     const isCtrlN = (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'n';
@@ -1862,15 +1817,13 @@ window.addEventListener("DOMContentLoaded", async () => {
       e.preventDefault();
     }
 
-    if (activeTab === 'workspace') {
-      // Ctrl+O always opens a project session file (Ctrl+S always saves one,
-      // unconditionally, below) — it previously depended on which Capture
-      // Studio sub-tab was active and opened the Add Demo Files picker
-      // instead when on Highlights, which doesn't match Ctrl+O's meaning
-      // in every other app.
-      if (isCtrlO) document.querySelector('#load-project-btn')?.click();
-      if (isCtrlS) document.querySelector('#save-project-btn')?.click();
-    }
+    // New/Save/Load Session work from any tab (#122) — previously gated to
+    // `activeTab === 'workspace'` because the buttons themselves only
+    // existed in the Studio nav-actions area; now that they live in the
+    // always-visible File menu, the shortcuts aren't tab-scoped either.
+    if (isCtrlN) document.querySelector('#new-session-btn')?.click();
+    if (isCtrlO) document.querySelector('#load-project-btn')?.click();
+    if (isCtrlS) document.querySelector('#save-project-btn')?.click();
   });
 
   // WebView2's native right-click menu (Reload/Inspect/browser Cut-Copy-

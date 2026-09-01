@@ -17,6 +17,36 @@
         <div class="nav-brand">
           <img src="/src/icon.png" alt="" class="brand-logo" />
           <span class="brand-title" data-str="NAV.APP_TITLE">DoD Tools Studio</span>
+          <!-- Custom in-app dropdowns, not a native OS menu bar — Windows
+               renders native menus with system chrome and offers no API to
+               recolor them (see #122), so this is styled like the rest of
+               the app instead. Wired up by app_menu.js. -->
+          <nav class="nav-menubar">
+            <div class="menu-dropdown" data-menu="file">
+              <button class="menu-dropdown-btn" id="file-menu-btn" data-str="NAV.FILE_MENU">File</button>
+              <div class="menu-dropdown-panel" id="file-menu-panel">
+                <button class="menu-dropdown-item" id="new-session-btn" data-str-title="NAV.NEW_SESSION_TITLE">
+                  <span data-str="NAV.NEW_SESSION_BUTTON">New Session</span><span class="menu-shortcut-hint">Ctrl+N</span>
+                </button>
+                <button class="menu-dropdown-item" id="load-project-btn" data-str-title="NAV.LOAD_SESSION_TITLE">
+                  <span data-str="NAV.LOAD_SESSION_BUTTON">Load Session</span><span class="menu-shortcut-hint">Ctrl+O</span>
+                </button>
+                <button class="menu-dropdown-item" id="save-project-btn" data-str-title="NAV.SAVE_SESSION_TITLE">
+                  <span id="save-project-btn-label" data-str="NAV.SAVE_SESSION_BUTTON">Save Session</span><span class="menu-shortcut-hint">Ctrl+S</span>
+                </button>
+              </div>
+            </div>
+            <div class="menu-dropdown" data-menu="help">
+              <button class="menu-dropdown-btn" id="help-menu-btn" data-str="NAV.HELP_MENU">
+                Help<span id="help-menu-update-dot" class="menu-update-dot" style="display: none;" title="An update is available"></span>
+              </button>
+              <div class="menu-dropdown-panel" id="help-menu-panel">
+                <button class="menu-dropdown-item" id="update-check-btn" data-str="FOOTER.CHECK_UPDATES_BUTTON" data-str-title="FOOTER.CHECK_UPDATES_TITLE" title="Check for app updates">Check for Updates</button>
+                <button class="menu-dropdown-item" id="view-logs-btn" data-str="FOOTER.VIEW_LOGS_BUTTON" data-str-title="FOOTER.VIEW_LOGS_TITLE" title="Open today's activity log in Explorer">View Logs</button>
+                <button class="menu-dropdown-item" id="about-menu-btn" data-str="NAV.ABOUT_MENU">About</button>
+              </div>
+            </div>
+          </nav>
         </div>
         <div class="nav-tabs">
           <button class="nav-tab-btn active" data-nav="workspace" data-str="NAV.STUDIO_TAB">Studio</button>
@@ -24,19 +54,7 @@
           <button class="nav-tab-btn" data-nav="demo-analyzer" data-str="NAV.DEMO_ANALYZER_TAB">Demo Analyzer</button>
         </div>
         <div class="nav-actions">
-          <div class="studio-mode-toggle">
-            <span class="studio-mode-label" id="studio-mode-label-quickclip" data-mode="quick-clip"
-                  data-str="NAV.QUICK_CLIP_LABEL" data-str-title="NAV.QUICK_CLIP_CAPTION">Quick-Clip</span>
-            <label class="studio-mode-switch" data-str-title="NAV.MODE_SWITCH_TITLE">
-              <input type="checkbox" id="studio-mode-switch-input" />
-              <span class="studio-mode-switch-slider"></span>
-            </label>
-            <span class="studio-mode-label" id="studio-mode-label-workspace" data-mode="workspace"
-                  data-str="NAV.WORKSPACE_LABEL" data-str-title="NAV.WORKSPACE_CAPTION">Workspace</span>
-          </div>
           <span id="session-file-indicator" class="session-file-indicator" title="" data-str="NAV.NO_SESSION_LOADED">No session loaded</span>
-          <button id="save-project-btn" data-str="NAV.SAVE_SESSION_BUTTON" data-str-title="NAV.SAVE_SESSION_TITLE">Save Session</button>
-          <button id="load-project-btn" data-str="NAV.LOAD_SESSION_BUTTON" data-str-title="NAV.LOAD_SESSION_TITLE">Load Session</button>
         </div>
       </header>
 
@@ -759,21 +777,6 @@
         <div id="footer-demo-analyzer" class="pinned-footer-content" style="display: none;">
           <div id="footer-analyzer-current-file" data-str="ANALYZER.NO_DEMO_LOADED">No demo loaded</div>
         </div>
-        <!-- One shared margin-left: auto on this wrapper, not on the buttons
-             individually — a per-button auto margin only pushes as far
-             right as whatever free space is left after the active
-             .pinned-footer-content sibling claims its own share (which
-             differs per tab: some have flex: 1, some are content-sized, one
-             is empty), so the group visibly drifted depending which tab was
-             active. Grouping makes the trailing block right-align as one
-             unit regardless of the sibling, and gap gives consistent
-             spacing between its children instead of relying on button
-             padding alone. -->
-        <div class="footer-trailing-actions">
-          <span id="app-version-label" class="app-version-label"></span>
-          <button id="update-check-btn" class="view-logs-btn" data-str="FOOTER.CHECK_UPDATES_BUTTON" data-str-title="FOOTER.CHECK_UPDATES_TITLE" title="Check for app updates">Check for Updates</button>
-          <button id="view-logs-btn" class="view-logs-btn" data-str="FOOTER.VIEW_LOGS_BUTTON" data-str-title="FOOTER.VIEW_LOGS_TITLE" title="Open today's activity log in Explorer">View Logs</button>
-        </div>
       </footer>
 
     </div>
@@ -798,11 +801,9 @@
     </div>
 
     <!-- Shared "clear with tracked work at risk" confirmation — used by both
-         Clear All (Workspace mode; Quick-Clip just uses a native confirm(),
-         since nothing is protected there) and Clear Selected (either mode,
-         whenever the checked demos include tracked work). Enumerates what
-         would be lost and offers to save first, per the connected-workspace
-         plan's Phase 4. -->
+         Clear All and Clear Selected, whenever the checked demos include
+         tracked work. Enumerates what would be lost and offers to save
+         first. -->
     <div id="clear-all-modal" class="modal" style="display: none;">
       <div class="modal-content" style="max-width: 480px; padding: 20px;">
         <h2 id="clear-all-title" data-str="CLEAR_ALL_MODAL.TITLE_DEFAULT">Clear All Demos</h2>
@@ -950,6 +951,23 @@
           <button id="download-install-update-btn" style="display: none;" data-str="UPDATE_MODAL.DOWNLOAD_INSTALL_BUTTON">Download & Install</button>
           <button id="restart-to-apply-btn" style="display: none;" data-str="UPDATE_MODAL.RESTART_BUTTON">Restart to Apply</button>
           <button id="update-modal-close-btn" data-str="UPDATE_MODAL.CLOSE_BUTTON">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- About (issue #122) — reachable from the Help menu on every tab. -->
+    <div id="about-modal" class="modal" style="display: none;">
+      <div class="modal-content" style="max-width: 420px; padding: 20px; text-align: center;">
+        <img src="/src/icon.png" alt="" style="width: 64px; height: 64px; border-radius: 8px; margin-bottom: 8px;" />
+        <h2 data-str="NAV.APP_TITLE">DoD Tools Studio</h2>
+        <p id="about-modal-version" class="status-text" style="margin: 4px 0 12px;"></p>
+        <p data-str="ABOUT_MODAL.BLURB">A capture, patching, and analytics pipeline for Day of Defeat 1.3 demos — batch-records highlight clips through HLAE and parses matches for scoreboards, kills, chat, and rounds.</p>
+        <p style="margin-top: 12px; color: var(--text-muted);" data-str="ABOUT_MODAL.CREDIT">Built by ccoventry</p>
+        <div style="display: flex; flex-direction: column; gap: 4px; margin-top: 8px;">
+          <a href="https://github.com/ccoventry/dod-tools" target="_blank" rel="noopener" data-str="ABOUT_MODAL.GITHUB_LINK">github.com/ccoventry/dod-tools</a>
+        </div>
+        <div style="display: flex; gap: 8px; margin-top: 16px; justify-content: center;">
+          <button id="about-modal-close-btn" data-str="UPDATE_MODAL.CLOSE_BUTTON">Close</button>
         </div>
       </div>
     </div>
