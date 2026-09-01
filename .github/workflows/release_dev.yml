@@ -72,6 +72,11 @@ jobs:
               fs.writeFileSync(path, JSON.stringify(json, null, 2) + '\n');
             }
           "
+          # tauri.conf.json's version is a display/manifest value only — Rust
+          # bakes CARGO_PKG_VERSION into the compiled binary from Cargo.toml,
+          # which is what tauri-action actually uses for bundle filenames and
+          # the published latest.json, so it needs the same stamp.
+          sed -i "s/^version = \".*\"/version = \"${DEV_VERSION}\"/" desktop-studio/src-tauri/Cargo.toml
           echo "DEV_VERSION=${DEV_VERSION}" >> "$GITHUB_ENV"
 
       - name: Build, sign, and publish dev build
