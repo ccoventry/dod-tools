@@ -18,21 +18,31 @@ export const STRINGS = {
   // ── Top Navigation / Header ─────────────────────────────────────────────
   NAV: {
     APP_TITLE: 'DoD Tools Studio',
+    // OS window title (taskbar/Alt-Tab) — set by updater_pane.js once the
+    // running build's version is known. baseVersion excludes the dev
+    // channel's `-<run number>` suffix — the title just needs "what kind of
+    // build is this", not which exact run. buildKind: 'local' (npm run
+    // tauri dev), 'debug' (tauri build --debug — a real bundle, just not a
+    // release-profile one), 'dev' (release_dev.yml), or anything else for a
+    // real stable build (no parenthetical).
+    appWindowTitle: (baseVersion, buildKind) => {
+      const tags = { local: 'local build', debug: 'debug build', dev: 'dev build' };
+      const tag = tags[buildKind];
+      return `DoD Tools Studio — v${baseVersion}${tag ? ` (${tag})` : ''}`;
+    },
     STUDIO_TAB: 'Studio',
     DEMO_AUDITOR_TAB: 'Demo Auditor',
     DEMO_ANALYZER_TAB: 'Demo Analyzer',
-    QUICK_CLIP_LABEL: 'Quick-Clip',
-    QUICK_CLIP_CAPTION: "Quick-Clip: nothing is saved to disk automatically — for grabbing a one-off clip. A re-scan replaces demos wholesale instead of preserving your edits.",
-    MODE_SWITCH_TITLE: 'Toggle between Quick-Clip and Workspace mode',
-    WORKSPACE_LABEL: 'Workspace',
-    WORKSPACE_CAPTION: 'Workspace: saves a project file and preserves your progress across restarts and re-scans.',
     NO_SESSION_LOADED: 'No session loaded',
+    FILE_MENU: 'File',
+    NEW_SESSION_BUTTON: 'New Session',
+    NEW_SESSION_TITLE: 'Start a new, empty session',
+    HELP_MENU: 'Help',
+    ABOUT_MENU: 'About',
     SAVE_SESSION_BUTTON: 'Save Session',
     SAVE_SESSION_TITLE: 'Save Project Session',
     LOAD_SESSION_BUTTON: 'Load Session',
     LOAD_SESSION_TITLE: 'Load Project Session',
-    SAVE_AS_WORKSPACE_BUTTON: 'Save as Workspace…',
-    SAVE_AS_WORKSPACE_TITLE: 'Saves a project file and switches this window to Workspace mode.',
   },
 
   // ── Workspace Pane: Directory Scan & Master Demo Queue ──────────────────
@@ -46,7 +56,7 @@ export const STRINGS = {
     MASTER_QUEUE_TITLE: 'Master Demo Queue',
     SEARCH_PLACEHOLDER: 'Search filename or map...',
     CLEAR_UNTRACKED_BUTTON: 'Clear Untracked',
-    CLEAR_UNTRACKED_TITLE: 'Remove demos with no Captured/Rendered status, notes, or edited kill range. Tracked demos are kept, in either mode. Only affects demos matching the current search.',
+    CLEAR_UNTRACKED_TITLE: 'Remove demos with no Captured/Rendered status, notes, or edited kill range. Tracked demos are kept. Only affects demos matching the current search.',
     CLEAR_SELECTED_BUTTON: 'Clear Selected',
     CLEAR_SELECTED_TITLE_DEFAULT: 'Check one or more rows first.',
     CLEAR_ALL_BUTTON: 'Clear All',
@@ -875,6 +885,7 @@ export const STRINGS = {
     NOTHING_TO_SAVE: 'Nothing to save yet — add demo files or load a session first.',
     ALREADY_SAVED: 'Already saved — no changes since the last save.',
     projectSavedToast: (path) => `Project session saved successfully to ${path}`,
+    NEW_SESSION_TOAST: 'Started a new session.',
     SAVE_PROJECT_ERROR: 'Error saving project session.',
     loadedDemosToast: (count) => `Loaded ${count} demos from project file`,
     LOAD_PROJECT_ERROR: 'Error loading project session.',
@@ -974,15 +985,13 @@ export const STRINGS = {
     CHECK_UPDATES_TITLE: 'Check for app updates',
     UPDATE_AVAILABLE_BUTTON: 'Update Available',
     UPDATE_AVAILABLE_TITLE: 'A new version is ready — click to install it.',
-    // baseVersion excludes the dev channel's `-<run number>` suffix — the
-    // footer just needs "what kind of build is this", not which exact run.
-    // buildKind: 'local' (npm run tauri dev), 'debug' (tauri build --debug —
-    // a real bundle, just not a release-profile one), 'dev'
-    // (release_dev.yml), or anything else for a real stable build (no tag).
-    appVersionLabel: (baseVersion, buildKind) => {
-      const tags = { local: ' | local build', debug: ' | debug build', dev: ' | dev build' };
-      return `v${baseVersion}${tags[buildKind] || ''}`;
-    },
+  },
+
+  // ── About modal (issue #122) ─────────────────────────────────────────────
+  ABOUT_MODAL: {
+    BLURB: 'A capture, patching, and analytics pipeline for Day of Defeat 1.3 demos — batch-records highlight clips through HLAE and parses matches for scoreboards, kills, chat, and rounds.',
+    CREDIT: 'Built by ccoventry',
+    GITHUB_LINK: 'github.com/ccoventry/dod-tools',
   },
 
   // ── Update check/install modal (issue #133) ──────────────────────────────

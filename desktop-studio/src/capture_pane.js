@@ -35,8 +35,7 @@ let currentOnSettingsChange = null;
 let currentOnStatusChange = null;
 // Returns the live project-level take index object (take_key -> uid[]) owned
 // by main.js, so recording into it here persists into the same object that
-// gets serialized on Save Session. Null in Quick-Clip-only contexts where
-// main.js hasn't wired one up yet.
+// gets serialized on Save Session. Null until main.js wires one up.
 let currentGetTakeIndex = null;
 // Fired once per batch when capture_status reports it's no longer running
 // (finished, cancelled, or errored) — main.js's updateExportPoolIndicator,

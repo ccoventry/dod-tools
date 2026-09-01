@@ -1,4 +1,5 @@
 import { listen } from '@tauri-apps/api/event';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { checkForUpdate, downloadAndInstallUpdate, restartApp, getAppVersion, isDebugBuild } from './ipc_bridge.js';
 import { notify } from './os_notifications.js';
 import { STRINGS } from './strings.js';
@@ -12,12 +13,16 @@ function setStatus(text) {
   if (el) el.textContent = text;
 }
 
-// Reflected on the persistent footer button (never hidden — see index.html's
-// #update-check-btn) rather than a separate show/hide badge, so "check for
-// updates" and "an update is waiting" are the same one-click affordance from
-// any tab, not two different footer elements.
+// Reflected on the Help menu's Check for Updates item (#update-check-btn,
+// moved from the footer into #help-menu-panel by #122) plus a small dot on
+// the Help menu button itself (#help-menu-update-dot) — the menu item alone
+// isn't visible until Help is opened, and an update being ready is exactly
+// the kind of thing that should be noticeable without opening the menu, the
+// same ambient-signal role the old always-visible footer button served.
 function setFooterButtonState(updateAvailable) {
   const btn = document.querySelector('#update-check-btn');
+  const dot = document.querySelector('#help-menu-update-dot');
+  if (dot) dot.style.display = updateAvailable ? '' : 'none';
   if (!btn) return;
   if (updateAvailable) {
     btn.textContent = STRINGS.FOOTER.UPDATE_AVAILABLE_BUTTON;
@@ -43,7 +48,10 @@ async function isLocalOrDebugBuild() {
 
 // Fetched once at startup rather than re-read per update check — the
 // running app's own version never changes without a restart, so there's
-// nothing to keep re-fetching.
+// nothing to keep re-fetching. This is also why the OS window title set
+// below only ever changes across a relaunch (e.g. after an update installs)
+// — flipping the Update Channel dropdown alone changes only which channel
+// the *next* check polls, not what build is currently running.
 async function displayCurrentVersion() {
   const version = await getAppVersion();
   if (!version) return;
@@ -62,10 +70,15 @@ async function displayCurrentVersion() {
   } else {
     buildKind = suffix ? 'dev' : 'stable';
   }
-  const footerLabel = document.querySelector('#app-version-label');
-  if (footerLabel) footerLabel.textContent = STRINGS.FOOTER.appVersionLabel(baseVersion, buildKind);
+  // OS window title (taskbar/Alt-Tab), not an in-page element — used to be
+  // a footer label (#122) before moving here.
+  getCurrentWindow().setTitle(STRINGS.NAV.appWindowTitle(baseVersion, buildKind)).catch((err) => {
+    console.error('Failed to set window title:', err);
+  });
   const modalLabel = document.querySelector('#update-modal-current-version');
   if (modalLabel) modalLabel.textContent = STRINGS.UPDATE_MODAL.currentVersionLabel(version);
+  const aboutLabel = document.querySelector('#about-modal-version');
+  if (aboutLabel) aboutLabel.textContent = STRINGS.UPDATE_MODAL.currentVersionLabel(version);
 }
 
 export async function checkForUpdatesNow(channel = currentChannel()) {
