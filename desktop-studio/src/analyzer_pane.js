@@ -1273,7 +1273,7 @@ function renderPlayerDetailsBody(tabContainer, p) {
       <div class="analyzer-stat-card"><div class="stat-title">${STRINGS.ANALYZER.AVG_LIFESPAN_TITLE}</div><div class="stat-value">${STRINGS.ANALYZER.secondsSuffix(avgLife.toFixed(1))}</div><div class="stat-badge text-muted">${STRINGS.ANALYZER.minMaxBadge(minLife.toFixed(0), maxLife.toFixed(0))}</div></div>
     </div>
 
-    <div class="analyzer-two-col">
+    <div class="analyzer-stacked-sections">
       <div>
         <h4 class="analyzer-section-title">${STRINGS.ANALYZER.WEAPON_BREAKDOWN_TITLE}</h4>
         <div class="table-wrapper" style="max-height:320px;">
