@@ -140,6 +140,14 @@ pub struct AppSettings {
     pub notify_renders_done: bool,
     #[serde(default = "default_notify_error")]
     pub notify_error: bool,
+    #[serde(default = "default_notify_updates")]
+    pub notify_updates: bool,
+    /// Which release channel `check_for_update` polls: `"stable"` (built from
+    /// `main`) or `"dev"` (built from `dev`, on-demand). See issue #133.
+    #[serde(default = "default_update_channel")]
+    pub update_channel: String,
+    #[serde(default = "default_auto_check_updates")]
+    pub auto_check_updates: bool,
 }
 
 fn default_resolution_width() -> i32 { 1280 }
@@ -167,6 +175,9 @@ fn default_notify_between_clips() -> bool { true }
 fn default_notify_captures_done() -> bool { true }
 fn default_notify_renders_done() -> bool { true }
 fn default_notify_error() -> bool { true }
+fn default_notify_updates() -> bool { true }
+fn default_update_channel() -> String { "stable".to_string() }
+fn default_auto_check_updates() -> bool { true }
 
 impl Default for AppSettings {
     fn default() -> Self {
@@ -228,6 +239,9 @@ impl Default for AppSettings {
             notify_captures_done: default_notify_captures_done(),
             notify_renders_done: default_notify_renders_done(),
             notify_error: default_notify_error(),
+            notify_updates: default_notify_updates(),
+            update_channel: default_update_channel(),
+            auto_check_updates: default_auto_check_updates(),
         }
     }
 }

@@ -33,6 +33,7 @@ import { initErrorReporter } from './error_reporter.js';
 import { STRINGS } from './strings.js';
 import { applyStaticStrings } from './apply_strings.js';
 import { initOsNotifications, updateNotificationSettings } from './os_notifications.js';
+import { initUpdater, checkForUpdatesNow } from './updater_pane.js';
 
 // Registered at module load, before DOMContentLoaded — so it's catching
 // from the earliest possible moment, not just once the app's own init
@@ -529,6 +530,9 @@ window.addEventListener("DOMContentLoaded", async () => {
     const notifyCapturesDone = document.querySelector('#config-notify-captures-done')?.checked ?? true;
     const notifyRendersDone = document.querySelector('#config-notify-renders-done')?.checked ?? true;
     const notifyError = document.querySelector('#config-notify-error')?.checked ?? true;
+    const notifyUpdates = document.querySelector('#config-notify-updates')?.checked ?? true;
+    const updateChannel = document.querySelector('#config-update-channel')?.value || 'stable';
+    const autoCheckUpdates = document.querySelector('#config-auto-check-updates')?.checked ?? true;
 
     const recordStartLead = parseFloat(document.querySelector('#config-record-start-lead')?.value) || 0.0;
     const recordStopTrail = parseFloat(document.querySelector('#config-record-stop-trail')?.value) || 0.0;
@@ -576,6 +580,9 @@ window.addEventListener("DOMContentLoaded", async () => {
       notify_captures_done: notifyCapturesDone,
       notify_renders_done: notifyRendersDone,
       notify_error: notifyError,
+      notify_updates: notifyUpdates,
+      update_channel: updateChannel,
+      auto_check_updates: autoCheckUpdates,
       record_start_lead: recordStartLead,
       record_stop_trail: recordStopTrail,
       initial_delay: initialDelay,
@@ -601,8 +608,9 @@ window.addEventListener("DOMContentLoaded", async () => {
   }
 
   // Load persistent settings on startup
+  let settings = null;
   try {
-    const settings = await getSettings();
+    settings = await getSettings();
     if (settings) {
       updateNotificationSettings(settings);
       if (settings.hlae_path) {
@@ -701,6 +709,12 @@ window.addEventListener("DOMContentLoaded", async () => {
       if (notifyRendersDoneEl) notifyRendersDoneEl.checked = !!settings.notify_renders_done;
       const notifyErrorEl = document.querySelector('#config-notify-error');
       if (notifyErrorEl) notifyErrorEl.checked = !!settings.notify_error;
+      const notifyUpdatesEl = document.querySelector('#config-notify-updates');
+      if (notifyUpdatesEl) notifyUpdatesEl.checked = settings.notify_updates !== false;
+      const updateChannelEl = document.querySelector('#config-update-channel');
+      if (updateChannelEl) updateChannelEl.value = settings.update_channel || 'stable';
+      const autoCheckUpdatesEl = document.querySelector('#config-auto-check-updates');
+      if (autoCheckUpdatesEl) autoCheckUpdatesEl.checked = settings.auto_check_updates !== false;
       if (settings.record_start_lead) {
         const inputEl = document.querySelector('#config-record-start-lead');
         if (inputEl) inputEl.value = settings.record_start_lead;
@@ -761,6 +775,10 @@ window.addEventListener("DOMContentLoaded", async () => {
   } catch (err) {
     console.error("Error loading startup settings:", err);
   }
+  // Wires the Updates tab's buttons regardless of whether settings loaded —
+  // only the startup auto-check itself is conditional on settings being
+  // present. Not awaited: a background check shouldn't block startup.
+  initUpdater(settings);
   applyStudioModeUI();
 
   const studioModeSwitchInput = document.querySelector('#studio-mode-switch-input');

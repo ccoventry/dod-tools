@@ -4,6 +4,7 @@ mod settings_manager;
 mod audit_manager;
 mod dir_browser;
 mod map_manager;
+mod updater_manager;
 
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 use capture_manager::{CaptureManager, CapturePayload, launch_demo_preview, generate_all_previews, launch_standalone_game, check_engine_processes, kill_engine_processes, scan_orphaned_previews, delete_orphaned_previews};
@@ -521,11 +522,13 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(CaptureManager::new())
         .manage(RenderManager::new())
         .manage(ScanManager::default())
         .manage(SettingsManager::new())
         .manage(AuditManager::default())
+        .manage(updater_manager::UpdaterState::default())
         .invoke_handler(tauri::generate_handler![
             test_bridge,
             log_frontend_event,
@@ -581,6 +584,9 @@ pub fn run() {
             map_manager::map_download_url,
             map_manager::scan_game_configs,
             map_manager::roll_floors,
+            updater_manager::check_for_update,
+            updater_manager::download_and_install_update,
+            updater_manager::restart_app,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

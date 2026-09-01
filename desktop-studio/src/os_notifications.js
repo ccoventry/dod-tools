@@ -16,6 +16,7 @@ let enabledFlags = {
   captures_done: true,
   renders_done: true,
   error: true,
+  updates: true,
 };
 
 export async function initOsNotifications() {
@@ -38,6 +39,7 @@ export function updateNotificationSettings(settings) {
     captures_done: settings.notify_captures_done !== false,
     renders_done: settings.notify_renders_done !== false,
     error: settings.notify_error !== false,
+    updates: settings.notify_updates !== false,
   };
 }
 

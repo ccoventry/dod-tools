@@ -484,3 +484,36 @@ export async function scanDemoFolders(root) {
       return [];
     });
 }
+
+/** Checks `channel` ("stable" or "dev") for a newer release. Resolves to
+ *  `{ version, current_version, notes, pub_date }` or `null` when already
+ *  up to date. See issue #133. */
+export async function checkForUpdate(channel) {
+  return invoke("check_for_update", { channel })
+    .catch((err) => {
+      console.error("IPC Execution Error (check_for_update):", err);
+      showToast(STRINGS.IPC.updateCheckFailed(err), 'error');
+      throw err;
+    });
+}
+
+/** Downloads and installs whatever update the last checkForUpdate() call
+ *  found — throws if none is pending. Progress arrives via the
+ *  `update_download_progress`/`update_ready` events, not this call's
+ *  return value. */
+export async function downloadAndInstallUpdate() {
+  return invoke("download_and_install_update")
+    .catch((err) => {
+      console.error("IPC Execution Error (download_and_install_update):", err);
+      showToast(STRINGS.IPC.updateInstallFailed(err), 'error');
+      throw err;
+    });
+}
+
+export async function restartApp() {
+  return invoke("restart_app")
+    .catch((err) => {
+      console.error("IPC Execution Error (restart_app):", err);
+      throw err;
+    });
+}
