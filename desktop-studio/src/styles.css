@@ -1242,7 +1242,7 @@ button.primary-btn:hover:not(:disabled) {
 }
 
 /* Demo Analyzer — Explorer sidebar (Quick Links + folder tree) + single-folder
-   Demos panel docked above the report tabs. See docs/tauri_parity_audit.md
+   Demos panel docked above the report tabs. See docs/archive/tauri_parity_audit.md
    Area 3 for the dev layout this mirrors. */
 
 #pane-demo-analyzer {

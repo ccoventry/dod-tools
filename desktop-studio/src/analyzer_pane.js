@@ -42,7 +42,7 @@ const WEAPON_CATEGORIES = [
 // Recent / Local), both driving one shared `currentDir`. The demos table
 // below is scoped to ONLY that single folder's contents (non-recursive) —
 // mirrors dev's SidePanel::left explorer + `desktop_files`, see
-// docs/tauri_parity_audit.md Area 3 for the corrected design this replaced
+// docs/archive/tauri_parity_audit.md Area 3 for the corrected design this replaced
 // an earlier (wrong-shape) recursive multi-folder aggregate with. Dev's
 // "Group by Match"/"Group by Player-Recorder" view modes are NOT ported:
 // their grouping keys (server_ip/player_roster_hash/recorder_id) were only
@@ -225,7 +225,7 @@ function demoTypeOf(entry) {
 // the middle when the full path is too long to fit the sidebar — e.g.
 // "C:\...\DoD Demos". Falls back to a forward-slash root-relative path when
 // short enough (dev's own `display_path`, see tree quick-links in
-// docs/tauri_parity_audit.md Area 3). Full path is always available via the
+// docs/archive/tauri_parity_audit.md Area 3). Full path is always available via the
 // row's `title` attribute regardless of how the visible label is shortened.
 function shortenPath(fullPath, maxChars = 34) {
   if (!fullPath) return '';
@@ -312,7 +312,7 @@ function quickLinkRowHtml(folder, count, isPinned) {
 // Dev's Windows-11-style Quick Access pattern: Pinned (explicit bookmarks),
 // Recent (auto-tracked history), Local (bounded background scan) — each
 // tier hidden entirely when empty, excludes anything already promoted to a
-// higher tier. See docs/tauri_parity_audit.md Area 3.
+// higher tier. See docs/archive/tauri_parity_audit.md Area 3.
 async function renderQuickLinksSection() {
   const container = document.querySelector('#analyzer-quick-links');
   if (!container) return;
@@ -417,7 +417,7 @@ function treeParentOf(path) {
 
 // Native Explorer Tree: drives -> subfolders, lazily loaded and cached per
 // node, genuinely expand/collapse (default closed). Mirrors dev's
-// `tree.rs::render_native_dir_node` — see docs/tauri_parity_audit.md Area 3.
+// `tree.rs::render_native_dir_node` — see docs/archive/tauri_parity_audit.md Area 3.
 async function renderExplorerTree() {
   const container = document.querySelector('#analyzer-tree');
   if (!container) return;

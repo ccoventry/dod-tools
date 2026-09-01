@@ -8,7 +8,7 @@ pub enum RenderCodec {
     NvencH264,
     /// Software libx264 — not in dev's original 3-variant enum. Added to
     /// preserve the Tauri rebuild's deliberate choice (see
-    /// docs/tauri_parity_audit.md Area 5) to keep both software and NVENC
+    /// docs/archive/tauri_parity_audit.md Area 5) to keep both software and NVENC
     /// H.264 as separate, explicit options rather than picking one.
     H264Software,
     ProRes,

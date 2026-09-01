@@ -5,7 +5,7 @@
 
 // In-workflow Studio phase — dev's SelectTab::Highlights/Configuration live
 // inside the single continuous Studio destination, not as separate top-level
-// nav tabs ("Batch Capture Config" was DRIFT, see docs/tauri_parity_audit.md
+// nav tabs ("Batch Capture Config" was DRIFT, see docs/archive/tauri_parity_audit.md
 // Area 1; Render Studio's own top-level tab was folded in the same way for
 // #81). 'highlights' shows the Master Queue's detail view + advanced
 // diagnostics; 'render' shows the Render Studio job panel; 'configuration'

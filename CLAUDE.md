@@ -20,11 +20,11 @@ Cargo workspace (`Cargo.toml`, resolver "3", edition 2024) containing the follow
   - `patch/` — Demo-file binary patcher (`engine.rs`, `builder.rs`, `scanner.rs`, `highlevel.rs`, `types.rs`). Scans, injects (bookmarks, director commands, `DRC_CMD_INEYE`), and rewrites GoldSrc frames.
   - `hlcr/` — Take management & FFmpeg transcoding (`renderer.rs`, `scanner.rs`, `config.rs`, `autosave.rs`).
   - `shared/`, `sys/`, `utils/` — Path resolution, disk-space queries, demo hashing.
-  - `views/export_manager.rs` — Shared export-pool/drive-routing logic.
   - `src/bin/cli/main.rs` → `preview_cli` binary: Headless entry point with drag-and-drop support.
 - **`hl-demo-auditor/`** — Standalone duplicate-demo detector using size + header hash (`fnv1a_hash`).
 - **`benchmark/`** — Performance benchmarking binary for the parsing/patching pipeline.
 - **`desktop-studio/`** — Active Tauri v2 + Vite/JS frontend workspace (`src-tauri/` backend and `src/*.js` frontend modules).
+- **`web-analyzer/`** — `analysis` compiled to `wasm32-unknown-unknown`, deployed to GitHub Pages on every push to `main` (`.github/workflows/deploy_web.yml`). Static frontend lives in `www/`.
 
 > The experimental `xash-transcode/` crate (GoldSrc HLDEMO → Xash3D IDEM transcoder for the browser preview viewer) lives on its own `experimental/xash-transcode` branch, not on `main`/`dev`/`feature/tauri-migration`. See that branch's `docs/web_preview_viewer.md` before touching it.
 

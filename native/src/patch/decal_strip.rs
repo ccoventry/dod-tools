@@ -1914,7 +1914,7 @@ pub fn clean_demo_decals(
 /// No capture windows are applied: this is the demo's whole contribution, not
 /// the subset outside a clip. Exposed because these are coordinates the engine
 /// provably accepted, which makes them the one honest way to check parsed map
-/// geometry without loading the game. See `docs/decal_flush_bsp_surfaces.md`.
+/// geometry without loading the game. See `docs/archive/decal_flush_bsp_surfaces.md`.
 pub fn proven_world_coordinates(demo: &dem::types::Demo) -> Vec<[f32; 3]> {
     survey(demo, &[], &DecalCleanOptions::default()).world_harvested
 }

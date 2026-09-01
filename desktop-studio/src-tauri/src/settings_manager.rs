@@ -17,7 +17,7 @@ pub struct AppSettings {
     pub demo_folder_history: Vec<String>,
     /// Gates the Demo Analyzer Explorer tree's per-subfolder "(N)" demo-count
     /// badge (Quick Links counts are always shown, matching dev — see
-    /// docs/tauri_parity_audit.md Area 1). Defaults to `false`, matching
+    /// docs/archive/tauri_parity_audit.md Area 1). Defaults to `false`, matching
     /// dev's own `AppSettings::default()`.
     #[serde(default)]
     pub scan_folders_for_demos: bool,

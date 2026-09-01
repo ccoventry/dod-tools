@@ -20,6 +20,7 @@ Read this before judging the codebase by whichever part you happen to open.
 | `hl-demo-auditor/` — duplicate finder | **Stable** | Small, self-contained. |
 | `native/` — capture engine & patcher | **Active development** | Works, but rough edges. Under near-continuous change. |
 | `desktop-studio/` — Tauri UI | **Active development** | Capture Studio and Render Studio are functional but **not polished**. Expect UI inconsistencies and in-flight refactors. |
+| `web-analyzer/` — browser demo viewer | **Active development** | `analysis/` compiled to wasm, deployed to GitHub Pages on every push to `main`. |
 
 If you are here to look at demo parsing or stats extraction, `dod/` and
 `analysis/` are the parts to read, and they are the parts you can rely on.
@@ -42,6 +43,7 @@ The capture and render pipeline is a frag-movie workflow and is unrelated.
     hl-demo-auditor/  duplicate-demo detector
     benchmark/        parsing/patching performance harness
     desktop-studio/   Tauri v2 + Vite frontend
+    web-analyzer/     analysis/ compiled to wasm, browser-based demo viewer
 
 ## Quick start
 
