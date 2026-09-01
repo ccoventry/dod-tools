@@ -66,6 +66,18 @@ Cargo workspace (`Cargo.toml`, resolver "3", edition 2024) containing the follow
 - **Diagnostics:** Never output raw compiler logs. Provide concise, single-sentence failure summaries and direct mechanical fixes.
 - **Execution Bypass:** Use `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` for blocked scripts. For unsigned binaries blocked by WDAC, execute via `run.ps1` to sequence process stops, build steps, and signature updates.
 
+### GitHub Issue/PR Linking
+- **After creating a PR**, check whether a GitHub issue already exists for the same work. If one does, link it to the PR via GraphQL, not just a `Closes #NN` line in the PR body — that text alone does not populate the issue's `closedByPullRequestsReferences`, so a "yes there's a PR" check on the issue can miss it:
+      PR_ID=$(gh api repos/<owner>/<repo>/pulls/<pr-number> --jq .node_id)
+      ISSUE_ID=$(gh api repos/<owner>/<repo>/issues/<issue-number> --jq .node_id)
+      gh api graphql -f query='
+        mutation($prId: ID!, $issueId: ID!) {
+          addCloseIssueReferences(input: {issueId: $issueId, pullRequestIds: [$prId]}) {
+            clientMutationId
+          }
+        }' -f prId="$PR_ID" -f issueId="$ISSUE_ID"
+  Still include `Closes #NN` in the PR body too — the GraphQL call is in addition to that, not a replacement for it.
+
 ---
 
 ## Concurrency, Rust & Memory Constraints
