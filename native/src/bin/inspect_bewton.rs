@@ -68,6 +68,6 @@ fn inspect_demo(path: &str) {
 }
 
 fn main() {
-    inspect_demo("demos/bewton-playoffs-round1-armory-axis.dem");
-    inspect_demo("demos/bewton-playoffs-round1-armory-allied.dem");
+    inspect_demo("local/demos/bewton-playoffs-round1-armory-axis.dem");
+    inspect_demo("local/demos/bewton-playoffs-round1-armory-allied.dem");
 }

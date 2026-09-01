@@ -1,16 +1,21 @@
 import { listen } from '@tauri-apps/api/event';
 import {
-  scanRenderDirectories,
-  executeRenderBatch,
+  queueRenderBatch,
+  startQueuedRender,
   cancelRenderBatch,
   cancelRenderJob,
   resetRenderJob,
+  setRenderJobCodec,
   getExportPoolFreeGb,
   checkRenderAutosave,
   discardRenderAutosave,
   recoverRenderBatch,
+  revealInExplorer,
 } from './ipc_bridge.js';
 import { showToast } from './toast.js';
+import { streakUid, resolveTake } from './take_index.js';
+import { STRINGS } from './strings.js';
+import { notify } from './os_notifications.js';
 
 let jobs = []; // RenderJobView[] — latest snapshot from 'render_jobs_snapshot'
 
@@ -20,6 +25,11 @@ function esc(s) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+/** The batch panel's currently-selected codec, defaulting like the select's own first option. */
+function getSelectedCodec() {
+  return document.querySelector('#render-codec-select')?.value || 'prores';
 }
 
 function statusColor(status) {
@@ -32,13 +42,186 @@ function statusColor(status) {
   }
 }
 
+/**
+ * One sentence describing how a finished batch actually ended.
+ *
+ * Reports every non-zero outcome rather than picking a single label, because
+ * mixed batches are the normal case: cancelling the takes you did not want and
+ * letting the rest run should read as a success with a note, not as "the batch
+ * was cancelled". Falls back to the single-outcome wording when only one kind
+ * of thing happened, so the common all-finished case stays as short as before.
+ */
+function summarizeBatchOutcome(finished, failed, cancelled) {
+  const parts = [];
+  if (finished > 0) parts.push(STRINGS.RENDER.countRendered(finished));
+  if (failed > 0) parts.push(STRINGS.RENDER.countFailed(failed));
+  if (cancelled > 0) parts.push(STRINGS.RENDER.countCancelled(cancelled));
+
+  if (parts.length === 0) return STRINGS.RENDER.BATCH_COMPLETED;
+  if (parts.length === 1) {
+    if (failed === 0 && cancelled === 0) return STRINGS.RENDER.BATCH_COMPLETED;
+    if (finished === 0 && failed === 0) return STRINGS.RENDER.BATCH_CANCELLED;
+  }
+  return STRINGS.RENDER.batchSummary(parts.join(', '));
+}
+
 function updateFooterQueueSummary() {
   const el = document.querySelector('#render-footer-queue-summary');
   if (!el) return;
   const queued = jobs.filter((j) => j.status === 'Queued').length;
   const rendering = jobs.filter((j) => j.status === 'Rendering').length;
   const done = jobs.filter((j) => j.status === 'Finished' || j.status === 'Error' || j.status === 'Cancelled').length;
-  el.textContent = `${queued} queued · ${rendering} rendering · ${done} done`;
+  el.textContent = STRINGS.RENDER.queueSummary(queued, rendering, done);
+}
+
+/**
+ * The Actions cell's buttons, as HTML — kept separate from the row template
+ * so it can be rebuilt on its own (see `updateJobRow`).
+ */
+function actionsCellHtml(j) {
+  let html = '';
+  if (j.status === 'Rendering' || j.status === 'Queued') {
+    html += `<button class="render-job-cancel-btn" data-job-id="${esc(j.id)}" title="${STRINGS.RENDER.CANCEL_JOB_TITLE}">✖</button>`;
+  } else if (j.status === 'Cancelled' || j.status === 'Finished' || j.status === 'Error') {
+    html += `<button class="render-job-reset-btn" data-job-id="${esc(j.id)}" title="${STRINGS.RENDER.RESET_JOB_TITLE}">🔄</button>`;
+  }
+  if (j.error_log) {
+    html += `<button class="render-job-view-log-btn" data-job-id="${esc(j.id)}" title="${STRINGS.RENDER.VIEW_LOG_TITLE}">${STRINGS.RENDER.VIEW_LOG_BUTTON}</button>`;
+  }
+  if ((j.status === 'Finished' && j.output_path) || j.take_folder) {
+    const useOutput = j.status === 'Finished' && j.output_path;
+    html += `<button class="render-job-reveal-btn" data-job-id="${esc(j.id)}" title="${useOutput ? STRINGS.RENDER.OPEN_OUTPUT_FOLDER_TITLE : STRINGS.RENDER.OPEN_TAKE_FOLDER_TITLE}">${useOutput ? STRINGS.RENDER.OPEN_OUTPUT_BUTTON : STRINGS.RENDER.OPEN_TAKE_FOLDER_BUTTON}</button>`;
+  }
+  return html;
+}
+
+function wireActionsCell(cell) {
+  cell.querySelectorAll('.render-job-cancel-btn').forEach((btn) => {
+    btn.addEventListener('click', () => cancelRenderJob(btn.dataset.jobId).catch(() => {}));
+  });
+  cell.querySelectorAll('.render-job-reset-btn').forEach((btn) => {
+    btn.addEventListener('click', () => resetRenderJob(btn.dataset.jobId).catch(() => {}));
+  });
+  cell.querySelectorAll('.render-job-reveal-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const job = jobs.find((j) => j.id === btn.dataset.jobId);
+      if (!job) return;
+      const target = (job.status === 'Finished' && job.output_path) ? job.output_path : job.take_folder;
+      if (target) revealInExplorer(target).catch(() => {});
+    });
+  });
+  cell.querySelectorAll('.render-job-view-log-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const job = jobs.find((j) => j.id === btn.dataset.jobId);
+      const modal = document.querySelector('#render-error-log-modal');
+      const title = document.querySelector('#render-error-log-title');
+      const body = document.querySelector('#render-error-log-body');
+      if (title) title.textContent = job ? STRINGS.RENDER.errorLogTitleForJob(job.name) : STRINGS.RENDER.ERROR_LOG_TITLE_DEFAULT;
+      if (body) body.textContent = (job && job.error_log) || '';
+      if (modal) modal.style.display = 'flex';
+    });
+  });
+}
+
+function settingsCellHtml(j) {
+  const showSkipToggle = j.skip_available && j.status === 'Queued';
+  const toggle = showSkipToggle
+    ? `<label class="render-skip-toggle" title="${STRINGS.RENDER.SKIP_TOGGLE_TITLE}" style="margin-left:6px; font-size:11px; white-space:nowrap;">
+         <input type="checkbox" class="render-job-skip-checkbox" data-job-id="${esc(j.id)}" ${j.codec_id === 'source_copy' ? 'checked' : ''} /> ${STRINGS.RENDER.SKIP_TOGGLE_LABEL}
+       </label>`
+    : '';
+  return `${esc(j.settings_summary)}${toggle}`;
+}
+
+function wireSettingsCell(cell) {
+  cell.querySelectorAll('.render-job-skip-checkbox').forEach((cb) => {
+    cb.addEventListener('change', () => {
+      const jobId = cb.dataset.jobId;
+      const wasChecked = !cb.checked;
+      // Unchecking restores *this job's own* codec from before Skip was
+      // ticked on (tracked in `updateJobRow` as `row.dataset.lastCodec`) —
+      // not whatever the batch panel's dropdown happens to show right now,
+      // which may have been changed since this job was queued. Matches the
+      // VirtualDub-style guarantee `reset_render_job` already documents: a
+      // queued job's settings never silently pick up a later panel change.
+      const row = cb.closest('tr');
+      const codecVal = cb.checked ? 'source_copy' : (row?.dataset.lastCodec || getSelectedCodec());
+      cb.disabled = true;
+      setRenderJobCodec(jobId, codecVal)
+        .catch((err) => {
+          showToast(STRINGS.RENDER.setJobCodecFailed(err), 'error');
+          cb.checked = wasChecked;
+        })
+        .finally(() => { cb.disabled = false; });
+    });
+  });
+}
+
+/** Builds one job's `<tr>` fresh — only ever called once per job id. */
+function createJobRow(j) {
+  const row = document.createElement('tr');
+  row.dataset.jobId = j.id;
+  row.innerHTML = `
+    <td class="rj-name"></td>
+    <td class="rj-stream"></td>
+    <td class="rj-frames"></td>
+    <td class="rj-date"></td>
+    <td class="rj-settings"></td>
+    <td class="rj-status"></td>
+    <td class="rj-speed"></td>
+    <td><div class="progress-bar-container" style="margin-top:0;"><div class="progress-bar-fill rj-progress-fill" style="width:0%;"></div></div></td>
+    <td class="rj-actions"></td>`;
+  updateJobRow(row, j);
+  return row;
+}
+
+/**
+ * Patches one job's existing `<tr>` in place rather than replacing it.
+ *
+ * #80: rebuilding every row's `innerHTML` on every `render_jobs_snapshot` —
+ * which fires ~6-7 times a second while anything is actively rendering —
+ * destroyed and recreated the Cancel/Reset/etc. buttons that often, so a
+ * click landing mid-rebuild could target a button that no longer existed.
+ * The settings (skip toggle) and actions cells are the only ones holding
+ * interactive elements, so those are the only ones conditionally rebuilt —
+ * and even then, only when what they need to show actually changed. Every
+ * other cell is plain text/style, which is safe to overwrite unconditionally
+ * since it never had a click in flight to lose.
+ */
+function updateJobRow(row, j) {
+  row.querySelector('.rj-name').textContent = j.name;
+  row.querySelector('.rj-stream').textContent = j.stream;
+  row.querySelector('.rj-frames').textContent = j.frames;
+  row.querySelector('.rj-date').textContent = j.date;
+
+  const statusCell = row.querySelector('.rj-status');
+  statusCell.textContent = j.status;
+  statusCell.style.color = statusColor(j.status);
+  row.querySelector('.rj-speed').textContent = j.speed;
+  row.querySelector('.rj-progress-fill').style.width = `${j.progress}%`;
+
+  // Remembers the last codec this job actually rendered under (i.e. never
+  // "source_copy" itself) so unchecking Skip later can restore exactly that,
+  // not whatever the batch panel currently shows — see `wireSettingsCell`.
+  if (j.codec_id !== 'source_copy') {
+    row.dataset.lastCodec = j.codec_id;
+  }
+
+  const settingsKey = `${j.settings_summary}|${j.skip_available}|${j.status === 'Queued'}|${j.codec_id}`;
+  if (settingsKey !== row.dataset.settingsKey) {
+    const cell = row.querySelector('.rj-settings');
+    cell.innerHTML = settingsCellHtml(j);
+    wireSettingsCell(cell);
+    row.dataset.settingsKey = settingsKey;
+  }
+
+  const actionsKey = `${j.status}|${!!j.error_log}|${j.output_path}|${j.take_folder}`;
+  if (actionsKey !== row.dataset.actionsKey) {
+    const cell = row.querySelector('.rj-actions');
+    cell.innerHTML = actionsCellHtml(j);
+    wireActionsCell(cell);
+    row.dataset.actionsKey = actionsKey;
+  }
 }
 
 function renderJobsTable() {
@@ -47,50 +230,36 @@ function renderJobsTable() {
   if (!tbody) return;
 
   if (jobs.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="8" class="table-empty">No render jobs queued. Scan a folder, then click Start Render Batch.</td></tr>';
+    tbody.innerHTML = `<tr><td colspan="9" class="table-empty">${STRINGS.RENDER.TABLE_EMPTY}</td></tr>`;
     return;
   }
 
-  tbody.innerHTML = jobs.map((j) => `
-    <tr data-job-id="${esc(j.id)}">
-      <td>${esc(j.name)}</td>
-      <td>${esc(j.stream)}</td>
-      <td>${j.frames}</td>
-      <td>${esc(j.date)}</td>
-      <td style="color:${statusColor(j.status)};">${esc(j.status)}</td>
-      <td>${esc(j.speed)}</td>
-      <td>
-        <div class="progress-bar-container" style="margin-top:0;">
-          <div class="progress-bar-fill" style="width:${j.progress}%;"></div>
-        </div>
-      </td>
-      <td>
-        ${(j.status === 'Rendering' || j.status === 'Queued')
-          ? `<button class="render-job-cancel-btn" data-job-id="${esc(j.id)}" title="Cancel this job">✖</button>`
-          : (j.status === 'Cancelled' || j.status === 'Finished' || j.status === 'Error')
-            ? `<button class="render-job-reset-btn" data-job-id="${esc(j.id)}" title="Reset to Queued">🔄</button>`
-            : ''}
-        ${j.error_log ? `<button class="render-job-view-log-btn" data-job-id="${esc(j.id)}" title="View error log">⚠️ View Log</button>` : ''}
-      </td>
-    </tr>`).join('');
+  // The empty-state placeholder is not a job row and has to go before keyed
+  // reconciliation below looks for `tr[data-job-id]` elements.
+  if (tbody.querySelector('td.table-empty')) {
+    tbody.innerHTML = '';
+  }
 
-  tbody.querySelectorAll('.render-job-cancel-btn').forEach((btn) => {
-    btn.addEventListener('click', () => cancelRenderJob(btn.dataset.jobId).catch(() => {}));
+  const existingRows = new Map();
+  tbody.querySelectorAll('tr[data-job-id]').forEach((tr) => existingRows.set(tr.dataset.jobId, tr));
+
+  // Job order is stable once a batch starts (`RenderJobRuntime`s are created
+  // once, at fixed indices, and never reordered) — so existing rows never
+  // need to move, only new ones need appending. That keeps every row that
+  // already existed untouched by this pass, not just its buttons.
+  jobs.forEach((j) => {
+    const row = existingRows.get(j.id);
+    if (row) {
+      existingRows.delete(j.id);
+      updateJobRow(row, j);
+    } else {
+      tbody.appendChild(createJobRow(j));
+    }
   });
-  tbody.querySelectorAll('.render-job-reset-btn').forEach((btn) => {
-    btn.addEventListener('click', () => resetRenderJob(btn.dataset.jobId).catch(() => {}));
-  });
-  tbody.querySelectorAll('.render-job-view-log-btn').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const job = jobs.find((j) => j.id === btn.dataset.jobId);
-      const modal = document.querySelector('#render-error-log-modal');
-      const title = document.querySelector('#render-error-log-title');
-      const body = document.querySelector('#render-error-log-body');
-      if (title) title.textContent = job ? `FFmpeg Error Log — ${job.name}` : 'FFmpeg Error Log';
-      if (body) body.textContent = (job && job.error_log) || '';
-      if (modal) modal.style.display = 'flex';
-    });
-  });
+  // Anything left in the map is a row for a job id no longer in the
+  // snapshot — should not normally happen within a batch, but a leftover
+  // stale row would be worse than the cost of checking.
+  existingRows.forEach((row) => row.remove());
 }
 
 function initErrorLogModal() {
@@ -106,13 +275,13 @@ async function refreshExportPoolFree(getExportDirs) {
   const freeEl = document.querySelector('#render-export-pool-free');
   const footerFreeEl = document.querySelector('#render-footer-pool-free');
   if (dirs.length === 0) {
-    if (freeEl) freeEl.textContent = '0.0 GB';
-    if (footerFreeEl) footerFreeEl.textContent = 'Export Pool Free: 0.0 GB';
+    if (freeEl) freeEl.textContent = STRINGS.RENDER.EXPORT_POOL_FREE_DEFAULT;
+    if (footerFreeEl) footerFreeEl.textContent = STRINGS.RENDER.RENDER_POOL_FREE_DEFAULT;
     return;
   }
   const gb = await getExportPoolFreeGb(dirs);
-  if (freeEl) freeEl.textContent = `${gb.toFixed(1)} GB`;
-  if (footerFreeEl) footerFreeEl.textContent = `Export Pool Free: ${gb.toFixed(1)} GB`;
+  if (freeEl) freeEl.textContent = STRINGS.RENDER.exportPoolFreeGb(gb.toFixed(1));
+  if (footerFreeEl) footerFreeEl.textContent = STRINGS.RENDER.exportPoolFreeFooter(gb.toFixed(1));
 }
 
 // ── Startup crash-recovery prompt ────────────────────────────────────────────
@@ -123,7 +292,7 @@ export async function checkRenderRecoveryOnStartup(onRecovered) {
 
   const modal = document.querySelector('#render-recovery-modal');
   if (!modal) return;
-  document.querySelector('#render-recovery-source').textContent = summary.source_folder || '(unknown)';
+  document.querySelector('#render-recovery-source').textContent = summary.source_folder || STRINGS.RENDER.UNKNOWN_SOURCE_FOLDER;
   document.querySelector('#render-recovery-completed').textContent = String(summary.completed_count);
   document.querySelector('#render-recovery-pending').textContent = String(summary.pending_count);
   modal.style.display = 'flex';
@@ -132,11 +301,11 @@ export async function checkRenderRecoveryOnStartup(onRecovered) {
     try {
       jobs = await recoverRenderBatch();
       renderJobsTable();
-      showToast(`Recovered ${summary.completed_count} completed, ${summary.pending_count} pending render job(s).`, 'info');
+      showToast(STRINGS.RENDER.recoveredJobsToast(summary.completed_count, summary.pending_count), 'info');
       if (onRecovered) onRecovered();
     } catch (err) {
       console.error('Error recovering render batch:', err);
-      showToast('Failed to recover render batch: ' + err, 'error');
+      showToast(STRINGS.RENDER.recoverFailed(err), 'error');
     } finally {
       modal.style.display = 'none';
     }
@@ -153,106 +322,150 @@ export async function checkRenderRecoveryOnStartup(onRecovered) {
   }, { once: true });
 }
 
-export function initRenderUI(getRenderFolders, getExportDirs, onSettingsChange) {
+export function initRenderUI(getCaptureLocations, getExportDirs, onSettingsChange, takeTracking) {
   const scanRenderBtn = document.querySelector('#scan-render-btn');
   const startRenderBtn = document.querySelector('#start-render-btn');
   const cancelRenderBtn = document.querySelector('#cancel-render-btn');
   const renderStatusEl = document.querySelector('#render-status');
 
+  const getTakeIndex = takeTracking?.getTakeIndex || null;
+  const getAllDemos = takeTracking?.getAllDemos || null;
+  const onTakeStatusChange = takeTracking?.onStatusChange || null;
+
   initErrorLogModal();
 
-  // Real-time per-job state, pushed by the backend scheduler.
+  // A take finishing renders — advances every highlight the take index says
+  // fed that take_key to Rendered. The take index is what makes this work
+  // even after a restart or re-scan replaced the original streak objects:
+  // it was recorded by uid at capture time, not by a live object reference.
+  listen('render_take_finished', (event) => {
+    const { take_key: takeKey, take_folder: takeFolder } = event.payload || {};
+    if (!takeKey) {
+      // Folder has no session parent to derive a key from (e.g. copied out
+      // of its session folder) — documented limitation, not an error.
+      console.warn(`[render] Take finished with no resolvable take_key: ${takeFolder}`);
+      return;
+    }
+    const takeIndex = getTakeIndex ? getTakeIndex() : null;
+    const demos = getAllDemos ? getAllDemos() : null;
+    if (!takeIndex || !demos) return;
+
+    const uids = new Set(resolveTake(takeIndex, takeKey));
+    // Logged unconditionally (hit or miss) so a lookup against a real,
+    // already-loaded index is visible even when it resolves nothing — the
+    // index's total entry count here is exactly what the previous
+    // "[take-index] Loaded from ..." log reported, proving this lookup runs
+    // against that same loaded data rather than something rebuilt in memory.
+    console.log(`[take-index] Resolving ${takeKey} against ${Object.keys(takeIndex).length} loaded take(s) — found ${uids.size} uid(s)`, Array.from(uids));
+    if (uids.size === 0) return;
+
+    let advanced = 0;
+    demos.forEach(demo => {
+      (demo.streaks || []).forEach(streak => {
+        if (!uids.has(streakUid(demo.path, streak))) return;
+        // Idempotent: separate_hud produces two render jobs (all + hudcolor)
+        // sharing one take_key, so this fires twice per take — the second
+        // pass is just a no-op instead of a double-toast.
+        if (streak.status === 'Rendered') return;
+        streak.status = 'Rendered';
+        advanced += 1;
+      });
+    });
+
+    if (advanced > 0) {
+      showToast(STRINGS.RENDER.highlightsMarkedRendered(advanced), 'success');
+      if (onTakeStatusChange) onTakeStatusChange();
+    }
+  });
+
+  // Real-time per-job state, pushed by the backend scheduler. This is the
+  // single source of truth for whether a batch is actually running — driving
+  // Start/Cancel off it (rather than only off the Start button's own click
+  // handler and render_batch_finished) matters because reset_render_job can
+  // resume the scheduler on its own, bypassing both of those. Without this,
+  // Start Render Batch stayed clickable during a reset-triggered resume and
+  // just repeatedly failed with "Render batch already in progress".
   listen('render_jobs_snapshot', (event) => {
     jobs = event.payload || [];
     renderJobsTable();
-    const activeOrQueued = jobs.filter((j) => j.status === 'Rendering' || j.status === 'Queued').length;
+    const queuedCount = jobs.filter((j) => j.status === 'Queued').length;
+    const renderingCount = jobs.filter((j) => j.status === 'Rendering').length;
+    const activeOrQueued = queuedCount + renderingCount;
     if (renderStatusEl) {
-      renderStatusEl.textContent = activeOrQueued > 0
-        ? `Status: Rendering (${jobs.length - activeOrQueued}/${jobs.length} done)`
-        : 'Status: Waiting...';
+      renderStatusEl.textContent = renderingCount > 0
+        ? STRINGS.RENDER.renderingStatus(jobs.length - activeOrQueued, jobs.length)
+        : (queuedCount > 0 ? STRINGS.RENDER.scanCompleteStatus(queuedCount) : STRINGS.RENDER.STATUS_WAITING);
     }
+    // Start only makes sense on a staged-but-not-started batch: something
+    // Queued, and nothing already Rendering. Scan is blocked for the same
+    // window so a re-scan can't clobber jobs the user may have already
+    // toggled Skip on — see queue_render_batch's own guard against this.
+    if (scanRenderBtn) scanRenderBtn.disabled = activeOrQueued > 0;
+    if (startRenderBtn) startRenderBtn.disabled = !(queuedCount > 0 && renderingCount === 0);
+    if (cancelRenderBtn) cancelRenderBtn.disabled = activeOrQueued === 0;
   });
 
-  listen('render_batch_finished', (event) => {
-    const status = event.payload && event.payload.status;
-    if (startRenderBtn) startRenderBtn.disabled = false;
+  listen('render_batch_finished', () => {
+    if (scanRenderBtn) scanRenderBtn.disabled = false;
+    if (startRenderBtn) startRenderBtn.disabled = true;
     if (cancelRenderBtn) cancelRenderBtn.disabled = true;
-    if (status === 'No takes found to render') {
-      showToast(status, 'error');
-      if (renderStatusEl) renderStatusEl.textContent = 'Status: ' + status;
-      return;
+    // Counted, not `some()`. The old check asked "was anything cancelled?"
+    // before "did anything finish?", so one cancelled job in a batch of any
+    // size reported the whole batch as cancelled — including the common case
+    // of cancelling the takes you did not want and letting the rest run, where
+    // it read as though nothing had rendered at all.
+    const finished = jobs.filter((j) => j.status === 'Finished').length;
+    const failed = jobs.filter((j) => j.status === 'Error').length;
+    const cancelled = jobs.filter((j) => j.status === 'Cancelled').length;
+
+    if (jobs.length > 0) {
+      // Severity follows what actually happened rather than what is present:
+      // a deliberate partial cancel where the rest rendered is a success, not
+      // an "info" event. Only a real failure is an error.
+      const level = failed > 0 ? 'error' : (finished > 0 ? 'success' : 'info');
+      const summary = summarizeBatchOutcome(finished, failed, cancelled);
+      showToast(summary, level);
+      if (level !== 'info') {
+        const kind = level === 'error' ? 'error' : 'renders_done';
+        const title = level === 'error' ? STRINGS.NOTIFICATIONS.RENDERS_ERROR_TITLE : STRINGS.NOTIFICATIONS.RENDERS_DONE_TITLE;
+        notify(kind, title, summary);
+      }
     }
-    const errored = jobs.some((j) => j.status === 'Error');
-    const cancelled = jobs.some((j) => j.status === 'Cancelled');
-    if (errored) {
-      showToast('Render batch finished with errors — check job rows for details.', 'error');
-    } else if (cancelled) {
-      showToast('Render batch cancelled.', 'info');
-    } else if (jobs.length > 0) {
-      showToast('Render batch completed successfully!', 'success');
-    }
-    if (renderStatusEl) renderStatusEl.textContent = 'Status: Finished';
+    if (renderStatusEl) renderStatusEl.textContent = STRINGS.RENDER.STATUS_FINISHED;
   });
 
   if (scanRenderBtn) {
-    scanRenderBtn.addEventListener('click', () => {
-      const renderFolders = getRenderFolders ? getRenderFolders() : [];
-      if (!renderFolders || renderFolders.length === 0) {
-        showToast('Please add at least one render directory.', 'error');
-        return;
-      }
-      showToast('Scanning render directories...', 'info');
-      scanRenderDirectories(renderFolders)
-        .then((takes) => {
-          const count = takes ? takes.length : 0;
-          showToast(`Scanned ${count} render take(s).`, 'info');
-
-          const container = document.querySelector('#render-job-container');
-          if (container) {
-            container.innerHTML =
-              takes && takes.length > 0
-                ? takes
-                    .map(
-                      (t) =>
-                        // base_name is the canonical display field on SerializedRenderJob
-                        `<div style="padding: 6px; border-bottom: 1px solid #444; font-family: monospace;">` +
-                        `<span style="color:#aaa;">[${t.clip_type}]</span> ` +
-                        `${t.base_name} &mdash; ${t.frame_count} frames` +
-                        `</div>`,
-                    )
-                    .join('')
-                : '<p style="color: #888;">No render takes detected.</p>';
-          }
-        })
-        .catch((err) => {
-          console.error('IPC Execution Error (scan_render_directories):', err);
-          showToast('Error scanning render directories: ' + err, 'error');
-        });
+    let scanFoundCount = 0;
+    listen('render_scan_status', () => {
+      // Payload is just "Found take: <name>" per take — the count is what
+      // the status line needs, not the name, so this stays a cheap counter
+      // rather than parsing/echoing every take's name into the DOM.
+      scanFoundCount += 1;
+      if (renderStatusEl) renderStatusEl.textContent = STRINGS.RENDER.scanFoundSoFar(scanFoundCount);
     });
-  }
 
-  if (startRenderBtn) {
-    startRenderBtn.addEventListener('click', () => {
-      const renderFolders = getRenderFolders ? getRenderFolders() : [];
-      if (!renderFolders || renderFolders.length === 0) {
-        showToast('Please add at least one render directory.', 'error');
+    scanRenderBtn.addEventListener('click', () => {
+      const captureLocations = getCaptureLocations ? getCaptureLocations() : [];
+      if (!captureLocations || captureLocations.length === 0) {
+        showToast(STRINGS.RENDER.ADD_RENDER_DIR_REQUIRED, 'error');
         return;
       }
 
-      const codecVal = document.querySelector('#render-codec-select')?.value || 'prores';
+      const codecVal = getSelectedCodec();
       const fpsVal = parseInt(document.querySelector('#render-fps-input')?.value, 10) || 300;
       const maxConcurrentVal = Math.min(8, Math.max(1, parseInt(document.querySelector('#render-max-concurrent-input')?.value, 10) || 2));
+      checkNvencConcurrencyWarning();
       const exportDirs = (getExportDirs ? getExportDirs() : []).filter(Boolean);
       // FFmpeg override is shared with the capture config panel.
       const ffmpegPathVal = document.querySelector('#ffmpeg-override-path-input')?.value?.trim() || null;
 
-      showToast('Initializing render batch...', 'info');
-      startRenderBtn.disabled = true;
-      if (cancelRenderBtn) cancelRenderBtn.disabled = false;
-      if (renderStatusEl) renderStatusEl.textContent = 'Status: Scanning for takes...';
+      scanFoundCount = 0;
+      showToast(STRINGS.RENDER.SCANNING_TOAST, 'info');
+      scanRenderBtn.disabled = true;
+      if (renderStatusEl) renderStatusEl.textContent = STRINGS.RENDER.STATUS_SCANNING;
 
       const renderPayload = {
-        render_directories: renderFolders,
+        render_directories: captureLocations,
         codec: codecVal,
         fps: fpsVal,
         ffmpeg_path: ffmpegPathVal || null,
@@ -260,13 +473,41 @@ export function initRenderUI(getRenderFolders, getExportDirs, onSettingsChange) 
         max_concurrent_renders: maxConcurrentVal,
       };
 
-      executeRenderBatch(renderPayload)
-        .then(() => {
-          showToast('Render batch queued successfully!', 'success');
+      // Populates the real job table (below) as Queued rows via the
+      // render_jobs_snapshot event this emits — not a preview. Start Render
+      // Batch is what actually kicks off the scheduler; this only stages it,
+      // so there's a real window to review the batch or toggle Skip on an
+      // OBS-shaped job before anything runs.
+      queueRenderBatch(renderPayload)
+        .then((count) => {
+          showToast(STRINGS.RENDER.scannedTakesToast(count), count > 0 ? 'success' : 'info');
+          if (renderStatusEl) {
+            renderStatusEl.textContent = count > 0
+              ? STRINGS.RENDER.scanCompleteStatus(count)
+              : STRINGS.MAIN.statusGeneric(STRINGS.RENDER.NO_RENDER_TAKES_DETECTED);
+          }
+          if (count === 0) scanRenderBtn.disabled = false;
         })
         .catch((err) => {
-          console.error('IPC Execution Error (executeRenderBatch):', err);
-          showToast('Error executing render batch: ' + err, 'error');
+          showToast(STRINGS.RENDER.scanDirError(err), 'error');
+          if (renderStatusEl) renderStatusEl.textContent = STRINGS.RENDER.STATUS_SCAN_FAILED;
+          scanRenderBtn.disabled = false;
+        });
+    });
+  }
+
+  if (startRenderBtn) {
+    startRenderBtn.addEventListener('click', () => {
+      showToast(STRINGS.RENDER.INITIALIZING_RENDER_BATCH, 'info');
+      startRenderBtn.disabled = true;
+      if (cancelRenderBtn) cancelRenderBtn.disabled = false;
+
+      startQueuedRender()
+        .then(() => {
+          showToast(STRINGS.RENDER.RENDER_BATCH_QUEUED, 'success');
+        })
+        .catch((err) => {
+          showToast(STRINGS.RENDER.renderBatchError(err), 'error');
           if (startRenderBtn) startRenderBtn.disabled = false;
           if (cancelRenderBtn) cancelRenderBtn.disabled = true;
         });
@@ -275,7 +516,7 @@ export function initRenderUI(getRenderFolders, getExportDirs, onSettingsChange) 
 
   if (cancelRenderBtn) {
     cancelRenderBtn.addEventListener('click', () => {
-      showToast('Cancelling render batch...', 'info');
+      showToast(STRINGS.RENDER.CANCELLING_RENDER_BATCH, 'info');
       cancelRenderBtn.disabled = true;
       cancelRenderBatch().catch((err) => {
         console.error('IPC Execution Error (cancelRenderBatch):', err);
@@ -287,14 +528,31 @@ export function initRenderUI(getRenderFolders, getExportDirs, onSettingsChange) 
   // Codec/FPS/max-concurrent aren't read until Start Render Batch is
   // clicked, but they're still persisted settings — nothing previously
   // wired their edits to a save.
+  const codecEl = document.querySelector('#render-codec-select');
+  const maxConcurrentEl = document.querySelector('#render-max-concurrent-input');
+  // NVENC's concurrent-session limit is unlocked on Quadro/RTX 40-series+
+  // but commonly capped at 3-5 on consumer GeForce cards — exceeding it
+  // doesn't fail upfront, it surfaces as an opaque FFmpeg error buried in
+  // a job's error log. Warn eagerly rather than let that be a mystery.
+  function checkNvencConcurrencyWarning() {
+    const isNvenc = (codecEl?.value || '') === 'h264_nvenc';
+    const maxConcurrent = parseInt(maxConcurrentEl?.value, 10) || 0;
+    if (isNvenc && maxConcurrent > 3) {
+      showToast(
+        STRINGS.RENDER.nvencWarning(maxConcurrent),
+        'warning',
+        6000
+      );
+    }
+  }
   if (onSettingsChange) {
-    const codecEl = document.querySelector('#render-codec-select');
     if (codecEl) codecEl.addEventListener('change', () => onSettingsChange());
     const fpsEl = document.querySelector('#render-fps-input');
     if (fpsEl) fpsEl.addEventListener('input', () => onSettingsChange());
-    const maxConcurrentEl = document.querySelector('#render-max-concurrent-input');
     if (maxConcurrentEl) maxConcurrentEl.addEventListener('input', () => onSettingsChange());
   }
+  if (codecEl) codecEl.addEventListener('change', checkNvencConcurrencyWarning);
+  if (maxConcurrentEl) maxConcurrentEl.addEventListener('change', checkNvencConcurrencyWarning);
 
   refreshExportPoolFree(getExportDirs);
   // Re-check free space periodically while the pane is open — cheap

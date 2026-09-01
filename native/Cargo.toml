@@ -27,6 +27,18 @@ rfd = "0.14"
 open = "5.1"
 sysinfo = "0.29"
 keepawake = "0.6"
+# Map fetching (see patch/map_fetch.rs). Blocking and small on purpose: the
+# download runs on a worker thread and verifies before it installs, so there is
+# nothing for an async client to overlap with.
+ureq = "3"
+# obs-websocket client (docs/obs_alternate_capture.md, #65). Blocking, like
+# `ureq` above and for the same reason: the capture engine is thread-and-poll
+# throughout, and `CaptureCleanupGuard::drop` has to be able to send a
+# `StopRecord` without an async runtime under it. `sha2`/`base64` are only for
+# the v5 challenge/salt handshake.
+tungstenite = { version = "0.30.0", default-features = false, features = ["handshake"] }
+sha2 = "0.11.0"
+base64 = "0.23.1"
 
 [[bin]]
 name = "preview_cli"
@@ -60,6 +72,17 @@ path = "src/bin/test_builder.rs"
 name = "check_ticks"
 path = "src/bin/check_ticks.rs"
 
+[[bin]]
+name = "strip_decals"
+path = "src/bin/strip_decals.rs"
+
+[[bin]]
+name = "probe_decals"
+path = "src/bin/probe_decals.rs"
+
+[[bin]]
+name = "probe_obs"
+path = "src/bin/probe_obs.rs"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2.100"

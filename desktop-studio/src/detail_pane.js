@@ -2,6 +2,8 @@ import { switchNavTab } from './nav.js';
 import { openAnalyzerDemo } from './analyzer_pane.js';
 import { launchDemoPreview, generateAllPreviews, checkEngineProcesses, killEngineProcesses } from './ipc_bridge.js';
 import { showToast } from './toast.js';
+import { isRangeModified as isKillRangeModified } from './take_index.js';
+import { STRINGS } from './strings.js';
 
 let currentDemo = null;
 let currentDemoIdx = null;
@@ -10,12 +12,21 @@ let currentDemoIdx = null;
 let currentGetAllDemos = null;
 // Optional callback supplied by main.js — re-runs capture_pane.js's disk
 // space launch guard, since toggling a streak's selection changes the
-// required-bytes side of that comparison.
+// required-bytes side of that comparison. Fired on every renderDetailView()
+// call, including pure re-renders (selecting a different demo, a capture/
+// render finishing) — NOT a signal that something was edited. See
+// currentOnDirty below for that.
 let currentOnSelectionChange = null;
+// Optional callback supplied by main.js — marks the project dirty. Fired
+// only from the actual field-edit listeners below (checkbox, kill range,
+// status, notes), never from a plain re-render, so loading a session or
+// switching the selected demo doesn't falsely flag unsaved changes.
+let currentOnDirty = null;
 
-export function initDetailPane(getAllDemos, onSelectionChange) {
+export function initDetailPane(getAllDemos, onSelectionChange, onDirty) {
   currentGetAllDemos = getAllDemos;
   currentOnSelectionChange = onSelectionChange || null;
+  currentOnDirty = onDirty || null;
 
   // The timeline canvas now lives inside the collapsed-by-default Advanced
   // Diagnostics <details> block, so it has 0 clientWidth/clientHeight (and
@@ -61,10 +72,35 @@ function hideProcessDetectorModal() {
 /** Parks a launch intent behind the Half-Life Preview Detector modal —
  *  `runFn` is invoked (no args) once the user picks "Force Relaunch" and any
  *  prior hl.exe/hlae.exe instance has been killed. Exported so other panes
- *  can reuse the same guarded-launch flow instead of duplicating it. */
-export function requestProcessGuardedLaunch(runFn) {
+ *  can reuse the same guarded-launch flow instead of duplicating it.
+ *
+ *  Pass `{ forBatch: true }` for a capture batch, which fails for a different
+ *  reason and has nothing to copy a view command for. */
+export function requestProcessGuardedLaunch(runFn, options = {}) {
   pendingLaunch = { run: runFn };
+  applyProcessModalCopy(options.forBatch === true);
   showProcessDetectorModal();
+}
+
+// The modal is shared, so its wording has to match whichever intent parked the
+// launch. A preview corrupts a session quietly; a batch is refused outright by
+// the engine, and only after every demo has already been patched. "Copy View
+// Command" has nothing to copy in the batch case.
+function applyProcessModalCopy(forBatch) {
+  const parts = [
+    ['#process-modal-title', forBatch ? 'TITLE_BATCH' : 'TITLE'],
+    ['#process-modal-body', forBatch ? 'BODY_BATCH' : 'BODY'],
+  ];
+  for (const [selector, key] of parts) {
+    const el = document.querySelector(selector);
+    if (!el) continue;
+    // Both the attribute and the text: the text is what is on screen now, the
+    // attribute is what a later language switch re-reads.
+    el.dataset.str = `PROCESS_DETECTOR_MODAL.${key}`;
+    el.textContent = STRINGS.PROCESS_DETECTOR_MODAL[key];
+  }
+  const copyBtn = document.querySelector('#process-modal-copy-command-btn');
+  if (copyBtn) copyBtn.style.display = forBatch ? 'none' : '';
 }
 
 /** Reflects current selection state onto the Launch Preview (per-demo) and
@@ -113,7 +149,7 @@ function updateStreakVisuals(streak) {
     // unresolved weapon name (e.g. a missing localization key) can never
     // leave a blank array element — `Array.prototype.join` would otherwise
     // render that as an orphaned leading/embedded separator with no name.
-    const weaponClean = String(weapon || '').replace(/^Weapon::/, '').trim() || 'Unknown';
+    const weaponClean = String(weapon || '').replace(/^Weapon::/, '').trim() || STRINGS.ANALYZER.WEAPON_UNKNOWN;
     if (i === 0) return weaponClean;
     const gapSec = Math.round(Math.max(absTime - slice[i - 1][1], 0));
     return `(+${Math.floor(gapSec / 60)}:${String(gapSec % 60).padStart(2, '0')}) ${weaponClean}`;
@@ -132,7 +168,15 @@ window.addEventListener("DOMContentLoaded", () => {
   if (btnSelectAll) {
     btnSelectAll.addEventListener('click', () => {
       if (!currentDemo || !currentDemo.streaks) return;
-      currentDemo.streaks.forEach(s => { s.selected = true; });
+      // Only the rows on screen. `demo.streaks` holds every player's streaks,
+      // and the table shows the recording player's at or above Min Kills — so
+      // selecting the raw list checked highlights belonging to other players
+      // that were never rendered and could not be unchecked. The batch groups
+      // by (demo, target player), so each of those became its own chained demo:
+      // one 15-row table produced five passes over the same file.
+      currentDemo.streaks.forEach(s => {
+        if (isVisibleStreak(currentDemo, s)) s.selected = true;
+      });
       const checkboxes = document.querySelectorAll('#detail-streaks-container input[type="checkbox"]');
       checkboxes.forEach(cb => { cb.checked = true; });
       renderDetailView(currentDemo, currentDemoIdx);
@@ -142,6 +186,10 @@ window.addEventListener("DOMContentLoaded", () => {
   if (btnDeselectAll) {
     btnDeselectAll.addEventListener('click', () => {
       if (!currentDemo || !currentDemo.streaks) return;
+      // Deliberately NOT filtered, unlike Select All. This is the escape hatch:
+      // if anything ever selects a streak the table does not show, this is what
+      // clears it. Erring wide costs nothing here; erring narrow leaves a
+      // capture running that nobody asked for.
       currentDemo.streaks.forEach(s => { s.selected = false; });
       const checkboxes = document.querySelectorAll('#detail-streaks-container input[type="checkbox"]');
       checkboxes.forEach(cb => { cb.checked = false; });
@@ -160,10 +208,10 @@ window.addEventListener("DOMContentLoaded", () => {
   async function performLaunchPreview(hlaePath, hlPath, selected) {
     btnLaunchPreview.disabled = true;
     const originalLabel = btnLaunchPreview.textContent;
-    btnLaunchPreview.textContent = 'Launching…';
+    btnLaunchPreview.textContent = STRINGS.HIGHLIGHTS.LAUNCHING;
     try {
       await launchDemoPreview(hlaePath, hlPath, selected);
-      showToast('Preview launching in HLAE...', 'info');
+      showToast(STRINGS.HIGHLIGHTS.PREVIEW_LAUNCHING_TOAST, 'info');
     } catch (err) {
       // Already toasted by ipc_bridge.js.
     } finally {
@@ -177,7 +225,7 @@ window.addEventListener("DOMContentLoaded", () => {
       const hlaePath = document.querySelector('#hlae-path-input')?.value?.trim();
       const hlPath = document.querySelector('#hl-path-input')?.value?.trim();
       if (!hlaePath || !hlPath) {
-        showToast('Configure the HLAE and Half-Life executable paths in Batch Capture Config before previewing.', 'error');
+        showToast(STRINGS.HIGHLIGHTS.HLAE_PATH_REQUIRED, 'error');
         return;
       }
       if (!currentDemo || !currentDemo.streaks) return;
@@ -230,10 +278,10 @@ window.addEventListener("DOMContentLoaded", () => {
       const viewCommand = `viewdemo ${stem}_preview`;
       try {
         await navigator.clipboard.writeText(viewCommand);
-        showToast(`Copied "${viewCommand}" to clipboard.`, 'success');
+        showToast(STRINGS.HIGHLIGHTS.copiedViewCommand(viewCommand), 'success');
       } catch (err) {
         console.error("Failed to copy view command to clipboard:", err);
-        showToast('Failed to copy the view command to clipboard.', 'error');
+        showToast(STRINGS.HIGHLIGHTS.COPY_VIEW_COMMAND_FAILED, 'error');
       }
       hideProcessDetectorModal();
     });
@@ -252,7 +300,7 @@ window.addEventListener("DOMContentLoaded", () => {
       const hlaePath = document.querySelector('#hlae-path-input')?.value?.trim();
       const hlPath = document.querySelector('#hl-path-input')?.value?.trim();
       if (!hlaePath || !hlPath) {
-        showToast('Configure the HLAE and Half-Life executable paths in Batch Capture Config before previewing.', 'error');
+        showToast(STRINGS.HIGHLIGHTS.HLAE_PATH_REQUIRED, 'error');
         return;
       }
       const allDemos = currentGetAllDemos ? currentGetAllDemos() : [];
@@ -261,10 +309,10 @@ window.addEventListener("DOMContentLoaded", () => {
 
       btnGenerateAllPreviews.disabled = true;
       const originalLabel = btnGenerateAllPreviews.textContent;
-      btnGenerateAllPreviews.textContent = 'Generating…';
+      btnGenerateAllPreviews.textContent = STRINGS.HIGHLIGHTS.GENERATING;
       try {
         const count = await generateAllPreviews(hlaePath, hlPath, allSelected);
-        showToast(`Generated ${count} preview demo(s). Load them manually via HLAE.`, 'success');
+        showToast(STRINGS.HIGHLIGHTS.generatedPreviews(count), 'success');
       } catch (err) {
         // Already toasted by ipc_bridge.js.
       } finally {
@@ -274,6 +322,35 @@ window.addEventListener("DOMContentLoaded", () => {
     });
   }
 });
+
+/**
+ * Whether a streak is one of the rows the Highlights table actually shows.
+ *
+ * Two filters, and both matter to anything that acts on "all" of them:
+ *
+ *  1. **The recording player only.** `demo.streaks` holds every player's
+ *     streaks — everyone in the server. Gated on `local_player_index` rather
+ *     than `demo.is_pov`, because is_pov fires on any demo containing
+ *     SvcHltv/SvcDirector messages, which a normal player recording also picks
+ *     up when an HLTV caster happens to be spectating. `scan_demo_for_highlights`
+ *     already rejects true HLTV proxy files, so a missing index means "no
+ *     resolvable owner", not "spectator demo".
+ *  2. **Min Kills.**
+ *
+ * Select All uses this too. When it did not, it checked highlights belonging to
+ * other players that were never rendered and could not be unchecked — and since
+ * the batch builder groups by (demo, target player), each of those became its
+ * own chained demo. One fifteen-row table turned into five passes over the same
+ * file.
+ */
+export function isVisibleStreak(demo, streak, minKills) {
+  if (!demo || !streak) return false;
+  if (demo.local_player_index !== null && demo.local_player_index !== undefined) {
+    if (streak.player_index !== demo.local_player_index) return false;
+  }
+  const threshold = minKills ?? parseInt(document.querySelector('#input-min-kills')?.value || "1", 10);
+  return streak.kill_count >= threshold;
+}
 
 export function renderDetailView(demo, selectedDemoIdx) {
   currentDemo = demo;
@@ -300,17 +377,24 @@ export function renderDetailView(demo, selectedDemoIdx) {
   if (!titleEl || !container) return;
 
   if (!demo) {
-    titleEl.textContent = 'Highlight Details (Select a Demo)';
-    container.innerHTML = '<p style="color: #888;">Select a demo in the Master List to view its killstreak details.</p>';
+    // No "(Select a Demo)" here — the empty-state message below already
+    // says exactly that; repeating it in the title was pure redundancy.
+    titleEl.textContent = STRINGS.HIGHLIGHTS.DEFAULT_TITLE;
+    titleEl.title = '';
+    container.innerHTML = `<p style="color: #888;">${STRINGS.HIGHLIGHTS.EMPTY_SELECT_DEMO}</p>`;
     return;
   }
 
   const minKills = parseInt(document.querySelector('#input-min-kills')?.value || "1", 10);
-  titleEl.textContent = `Highlight Details: ${demo.name}`;
+  titleEl.textContent = STRINGS.HIGHLIGHTS.detailTitle(demo.name);
+  // CSS truncates this with an ellipsis at narrow widths (same treatment as
+  // the Master Queue's demo-name column) — the title attribute keeps the
+  // full name reachable on hover once it's cut off.
+  titleEl.title = STRINGS.HIGHLIGHTS.detailTitle(demo.name);
   container.innerHTML = '';
 
   if (!demo.streaks || demo.streaks.length === 0) {
-    container.innerHTML = '<p style="color: #888;">No killstreak highlights detected in this demo.</p>';
+    container.innerHTML = `<p style="color: #888;">${STRINGS.HIGHLIGHTS.EMPTY_NO_STREAKS}</p>`;
     return;
   }
 
@@ -321,15 +405,15 @@ export function renderDetailView(demo, selectedDemoIdx) {
   table.innerHTML = `
     <thead>
       <tr>
-        <th>Row #</th>
-        <th>Sel</th>
-        <th>Kill Range</th>
-        <th>Kills</th>
-        <th>Time</th>
-        <th>Dur.</th>
-        <th>Status</th>
-        <th>Notes</th>
-        <th>Details</th>
+        <th>${STRINGS.HIGHLIGHTS.COL_ROW_NUM}</th>
+        <th>${STRINGS.HIGHLIGHTS.COL_SEL}</th>
+        <th>${STRINGS.HIGHLIGHTS.COL_KILL_RANGE}</th>
+        <th>${STRINGS.HIGHLIGHTS.COL_KILLS}</th>
+        <th>${STRINGS.HIGHLIGHTS.COL_TIME}</th>
+        <th>${STRINGS.HIGHLIGHTS.COL_DUR}</th>
+        <th>${STRINGS.HIGHLIGHTS.COL_STATUS}</th>
+        <th>${STRINGS.HIGHLIGHTS.COL_NOTES}</th>
+        <th>${STRINGS.HIGHLIGHTS.COL_DETAILS}</th>
       </tr>
     </thead>
     <tbody></tbody>
@@ -343,22 +427,10 @@ export function renderDetailView(demo, selectedDemoIdx) {
   let renderedRowNum = 0;
 
   demo.streaks.forEach((streak, streakIdx) => {
-    // 1. POV Filter — gate on whether the analyzer actually resolved a
-    // recording player (local_player_index), not on demo.is_pov. is_pov
-    // reflects whether the demo contains any SvcHltv/SvcDirector message
-    // anywhere in the file, which also fires on a normal player-recorded
-    // demo if an HLTV caster was merely spectating the live match (those
-    // are server-broadcast messages every connected client picks up) — so
-    // it's not a reliable signal that this is an actual spectator/HLTV
-    // recording with no single owner. scan_demo_for_highlights already
-    // rejects true HLTV proxy files before local_player_index is ever
-    // computed, so None here means "no resolvable owner", not "is_pov".
-    if (demo.local_player_index !== null && demo.local_player_index !== undefined) {
-       if (streak.player_index !== demo.local_player_index) return;
-    }
-
-    // 2. Min Kills filter
-    if (streak.kill_count < minKills) {
+    // Both filters live in isVisibleStreak so Select All applies exactly the
+    // same rule. They disagreed once, and the result was five chained demos
+    // from a fifteen-row table.
+    if (!isVisibleStreak(demo, streak, minKills)) {
       return;
     }
 
@@ -389,7 +461,7 @@ export function renderDetailView(demo, selectedDemoIdx) {
 
     // Details: precomputed weapon/timing chain from the backend
     // (e.g. "Rifle (+0:03) Rifle" — first kill weapon + gap + weapon chain).
-    const timelineText = streak.timeline_string || `${streak.kill_count} kills`;
+    const timelineText = streak.timeline_string || STRINGS.HIGHLIGHTS.fallbackKillCount(streak.kill_count);
 
     // Status badge colours matching HighlightStatus enum
     const statusColors = {
@@ -398,11 +470,19 @@ export function renderDetailView(demo, selectedDemoIdx) {
       Rendered: '#2196f3',
       None: '#555',
     };
-    const statusLabel = streak.status || 'Pending';
+    const statusLabel = streak.status || STRINGS.HIGHLIGHTS.STATUS_PENDING_DEFAULT;
     const statusColor = statusColors[statusLabel] || '#888';
 
     const maxKillIdx = Math.max((streak.kills || []).length - 1, 0);
-    const isRangeModified = streak.start_index > 0 || streak.end_index < maxKillIdx;
+    const isRangeModified = isKillRangeModified(streak);
+
+    // Set by capture_pane.js's capture_takes_verified handler when this
+    // highlight's take was an overlap merge covering more than one highlight
+    // (builder.rs's merge loop) — surfaced so it's obvious at a glance why
+    // two rows flipped to Captured together instead of independently.
+    const mergedBadge = streak.mergedTakeKey
+      ? `<span title="${STRINGS.HIGHLIGHTS.mergedBadgeTitle(streak.mergedCount)}" style="margin-left:6px;font-size:0.75em;color:#ff9800;border:1px solid #ff9800;border-radius:2px;padding:1px 4px;cursor:help;">${STRINGS.HIGHLIGHTS.mergedTakeBadge(streak.mergedTakeKey.split('/').pop())}</span>`
+      : '';
 
     tr.innerHTML = `
       <td style="padding: 8px;">${rowNum}</td>
@@ -416,21 +496,21 @@ export function renderDetailView(demo, selectedDemoIdx) {
           <span>-</span>
           <input type="number" class="kr-end-input" min="1" max="${maxKillIdx + 1}"
                  value="${streak.end_index + 1}" style="width:38px;background:#1a1a1a;color:inherit;border:1px solid #444;border-radius:2px;" />
-          ${isRangeModified ? '<button type="button" class="kr-reset-btn" title="Reset to full range" style="background:transparent;border:1px solid #555;border-radius:2px;color:#aaa;cursor:pointer;">↺</button>' : ''}
+          ${isRangeModified ? `<button type="button" class="kr-reset-btn" title="${STRINGS.HIGHLIGHTS.KR_RESET_TITLE}" style="background:transparent;border:1px solid #555;border-radius:2px;color:#aaa;cursor:pointer;">↺</button>` : ''}
         </div>
       </td>
       <td style="padding: 8px; font-weight: bold;">${streak.kill_count}</td>
       <td style="padding: 8px;">${timeStr}</td>
-      <td style="padding: 8px;">${durSecs}s</td>
+      <td style="padding: 8px;">${STRINGS.HIGHLIGHTS.secondsSuffix(durSecs)}</td>
       <td style="padding: 8px;">
         <select class="streak-status-select" style="color: ${statusColor}; font-size: 0.85em;">
-          ${['None', 'Pending', 'Captured', 'Rendered'].map(s =>
+          ${STRINGS.HIGHLIGHTS.STATUS_OPTIONS.map(s =>
             `<option value="${s}" ${s === statusLabel ? 'selected' : ''}>${s}</option>`
           ).join('')}
-        </select>
+        </select>${mergedBadge}
       </td>
       <td style="padding: 8px;">
-        <input type="text" class="streak-notes-input" placeholder="Add note..." value="${(streak.notes || '').replace(/"/g, '&quot;')}" style="background: #1a1a1a; color: #fff; border: 1px solid #444; border-radius: 3px; padding: 2px; width: 100%;" />
+        <input type="text" class="streak-notes-input" placeholder="${STRINGS.HIGHLIGHTS.NOTES_PLACEHOLDER}" value="${(streak.notes || '').replace(/"/g, '&quot;')}" style="background: #1a1a1a; color: #fff; border: 1px solid #444; border-radius: 3px; padding: 2px; width: 100%;" />
       </td>
       <td class="details-cell" title="${timelineText}">${timelineText}</td>
     `;
@@ -440,6 +520,8 @@ export function renderDetailView(demo, selectedDemoIdx) {
       streak.selected = e.target.checked;
       renderTimeline(currentDemo);
       updatePreviewButtonStates();
+      if (currentOnSelectionChange) currentOnSelectionChange();
+      if (currentOnDirty) currentOnDirty();
     });
 
     const startInput = tr.querySelector('.kr-start-input');
@@ -449,12 +531,16 @@ export function renderDetailView(demo, selectedDemoIdx) {
       streak.start_index = Number.isNaN(v) ? 0 : v;
       updateStreakVisuals(streak);
       renderDetailView(currentDemo, currentDemoIdx);
+      if (currentOnSelectionChange) currentOnSelectionChange();
+      if (currentOnDirty) currentOnDirty();
     });
     endInput.addEventListener('change', () => {
       const v = Math.max(Math.min(parseInt(endInput.value, 10) - 1, maxKillIdx), streak.start_index);
       streak.end_index = Number.isNaN(v) ? maxKillIdx : v;
       updateStreakVisuals(streak);
       renderDetailView(currentDemo, currentDemoIdx);
+      if (currentOnSelectionChange) currentOnSelectionChange();
+      if (currentOnDirty) currentOnDirty();
     });
 
     const resetBtn = tr.querySelector('.kr-reset-btn');
@@ -464,6 +550,8 @@ export function renderDetailView(demo, selectedDemoIdx) {
         streak.end_index = maxKillIdx;
         updateStreakVisuals(streak);
         renderDetailView(currentDemo, currentDemoIdx);
+        if (currentOnSelectionChange) currentOnSelectionChange();
+        if (currentOnDirty) currentOnDirty();
       });
     }
 
@@ -472,11 +560,20 @@ export function renderDetailView(demo, selectedDemoIdx) {
       streak.status = e.target.value;
       statusSelect.style.color = statusColors[e.target.value] || '#888';
       if (currentOnSelectionChange) currentOnSelectionChange();
+      if (currentOnDirty) currentOnDirty();
     });
 
     const notesInput = tr.querySelector('.streak-notes-input');
     notesInput.addEventListener('input', (e) => {
       streak.notes = e.target.value;
+    });
+    // Master Queue's tracked badge (master_pane.js) depends on whether this
+    // streak has a note — 'change' (fires on blur/Enter, not per keystroke)
+    // rather than 'input' so typing a note doesn't rebuild the whole Master
+    // Queue table on every character, matching the Kill Range inputs above.
+    notesInput.addEventListener('change', () => {
+      if (currentOnSelectionChange) currentOnSelectionChange();
+      if (currentOnDirty) currentOnDirty();
     });
 
     tbody.appendChild(tr);
@@ -506,7 +603,7 @@ export function renderTimeline(demo) {
     ctx.fillStyle = '#666666';
     ctx.font = '12px sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('No streak timeline available', width / 2, height / 2);
+    ctx.fillText(STRINGS.HIGHLIGHTS.TIMELINE_NO_DATA, width / 2, height / 2);
     return;
   }
 
@@ -543,9 +640,9 @@ export function renderTimeline(demo) {
   ctx.fillStyle = '#888888';
   ctx.font = '10px monospace';
   ctx.textAlign = 'left';
-  ctx.fillText(`Tick ${minTick}`, padding, height - 5);
+  ctx.fillText(STRINGS.HIGHLIGHTS.tickLabel(minTick), padding, height - 5);
   ctx.textAlign = 'right';
-  ctx.fillText(`Tick ${maxTick}`, width - padding, height - 5);
+  ctx.fillText(STRINGS.HIGHLIGHTS.tickLabel(maxTick), width - padding, height - 5);
 
   demo.streaks.forEach((streak) => {
     // Opt-in model, matching the checkbox default and the row-build loop

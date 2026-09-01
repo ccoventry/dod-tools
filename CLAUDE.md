@@ -20,11 +20,11 @@ Cargo workspace (`Cargo.toml`, resolver "3", edition 2024) containing the follow
   - `patch/` — Demo-file binary patcher (`engine.rs`, `builder.rs`, `scanner.rs`, `highlevel.rs`, `types.rs`). Scans, injects (bookmarks, director commands, `DRC_CMD_INEYE`), and rewrites GoldSrc frames.
   - `hlcr/` — Take management & FFmpeg transcoding (`renderer.rs`, `scanner.rs`, `config.rs`, `autosave.rs`).
   - `shared/`, `sys/`, `utils/` — Path resolution, disk-space queries, demo hashing.
-  - `views/export_manager.rs` — Shared export-pool/drive-routing logic.
   - `src/bin/cli/main.rs` → `preview_cli` binary: Headless entry point with drag-and-drop support.
 - **`hl-demo-auditor/`** — Standalone duplicate-demo detector using size + header hash (`fnv1a_hash`).
 - **`benchmark/`** — Performance benchmarking binary for the parsing/patching pipeline.
 - **`desktop-studio/`** — Active Tauri v2 + Vite/JS frontend workspace (`src-tauri/` backend and `src/*.js` frontend modules).
+- **`web-analyzer/`** — `analysis` compiled to `wasm32-unknown-unknown`, deployed to GitHub Pages on every push to `main` (`.github/workflows/deploy_web.yml`). Static frontend lives in `www/`.
 
 > The experimental `xash-transcode/` crate (GoldSrc HLDEMO → Xash3D IDEM transcoder for the browser preview viewer) lives on its own `experimental/xash-transcode` branch, not on `main`/`dev`/`feature/tauri-migration`. See that branch's `docs/web_preview_viewer.md` before touching it.
 
@@ -56,7 +56,7 @@ Cargo workspace (`Cargo.toml`, resolver "3", edition 2024) containing the follow
 ## System Guardrails & Agent Directives
 
 ### Context & Execution Boundaries
-- **Context Scope:** Rely strictly on active chat code and files inside `docs/`. Strictly ignore any open files in hidden dot-directories to prevent prompt contamination. Do not index `target/`, `demos/`, or `Cargo.lock`.
+- **Context Scope:** Rely strictly on active chat code and files inside `docs/`. Strictly ignore any open files in hidden dot-directories to prevent prompt contamination. Do not index `target/`, `local/` (demos and screenshots), or `Cargo.lock`.
 - **Locked Files:** Do not modify build/deployment configs, environment files, lint rules, or public APIs unless explicitly requested.
 - **Behavior:** Be concise. Suppress conversational filler, apologies, and requirement summaries.
 - **Code Edits:** Apply minimal changes directly to files. Never rewrite unchanged lines or entire files unnecessarily.
@@ -64,9 +64,20 @@ Cargo workspace (`Cargo.toml`, resolver "3", edition 2024) containing the follow
 
 ### Terminal & Shell Rules
 - **Diagnostics:** Never output raw compiler logs. Provide concise, single-sentence failure summaries and direct mechanical fixes.
-- **Pipeline Execution:** DO NOT run `cargo check` or `cargo run` internally without piping output. Pipe execution through `tuf` (e.g., `cmd 2>&1 | tuf`).
 - **Execution Bypass:** Use `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` for blocked scripts. For unsigned binaries blocked by WDAC, execute via `run.ps1` to sequence process stops, build steps, and signature updates.
-- **Shell Chaining:** Collapse multi-step shell commands into a single sequence using semicolons `;`.
+
+### GitHub Issues & PRs
+- **After creating a PR**, check whether a GitHub issue already exists for the same work. If one does, link it to the PR via GraphQL, not just a `Closes #NN` line in the PR body — that text alone does not populate the issue's `closedByPullRequestsReferences`, so a "yes there's a PR" check on the issue can miss it:
+      PR_ID=$(gh api repos/<owner>/<repo>/pulls/<pr-number> --jq .node_id)
+      ISSUE_ID=$(gh api repos/<owner>/<repo>/issues/<issue-number> --jq .node_id)
+      gh api graphql -f query='
+        mutation($prId: ID!, $issueId: ID!) {
+          addCloseIssueReferences(input: {issueId: $issueId, pullRequestIds: [$prId]}) {
+            clientMutationId
+          }
+        }' -f prId="$PR_ID" -f issueId="$ISSUE_ID"
+  Still include `Closes #NN` in the PR body too — the GraphQL call is in addition to that, not a replacement for it.
+- **Do not create an issue after every PR as a matter of habit.** A PR that fixes something noticed and resolved in the same pass needs no separate paper trail — the PR description already is that record, and an issue closed minutes later by the very PR that created it is noise. Only file one for work you are deliberately *not* doing right now: something noticed but out of scope for the current PR, or a fix knowingly deferred rather than made. That is the actual signal — deferral, not the mere absence of a pre-existing issue.
 
 ---
 
@@ -87,16 +98,7 @@ Cargo workspace (`Cargo.toml`, resolver "3", edition 2024) containing the follow
 - **Cbuf Payload Limit:** Command strings injected per tick must stay strictly under GoldSrc's 64-byte `Cbuf_AddTextToBuffer` limit. Stagger long absolute paths across multiple ticks.
 - **Packet Integrity:** Never interleave injected frames inside existing `NetworkMessage` payloads. Injected bookmarks/director frames must be written as complete, standalone frames ahead of the original packet to prevent `svc_bad` buffer overflows.
 - **Path Escaping:** All runtime paths passed to HLAE console inputs must replace forward slashes with double-escaped backslashes (`.replace("/", "\\\\")`).
+- **Decal Ring:** `r_decals` bounds the rotating decal index and evicts nothing, so lowering it strands every decal above the new limit. Set it exactly once, at demo load, from `init_commands` — never mid-demo, never as an injected `ConsoleCommand` frame (that shifts every later frame ordinal by +1). See `docs/goldsrc_dod_quirks.md`.
+- **User Config Files:** The game's own `.cfg` files are the user's. **Detect and warn, never write.** They override nothing the app assumes — a `config.cfg` ending in `exec movie.cfg` can set `mirv_fov` or `r_decals` behind the pipeline entirely. `native/src/patch/cfg_scan.rs` is read-only by construction; keep it that way.
 - **Tauri IPC:** Every frontend `invoke()` call in `ipc_bridge.js` must implement a `.catch()` block to prevent swallowed Rust backend errors.
 - **Filesystem Picking:** Force the use of `@tauri-apps/plugin-dialog` native pickers instead of text input paths to prevent string escaping vulnerabilities.
-
----
-
-## Mandatory Task Completion Protocol
-
-Upon completion or blocking of any task, you MUST output a SINGLE markdown code block holding the return payload. The title MUST match the prompt title provided to you:
-
-    ### 📡 Return Payload for Web AI: [Exact Prompt Title]
-    - **Files Modified:** [List relative file paths]
-    - **Logic Changes:** [Point-form summary of modifications]
-    - **Terminal/Compiler Status:** [Status of build/test commands]

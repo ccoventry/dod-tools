@@ -5,8 +5,11 @@
   "windows": ["main"],
   "permissions": [
     "core:default",
+    "core:window:allow-destroy",
     "opener:default",
     "dialog:default",
-    "fs:default"
+    "fs:default",
+    "notification:default",
+    "updater:default"
   ]
 }

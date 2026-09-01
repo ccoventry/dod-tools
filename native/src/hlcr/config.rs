@@ -8,11 +8,16 @@ pub enum RenderCodec {
     NvencH264,
     /// Software libx264 — not in dev's original 3-variant enum. Added to
     /// preserve the Tauri rebuild's deliberate choice (see
-    /// docs/tauri_parity_audit.md Area 5) to keep both software and NVENC
+    /// docs/archive/tauri_parity_audit.md Area 5) to keep both software and NVENC
     /// H.264 as separate, explicit options rather than picking one.
     H264Software,
     ProRes,
     DnxHr,
+    /// "Skip" — leave an OBS take exactly as OBS wrote it: no FFmpeg pass at
+    /// all, just a copy into the export pool under the pipeline's naming.
+    /// Only meaningful for a clip with its own muxed-in audio (`ClipData.wav_file
+    /// == None`); `run_render_job` rejects it for anything else.
+    SourceCopy,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -35,7 +40,33 @@ impl RenderCodec {
             "h264" => Self::H264Software,
             "h264_nvenc" => Self::NvencH264,
             "dnxhr" => Self::DnxHr,
+            "source_copy" => Self::SourceCopy,
             _ => Self::ProRes,
+        }
+    }
+
+    /// Inverse of `from_str_id` — round-trips through the same string ids
+    /// (not `Debug` formatting) so autosave recovery can parse a persisted
+    /// codec back into the enum without a second, drifting mapping.
+    pub fn to_str_id(self) -> &'static str {
+        match self {
+            Self::H264Software => "h264",
+            Self::NvencH264 => "h264_nvenc",
+            Self::DnxHr => "dnxhr",
+            Self::ProRes => "prores",
+            Self::SourceCopy => "source_copy",
+        }
+    }
+
+    /// Short human-readable label for UI display (e.g. the render job
+    /// table's per-job Settings column).
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::H264Software => "H.264 (Software)",
+            Self::NvencH264 => "H.264 (NVENC)",
+            Self::DnxHr => "DNxHR",
+            Self::ProRes => "ProRes",
+            Self::SourceCopy => "Skip (Keep Original)",
         }
     }
 }
@@ -50,36 +81,6 @@ impl Default for RenderConfig {
             target_codec: RenderCodec::ProRes,
             max_concurrent_renders: 2,
         }
-    }
-}
-
-pub struct CodecPreset {
-    pub standard: Vec<&'static str>,
-    pub alpha: Vec<&'static str>,
-    pub ext_standard: &'static str,
-    pub ext_alpha: &'static str,
-}
-
-pub fn get_codec_preset(codec: &str) -> CodecPreset {
-    match codec {
-        "h264" => CodecPreset {
-            standard: vec!["-c:v", "libx264", "-preset", "fast", "-crf", "16", "-pix_fmt", "yuv420p"],
-            alpha: vec!["-c:v", "prores_ks", "-profile:v", "4444", "-pix_fmt", "yuva444p10le"],
-            ext_standard: ".mp4",
-            ext_alpha: ".mov",
-        },
-        "dnxhr" => CodecPreset {
-            standard: vec!["-c:v", "dnxhd", "-profile:v", "dnxhr_hq", "-pix_fmt", "yuv422p"],
-            alpha: vec!["-c:v", "dnxhd", "-profile:v", "dnxhr_444", "-pix_fmt", "yuv444p10le"],
-            ext_standard: ".mov",
-            ext_alpha: ".mov",
-        },
-        _ => CodecPreset { // Default is ProRes
-            standard: vec!["-c:v", "prores", "-profile:v", "3", "-pix_fmt", "yuv422p10le"],
-            alpha: vec!["-c:v", "prores_ks", "-profile:v", "4444", "-pix_fmt", "yuva444p10le"],
-            ext_standard: ".mov",
-            ext_alpha: ".mov",
-        },
     }
 }
 
@@ -113,4 +114,24 @@ pub fn save_config(config: &RenderConfig) -> Result<(), String> {
     std::fs::write(&path, content)
         .map_err(|e| format!("Failed to write config file to {}: {}", path.display(), e))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_str_id_round_trips_through_every_codec() {
+        // to_str_id/from_str_id must stay inverses — autosave recovery
+        // (render_manager.rs's recover_render_batch) round-trips a persisted
+        // codec through exactly this pair.
+        for codec in [RenderCodec::NvencH264, RenderCodec::H264Software, RenderCodec::ProRes, RenderCodec::DnxHr, RenderCodec::SourceCopy] {
+            assert_eq!(RenderCodec::from_str_id(codec.to_str_id()), codec);
+        }
+    }
+
+    #[test]
+    fn test_from_str_id_unrecognized_falls_back_to_prores() {
+        assert_eq!(RenderCodec::from_str_id("not_a_real_codec"), RenderCodec::ProRes);
+    }
 }

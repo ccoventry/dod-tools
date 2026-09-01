@@ -9,10 +9,10 @@ const NETMSG_INFO_SIZE: usize = 464;
 const MAX_PAYLOAD_LIMIT_BYTES: usize = 2_097_152;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let demo_path = Path::new("demos/test_director_cmds_hltv_source.dem");
+    let demo_path = Path::new("local/demos/test_director_cmds_hltv_source.dem");
     if !demo_path.exists() {
         eprintln!("Test demo file not found at: {}", demo_path.display());
-        eprintln!("Please place an HLTV demo at 'demos/hltv_test.dem' to analyze.");
+        eprintln!("Please place an HLTV demo at 'local/demos/hltv_test.dem' to analyze.");
         return Ok(());
     }
 

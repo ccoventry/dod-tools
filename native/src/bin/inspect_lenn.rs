@@ -3,7 +3,7 @@ use dem::types::{FrameData, MessageData};
 use std::fs;
 
 fn main() {
-    let path = "demos/ktps8w1-m00cat_soul_lenn_h2.dem";
+    let path = "local/demos/ktps8w1-m00cat_soul_lenn_h2.dem";
     if !std::path::Path::new(path).exists() {
         println!("Demo file not found at {}!", path);
         return;

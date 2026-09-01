@@ -14,8 +14,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use native::patch::{PatcherConfig, CaptureStreak, PatchJob, StreamPatcher, build_batch_queue, build_preview_patch_jobs, DriveAllocationStrategy, CustomCommand, CommandRelation};
+use native::patch::{PatcherConfig, CaptureStreak, CaptureBlock, PatchJob, StreamPatcher, build_batch_queue, build_preview_patch_jobs, CustomCommand, CommandRelation};
 use native::capture_engine::{spawn_capture_engine, CaptureJob, EngineEvent};
+use native::log_markdown;
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager};
 
@@ -38,6 +39,27 @@ pub struct CapturePayload {
     #[serde(default)]
     pub separate_hud: bool,
     #[serde(default)]
+    pub ffmpeg_capture: bool,
+    /// Codec id for direct-to-video capture; unknown ids fall back to the
+    /// default rather than failing the batch.
+    #[serde(default)]
+    pub ffmpeg_capture_codec: String,
+    /// `frame_sequence`, `direct_to_video` or `obs`. Absent on payloads from a
+    /// frontend predating the selector, in which case `ffmpeg_capture` above
+    /// still decides — see `PatcherConfig::normalise_capture_mode`.
+    #[serde(default)]
+    pub capture_mode: String,
+    #[serde(default)]
+    pub obs_host: String,
+    #[serde(default)]
+    pub obs_port: u16,
+    #[serde(default)]
+    pub obs_password: String,
+    #[serde(default)]
+    pub obs_scene: String,
+    #[serde(default)]
+    pub obs_scene_collection: String,
+    #[serde(default)]
     pub save_local_patched_copy: bool,
     #[serde(default = "default_add_condebug")]
     pub add_condebug: bool,
@@ -52,8 +74,6 @@ pub struct CapturePayload {
     pub capture_fps: i32,
     /// Output drives for AOT capacity simulation and media routing.
     pub drives: Vec<String>,
-    /// Matches native `DriveAllocationStrategy`: "MaximizeSpace" | "Chronological".
-    pub allocation_strategy: String,
     #[serde(default)]
     pub record_start_lead: f32,
     #[serde(default)]
@@ -80,10 +100,18 @@ pub struct CapturePayload {
     /// User-defined commands scheduled relative to each highlight's bounds.
     #[serde(default)]
     pub custom_commands: Vec<CustomCommandPayload>,
+    /// Clear accumulated wall decals ahead of every recorded clip, so the
+    /// second and later takes cut from one demo don't start dirty. Absent
+    /// means "leave it at the pipeline default".
+    #[serde(default)]
+    pub decal_flush: Option<bool>,
+    /// Decal ring size the flush pins `r_decals` to. Absent means the default.
+    #[serde(default)]
+    pub decal_ring_limit: Option<u32>,
 }
 
 fn default_initial_delay() -> f32 { 3.0 }
-fn default_fast_forward_speed() -> f32 { 10.0 }
+fn default_fast_forward_speed() -> f32 { 0.05 }
 fn default_resolution_width() -> i32 { 1280 }
 fn default_resolution_height() -> i32 { 720 }
 fn default_add_condebug() -> bool { true }
@@ -166,6 +194,9 @@ pub struct CaptureManager {
     pub cancel_token: Arc<std::sync::atomic::AtomicBool>,
     /// Cached config from the most recent run (used for status queries).
     pub last_config: Arc<Mutex<Option<PatcherConfig>>>,
+    /// Recording blocks the most recent batch planned, used to verify takes
+    /// against disk once the batch ends.
+    pub last_manifest: Arc<Mutex<Option<CaptureManifest>>>,
 }
 
 impl CaptureManager {
@@ -174,6 +205,7 @@ impl CaptureManager {
             is_running: Arc::new(Mutex::new(false)),
             cancel_token: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             last_config: Arc::new(Mutex::new(None)),
+            last_manifest: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -201,6 +233,18 @@ fn config_from_payload(payload: &CapturePayload) -> PatcherConfig {
     cfg.resolution_width = payload.resolution_width;
     cfg.resolution_height = payload.resolution_height;
     cfg.separate_hud = payload.separate_hud;
+    cfg.ffmpeg_capture = payload.ffmpeg_capture;
+    cfg.ffmpeg_capture_codec = native::patch::CaptureCodec::from_str_id(&payload.ffmpeg_capture_codec);
+    if !payload.capture_mode.is_empty() {
+        cfg.capture_mode = native::patch::CaptureMode::from_str_id(&payload.capture_mode);
+    }
+    cfg.obs = native::patch::ObsConfig {
+        host: if payload.obs_host.is_empty() { "127.0.0.1".to_string() } else { payload.obs_host.clone() },
+        port: if payload.obs_port == 0 { 4455 } else { payload.obs_port },
+        password: payload.obs_password.clone(),
+        scene: payload.obs_scene.clone(),
+        scene_collection: payload.obs_scene_collection.clone(),
+    };
     cfg.save_local_patched_copy = payload.save_local_patched_copy;
     cfg.add_condebug = payload.add_condebug;
     cfg.auto_clear_logs = payload.auto_clear_logs;
@@ -216,25 +260,357 @@ fn config_from_payload(payload: &CapturePayload) -> PatcherConfig {
             _ => CommandRelation::Before,
         },
     }).collect();
+    if let Some(v) = payload.decal_flush {
+        cfg.decal_flush = v;
+    }
+    if let Some(v) = payload.decal_ring_limit {
+        cfg.decal_ring_limit = v;
+    }
     // Capture Output is the sole (required) source of output directories —
     // the frontend already blocks the batch if `drives` is empty.
     cfg.primary_media_dir = payload.drives.first().map(std::path::PathBuf::from);
-    cfg.allocation_strategy = match payload.allocation_strategy.as_str() {
-        "Chronological" => DriveAllocationStrategy::Chronological,
-        _ => DriveAllocationStrategy::MaximizeSpace,
-    };
+    // Last, so it sees every field the payload set: reconciles the capture mode
+    // with the legacy `ffmpeg_capture` flag and applies what the mode implies.
+    // Everything downstream branches on `capture_mode`, so this must run before
+    // any of it does.
+    cfg.normalise_capture_mode();
     cfg
 }
 
-/// Derives the expected HLCR capture output folder from a patched demo path.
-fn expected_take_folder(job: &PatchJob, dod_dir: &PathBuf) -> PathBuf {
-    let stem = job
-        .output_demo
-        .file_stem()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .to_string();
-    dod_dir.join("hlcr_captures").join(stem)
+// ── OBS ────────────────────────────────────────────────────────────────────────
+
+/// What the settings panel shows after a connection test.
+///
+/// Flattens `ObsPreflight` plus the scene list into one round trip, because the
+/// panel needs all of it at once and a second `invoke` would be a second chance
+/// to fail.
+#[derive(Debug, Serialize)]
+pub struct ObsConnectionReport {
+    pub connected: bool,
+    /// Populated when `connected` is false. Already phrased for the user —
+    /// `ObsError`'s `Display` distinguishes a wrong password from a version
+    /// problem, and the two want different actions.
+    pub error: Option<String>,
+    pub obs_version: String,
+    pub websocket_version: String,
+    pub missing_requests: Vec<String>,
+    pub recording: bool,
+    pub streaming: bool,
+    pub record_directory: String,
+    pub canvas: String,
+    pub output: String,
+    pub fps: f64,
+    pub current_scene: String,
+    pub scene_collection: String,
+    pub scenes: Vec<String>,
+    pub warnings: Vec<String>,
+}
+
+impl ObsConnectionReport {
+    fn failed(e: impl std::fmt::Display) -> Self {
+        Self {
+            connected: false,
+            error: Some(e.to_string()),
+            obs_version: String::new(),
+            websocket_version: String::new(),
+            missing_requests: Vec::new(),
+            recording: false,
+            streaming: false,
+            record_directory: String::new(),
+            canvas: String::new(),
+            output: String::new(),
+            fps: 0.0,
+            current_scene: String::new(),
+            scene_collection: String::new(),
+            scenes: Vec::new(),
+            warnings: Vec::new(),
+        }
+    }
+}
+
+/// Tests the OBS connection and reports everything the settings panel shows.
+///
+/// Read-only. Nothing about the user's OBS is changed by asking — no scene
+/// switch, no settings write — so this is safe to call whenever the panel is
+/// opened.
+///
+/// `game_width`/`game_height` are passed in so the report can flag the canvas
+/// mismatch that silently costs the most quality: a canvas larger than the game
+/// means the capture is scaled up onto it and the whole canvas scaled back
+/// down, discarding most of the pixels before the encoder sees them.
+#[tauri::command]
+pub async fn obs_test_connection(
+    host: String,
+    port: u16,
+    password: String,
+    game_width: i32,
+    game_height: i32,
+) -> Result<ObsConnectionReport, String> {
+    let url = format!("ws://{}:{}", if host.is_empty() { "127.0.0.1".into() } else { host }, if port == 0 { 4455 } else { port });
+    tokio::task::spawn_blocking(move || {
+        let mut client = match native::obs::ObsClient::connect(&url, &password) {
+            Ok(c) => c,
+            Err(e) => return ObsConnectionReport::failed(e),
+        };
+        let preflight = match client.preflight(game_width, game_height) {
+            Ok(p) => p,
+            Err(e) => return ObsConnectionReport::failed(e),
+        };
+        let scenes = client.scene_names().unwrap_or_default();
+        ObsConnectionReport {
+            connected: true,
+            error: None,
+            obs_version: preflight.obs_version,
+            websocket_version: preflight.websocket_version,
+            missing_requests: preflight.missing_requests,
+            recording: preflight.recording,
+            streaming: preflight.streaming,
+            record_directory: preflight.record_directory,
+            canvas: format!("{}x{}", preflight.canvas_width, preflight.canvas_height),
+            output: format!("{}x{}", preflight.output_width, preflight.output_height),
+            fps: preflight.fps,
+            current_scene: preflight.current_scene,
+            scene_collection: preflight.scene_collection,
+            scenes,
+            warnings: preflight.warnings,
+        }
+    })
+    .await
+    .map_err(|e| format!("OBS connection test failed to run: {e}"))
+}
+
+/// What a start-up orphan check found.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ObsOrphanReport {
+    /// Whether OBS answered at all. `false` is the ordinary case — OBS is
+    /// simply not running — and the UI says nothing about it.
+    pub reachable: bool,
+    pub recording: bool,
+    pub directory: String,
+    /// Whether the folder OBS is recording into could only be one of ours.
+    pub ours: bool,
+}
+
+/// Asks OBS whether it is still recording a dod-tools take from a previous run.
+///
+/// Read-only, and quiet about failure on purpose: this runs at start-up, where
+/// "OBS is not running" is the normal answer and not something to report.
+///
+/// The case it exists for is the one no `Drop` can cover — a panic (release
+/// builds abort rather than unwind), a hard kill, a `tauri dev` restart, a
+/// power cut. In all of those the process is simply gone and OBS keeps
+/// recording until the disk fills.
+#[tauri::command]
+pub async fn obs_check_orphan(
+    host: String,
+    port: u16,
+    password: String,
+) -> Result<ObsOrphanReport, String> {
+    let cfg = obs_config(host, port, password);
+    tokio::task::spawn_blocking(move || match native::obs::check_orphan(&cfg) {
+        Ok(report) => ObsOrphanReport {
+            reachable: true,
+            recording: report.recording,
+            directory: report.directory,
+            ours: report.ours,
+        },
+        Err(_) => ObsOrphanReport {
+            reachable: false,
+            recording: false,
+            directory: String::new(),
+            ours: false,
+        },
+    })
+    .await
+    .map_err(|e| format!("OBS orphan check failed to run: {e}"))
+}
+
+/// Stops an orphaned recording and folds its file into the take folder.
+///
+/// Refuses any directory that is not shaped like one of ours, so a user who
+/// was recording something of their own keeps it. Called only after
+/// `obs_check_orphan` has reported `ours`, and asked of the user first.
+#[tauri::command]
+pub async fn obs_recover_orphan(
+    host: String,
+    port: u16,
+    password: String,
+) -> Result<String, String> {
+    let cfg = obs_config(host, port, password);
+    tokio::task::spawn_blocking(move || match native::obs::recover_orphan(&cfg) {
+        Ok(Some(video)) => Ok(video.to_string_lossy().to_string()),
+        Ok(None) => Ok(String::new()),
+        Err(e) => Err(e.to_string()),
+    })
+    .await
+    .map_err(|e| format!("OBS orphan recovery failed to run: {e}"))?
+}
+
+/// Settings-shaped values from the frontend, with the same defaults the
+/// settings file uses so an empty field means "the usual" rather than "".
+fn obs_config(host: String, port: u16, password: String) -> native::patch::ObsConfig {
+    native::patch::ObsConfig {
+        host: if host.is_empty() { "127.0.0.1".to_string() } else { host },
+        port: if port == 0 { 4455 } else { port },
+        password,
+        ..Default::default()
+    }
+}
+
+// ── Take verification ──────────────────────────────────────────────────────────
+
+/// Every recording block a dispatched batch planned, flattened across jobs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CaptureManifest {
+    pub session_id: String,
+    pub blocks: Vec<CaptureBlock>,
+    /// `mirv_movie_fps` this batch was captured at, recorded beside the takes
+    /// once they verify so Render Studio can tell when its own FPS setting
+    /// disagrees. See `native::hlcr::take_meta`.
+    pub capture_fps: i32,
+}
+
+/// One block's post-batch verdict, checked against what's actually on disk.
+#[derive(Debug, Clone, Serialize)]
+pub struct VerifiedBlock {
+    pub take_key: String,
+    pub take_folder: String,
+    pub demo_name: String,
+    pub block_index: usize,
+    /// Positions in the dispatched payload's `streaks` array that this block
+    /// covers — several when overlapping highlights merged into one recording.
+    pub source_streak_indices: Vec<usize>,
+    /// Tier 1: the take folder exists and isn't empty.
+    pub captured: bool,
+    /// Tier 2: Render Studio's scanner would actually admit this take.
+    pub renderable: bool,
+}
+
+fn take_folder_has_content(path: &Path) -> bool {
+    // Our own metadata does not count as captured output. It is written into
+    // this folder after verification, so it cannot affect the batch that made
+    // it — but a re-verification of an older session would otherwise report a
+    // capture that never happened.
+    std::fs::read_dir(path)
+        .map(|entries| {
+            entries
+                .flatten()
+                .any(|e| !native::hlcr::take_meta::is_metadata(&e.file_name()))
+        })
+        .unwrap_or(false)
+}
+
+/// Checks each planned block against disk after a batch ends.
+///
+/// Two tiers on purpose: "captured" is the loose check that drives status, so
+/// an unanticipated HLAE output layout degrades to a warning rather than
+/// silently marking nothing; "renderable" reuses Render Studio's own admission
+/// predicate so the two views can't disagree without saying so.
+fn verify_capture_takes(manifest: &CaptureManifest) -> Vec<VerifiedBlock> {
+    let mut verified: Vec<VerifiedBlock> = manifest
+        .blocks
+        .iter()
+        .map(|block| VerifiedBlock {
+            take_key: block.take_key.clone(),
+            take_folder: block.take_folder.to_string_lossy().into_owned(),
+            demo_name: block.demo_name.clone(),
+            block_index: block.block_index,
+            source_streak_indices: block.source_streak_indices.clone(),
+            captured: take_folder_has_content(&block.take_folder),
+            renderable: native::hlcr::scanner::is_renderable_take(&block.take_folder),
+        })
+        .collect();
+
+    // HLAE is force-killed the moment the exit trigger appears, so a take can
+    // still be mid-flush when we first look. Re-check only the misses once.
+    if verified.iter().any(|v| !v.captured) {
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+        for (v, block) in verified.iter_mut().zip(manifest.blocks.iter()) {
+            if !v.captured {
+                v.captured = take_folder_has_content(&block.take_folder);
+            }
+            if !v.renderable {
+                v.renderable = native::hlcr::scanner::is_renderable_take(&block.take_folder);
+            }
+        }
+    }
+
+    verified
+}
+
+/// Records what each take was captured at, in the take's own block folder.
+///
+/// Per take rather than per session so the record travels with the take. Two
+/// batches at different rates already land in different session folders, so a
+/// session-level file would be right for that — until somebody moves a take,
+/// at which point it would silently inherit the settings of wherever it landed.
+///
+/// Runs **after** verification and only for blocks that actually landed. A
+/// metadata file in a block that produced nothing would be misleading on its
+/// own, and `take_folder_has_content` decides a take was captured by asking
+/// whether its folder is non-empty — that check now skips our own file, so the
+/// ordering here is belt-and-braces rather than the only thing holding it up.
+///
+/// Best-effort throughout: a capture that succeeded must never be reported as
+/// failed because a metadata file could not be written.
+fn record_capture_settings(manifest: &CaptureManifest, blocks: &[VerifiedBlock]) {
+    if manifest.capture_fps <= 0 {
+        return;
+    }
+    let meta = native::hlcr::take_meta::SessionMeta::new(
+        manifest.session_id.clone(),
+        manifest.capture_fps,
+    );
+
+    for block in blocks.iter().filter(|b| b.captured) {
+        let folder = Path::new(&block.take_folder);
+        if let Err(e) = native::hlcr::take_meta::write(folder, &meta) {
+            log_markdown(&format!(
+                "[take-verify] could not record capture settings at {} — {}. Render Studio will \
+                 not be able to warn about an FPS mismatch for this take.",
+                folder.display(),
+                e
+            ));
+        }
+    }
+}
+
+/// Runs verification for the batch that just ended and reports it to the
+/// frontend. Phase 1 is observe-only — nothing consumes this to change a
+/// highlight's status yet.
+fn emit_take_verification(app: &tauri::AppHandle, manifest_slot: &Arc<Mutex<Option<CaptureManifest>>>) {
+    let manifest = {
+        let guard = manifest_slot.lock().unwrap_or_else(|p| p.into_inner());
+        match guard.as_ref() {
+            Some(m) if !m.blocks.is_empty() => m.clone(),
+            _ => return,
+        }
+    };
+
+    let blocks = verify_capture_takes(&manifest);
+    let captured_count = blocks.iter().filter(|b| b.captured).count();
+    let renderable_count = blocks.iter().filter(|b| b.renderable).count();
+
+    log_markdown(&format!(
+        "[take-verify] session {}: {}/{} takes on disk, {} renderable",
+        manifest.session_id, captured_count, blocks.len(), renderable_count
+    ));
+    for block in &blocks {
+        log_markdown(&format!(
+            "[take-verify] {} captured={} renderable={} at {}",
+            block.take_key, block.captured, block.renderable, block.take_folder
+        ));
+    }
+
+    record_capture_settings(&manifest, &blocks);
+
+    let _ = app.emit("capture_takes_verified", serde_json::json!({
+        "session_id": manifest.session_id,
+        "total_count": blocks.len(),
+        "captured_count": captured_count,
+        "renderable_count": renderable_count,
+        "blocks": blocks,
+    }));
 }
 
 // ── Public command handler ─────────────────────────────────────────────────────
@@ -245,6 +621,15 @@ pub async fn start_capture_batch_impl(
     manager: &CaptureManager,
     payload: CapturePayload,
 ) -> Result<(), String> {
+    // ── Guard: separate HUD cannot be captured through mirv_movie_ffmpeg ──────
+    // HLAE writes blank frames to the HUD stream on the FFmpeg path — measured
+    // both ways against one demo, see docs/direct_to_video_capture.md. Capture
+    // and render both report success and the clip is a black rectangle, so
+    // nothing downstream can catch it. Checked here as well as in the launch
+    // guard because the frontend check is only as good as the frontend.
+    //
+    // Rejected before the running flag is claimed, so a refused batch does not
+    // leave the manager wedged.
     // ── Guard: reject concurrent batches ──────────────────────────────────────
     {
         let mut running = manager
@@ -296,19 +681,16 @@ pub async fn start_capture_batch_impl(
     // ── Clone Arcs into the worker closure ────────────────────────────────────
     let is_running_arc = Arc::clone(&manager.is_running);
     let cancel_token_arc = Arc::clone(&manager.cancel_token);
+    let manifest_arc = Arc::clone(&manager.last_manifest);
     let hlae_path = PathBuf::from(&patcher_config.hlae_path);
     let hl_path = PathBuf::from(&patcher_config.game_path);
-    let dod_dir = hl_path
-        .parent()
-        .map(|p| p.join("dod"))
-        .unwrap_or_else(|| PathBuf::from("dod"));
 
     let app_handle_clone = app_handle.clone();
 
     // ── Offload blocking I/O to a dedicated thread ────────────────────────────
     tokio::task::spawn_blocking(move || {
-        let patch_jobs = match build_batch_queue(raw_streaks, &patcher_config, &std::collections::HashMap::new()) {
-            Ok(jobs) => jobs,
+        let (patch_jobs, drive_headroom) = match build_batch_queue(raw_streaks, &patcher_config, &std::collections::HashMap::new()) {
+            Ok(v) => v,
             Err(e) => {
                 log::error!("build_batch_queue failed: {}", e);
                 let mut running = is_running_arc.lock().unwrap_or_else(|p| p.into_inner());
@@ -321,6 +703,25 @@ pub async fn start_capture_batch_impl(
                 return;
             }
         };
+
+        // Built from the same flattened walk as the manifest, deliberately
+        // adjacent to it. In OBS mode the engine consumes these positionally as
+        // each block's AUDIO_SYNC marker arrives, so the two orders have to
+        // agree — computing them apart is how they would come to disagree.
+        let obs_take_folders: Vec<std::path::PathBuf> = patch_jobs
+            .iter()
+            .flat_map(|j| j.blocks.iter().map(|b| b.take_folder.clone()))
+            .collect();
+
+        {
+            let manifest = CaptureManifest {
+                session_id: patcher_config.session_id.clone(),
+                blocks: patch_jobs.iter().flat_map(|j| j.blocks.iter().cloned()).collect(),
+                capture_fps: patcher_config.capture_fps,
+            };
+            let mut slot = manifest_arc.lock().unwrap_or_else(|p| p.into_inner());
+            *slot = Some(manifest);
+        }
 
         if patch_jobs.is_empty() {
             log::warn!("build_batch_queue produced no jobs");
@@ -341,6 +742,17 @@ pub async fn start_capture_batch_impl(
         // the game's dod/ directory (it would otherwise fail with "file not
         // found" since output_demo never existed).
         let total_patch_jobs = patch_jobs.len() as u32;
+        // Known upfront from the same per-job block lists build_batch_queue
+        // already produced — cheap, and lets the demo-loading notification
+        // show "X of Y clips total" without any per-demo lookback.
+        let total_batch_clips: u32 = patch_jobs.iter().map(|j| j.blocks.len() as u32).sum();
+        // One start + one end notification for the whole patching phase, not
+        // per-demo like capture_demo_loading -- decal clearing means patching
+        // is no longer instant, but a toast per demo patched would still be
+        // noise (see issue #98 discussion).
+        let _ = app_handle_clone.emit("capture_patching_started", serde_json::json!({
+            "total": total_patch_jobs,
+        }));
         for (idx, job) in patch_jobs.iter().enumerate() {
             if cancel_token_arc.load(std::sync::atomic::Ordering::Relaxed) {
                 let mut running = is_running_arc.lock().unwrap_or_else(|p| p.into_inner());
@@ -382,25 +794,33 @@ pub async fn start_capture_batch_impl(
             }
         }
 
+        let _ = app_handle_clone.emit("capture_patching_finished", serde_json::json!({
+            "total": total_patch_jobs,
+        }));
+
         let capture_jobs: Vec<CaptureJob> = patch_jobs
             .into_iter()
-            .map(|job| {
-                let expected = expected_take_folder(&job, &dod_dir);
-                CaptureJob {
-                    patched_demo_path: job.output_demo,
-                    expected_take_folder: expected,
-                }
-            })
+            .map(|job| CaptureJob { patched_demo_path: job.output_demo })
             .collect();
 
         let (engine_tx, engine_rx) = std::sync::mpsc::channel();
 
         // Spawn a listener to clear the running flag when the batch terminates and forward events to frontend
         let is_running_clone = Arc::clone(&is_running_arc);
+        let manifest_for_listener = Arc::clone(&manifest_arc);
         let app_emitter = app_handle_clone.clone();
+        let is_running_for_panic = Arc::clone(&is_running_arc);
+        let app_emitter_for_panic = app_handle_clone.clone();
         std::thread::spawn(move || {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let mut total_jobs: u32 = 0;
             let mut current_idx: u32 = 0;
+            // Running tally of clips captured through and including the
+            // current demo -- updated once per DemoLoading (never per
+            // FastForwardToClip), so every fast-forward-to-clip notification
+            // within a demo reports the same "X of Y clips total" the
+            // demo-loading toast itself would have shown. See issue #98.
+            let mut clips_so_far: u32 = 0;
             while let Ok(event) = engine_rx.recv() {
                 match event {
                     EngineEvent::Starting(total) => {
@@ -432,13 +852,24 @@ pub async fn start_capture_batch_impl(
                             "status": "Finished"
                         }));
                     }
-                    EngineEvent::Verified(name) => {
-                        let _ = app_emitter.emit("capture_status", serde_json::json!({
-                            "running": true,
-                            "index": current_idx,
-                            "total": total_jobs,
-                            "name": name,
-                            "status": "Verified"
+                    EngineEvent::DemoLoading(job_idx, total, clip_count) => {
+                        clips_so_far += clip_count;
+                        let _ = app_emitter.emit("capture_demo_loading", serde_json::json!({
+                            "index": job_idx,
+                            "total": total,
+                            "clip_count": clip_count,
+                            "clips_so_far": clips_so_far,
+                            "total_batch_clips": total_batch_clips,
+                        }));
+                    }
+                    EngineEvent::FastForwardToClip(job_idx, total, clip_idx, clip_count_this_demo) => {
+                        let _ = app_emitter.emit("capture_fast_forward_to_clip", serde_json::json!({
+                            "demo_index": job_idx,
+                            "demo_total": total,
+                            "clip_index": clip_idx,
+                            "clip_count_this_demo": clip_count_this_demo,
+                            "clips_so_far": clips_so_far,
+                            "total_batch_clips": total_batch_clips,
                         }));
                     }
                     EngineEvent::Error(msg) => {
@@ -460,6 +891,7 @@ pub async fn start_capture_batch_impl(
                             "index": total_jobs,
                             "total": total_jobs
                         }));
+                        emit_take_verification(&app_emitter, &manifest_for_listener);
                         break;
                     }
                     EngineEvent::Cancelled => {
@@ -469,9 +901,29 @@ pub async fn start_capture_batch_impl(
                             "running": false,
                             "status": "Cancelled"
                         }));
+                        // A cancelled batch still leaves real finished takes on
+                        // disk — verify anyway rather than discarding them.
+                        emit_take_verification(&app_emitter, &manifest_for_listener);
                         break;
                     }
                 }
+            }
+            }));
+
+            if let Err(panic_payload) = result {
+                let msg = panic_payload
+                    .downcast_ref::<&str>()
+                    .map(|s| s.to_string())
+                    .or_else(|| panic_payload.downcast_ref::<String>().cloned())
+                    .unwrap_or_else(|| "unknown panic payload".to_string());
+                log_markdown(&format!("[capture] Event listener thread panicked: {}", msg));
+                let mut running = is_running_for_panic.lock().unwrap_or_else(|p| p.into_inner());
+                *running = false;
+                let _ = app_emitter_for_panic.emit("capture_status", serde_json::json!({
+                    "running": false,
+                    "error": true,
+                    "status": format!("Internal error in capture event listener: {}", msg)
+                }));
             }
         });
 
@@ -483,6 +935,8 @@ pub async fn start_capture_batch_impl(
             engine_tx,
             cancel_token_arc,
             patcher_config,
+            drive_headroom,
+            obs_take_folders,
         );
     });
 
@@ -892,6 +1346,8 @@ pub async fn launch_standalone_game(app: tauri::AppHandle) -> Result<(), String>
             resolution_width: settings.resolution_width,
             resolution_height: settings.resolution_height,
             separate_hud: settings.separate_hud,
+            ffmpeg_capture: settings.ffmpeg_capture,
+            ffmpeg_capture_codec: native::patch::CaptureCodec::from_str_id(&settings.ffmpeg_capture_codec),
             ..PatcherConfig::default()
         };
 
@@ -1077,4 +1533,147 @@ pub async fn delete_orphaned_previews(file_paths: Vec<String>) -> Result<u32, St
     })
     .await
     .map_err(|e| format!("Task join error: {}", e))?
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_payload() -> CapturePayload {
+        CapturePayload {
+            hlae_path: "C:/hlae/hlae.exe".to_string(),
+            game_path: "C:/dod/hl.exe".to_string(),
+            ffmpeg_override_path: None,
+            resolution_width: 1920,
+            resolution_height: 1080,
+            separate_hud: true,
+            ffmpeg_capture: false,
+            ffmpeg_capture_codec: String::new(),
+            capture_mode: String::new(),
+            obs_host: String::new(),
+            obs_port: 0,
+            obs_password: String::new(),
+            obs_scene: String::new(),
+            obs_scene_collection: String::new(),
+            save_local_patched_copy: false,
+            add_condebug: true,
+            streaks: Vec::new(),
+            pre_roll_seconds: 2.0,
+            post_roll_seconds: 0.6,
+            capture_directories: vec!["D:/capture".to_string()],
+            capture_fps: 300,
+            drives: vec!["D:/capture".to_string(), "E:/capture".to_string()],
+            record_start_lead: 0.0,
+            record_stop_trail: 0.0,
+            initial_delay: 3.0,
+            fast_forward_speed: 0.05,
+            auto_clear_logs: false,
+            auto_clear_previews: false,
+            auto_clear_temp_demos: false,
+            session_id: "session_test".to_string(),
+            init_commands: vec!["exec autoexec".to_string()],
+            custom_commands: vec![
+                CustomCommandPayload { command: "say after".to_string(), relation: "After".to_string(), offset_seconds: 1.0 },
+                CustomCommandPayload { command: "say unrecognized".to_string(), relation: "Sideways".to_string(), offset_seconds: 1.0 },
+            ],
+            decal_flush: None,
+            decal_ring_limit: None,
+        }
+    }
+
+    /// `fast_forward_speed`'s serde default silently drifted to 10.0 here while
+    /// every other default (settings_manager, patch::types, the frontend's own
+    /// JS fallback) agrees on 0.05 — a 200x-too-fast fallback that only bites
+    /// a payload missing the field entirely (an old cached payload, a CLI/test
+    /// caller), but should still agree with everywhere else. See issue #29.
+    #[test]
+    fn test_capture_payload_fast_forward_speed_default_matches_settings_default() {
+        let mut value = serde_json::to_value(sample_payload()).unwrap();
+        value.as_object_mut().unwrap().remove("fast_forward_speed");
+        let payload: CapturePayload = serde_json::from_value(value).unwrap();
+        assert_eq!(payload.fast_forward_speed, 0.05);
+    }
+
+    /// Separate HUD and direct-to-video are both carried through to the patcher
+    /// config, and the two together are a supported combination. They were
+    /// briefly refused as a pair while the HUD streams captured blank; that
+    /// turned out to be the alpha buffer, not the FFmpeg path, and is fixed in
+    /// capture_engine's launch flags. This asserts the pairing survives the
+    /// mapping so the block cannot creep back in unnoticed.
+    #[test]
+    fn test_separate_hud_and_video_capture_survive_together() {
+        let mut payload = sample_payload();
+        payload.separate_hud = true;
+        payload.ffmpeg_capture = true;
+
+        let cfg = config_from_payload(&payload);
+        assert!(cfg.separate_hud);
+        assert!(cfg.ffmpeg_capture);
+    }
+
+    #[test]
+    fn test_config_from_payload_maps_scalar_fields() {
+        let payload = sample_payload();
+        let cfg = config_from_payload(&payload);
+
+        assert_eq!(cfg.hlae_path, payload.hlae_path);
+        assert_eq!(cfg.game_path, payload.game_path);
+        assert_eq!(cfg.resolution_width, 1920);
+        assert_eq!(cfg.resolution_height, 1080);
+        assert_eq!(cfg.separate_hud, true);
+        assert_eq!(cfg.capture_fps, 300);
+        assert_eq!(cfg.session_id, "session_test");
+        assert_eq!(cfg.init_commands, vec!["exec autoexec".to_string()]);
+        assert_eq!(cfg.capture_directories, vec![PathBuf::from("D:/capture")]);
+    }
+
+    #[test]
+    fn test_config_from_payload_decal_flush_overrides_only_when_sent() {
+        // Absent means "leave the pipeline default alone", so a frontend that
+        // knows nothing about decals still gets the flush.
+        let defaults = PatcherConfig::default();
+        let mut payload = sample_payload();
+
+        let cfg = config_from_payload(&payload);
+        assert_eq!(cfg.decal_flush, defaults.decal_flush);
+        assert_eq!(cfg.decal_ring_limit, defaults.decal_ring_limit);
+
+        payload.decal_flush = Some(false);
+        payload.decal_ring_limit = Some(64);
+        let cfg = config_from_payload(&payload);
+        assert!(!cfg.decal_flush);
+        assert_eq!(cfg.decal_ring_limit, 64);
+    }
+
+    #[test]
+    fn test_config_from_payload_primary_media_dir_is_first_drive() {
+        let payload = sample_payload();
+        let cfg = config_from_payload(&payload);
+        // Capture Output's first entry is the sole source of primary_media_dir —
+        // there's no separate "Primary Media Dir" field anymore (removed 2026-08-17).
+        assert_eq!(cfg.primary_media_dir, Some(PathBuf::from("D:/capture")));
+    }
+
+    #[test]
+    fn test_config_from_payload_no_drives_leaves_primary_media_dir_none() {
+        let mut payload = sample_payload();
+        payload.drives = Vec::new();
+        let cfg = config_from_payload(&payload);
+        assert_eq!(cfg.primary_media_dir, None);
+    }
+
+    #[test]
+    fn test_config_from_payload_custom_command_relation_falls_back_to_before() {
+        let payload = sample_payload();
+        let cfg = config_from_payload(&payload);
+
+        assert_eq!(cfg.custom_commands.len(), 2);
+        assert_eq!(cfg.custom_commands[0].command, "say after");
+        assert_eq!(cfg.custom_commands[0].relation, CommandRelation::After);
+        // An unrecognised relation string must fail safe to Before rather than
+        // rejecting the whole batch payload (see CustomCommandPayload's doc comment).
+        assert_eq!(cfg.custom_commands[1].relation, CommandRelation::Before);
+    }
 }

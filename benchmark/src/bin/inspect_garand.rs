@@ -4,7 +4,7 @@ use dod::{UserMessage, Weapon};
 use std::fs;
 
 fn main() {
-    let path = "demos/FPSDROPPINGMATCHvsIcyaxis.dem";
+    let path = "local/demos/FPSDROPPINGMATCHvsIcyaxis.dem";
     println!("Scanning ALL Garand CurWeapon in: {}", path);
     let file_bytes = fs::read(path).unwrap();
     let demo = open_demo_from_bytes(&file_bytes).unwrap();

@@ -4,7 +4,7 @@
 // selected. Mirrors the `dev` branch egui GUI's SidePanel::left explorer +
 // browser.rs's `desktop_files` list (see native/src/bin/gui/tree.rs's
 // get_native_roots/get_subdirs/get_demo_map_name/count_demo_files and
-// scan_demo_folders_async) — see docs/tauri_parity_audit.md Area 3 for the
+// scan_demo_folders_async) — see docs/archive/tauri_parity_audit.md Area 3 for the
 // full corrected design this was rebuilt against.
 
 use serde::Serialize;

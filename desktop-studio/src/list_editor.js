@@ -1,10 +1,13 @@
 // Shared editable row-list widget.
 //
-// Backs Capture Output, Render Folders, Render Studio's Export Drives,
-// Init Commands, and Custom Commands so all five lists share one
-// add/edit/remove/reorder implementation instead of five hand-rolled ones.
+// Backs Capture Locations (also Render Studio's scan input), Render
+// Studio's Export Drives, Init Commands, and Custom Commands so all four
+// lists share one add/edit/remove/reorder implementation instead of four
+// hand-rolled ones.
 // Items are either plain values (`fields[0].primitive: true`, e.g. a path
 // string) or objects keyed by each field's `key`.
+
+import { STRINGS } from './strings.js';
 
 function primaryValue(item, fields) {
   return fields[0].primitive ? item : item[fields[0].key];
@@ -22,7 +25,7 @@ function setFieldValue(items, idx, field, value) {
 // Inline SVG (not the 🗑 emoji) so the icon actually inherits `currentColor` —
 // WebView2 falls back to a monochrome glyph for 🗑 that ignores CSS `color`,
 // which reads as a pause icon in light-grey-on-dark-grey.
-const TRASH_ICON_SVG = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"></path></svg>`;
+export const TRASH_ICON_SVG = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"></path></svg>`;
 
 /**
  * @param {Object} opts
@@ -72,11 +75,16 @@ export function createListEditor({ container, getItems, fields, unique = false, 
         else input.style.flex = '1';
         if (field.placeholder) input.placeholder = field.placeholder;
         input.value = value ?? '';
+        // Keep the in-memory item updated every keystroke, but only notify
+        // (-> settings autosave-to-disk) on 'change' (blur/Enter) — matches
+        // detail_pane.js's notes-field split, avoiding a full settings write
+        // per character while composing a value, notably free-text Custom
+        // Commands / Init Commands entries.
         input.addEventListener('input', (e) => {
           const v = field.type === 'number' ? (parseFloat(e.target.value) || 0) : e.target.value;
           setFieldValue(items, idx, field, v);
-          notify();
         });
+        input.addEventListener('change', () => notify());
       }
       input.className = 'list-editor-field';
       row.appendChild(input);
@@ -87,7 +95,7 @@ export function createListEditor({ container, getItems, fields, unique = false, 
       browseBtn.type = 'button';
       browseBtn.className = 'list-editor-browse-btn';
       browseBtn.textContent = '📁';
-      browseBtn.title = 'Browse…';
+      browseBtn.title = STRINGS.LIST_EDITOR.BROWSE_TITLE;
       browseBtn.addEventListener('click', async () => {
         const selected = await browse();
         if (!selected) return;
@@ -103,7 +111,7 @@ export function createListEditor({ container, getItems, fields, unique = false, 
     upBtn.type = 'button';
     upBtn.className = 'list-editor-move-btn';
     upBtn.textContent = '▲';
-    upBtn.title = 'Move up';
+    upBtn.title = STRINGS.LIST_EDITOR.MOVE_UP_TITLE;
     upBtn.disabled = idx === 0;
     upBtn.addEventListener('click', () => {
       if (idx === 0) return;
@@ -117,7 +125,7 @@ export function createListEditor({ container, getItems, fields, unique = false, 
     downBtn.type = 'button';
     downBtn.className = 'list-editor-move-btn';
     downBtn.textContent = '▼';
-    downBtn.title = 'Move down';
+    downBtn.title = STRINGS.LIST_EDITOR.MOVE_DOWN_TITLE;
     downBtn.disabled = idx === items.length - 1;
     downBtn.addEventListener('click', () => {
       if (idx === items.length - 1) return;
@@ -131,8 +139,8 @@ export function createListEditor({ container, getItems, fields, unique = false, 
     removeBtn.type = 'button';
     removeBtn.className = 'list-editor-remove-btn';
     removeBtn.innerHTML = TRASH_ICON_SVG;
-    removeBtn.title = 'Remove';
-    removeBtn.setAttribute('aria-label', 'Remove');
+    removeBtn.title = STRINGS.LIST_EDITOR.REMOVE_TITLE;
+    removeBtn.setAttribute('aria-label', STRINGS.LIST_EDITOR.REMOVE_ARIA_LABEL);
     removeBtn.addEventListener('click', () => {
       items.splice(idx, 1);
       notify();

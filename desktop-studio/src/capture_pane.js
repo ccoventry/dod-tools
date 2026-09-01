@@ -1,10 +1,20 @@
-import { startCaptureBatch, cancelCaptureBatch, validatePaths, calculateExportPoolSpace, scanOrphanedPreviews, deleteOrphanedPreviews, checkEngineProcesses, launchStandaloneGame } from './ipc_bridge.js';
+import { startCaptureBatch, cancelCaptureBatch, validatePaths, calculateExportPoolSpace, diagnoseCaptureOutputPaths, scanOrphanedPreviews, deleteOrphanedPreviews, checkEngineProcesses, launchStandaloneGame } from './ipc_bridge.js';
 import { listen } from '@tauri-apps/api/event';
+import { themedConfirm } from './themed_confirm.js';
 import { showToast } from './toast.js';
 import { requestProcessGuardedLaunch } from './detail_pane.js';
 import { createListEditor } from './list_editor.js';
+import { refreshCfgWarnings } from './cfg_warnings.js';
+import { refreshRollFloors } from './roll_floors.js';
+import { streakUid, recordTake } from './take_index.js';
+import { STRINGS } from './strings.js';
+import { notify, isNotificationEnabled } from './os_notifications.js';
 
 let unlistenCaptureStatus = null;
+let unlistenDemoLoading = null;
+let unlistenFastForwardToClip = null;
+let unlistenPatchingStarted = null;
+let unlistenPatchingFinished = null;
 // Tracks whether a batch is actively running so refreshLaunchGuard() never
 // re-enables Start Capture out from under the capture_status "running" lock.
 let capturingInFlight = false;
@@ -18,9 +28,86 @@ let currentGetState = null;
 // being saved incidentally whenever some unrelated action (e.g. browsing
 // for hlae.exe) happens to also call it.
 let currentOnSettingsChange = null;
+// Fired after a verified capture advances highlight statuses, so the panes
+// that render status (Master Queue counts, Highlight Details rows) re-render.
+// Neither watches the streak objects, so without this the tables stay stale
+// until the next unrelated interaction.
+let currentOnStatusChange = null;
+// Returns the live project-level take index object (take_key -> uid[]) owned
+// by main.js, so recording into it here persists into the same object that
+// gets serialized on Save Session. Null in Quick-Clip-only contexts where
+// main.js hasn't wired one up yet.
+let currentGetTakeIndex = null;
+// Fired once per batch when capture_status reports it's no longer running
+// (finished, cancelled, or errored) — main.js's updateExportPoolIndicator,
+// so the footer's "Capture Output Free" figure reflects what the batch just
+// wrote. Previously only refreshLaunchGuard() ran here, which reads its own
+// separate availableBytes for the launch-guard banner and never touched the
+// footer, so it stayed stuck at its last edit-time value until something
+// unrelated (editing the drive list, restarting) happened to refresh it.
+// See issue #13.
+let currentOnBatchFinished = null;
+// The most recent batch dispatched from this window: its session id and the
+// live streak objects, in the exact order they were sent. The backend's take
+// manifest indexes into that same order, which is what lets a verified block
+// resolve back to the highlights it actually recorded.
+let lastDispatch = null;
+let unlistenTakesVerified = null;
 
 function notifySettingsChange() {
   if (currentOnSettingsChange) currentOnSettingsChange();
+}
+
+/**
+ * Settings the pipeline turns into init commands of its own, appended after
+ * the user's own list. Capture FPS becomes `mirv_movie_fps <n>`, Separate HUD
+ * becomes `mirv_movie_separate_hud <n>`, and the decal flush contributes the
+ * `r_decals` pin — so each can displace a value from a config file, and the
+ * warning banner is stale until it is told one changed.
+ *
+ * Keyed by element id rather than by tab, deliberately: what makes these
+ * special is that they become commands, not where they happen to sit.
+ */
+const FIELDS_THAT_BECOME_COMMANDS = [
+  '#config-capture-fps',
+  '#config-separate-hud',
+  '#config-decal-flush',
+];
+
+/**
+ * Re-check the game's config files against the commands a capture would apply.
+ *
+ * Passes the settings that decide what the pipeline appends for itself — the
+ * movie fps, the HUD split, the decal pin — so the overrides reported are the
+ * ones a real capture would really perform, not just the ones typed by hand.
+ * `movie.cfg` setting `mirv_movie_fps 300` against a capture configured for 120
+ * is a collision nobody typed and nobody would otherwise see.
+ *
+ * Called by main.js once persisted settings have landed in the DOM, whenever
+ * the hl.exe path changes, by the command editors on every edit, and by the
+ * settings below that the pipeline turns into commands of its own.
+ */
+export function refreshInitCommandWarnings() {
+  const gamePath = document.querySelector('#hl-path-input')?.value?.trim() || '';
+  refreshCfgWarnings(
+    gamePath,
+    initCommands.map((c) => c.trim()).filter((c) => c.length > 0),
+    // Relation and offset travel with the command: they decide which one the
+    // engine reaches first, and only the first to touch a cvar displaces what
+    // the configs left it at.
+    customCommands
+      .filter((c) => (c?.command || '').trim())
+      .map((c) => ({
+        command: c.command.trim(),
+        relation: c.relation === 'After' ? 'After' : 'Before',
+        offset_seconds: Number(c.offsetSeconds) || 0,
+      })),
+    {
+      captureFps: parseInt(document.querySelector('#config-capture-fps')?.value, 10) || null,
+      separateHud: document.querySelector('#config-separate-hud')?.checked ?? null,
+      decalFlush: document.querySelector('#config-decal-flush')?.checked ?? true,
+    }
+  );
 }
 
 /** Generates a `session_YYYYMMDD_HHMMSS` id so each batch routes into its own
@@ -30,17 +117,6 @@ function generateSessionId() {
   const now = new Date();
   const pad = (n) => String(n).padStart(2, '0');
   return `session_${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
-}
-
-function updateRowBadges(statusText, colorHex) {
-  const tableBody = document.querySelector('#master-demo-table-body');
-  if (tableBody) {
-    const statusSpans = tableBody.querySelectorAll('td span');
-    statusSpans.forEach(span => {
-      span.textContent = statusText;
-      span.style.color = colorHex;
-    });
-  }
 }
 
 // ── Pre-Flight Disk Space Estimator ───────────────────────────────────────────
@@ -54,7 +130,11 @@ function updateRowBadges(statusText, colorHex) {
  * `separate_hud` triples the total (HUD pass recorded as its own stream).
  */
 function computeRequiredCaptureBytes(currentScannedDemos, opts) {
-  const { preRollSeconds, postRollSeconds, captureFps, resWidth, resHeight, separateHud } = opts;
+  const {
+    preRollSeconds, postRollSeconds,
+    recordStartLead, recordStopTrail,
+    captureFps, resWidth, resHeight, separateHud,
+  } = opts;
   let totalSeconds = 0;
 
   (currentScannedDemos || []).forEach(demo => {
@@ -67,28 +147,38 @@ function computeRequiredCaptureBytes(currentScannedDemos, opts) {
       .filter(streak => streak.selected === true)
       .map(streak => {
         const fps = streak.demo_fps || 100;
-        const startSec = (streak.start_tick / fps) - preRollSeconds;
-        const endSec = (streak.end_tick / fps) + postRollSeconds;
+        const startSec = streak.start_tick / fps;
+        const endSec = streak.end_tick / fps;
         return [startSec, endSec];
       })
       .sort((a, b) => a[0] - b[0]);
 
+    // Two different windows are at play, and mixing them up is what this used
+    // to get wrong:
+    //  - whether two highlights collapse into ONE take is decided by
+    //    pre/post-roll (native/src/patch/builder.rs's blocks_merge), and
+    //  - how many frames actually get written is start-lead -> stop-trail
+    //    (PatcherConfig::calculate_total_capture_duration).
+    // So merge on the roll window, then bill the lead/trail window.
     let mergedStart = null;
     let mergedEnd = null;
+    const bill = () => {
+      totalSeconds += recordStartLead + (mergedEnd - mergedStart) + recordStopTrail;
+    };
     intervals.forEach(([start, end]) => {
       if (mergedStart === null) {
         mergedStart = start;
         mergedEnd = end;
-      } else if (start <= mergedEnd) {
+      } else if (start - preRollSeconds <= mergedEnd + postRollSeconds) {
         mergedEnd = Math.max(mergedEnd, end);
       } else {
-        totalSeconds += (mergedEnd - mergedStart);
+        bill();
         mergedStart = start;
         mergedEnd = end;
       }
     });
     if (mergedStart !== null) {
-      totalSeconds += (mergedEnd - mergedStart);
+      bill();
     }
   });
 
@@ -99,22 +189,25 @@ function computeRequiredCaptureBytes(currentScannedDemos, opts) {
   return requiredBytes;
 }
 
-const ALLOCATION_STRATEGY_LABELS = {
-  MaximizeSpace: 'Maximize Space',
-  Chronological: 'Chronological',
+const PATH_PROBLEM_REASONS = {
+  not_absolute: STRINGS.CAPTURE.pathProblem.notAbsolute,
+  malformed: STRINGS.CAPTURE.pathProblem.malformed,
+  not_found: STRINGS.CAPTURE.pathProblem.notFound,
+  not_a_directory: STRINGS.CAPTURE.pathProblem.notADirectory,
 };
 
-/** Mirrors the Drive Overrides tab's Allocation Strategy <select> into the
- *  pinned footer, in plain English rather than the raw enum value. Doesn't
- *  affect the "Capture Output Free" total shown alongside it — that's a
- *  straight sum across every configured directory regardless of strategy;
- *  the strategy only governs which specific drive each job's output lands
- *  on once a capture is actually running. */
-function updateAllocationStrategyFooter() {
-  const el = document.querySelector('#footer-allocation-strategy');
-  if (!el) return;
-  const raw = document.querySelector('#allocation-strategy')?.value || 'MaximizeSpace';
-  el.textContent = `Allocation: ${ALLOCATION_STRATEGY_LABELS[raw] || raw}`;
+const MAX_PROBLEM_PATHS_SHOWN = 3;
+
+/** Turns a list of non-"ok" diagnostics into a point-form list of reasons
+ *  (one bullet per line, `warningEl`'s `white-space: pre-line` renders the
+ *  `\n`s), capped so a long invalid list doesn't turn into a wall of text.
+ *  Falls back to a single plain sentence when there's just one problem. */
+function describeProblemPaths(problems) {
+  const shown = problems.slice(0, MAX_PROBLEM_PATHS_SHOWN)
+    .map((d) => PATH_PROBLEM_REASONS[d.status]?.(d.path) || STRINGS.CAPTURE.pathProblem.unusable(d.path));
+  const remaining = problems.length - MAX_PROBLEM_PATHS_SHOWN;
+  if (remaining > 0) shown.push(STRINGS.CAPTURE.andNMore(remaining));
+  return shown.length === 1 ? shown[0] : shown.map((s) => `• ${s}`).join('\n');
 }
 
 /**
@@ -136,14 +229,17 @@ export async function refreshLaunchGuard(state) {
 
   const preRollVal = parseFloat(document.querySelector("#config-pre-roll")?.value) || 2.0;
   const postRollVal = parseFloat(document.querySelector("#config-post-roll")?.value) || 0.6;
+  const recordStartLeadVal = parseFloat(document.querySelector("#config-record-start-lead")?.value) || 0.0;
+  const recordStopTrailVal = parseFloat(document.querySelector("#config-record-stop-trail")?.value) || 0.0;
   const captureFpsVal = parseInt(document.querySelector("#config-capture-fps")?.value, 10) || 300;
   const resWidthVal = parseInt(document.querySelector("#config-res-width")?.value, 10) || 1280;
   const resHeightVal = parseInt(document.querySelector("#config-res-height")?.value, 10) || 720;
   const separateHudVal = document.querySelector("#config-separate-hud")?.checked || false;
-
   const requiredBytes = computeRequiredCaptureBytes(resolvedState.currentScannedDemos, {
     preRollSeconds: preRollVal,
     postRollSeconds: postRollVal,
+    recordStartLead: recordStartLeadVal,
+    recordStopTrail: recordStopTrailVal,
     captureFps: captureFpsVal,
     resWidth: resWidthVal,
     resHeight: resHeightVal,
@@ -156,30 +252,96 @@ export async function refreshLaunchGuard(state) {
   const effectiveDrivePool = (resolvedState.targetDrives || []).filter(Boolean);
 
   let availableBytes = 0;
+  let problemPaths = [];
+  let willBeCreatedPaths = [];
   if (effectiveDrivePool.length > 0) {
     try {
       availableBytes = await calculateExportPoolSpace(effectiveDrivePool);
     } catch (err) {
       console.error("Error calculating export pool space for launch guard:", err);
     }
+    // Fetched unconditionally (not just when the pool is fully unusable) so a
+    // *partially* bad pool — some valid drives, some typo'd/missing ones —
+    // can still be called out below instead of going silently ignored just
+    // because the aggregate sum happens to clear.
+    try {
+      const diagnostics = await diagnoseCaptureOutputPaths(effectiveDrivePool);
+      problemPaths = diagnostics.filter((d) => !d.usable);
+      // Usable but not found yet: real drive, folder just hasn't been
+      // created — worth a quiet FYI (mainly to catch a typo of an intended
+      // *existing* folder) but not a "problem," since it's the same case
+      // get_available_bytes already counts as fine.
+      willBeCreatedPaths = diagnostics.filter((d) => d.usable && d.status === 'not_found');
+    } catch (err) {
+      console.error("Error diagnosing Capture Output paths:", err);
+    }
   }
 
   // Zero configured (or zero-space) drives must lock the button on its own —
   // `requiredBytes > availableBytes` alone would pass with requiredBytes 0.
-  const noDrivesConfigured = effectiveDrivePool.length === 0 || availableBytes === 0;
-  const insufficientSpace = !noDrivesConfigured && requiredBytes > availableBytes;
-  const blocked = noDrivesConfigured || insufficientSpace;
+  // Kept as two distinct booleans (not one merged "noDrivesConfigured") so
+  // the warning message can tell "you haven't added anything" apart from
+  // "you added something, but it doesn't resolve to a usable directory" —
+  // those used to share one message, which told the user to do something
+  // they'd already done.
+  // Nothing selected is the most basic reason a batch cannot run, and it was
+  // the one condition nothing checked: `buildCapturePayload` happily produced
+  // a payload with zero streaks, so the batch started, patched nothing and
+  // captured nothing. It belongs here rather than in the click handler so the
+  // button is simply not live until there is something to capture.
+  const selectedHighlights = (resolvedState.currentScannedDemos || []).reduce(
+    (total, demo) => total + (demo.streaks || []).filter((s) => s.selected === true).length,
+    0
+  );
+  const noHighlightsSelected = selectedHighlights === 0;
+
+  const noDrivesConfigured = effectiveDrivePool.length === 0;
+  const noUsableSpace = !noDrivesConfigured && availableBytes === 0;
+  const insufficientSpace = !noDrivesConfigured && !noUsableSpace && requiredBytes > availableBytes;
+  // Pool is usable overall (at least one real drive with room) but not every
+  // configured entry is — worth a heads-up, not worth blocking the batch.
+  const hasPartialProblems = !noDrivesConfigured && !noUsableSpace && !insufficientSpace && problemPaths.length > 0;
+  const blocked = noHighlightsSelected || noDrivesConfigured || noUsableSpace || insufficientSpace;
 
   if (!capturingInFlight) {
     startBtn.disabled = blocked;
   }
 
   if (warningEl) {
-    if (noDrivesConfigured) {
-      warningEl.textContent = "No Capture Output directories configured — add at least one with free space before starting a capture.";
+    // First, and in the calm colour: an empty selection is the ordinary state
+    // of a freshly scanned workspace, not a misconfiguration to shout about.
+    if (noHighlightsSelected) {
+      warningEl.style.color = '#64b5f6';
+      warningEl.textContent = STRINGS.CAPTURE.NO_HIGHLIGHTS_SELECTED_WARNING;
+      warningEl.style.display = 'block';
+    } else if (noDrivesConfigured) {
+      warningEl.style.color = '#f44336';
+      warningEl.textContent = STRINGS.CAPTURE.NO_DRIVES_CONFIGURED_WARNING;
+      warningEl.style.display = 'block';
+    } else if (noUsableSpace) {
+      warningEl.style.color = '#f44336';
+      warningEl.textContent = problemPaths.length > 0
+        ? STRINGS.CAPTURE.noUsableSpaceProblem(describeProblemPaths(problemPaths))
+        : STRINGS.CAPTURE.NO_USABLE_SPACE_WARNING;
       warningEl.style.display = 'block';
     } else if (insufficientSpace) {
-      warningEl.textContent = `Insufficient disk space: capture needs ~${(requiredBytes / 1e9).toFixed(2)} GB, only ${(availableBytes / 1e9).toFixed(2)} GB available across the export pool.`;
+      warningEl.style.color = '#f44336';
+      warningEl.textContent = STRINGS.CAPTURE.insufficientSpaceWarning((requiredBytes / 1e9).toFixed(2), (availableBytes / 1e9).toFixed(2));
+      warningEl.style.display = 'block';
+    } else if (hasPartialProblems) {
+      warningEl.style.color = '#ffa726';
+      const wontBeUsed = problemPaths.length === 1 ? STRINGS.CAPTURE.ENTRY_WONT_BE_USED_SINGULAR : STRINGS.CAPTURE.ENTRY_WONT_BE_USED_PLURAL;
+      warningEl.textContent = STRINGS.CAPTURE.partialProblemsWarning(wontBeUsed, describeProblemPaths(problemPaths));
+      warningEl.style.display = 'block';
+    } else if (willBeCreatedPaths.length > 0) {
+      warningEl.style.color = '#64b5f6';
+      const shown = willBeCreatedPaths.slice(0, MAX_PROBLEM_PATHS_SHOWN).map((d) => `"${d.path}"`);
+      const remaining = willBeCreatedPaths.length - MAX_PROBLEM_PATHS_SHOWN;
+      if (remaining > 0) shown.push(STRINGS.CAPTURE.andNMore(remaining));
+      const doesnt = willBeCreatedPaths.length === 1 ? STRINGS.CAPTURE.DOESNT_SINGULAR : STRINGS.CAPTURE.DOESNT_PLURAL;
+      warningEl.textContent = shown.length === 1
+        ? STRINGS.CAPTURE.willBeCreatedSingle(shown[0], doesnt)
+        : STRINGS.CAPTURE.willBeCreatedMultiple(doesnt, shown.map((s) => `• ${s}`).join('\n'));
       warningEl.style.display = 'block';
     } else {
       warningEl.style.display = 'none';
@@ -190,11 +352,11 @@ export async function refreshLaunchGuard(state) {
   const footerRequiredEl = document.querySelector('#footer-required-space');
   if (footerRequiredEl) {
     const requiredGb = (requiredBytes / (1024 * 1024 * 1024)).toFixed(2);
-    footerRequiredEl.textContent = `Required: ${requiredGb} GB`;
+    footerRequiredEl.textContent = STRINGS.CAPTURE_CONFIG.footerRequiredSpace(requiredGb);
     footerRequiredEl.style.color = insufficientSpace ? '#f44336' : '#4caf50';
   }
 
-  return { requiredBytes, availableBytes, blocked };
+  return { requiredBytes, availableBytes, blocked, noHighlightsSelected };
 }
 
 // ── Custom Engine Commands (Init / Before-After) ──────────────────────────────
@@ -244,7 +406,7 @@ export function hydrateCommandsState(persistedInitCommands, persistedCustomComma
 let currentPreviewScanResults = [];
 
 function formatPreviewSize(bytes) {
-  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+  return STRINGS.CAPTURE.megabytesLabel((bytes / (1024 * 1024)).toFixed(2));
 }
 
 function updateClearPreviewsDeleteButtonState() {
@@ -252,7 +414,7 @@ function updateClearPreviewsDeleteButtonState() {
   if (!deleteBtn) return;
   const checked = document.querySelectorAll('.clear-previews-row-cb:checked');
   deleteBtn.disabled = checked.length === 0;
-  deleteBtn.textContent = checked.length > 0 ? `Delete ${checked.length} Selected` : 'Delete Selected';
+  deleteBtn.textContent = checked.length > 0 ? STRINGS.CAPTURE.deleteNSelected(checked.length) : STRINGS.CAPTURE.DELETE_SELECTED_DEFAULT;
 }
 
 function renderClearPreviewsResults() {
@@ -261,8 +423,8 @@ function renderClearPreviewsResults() {
   if (!tbody) return;
 
   if (currentPreviewScanResults.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="4" class="table-empty">No orphaned preview demos found.</td></tr>';
-    if (footerEl) footerEl.textContent = 'Found: 0 | Reclaimable: 0.00 GB';
+    tbody.innerHTML = `<tr><td colspan="4" class="table-empty">${STRINGS.CAPTURE.NO_ORPHANED_PREVIEWS}</td></tr>`;
+    if (footerEl) footerEl.textContent = STRINGS.CLEAR_PREVIEWS_MODAL.FOOTER_DEFAULT;
     updateClearPreviewsDeleteButtonState();
     return;
   }
@@ -293,7 +455,7 @@ function renderClearPreviewsResults() {
     const tdModified = document.createElement('td');
     tdModified.textContent = entry.modified_unix_secs
       ? new Date(entry.modified_unix_secs * 1000).toLocaleString()
-      : '—';
+      : STRINGS.CAPTURE.EMPTY_DASH;
 
     tr.appendChild(tdCb);
     tr.appendChild(tdFile);
@@ -303,7 +465,7 @@ function renderClearPreviewsResults() {
   });
 
   const totalGb = (totalBytes / (1024 * 1024 * 1024)).toFixed(2);
-  if (footerEl) footerEl.textContent = `Found: ${currentPreviewScanResults.length} | Reclaimable: ${totalGb} GB`;
+  if (footerEl) footerEl.textContent = STRINGS.CLEAR_PREVIEWS_MODAL.foundReclaimable(currentPreviewScanResults.length, totalGb);
   updateClearPreviewsDeleteButtonState();
 }
 
@@ -322,10 +484,10 @@ function initStandaloneLaunchButton() {
   async function performLaunch() {
     btn.disabled = true;
     const originalLabel = btn.textContent;
-    btn.textContent = 'Launching…';
+    btn.textContent = STRINGS.HIGHLIGHTS.LAUNCHING;
     try {
       await launchStandaloneGame();
-      showToast('Launching HLAE...', 'info');
+      showToast(STRINGS.HIGHLIGHTS.LAUNCHING_HLAE_TOAST, 'info');
     } catch (err) {
       // Already toasted by ipc_bridge.js.
     } finally {
@@ -366,23 +528,23 @@ function initClearPreviewsModal() {
   openBtn.addEventListener('click', async () => {
     const gameDir = document.querySelector('#hl-path-input')?.value?.trim() || '';
     if (!gameDir) {
-      showToast("Configure the Half-Life Executable (hl.exe) path before auditing previews.", 'error');
+      showToast(STRINGS.CAPTURE.CONFIGURE_HL_PATH_FIRST, 'error');
       return;
     }
 
     modal.style.display = 'flex';
     currentPreviewScanResults = [];
-    if (statusEl) statusEl.textContent = 'Scanning for orphaned preview demos...';
-    if (tbody) tbody.innerHTML = '<tr><td colspan="4" class="table-empty">Scanning...</td></tr>';
+    if (statusEl) statusEl.textContent = STRINGS.CAPTURE.SCANNING_ORPHANED_PREVIEWS;
+    if (tbody) tbody.innerHTML = `<tr><td colspan="4" class="table-empty">${STRINGS.CLEAR_PREVIEWS_MODAL.SCANNING_ROW}</td></tr>`;
     updateClearPreviewsDeleteButtonState();
 
     try {
       currentPreviewScanResults = await scanOrphanedPreviews(gameDir);
-      if (statusEl) statusEl.textContent = 'Scan complete.';
+      if (statusEl) statusEl.textContent = STRINGS.CAPTURE.SCAN_COMPLETE;
       renderClearPreviewsResults();
     } catch (e) {
-      if (statusEl) statusEl.textContent = 'Scan failed.';
-      if (tbody) tbody.innerHTML = `<tr><td colspan="4" class="table-empty">Scan failed: ${e}</td></tr>`;
+      if (statusEl) statusEl.textContent = STRINGS.CAPTURE.SCAN_FAILED;
+      if (tbody) tbody.innerHTML = `<tr><td colspan="4" class="table-empty">${STRINGS.CAPTURE.scanFailedRow(e)}</td></tr>`;
     }
   });
 
@@ -406,52 +568,84 @@ function initClearPreviewsModal() {
       const checked = document.querySelectorAll('.clear-previews-row-cb:checked');
       const pathsToDelete = Array.from(checked).map(cb => cb.dataset.path);
       if (pathsToDelete.length === 0) return;
-      if (!confirm(`Permanently delete ${pathsToDelete.length} orphaned preview demo(s)?`)) return;
+      if (!(await themedConfirm(STRINGS.CAPTURE.deletePreviewsConfirm(pathsToDelete.length)))) return;
 
       deleteBtn.disabled = true;
       try {
         const deletedCount = await deleteOrphanedPreviews(pathsToDelete);
-        showToast(`Deleted ${deletedCount} orphaned preview demo(s).`, 'success');
+        showToast(STRINGS.CAPTURE.deletedPreviews(deletedCount), 'success');
         currentPreviewScanResults = currentPreviewScanResults.filter(entry => !pathsToDelete.includes(entry.demo_path));
         renderClearPreviewsResults();
       } catch (e) {
-        showToast(`Deletion failed: ${e}`, 'error');
+        showToast(STRINGS.CAPTURE.deletionFailed(e), 'error');
         updateClearPreviewsDeleteButtonState();
       }
     });
   }
 }
 
-export function initCaptureUI(getState, onSettingsChange) {
+export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTakeIndex, onBatchFinished) {
   const startBtn = document.querySelector('#start-capture-btn') || document.querySelector('#start-batch-btn');
   const cancelBtn = document.querySelector('#cancel-batch-btn');
   const statusEl = document.querySelector('#batch-status');
   const progressContainer = document.querySelector('#capture-progress-container');
   const progressBar = document.querySelector('#capture-progress-bar');
+  const focusReminder = document.querySelector('#batch-focus-reminder');
+
+  // Tied to the progress bar rather than tracked separately: the reminder is
+  // only true while a batch is actually running, and two flags for one state
+  // is how they come to disagree.
+  const setBatchRunning = (running) => {
+    if (progressContainer && running) progressContainer.style.display = 'block';
+    if (focusReminder) focusReminder.style.display = running ? 'block' : 'none';
+  };
 
   currentGetState = getState;
   currentOnSettingsChange = onSettingsChange || null;
+  currentOnStatusChange = onStatusChange || null;
+  currentGetTakeIndex = getTakeIndex || null;
+  currentOnBatchFinished = onBatchFinished || null;
 
   initCommandsEditor = createListEditor({
     container: document.querySelector('#init-commands-list'),
     getItems: () => initCommands,
-    fields: [{ key: 'value', type: 'text', primitive: true, placeholder: 'e.g. mirv_streams add all' }],
-    onChange: notifySettingsChange,
+    fields: [{ key: 'value', type: 'text', primitive: true, placeholder: STRINGS.CAPTURE_CONFIG.INIT_COMMAND_PLACEHOLDER }],
+    onChange: () => {
+      notifySettingsChange();
+      // Typing a command here can silence a line in the user's own config, and
+      // this is the moment they can still see both.
+      refreshInitCommandWarnings();
+    },
   });
 
   customCommandsEditor = createListEditor({
     container: document.querySelector('#custom-commands-list'),
     getItems: () => customCommands,
     fields: [
-      { key: 'command', type: 'text', placeholder: 'Command' },
-      { key: 'relation', type: 'select', options: ['Before', 'After'] },
+      { key: 'command', type: 'text', placeholder: STRINGS.CAPTURE_CONFIG.CUSTOM_COMMAND_PLACEHOLDER },
+      { key: 'relation', type: 'select', options: STRINGS.CAPTURE_CONFIG.CUSTOM_COMMAND_RELATION_OPTIONS },
       { key: 'offsetSeconds', type: 'number', step: 0.1, min: 0, width: '70px' },
     ],
-    onChange: notifySettingsChange,
+    onChange: () => {
+      notifySettingsChange();
+      // These run last of all — after the configs and after the init commands —
+      // and are the only place a cvar changes partway through a capture.
+      refreshInitCommandWarnings();
+      // A Scheduled Command offset is one of the terms the roll floors are
+      // built from, so moving one can move the floor.
+      refreshRollFloors();
+    },
   });
 
   initClearPreviewsModal();
   initStandaloneLaunchButton();
+
+  // The pipeline turns some settings into init commands, so the warnings go
+  // stale when one changes.
+  FIELDS_THAT_BECOME_COMMANDS.forEach((sel) => {
+    const el = document.querySelector(sel);
+    if (el) el.addEventListener("change", refreshInitCommandWarnings);
+  });
 
   const addInitCommandBtn = document.querySelector('#add-init-command-btn');
   if (addInitCommandBtn) {
@@ -474,35 +668,38 @@ export function initCaptureUI(getState, onSettingsChange) {
   // settings.json on edit — previously nothing wired them to a save at all,
   // so values only survived a restart by coincidence, if some unrelated
   // action (e.g. browsing for hlae.exe) happened to save afterward.
-  ['#config-res-width', '#config-res-height', '#config-separate-hud',
-   '#config-pre-roll', '#config-post-roll', '#config-capture-fps'].forEach(selector => {
+  // Start-lead/stop-trail belong in this list too: they define the recorded
+  // window, so they change the disk estimate the guard is built on.
+  ['#config-res-width', '#config-res-height', '#config-separate-hud', '#config-ffmpeg-capture',
+   '#config-pre-roll', '#config-post-roll', '#config-capture-fps',
+   '#config-record-start-lead', '#config-record-stop-trail'].forEach(selector => {
     const el = document.querySelector(selector);
     if (el) el.addEventListener('input', () => { refreshLaunchGuard(); notifySettingsChange(); });
   });
-  ['#config-record-start-lead', '#config-record-stop-trail', '#config-initial-delay']
-    .forEach(selector => {
-      const el = document.querySelector(selector);
-      if (el) el.addEventListener('input', () => notifySettingsChange());
-    });
+  // Same missing-wiring bug as the rest of this function, just on the OBS
+  // connection fields and the capture-mode selector — all three read at
+  // capture/save time but never saved on their own change, so edits looked
+  // like they took but silently reverted on the next launch/refresh.
+  ['#config-initial-delay', '#config-obs-host', '#config-obs-port', '#config-obs-password'].forEach(selector => {
+    const el = document.querySelector(selector);
+    if (el) el.addEventListener('input', () => notifySettingsChange());
+  });
   // Checkboxes read by persistAppSettings/buildCapturePayload but with no
   // change listener of their own — same missing-wiring bug as the Timing
   // Options fields above, just on Path Routing / Capture Output checkboxes.
   ['#config-add-condebug', '#config-auto-clear-logs', '#config-auto-clear-previews',
-   '#config-auto-clear-temp-demos', '#config-save-local-patched'].forEach(selector => {
+   '#config-auto-clear-temp-demos', '#config-save-local-patched',
+   '#config-notify-patching', '#config-notify-demo-loading', '#config-notify-between-clips',
+   '#config-notify-captures-done', '#config-notify-renders-done', '#config-notify-error',
+   // A <select> fires `change`, not `input` — it belongs here rather than in
+   // the list above, which is wired for text/number/checkbox inputs.
+   '#config-capture-codec', '#config-capture-mode', '#config-obs-scene'].forEach(selector => {
     const el = document.querySelector(selector);
     if (el) el.addEventListener('change', () => notifySettingsChange());
   });
   // Only read at capture time (buildCapturePayload), same as the checkboxes
   // above, but previously not part of AppSettings at all — reset to default
   // every restart.
-  const allocationStrategyEl = document.querySelector('#allocation-strategy');
-  if (allocationStrategyEl) {
-    allocationStrategyEl.addEventListener('change', () => {
-      notifySettingsChange();
-      updateAllocationStrategyFooter();
-    });
-  }
-  updateAllocationStrategyFooter();
   refreshLaunchGuard();
 
   if (!unlistenCaptureStatus) {
@@ -510,7 +707,7 @@ export function initCaptureUI(getState, onSettingsChange) {
       const payload = event.payload || {};
       if (payload.running) {
         capturingInFlight = true;
-        if (progressContainer) progressContainer.style.display = 'block';
+        setBatchRunning(true);
         if (progressBar) {
           if (payload.index !== undefined && payload.total && payload.total > 0) {
             const pct = Math.min(100, Math.round((payload.index / payload.total) * 100));
@@ -519,36 +716,169 @@ export function initCaptureUI(getState, onSettingsChange) {
             progressBar.style.width = '50%';
           }
         }
-        const statusText = payload.name ? `${payload.status || "Capturing"}: ${payload.name}` : (payload.status || "Capturing...");
+        const statusText = payload.name ? STRINGS.CAPTURE.capturingWithName(payload.status || STRINGS.CAPTURE.CAPTURING_DEFAULT, payload.name) : (payload.status || STRINGS.CAPTURE.CAPTURING_ELLIPSIS_DEFAULT);
         if (statusEl) statusEl.textContent = statusText;
-        updateRowBadges(payload.status || "Capturing...", "#ff9800");
         if (startBtn) startBtn.disabled = true;
         if (cancelBtn) cancelBtn.disabled = false;
       } else {
         capturingInFlight = false;
+        setBatchRunning(false);
         if (cancelBtn) cancelBtn.disabled = true;
         refreshLaunchGuard();
+        if (currentOnBatchFinished) currentOnBatchFinished();
 
         if (payload.error) {
-          showToast(`Capture error: ${payload.status || "Unknown error"}`, "error");
-          updateRowBadges("Error", "#f44336");
-          if (statusEl) statusEl.textContent = `Error: ${payload.status || "Capture failed"}`;
+          const errorBody = STRINGS.CAPTURE.captureErrorToast(payload.status || STRINGS.CAPTURE.CAPTURE_ERROR_STATUS_DEFAULT);
+          showToast(errorBody, "error");
+          if (statusEl) statusEl.textContent = STRINGS.CAPTURE.captureErrorStatusText(payload.status || STRINGS.CAPTURE.CAPTURE_ERROR_TEXT_DEFAULT);
+          notify('error', STRINGS.NOTIFICATIONS.CAPTURES_ERROR_TITLE, errorBody);
         } else if (payload.status === "Cancelled") {
-          showToast("Batch capture cancelled.", "info");
-          updateRowBadges("Cancelled", "#f44336");
+          showToast(STRINGS.CAPTURE.BATCH_CANCELLED_TOAST, "info");
           if (progressBar) progressBar.style.width = '0%';
-          if (statusEl) statusEl.textContent = "Cancelled";
+          if (statusEl) statusEl.textContent = STRINGS.CAPTURE.CANCELLED;
         } else {
-          showToast("Batch capture completed successfully!", "success");
-          updateRowBadges("Completed", "#4caf50");
+          showToast(STRINGS.CAPTURE.BATCH_COMPLETED_TOAST, "success");
           if (progressBar) progressBar.style.width = '100%';
-          if (statusEl) statusEl.textContent = "Completed";
+          if (statusEl) statusEl.textContent = STRINGS.CAPTURE.COMPLETED;
+          notify('captures_done', STRINGS.NOTIFICATIONS.CAPTURES_DONE_TITLE, STRINGS.CAPTURE.BATCH_COMPLETED_TOAST);
         }
       }
     }).then(unlistenFn => {
       unlistenCaptureStatus = unlistenFn;
     }).catch(err => {
       console.error("Failed to register capture_status listener:", err);
+    });
+  }
+
+  // Per-demo progress, from the engine's own DEMO_START console marker —
+  // requires "Add condebug" on, silently never fires otherwise. clips_so_far
+  // is computed server-side (capture_manager.rs), so this listener does no
+  // running-total bookkeeping of its own.
+  if (!unlistenDemoLoading) {
+    listen('capture_demo_loading', (event) => {
+      const payload = event.payload || {};
+      // The upcoming "fast-forwarding to clip 1" toast carries the same
+      // title plus more detail — skip this one so they don't double up,
+      // when that notification is actually on to cover it.
+      if (isNotificationEnabled('between_clips')) return;
+      notify(
+        'demo_loading',
+        STRINGS.NOTIFICATIONS.demoLoadingTitle(payload.index, payload.total),
+        STRINGS.NOTIFICATIONS.demoLoadingBody(payload.clip_count, payload.clips_so_far, payload.total_batch_clips)
+      );
+    }).then(unlistenFn => {
+      unlistenDemoLoading = unlistenFn;
+    }).catch(err => {
+      console.error("Failed to register capture_demo_loading listener:", err);
+    });
+  }
+
+  // Fast-forward-to-clip progress, from the engine's own NEXT_CLIP console
+  // marker — same -condebug requirement as demo-loading above. Fires for
+  // clip 1 too (see the demo-loading listener's own suppression above).
+  if (!unlistenFastForwardToClip) {
+    listen('capture_fast_forward_to_clip', (event) => {
+      const payload = event.payload || {};
+      notify(
+        'between_clips',
+        STRINGS.NOTIFICATIONS.demoLoadingTitle(payload.demo_index, payload.demo_total),
+        STRINGS.NOTIFICATIONS.fastForwardToClipBody(payload.clip_index, payload.clip_count_this_demo, payload.clips_so_far, payload.total_batch_clips)
+      );
+    }).then(unlistenFn => {
+      unlistenFastForwardToClip = unlistenFn;
+    }).catch(err => {
+      console.error("Failed to register capture_fast_forward_to_clip listener:", err);
+    });
+  }
+
+  // Patching phase start/end -- one toast each, not per-demo (see
+  // capture_demo_loading above for the per-demo one).
+  if (!unlistenPatchingStarted) {
+    listen('capture_patching_started', (event) => {
+      const total = (event.payload || {}).total || 0;
+      notify('patching', STRINGS.NOTIFICATIONS.patchingStartedTitle(total), STRINGS.NOTIFICATIONS.PATCHING_STARTED_BODY);
+    }).then(unlistenFn => {
+      unlistenPatchingStarted = unlistenFn;
+    }).catch(err => {
+      console.error("Failed to register capture_patching_started listener:", err);
+    });
+  }
+  if (!unlistenPatchingFinished) {
+    listen('capture_patching_finished', (event) => {
+      const total = (event.payload || {}).total || 0;
+      notify('patching', STRINGS.NOTIFICATIONS.PATCHING_FINISHED_TITLE, STRINGS.NOTIFICATIONS.patchingFinishedBody(total));
+    }).then(unlistenFn => {
+      unlistenPatchingFinished = unlistenFn;
+    }).catch(err => {
+      console.error("Failed to register capture_patching_finished listener:", err);
+    });
+  }
+
+  // Post-batch take verification: advances each verified highlight to Captured.
+  if (!unlistenTakesVerified) {
+    listen('capture_takes_verified', (event) => {
+      const payload = event.payload || {};
+      const blocks = payload.blocks || [];
+      const total = payload.total_count ?? blocks.length;
+      const captured = payload.captured_count ?? 0;
+      const renderable = payload.renderable_count ?? 0;
+
+      const takeIndex = currentGetTakeIndex ? currentGetTakeIndex() : null;
+
+      let advanced = 0;
+      blocks.forEach(block => {
+        if (!block.captured) return;
+        // A block can cover several highlights — overlapping ones are recorded
+        // as one continuous take — so every highlight it covers advances.
+        const uids = [];
+        const sourceIndices = block.source_streak_indices || [];
+        sourceIndices.forEach(i => {
+          const streak = lastDispatch?.streaks?.[i];
+          if (!streak) return;
+          const demoPath = lastDispatch?.demoPaths?.[i];
+          uids.push(streakUid(demoPath, streak));
+          // Merged blocks (2+ source highlights recorded into one take) get a
+          // visible affordance in Highlight Details (detail_pane.js) so it's
+          // obvious why the rows flipped together. Non-enumerable, same as
+          // `.uid`, so it never leaks into a future capture payload sent
+          // over IPC (buildCapturePayload pushes the live streak object).
+          if (sourceIndices.length > 1 && block.take_key) {
+            Object.defineProperty(streak, 'mergedTakeKey', { value: block.take_key, enumerable: false, configurable: true });
+            Object.defineProperty(streak, 'mergedCount', { value: sourceIndices.length, enumerable: false, configurable: true });
+          }
+          // Status only ever moves forward. Re-capturing something already
+          // rendered must not knock it back down to Captured.
+          if (streak.status === 'Rendered') return;
+          if (streak.status !== 'Captured') advanced += 1;
+          streak.status = 'Captured';
+        });
+        // Recorded even when the take isn't renderable yet — a future render
+        // still needs to resolve this take_key back to these highlights once
+        // it succeeds, and the index outlives this dispatch's in-memory state.
+        if (takeIndex && block.take_key) {
+          recordTake(takeIndex, block.take_key, uids);
+        }
+      });
+
+      if (total === 0) return;
+
+      if (advanced > 0) {
+        // Both tables read status, and neither re-renders on its own.
+        if (currentOnStatusChange) currentOnStatusChange();
+      }
+
+      const marked = advanced > 0 ? STRINGS.CAPTURE.highlightsMarkedCaptured(advanced) : '';
+      if (captured < total) {
+        showToast(`${STRINGS.CAPTURE.takesFoundMissing(captured, total)}${marked}`, 'error');
+      } else if (renderable < total) {
+        showToast(`${STRINGS.CAPTURE.takesRenderStudioMiss(captured, total, total - renderable)}${marked}`, 'info');
+      } else {
+        showToast(`${STRINGS.CAPTURE.allTakesVerified(total)}${marked}`, 'success');
+      }
+    }).then(unlistenFn => {
+      unlistenTakesVerified = unlistenFn;
+    }).catch(err => {
+      console.error("Failed to register capture_takes_verified listener:", err);
     });
   }
 
@@ -561,6 +891,10 @@ export function initCaptureUI(getState, onSettingsChange) {
    */
   function buildCapturePayload(state) {
     const selectedStreaks = [];
+    // Index-aligned with selectedStreaks — the owning demo's path, needed to
+    // derive each streak's durable uid (streakUid takes demoPath + streak)
+    // for the take index below.
+    const selectedDemoPaths = [];
     if (state.currentScannedDemos) {
       state.currentScannedDemos.forEach(demo => {
         if (demo.streaks) {
@@ -568,11 +902,18 @@ export function initCaptureUI(getState, onSettingsChange) {
             // Opt-in model (detail_pane.js) — see computeRequiredCaptureBytes above.
             if (streak.selected === true) {
               selectedStreaks.push(streak);
+              selectedDemoPaths.push(demo.path);
             }
           });
         }
       });
     }
+
+    // Remembered so the post-batch take verification can map each block's
+    // source_streak_indices back to these exact live streak objects — the
+    // backend preserves this array's order, so index N here is index N there.
+    const sessionId = generateSessionId();
+    lastDispatch = { sessionId, streaks: selectedStreaks, demoPaths: selectedDemoPaths };
 
     const captureFpsVal = parseInt(document.querySelector("#config-capture-fps")?.value, 10) || 300;
     const preRollVal = parseFloat(document.querySelector("#config-pre-roll")?.value) || 2.0;
@@ -581,7 +922,6 @@ export function initCaptureUI(getState, onSettingsChange) {
     const recordStopTrailVal = parseFloat(document.querySelector("#config-record-stop-trail")?.value) || 0.0;
     const initialDelayVal = parseFloat(document.querySelector("#config-initial-delay")?.value) || 3.0;
     const fastForwardSpeedVal = parseFloat(document.querySelector("#config-fast-forward-speed")?.value) || 0.05;
-    const allocationStrategyVal = document.getElementById('allocation-strategy')?.value || "MaximizeSpace";
 
     const hlaePathVal = document.querySelector("#hlae-path-input")?.value?.trim() || "";
     const hlPathVal = document.querySelector("#hl-path-input")?.value?.trim() || "";
@@ -590,6 +930,20 @@ export function initCaptureUI(getState, onSettingsChange) {
     const resWidthVal = parseInt(document.querySelector("#config-res-width")?.value, 10) || 1280;
     const resHeightVal = parseInt(document.querySelector("#config-res-height")?.value, 10) || 720;
     const separateHudVal = document.querySelector("#config-separate-hud")?.checked || false;
+    // `?? true` not `|| false`: a missing element must not silently disable
+    // the flush, since nothing in the captured video would show that it had.
+    const decalFlushVal = document.querySelector("#config-decal-flush")?.checked ?? true;
+    // The mode select is the authority; `ffmpeg_capture` is derived from it so
+    // the payload cannot describe two modes at once. The backend reconciles
+    // both fields again in `normalise_capture_mode`, which is what keeps an
+    // older frontend working against this build.
+    const captureModeVal = document.querySelector("#config-capture-mode")?.value || "frame_sequence";
+    const ffmpegCaptureVal = captureModeVal === "direct_to_video";
+    const ffmpegCaptureCodecVal = document.querySelector("#config-capture-codec")?.value || "utvideo";
+    const obsHostVal = document.querySelector("#config-obs-host")?.value?.trim() || "127.0.0.1";
+    const obsPortVal = parseInt(document.querySelector("#config-obs-port")?.value, 10) || 4455;
+    const obsPasswordVal = document.querySelector("#config-obs-password")?.value || "";
+    const obsSceneVal = document.querySelector("#config-obs-scene")?.value || "";
     const saveLocalPatchedCopyVal = document.querySelector("#config-save-local-patched")?.checked || false;
     const addCondebugVal = document.querySelector("#config-add-condebug")?.checked || false;
 
@@ -598,8 +952,7 @@ export function initCaptureUI(getState, onSettingsChange) {
     const autoClearTempDemosVal = document.querySelector("#config-auto-clear-temp-demos")?.checked || false;
 
     if (!hlaePathVal || !hlPathVal) {
-      const errorMsg = "Please specify valid file paths for both HLAE Executable (hlae.exe) and Half-Life Executable (hl.exe).";
-      showToast(errorMsg, 'error');
+      showToast(STRINGS.CAPTURE.BOTH_PATHS_REQUIRED, 'error');
       return null;
     }
 
@@ -613,7 +966,7 @@ export function initCaptureUI(getState, onSettingsChange) {
     const outputDrivePool = (state.targetDrives || []).filter(Boolean);
 
     if (outputDrivePool.length === 0) {
-      showToast("Configure at least one Capture Output directory before starting a capture.", 'error');
+      showToast(STRINGS.CAPTURE.NO_CAPTURE_OUTPUT_DIR, 'error');
       return null;
     }
 
@@ -635,6 +988,14 @@ export function initCaptureUI(getState, onSettingsChange) {
       resolution_width: resWidthVal,
       resolution_height: resHeightVal,
       separate_hud: separateHudVal,
+      decal_flush: decalFlushVal,
+      ffmpeg_capture: ffmpegCaptureVal,
+      ffmpeg_capture_codec: ffmpegCaptureCodecVal,
+      capture_mode: captureModeVal,
+      obs_host: obsHostVal,
+      obs_port: obsPortVal,
+      obs_password: obsPasswordVal,
+      obs_scene: obsSceneVal,
       save_local_patched_copy: saveLocalPatchedCopyVal,
       add_condebug: addCondebugVal,
       streaks: selectedStreaks,
@@ -643,7 +1004,6 @@ export function initCaptureUI(getState, onSettingsChange) {
       capture_directories: outputDrivePool,
       capture_fps: captureFpsVal,
       drives: state.targetDrives || [],
-      allocation_strategy: allocationStrategyVal,
       record_start_lead: recordStartLeadVal,
       record_stop_trail: recordStopTrailVal,
       initial_delay: initialDelayVal,
@@ -651,7 +1011,7 @@ export function initCaptureUI(getState, onSettingsChange) {
       auto_clear_logs: autoClearLogsVal,
       auto_clear_previews: autoClearPreviewsVal,
       auto_clear_temp_demos: autoClearTempDemosVal,
-      session_id: generateSessionId(),
+      session_id: sessionId,
       init_commands: initCommandsPayload,
       custom_commands: customCommandsPayload,
     };
@@ -668,10 +1028,15 @@ export function initCaptureUI(getState, onSettingsChange) {
       // now blocks unconditionally instead of skipping the check).
       const guard = await refreshLaunchGuard(state);
       if (guard && guard.blocked) {
-        if (guard.availableBytes === 0) {
-          showToast("Configure at least one Capture Output directory with free space before starting a capture.", 'error');
+        // Ahead of the disk branches, and well ahead of the running-game check
+        // below: "you haven't picked anything yet" is the answer the user needs,
+        // and it should not arrive behind a modal about closing their game.
+        if (guard.noHighlightsSelected) {
+          showToast(STRINGS.CAPTURE.NO_HIGHLIGHTS_SELECTED_WARNING, 'error');
+        } else if (guard.availableBytes === 0) {
+          showToast(STRINGS.CAPTURE.NO_CAPTURE_OUTPUT_DIR_WITH_SPACE, 'error');
         } else {
-          showToast(`Insufficient disk space. Required: ${(guard.requiredBytes / 1e9).toFixed(2)} GB, Available: ${(guard.availableBytes / 1e9).toFixed(2)} GB`, 'error');
+          showToast(STRINGS.CAPTURE.insufficientDiskSpaceToast((guard.requiredBytes / 1e9).toFixed(2), (guard.availableBytes / 1e9).toFixed(2)), 'error');
         }
         return;
       }
@@ -687,35 +1052,62 @@ export function initCaptureUI(getState, onSettingsChange) {
         return;
       }
 
-      showToast("Initializing capture batch...", "info");
-      startBtn.disabled = true;
-      if (cancelBtn) cancelBtn.disabled = false;
-      updateRowBadges("Queued", "#2196f3");
+      // Day of Defeat allows one instance, and the batch does not find that out
+      // until after it has patched every demo in the queue — the engine's own
+      // "Only one instance of this game can be run at a time" box appears at
+      // the end of all that work, with nothing captured. The preview and
+      // standalone launches have been guarded against this all along; the batch
+      // was the one path that went straight through. Observed 2026-08-28.
+      let engineAlreadyRunning = false;
+      try {
+        engineAlreadyRunning = await checkEngineProcesses();
+      } catch (err) {
+        // Already toasted by ipc_bridge.js — fail open rather than blocking a
+        // legitimate batch because the detector itself errored.
+      }
 
-      startCaptureBatch(activePayload)
+      const runBatch = () => {
+        showToast(STRINGS.CAPTURE.INITIALIZING_CAPTURE_BATCH, "info");
+        startBtn.disabled = true;
+        if (cancelBtn) cancelBtn.disabled = false;
+        return startBatchWithPayload(activePayload, state);
+      };
+
+      if (engineAlreadyRunning) {
+        requestProcessGuardedLaunch(runBatch, { forBatch: true });
+        return;
+      }
+
+      runBatch();
+    });
+  }
+
+  // Split out of the click handler so the process-conflict modal can park it
+  // and run it later unchanged.
+  function startBatchWithPayload(activePayload, state) {
+    return startCaptureBatch(activePayload)
         .then(() => {
-          showToast("Batch capture queued successfully!", "success");
-          if (progressContainer) progressContainer.style.display = 'block';
+          showToast(STRINGS.CAPTURE.BATCH_QUEUED_TOAST, "success");
+          setBatchRunning(true);
           if (progressBar) progressBar.style.width = '10%';
         })
         .catch((err) => {
           console.error("IPC Execution Error (start_capture_batch):", err);
-          showToast("Error starting batch: " + err, "error");
-          updateRowBadges("Failed", "#f44336");
+          showToast(STRINGS.CAPTURE.startBatchError(err), "error");
           if (cancelBtn) cancelBtn.disabled = true;
           capturingInFlight = false;
+          // The batch never started, so the reminder must not be left standing.
+          setBatchRunning(false);
           refreshLaunchGuard(state);
         });
-    });
   }
 
   if (cancelBtn) {
     cancelBtn.addEventListener('click', () => {
-      showToast("Cancelling batch...", "info");
+      showToast(STRINGS.CAPTURE.CANCELLING_BATCH_TOAST, "info");
       cancelBtn.disabled = true;
       cancelCaptureBatch()
         .then(() => {
-          updateRowBadges("Cancelled", "#f44336");
           if (progressBar) progressBar.style.width = '0%';
           capturingInFlight = false;
           refreshLaunchGuard();

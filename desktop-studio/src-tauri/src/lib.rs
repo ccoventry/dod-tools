@@ -3,12 +3,14 @@ mod render_manager;
 mod settings_manager;
 mod audit_manager;
 mod dir_browser;
+mod map_manager;
+mod updater_manager;
 
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 use capture_manager::{CaptureManager, CapturePayload, launch_demo_preview, generate_all_previews, launch_standalone_game, check_engine_processes, kill_engine_processes, scan_orphaned_previews, delete_orphaned_previews};
 use render_manager::{
-    RenderManager, scan_render_directories, execute_render_batch, cancel_render_batch,
-    cancel_render_job, reset_render_job, get_export_pool_free_gb,
+    RenderManager, queue_render_batch, start_queued_render, cancel_render_batch,
+    cancel_render_job, reset_render_job, set_render_job_codec, get_export_pool_free_gb,
     check_render_autosave, discard_render_autosave, recover_render_batch,
 };
 use settings_manager::{AppSettings, SettingsManager};
@@ -150,6 +152,10 @@ fn simulate_aot_capacity(
 /// Cancel a running capture batch.
 #[tauri::command]
 async fn cancel_capture_batch(state: tauri::State<'_, CaptureManager>) -> Result<(), String> {
+    native::log_markdown(&format!(
+        "[capture] Cancel requested (is_running={})",
+        state.is_running()
+    ));
     state
         .cancel_token
         .store(true, std::sync::atomic::Ordering::Relaxed);
@@ -166,6 +172,22 @@ fn capture_status(state: tauri::State<'_, CaptureManager>) -> bool {
 #[tauri::command]
 fn test_bridge(path: String) -> String {
     format!("Tauri Backend received target: {}. Engine ready.", path)
+}
+
+/// Writes one line to today's activity log from the frontend. Exists for
+/// events that have no other Tauri command to piggyback logging on — the
+/// Master Demo Queue's Clear Untracked/Selected/All and row-delete actions
+/// are pure frontend array mutations with nothing else calling into Rust.
+#[tauri::command]
+fn log_frontend_event(message: String) {
+    native::log_markdown(&message);
+}
+
+/// Absolute path to today's activity log, for the top nav's "View Logs"
+/// button — most users won't know to go looking under AppData on their own.
+#[tauri::command]
+fn get_activity_log_path() -> String {
+    native::activity_log_path().to_string_lossy().to_string()
 }
 
 #[tauri::command]
@@ -215,6 +237,39 @@ fn calculate_export_pool_space(paths: Vec<String>) -> Result<u64, String> {
     Ok(total)
 }
 
+#[derive(serde::Serialize)]
+struct CaptureOutputDiagnostic {
+    path: String,
+    status: &'static str, // "ok" | "not_absolute" | "malformed" | "not_found" | "not_a_directory"
+    // Whether get_available_bytes (the same function backing the aggregate
+    // sum/footer) would actually count this path — a "not_found" path whose
+    // drive is real and mounted still passes (many output folders are
+    // auto-created at write time), while one on an unmounted/nonexistent
+    // drive doesn't. Reusing that exact check here, rather than deriving a
+    // second opinion from `status` alone, is what keeps this list and the
+    // footer's byte total from disagreeing about the same path.
+    usable: bool,
+}
+
+#[tauri::command]
+fn diagnose_capture_output_paths(paths: Vec<String>) -> Vec<CaptureOutputDiagnostic> {
+    paths
+        .into_iter()
+        .map(|path_str| {
+            let p = std::path::PathBuf::from(&path_str);
+            let status = match native::sys::disk::diagnose_path(&p) {
+                native::sys::disk::PathStatus::Ok => "ok",
+                native::sys::disk::PathStatus::NotAbsolute => "not_absolute",
+                native::sys::disk::PathStatus::Malformed => "malformed",
+                native::sys::disk::PathStatus::NotFound => "not_found",
+                native::sys::disk::PathStatus::NotADirectory => "not_a_directory",
+            };
+            let usable = native::sys::disk::get_available_bytes(&p) != u64::MAX;
+            CaptureOutputDiagnostic { path: path_str, status, usable }
+        })
+        .collect()
+}
+
 #[tauri::command]
 async fn validate_paths(hlae_path: String, hl_path: String) -> Result<bool, String> {
     let hlae_p = std::path::Path::new(&hlae_path);
@@ -229,70 +284,159 @@ async fn validate_paths(hlae_path: String, hl_path: String) -> Result<bool, Stri
     Ok(true)
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
-pub struct SerializedAnalysis {
-    pub scoreboard: serde_json::Value,
-    pub chat_logs: serde_json::Value,
-    pub mortality_metrics: serde_json::Value,
-    pub round_chronologies: serde_json::Value,
-    pub file_info: serde_json::Value,
+/// Whether HLAE can reach an FFmpeg of its own, which is a different question
+/// from whether Render Studio can.
+///
+/// `mirv_movie_ffmpeg` makes HLAE spawn FFmpeg itself and it does not consult
+/// the app's resolution chain, so this has to be reported before a batch rather
+/// than discovered after one — the failure is a capture that runs to completion
+/// and produces no video. See `native::shared::hlae_ffmpeg`.
+#[tauri::command]
+async fn check_hlae_ffmpeg(
+    hlae_path: String,
+    ffmpeg_path: Option<String>,
+) -> Result<serde_json::Value, String> {
+    use native::shared::hlae_ffmpeg as hf;
+
+    let state = hf::detect(std::path::Path::new(&hlae_path));
+
+    // "HLAE is pointed somewhere" and "HLAE is pointed at the same FFmpeg
+    // Render Studio uses" are different questions, and only the second keeps
+    // both halves of the pipeline encoding with the same build — which was the
+    // stated reason for writing an ini instead of copying the binary. Nothing
+    // was checking it stayed true, so changing the app's FFmpeg silently left
+    // HLAE on the old one.
+    let app_ffmpeg = hf::resolve_absolute(ffmpeg_path.as_deref().unwrap_or("ffmpeg"));
+    let agrees_with_app = match (&state, &app_ffmpeg) {
+        (hf::HlaeFfmpeg::Linked { target, .. }, Some(app)) => Some(hf::same_file(target, app)),
+        // A bundled binary is HLAE's own and is meant to differ; with nothing
+        // linked there is nothing to disagree with.
+        _ => None,
+    };
+
+    // "It exists" was the only test the picker applied, and ffplay.exe and
+    // ffprobe.exe sit in the same folder as ffmpeg.exe. Checking here as well as
+    // at link time means the row says so before the button is pressed, instead
+    // of reporting a disagreement between two paths one of which cannot record.
+    //
+    // Chaining this off `app_ffmpeg` was a hole: a path that does not resolve
+    // produces `None`, so the check never ran and a typo'd override said
+    // nothing at all. Failing to resolve is itself the problem worth reporting.
+    let configured = ffmpeg_path.as_deref().unwrap_or("").trim().to_string();
+    let app_ffmpeg_problem = match &app_ffmpeg {
+        Some(p) => hf::verify_is_ffmpeg(p).err(),
+        None if configured.is_empty() => {
+            Some("no ffmpeg.exe was found on PATH, and no override is set".to_string())
+        }
+        None => Some(format!("there is no file at \"{}\"", configured)),
+    };
+
+    // Whether the HLAE Executable above is a working HLAE install, answered by
+    // the file the pipeline actually consumes rather than by what the exe calls
+    // itself: `build_hlae_process` passes this DLL as `-hookDllPath`, so its
+    // absence means a capture cannot work whatever the exe is named. Advisory —
+    // reported, never enforced.
+    let missing_hook_dll = hf::missing_hook_dll(std::path::Path::new(&hlae_path))
+        .map(|p| p.to_string_lossy().into_owned());
+
+    Ok(serde_json::json!({
+        "state": state,
+        "usable": state.is_usable(),
+        "can_link": state.can_link(),
+        "app_ffmpeg": app_ffmpeg.map(|p| p.to_string_lossy().into_owned()),
+        "agrees_with_app": agrees_with_app,
+        "app_ffmpeg_problem": app_ffmpeg_problem,
+        "missing_hook_dll": missing_hook_dll,
+    }))
 }
 
+/// Whether each configured executable path actually points at a file.
+///
+/// The Path Routing fields accepted anything: `validate_paths` only ran at
+/// capture launch, so a typo sat there looking fine until a batch failed
+/// minutes later. Returns a state per path rather than a message, so the
+/// wording stays in `strings.js` with every other user-facing string.
 #[tauri::command]
-async fn analyze_demo(demo_path: String) -> Result<SerializedAnalysis, String> {
-    tokio::task::spawn_blocking(move || {
-        let path = std::path::PathBuf::from(&demo_path);
-
-        if !path.exists() || !path.is_file() {
-            return Err(format!("Demo file not found: {}", demo_path));
-        }
-
-        match native::run_analyzer_with_progress(&path, |_, _| {}) {
-            Ok((file_info, analysis)) => {
-                let analysis_json = serde_json::to_value(&analysis)
-                    .map_err(|e| format!("Serialization error (analysis): {}", e))?;
-                let file_info_json = serde_json::to_value(&file_info)
-                    .map_err(|e| format!("Serialization error (file_info): {}", e))?;
-
-                let scoreboard = analysis_json
-                    .get("scoreboard")
-                    .cloned()
-                    .unwrap_or(serde_json::Value::Null);
-                let chat_logs = analysis_json
-                    .get("chat_logs")
-                    .or_else(|| analysis_json.get("chat"))
-                    .cloned()
-                    .unwrap_or(serde_json::Value::Null);
-                let mortality_metrics = analysis_json
-                    .get("mortality_metrics")
-                    .or_else(|| analysis_json.get("deaths"))
-                    .cloned()
-                    .unwrap_or(serde_json::Value::Null);
-                let round_chronologies = analysis_json
-                    .get("round_chronologies")
-                    .or_else(|| analysis_json.get("rounds"))
-                    .cloned()
-                    .unwrap_or(serde_json::Value::Null);
-
-                Ok(SerializedAnalysis {
-                    scoreboard,
-                    chat_logs,
-                    mortality_metrics,
-                    round_chronologies,
-                    file_info: file_info_json,
-                })
+async fn diagnose_executable_paths(paths: Vec<String>) -> Result<Vec<String>, String> {
+    Ok(paths
+        .iter()
+        .map(|raw| {
+            let path = raw.trim();
+            if path.is_empty() {
+                // Not a complaint: these fields are legitimately blank before
+                // they are filled in, and the FFmpeg override is optional.
+                return "empty";
             }
-            Err(e) => Err(format!("Analyzer error: {}", e)),
+            let p = std::path::Path::new(path);
+            if p.is_file() {
+                "ok"
+            } else if p.is_dir() {
+                // The classic mistake these fields invite — the folder rather
+                // than the executable inside it.
+                "not_a_file"
+            } else {
+                "not_found"
+            }
+        })
+        .map(str::to_string)
+        .collect())
+}
+
+/// Points HLAE at an FFmpeg by writing `ffmpeg.ini`, on request only.
+///
+/// Never overwrites an existing ini: HLAE installs are shared with Source work
+/// and other projects, so silently repointing one would break somebody else's
+/// setup to fix ours. `link` refuses in that case and the error says so.
+/// `elevated` retries the same write through a UAC prompt. The HLAE installer
+/// puts the target under `Program Files`, so an unelevated write fails for most
+/// people — the frontend asks first, then calls back with this set.
+#[tauri::command]
+async fn link_hlae_ffmpeg(
+    hlae_path: String,
+    ffmpeg_path: String,
+    elevated: Option<bool>,
+) -> Result<serde_json::Value, String> {
+    use native::shared::hlae_ffmpeg::{self, LinkError};
+
+    let ffmpeg = hlae_ffmpeg::resolve_absolute(&ffmpeg_path).ok_or_else(|| {
+        format!(
+            "Could not resolve an FFmpeg from \"{}\". Set Render Studio's FFmpeg path to a real \
+             ffmpeg.exe first — HLAE's ini needs an absolute path and cannot use a bare command \
+             name.",
+            ffmpeg_path
+        )
+    })?;
+
+    let hlae = std::path::Path::new(&hlae_path);
+    let result = if elevated.unwrap_or(false) {
+        hlae_ffmpeg::link_elevated(hlae, &ffmpeg)
+    } else {
+        hlae_ffmpeg::link(hlae, &ffmpeg)
+    };
+
+    match result {
+        Ok(ini) => {
+            native::log_markdown(&format!(
+                "[hlae-ffmpeg] wrote {} pointing at {} — HLAE can now spawn FFmpeg for \
+                 `mirv_movie_ffmpeg`.",
+                ini.display(),
+                ffmpeg.display()
+            ));
+            Ok(serde_json::json!({ "ini": ini.to_string_lossy() }))
         }
-    })
-    .await
-    .map_err(|e| format!("Task join error: {}", e))?
+        // Reported as data, not an error string: the frontend has to tell this
+        // apart from a real failure so it can offer the prompt rather than show
+        // somebody "Access is denied. (os error 5)" and leave them there.
+        Err(LinkError::NeedsElevation { ini }) => Ok(serde_json::json!({
+            "needs_elevation": true,
+            "ini": ini.to_string_lossy(),
+        })),
+        Err(e) => Err(e.to_string()),
+    }
 }
 
 // ── Full-fidelity analysis payload for the standalone Demo Analyzer tab ─────────
-// Unlike `SerializedAnalysis` (which flattens a handful of sections into loose
-// JSON for the compact inline telemetry summary), this passes the typed
-// `analysis::DemoInfo`/`AnalyzerState` straight through so the frontend can
+// Passes the typed `analysis::DemoInfo`/`AnalyzerState` straight through so the frontend can
 // reconstruct every report sub-view (Summary/Scoreboard/Player Details/Team
 // Details/Timeline/Rounds/Chat) with full fidelity, matching the data the
 // egui report views on `dev` were built from.
@@ -377,19 +521,29 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(CaptureManager::new())
         .manage(RenderManager::new())
         .manage(ScanManager::default())
         .manage(SettingsManager::new())
         .manage(AuditManager::default())
+        .manage(updater_manager::UpdaterState::default())
         .invoke_handler(tauri::generate_handler![
             test_bridge,
+            log_frontend_event,
+            get_activity_log_path,
             validate_paths,
-            analyze_demo,
+            check_hlae_ffmpeg,
+            diagnose_executable_paths,
+            link_hlae_ffmpeg,
             analyze_demo_full,
             start_capture_batch,
             launch_demo_preview,
             generate_all_previews,
+            capture_manager::obs_test_connection,
+            capture_manager::obs_check_orphan,
+            capture_manager::obs_recover_orphan,
             launch_standalone_game,
             check_engine_processes,
             kill_engine_processes,
@@ -401,12 +555,14 @@ pub fn run() {
             scan_demos,
             cancel_scan,
             calculate_export_pool_space,
+            diagnose_capture_output_paths,
             simulate_aot_capacity,
-            scan_render_directories,
-            execute_render_batch,
+            queue_render_batch,
+            start_queued_render,
             cancel_render_batch,
             cancel_render_job,
             reset_render_job,
+            set_render_job_codec,
             get_export_pool_free_gb,
             check_render_autosave,
             discard_render_autosave,
@@ -423,6 +579,14 @@ pub fn run() {
             dir_browser::default_browse_dir,
             dir_browser::count_demo_files_in_folder,
             dir_browser::scan_demo_folders,
+            map_manager::check_demo_maps,
+            map_manager::download_map,
+            map_manager::map_download_url,
+            map_manager::scan_game_configs,
+            map_manager::roll_floors,
+            updater_manager::check_for_update,
+            updater_manager::download_and_install_update,
+            updater_manager::restart_app,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

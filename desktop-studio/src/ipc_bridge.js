@@ -1,13 +1,97 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { showToast } from './toast.js';
+import { STRINGS } from './strings.js';
+
+/** Writes one line to today's activity log — for frontend-only events (the
+ *  Master Queue's Clear Untracked/Selected/All and row-delete actions) that
+ *  have no other IPC call to log from. Best-effort: logs to the console on
+ *  failure rather than toasting, since a lost log line isn't worth
+ *  interrupting the user over. */
+export function logFrontendEvent(message) {
+  invoke('log_frontend_event', { message }).catch((err) => {
+    console.error("IPC Execution Error (log_frontend_event):", err);
+  });
+}
+
+/** Opens Explorer with today's activity log pre-selected — AppData/logs
+ *  isn't somewhere most users would think to go looking on their own. */
+export async function openActivityLog() {
+  return invoke('get_activity_log_path')
+    .then((path) => revealItemInDir(path))
+    .catch((err) => {
+      console.error("IPC Execution Error (get_activity_log_path):", err);
+      showToast(STRINGS.IPC.logFileOpenFailed(err), 'error');
+    });
+}
 
 export async function scanDirectory(scanPaths) {
   return invoke("scan_directory", { paths: scanPaths })
     .catch((err) => {
       console.error("IPC Execution Error (scan_directory):", err);
-      showToast(`Scan error: ${err}`, 'error');
+      showToast(STRINGS.IPC.scanError(err), 'error');
       throw err;
+    });
+}
+
+// Map library checks. Deliberately quiet on failure: a demo whose map cannot be
+// checked is still a demo the user can work with, so this reports and returns
+// nothing rather than interrupting a scan that otherwise succeeded.
+export async function checkDemoMaps(demoPaths, gamePath) {
+  return invoke("check_demo_maps", { demoPaths, gamePath })
+    .catch((err) => {
+      console.error("IPC Execution Error (check_demo_maps):", err);
+      return [];
+    });
+}
+
+export async function downloadMap(mapName, expectedChecksum, gamePath) {
+  return invoke("download_map", { mapName, expectedChecksum, gamePath })
+    .catch((err) => {
+      console.error("IPC Execution Error (download_map):", err);
+      throw err;
+    });
+}
+
+export async function mapDownloadUrl(mapName) {
+  return invoke("map_download_url", { mapName })
+    .catch((err) => {
+      console.error("IPC Execution Error (map_download_url):", err);
+      return null;
+    });
+}
+
+
+// What the pre-roll and post-roll have to cover. Quiet on failure: a timing
+// hint that cannot be computed is not worth interrupting anyone over.
+export async function getRollFloors(preRoll, postRoll, decalFlush, customCommands = []) {
+  const recordStartLead = parseFloat(document.querySelector('#config-record-start-lead')?.value) || 0;
+  const recordStopTrail = parseFloat(document.querySelector('#config-record-stop-trail')?.value) || 0;
+  return invoke("roll_floors", { preRoll, postRoll, recordStartLead, recordStopTrail, decalFlush, customCommands })
+    .catch((err) => {
+      console.error("IPC Execution Error (roll_floors):", err);
+      return null;
+    });
+}
+
+export async function scanGameConfigs(
+  gamePath,
+  initCommands = [],
+  customCommands = [],
+  context = {}
+) {
+  return invoke("scan_game_configs", {
+    gamePath,
+    initCommands,
+    customCommands,
+    captureFps: context.captureFps ?? null,
+    separateHud: context.separateHud ?? null,
+    decalFlush: context.decalFlush ?? null,
+  })
+    .catch((err) => {
+      console.error("IPC Execution Error (scan_game_configs):", err);
+      return { unseen: [], overrides: [], shadowed: [], custom: [] };
     });
 }
 
@@ -15,16 +99,49 @@ export async function validatePaths(hlaePath, hlPath) {
   return await invoke('validate_paths', { hlaePath, hlPath })
     .catch((err) => {
       console.error("IPC Execution Error (validate_paths):", err);
-      showToast(`Validation error: ${err}`, 'error');
+      showToast(STRINGS.IPC.validationError(err), 'error');
       throw err;
     });
 }
 
-export async function analyzeDemo(demoPath) {
-  return await invoke('analyze_demo', { demoPath })
+/**
+ * Whether HLAE can reach an FFmpeg of its own.
+ *
+ * A different question from Render Studio's FFmpeg: `mirv_movie_ffmpeg` makes
+ * HLAE spawn one itself and it does not consult the app's resolution chain, so
+ * a missing one is only discovered as a capture that finishes and produces no
+ * video. See `docs/direct_to_video_capture.md`.
+ */
+/**
+ * Whether each configured executable path points at a file. Returns a state per
+ * path ("ok" | "empty" | "not_found" | "not_a_file"), not a message — the
+ * wording lives in strings.js with everything else the user reads.
+ */
+export async function diagnoseExecutablePaths(paths) {
+  return await invoke('diagnose_executable_paths', { paths })
     .catch((err) => {
-      console.error("IPC Execution Error (analyze_demo):", err);
-      showToast(`Analysis error: ${err}`, 'error');
+      console.error("IPC Execution Error (diagnose_executable_paths):", err);
+      throw err;
+    });
+}
+
+export async function checkHlaeFfmpeg(hlaePath, ffmpegPath) {
+  return await invoke('check_hlae_ffmpeg', { hlaePath, ffmpegPath })
+    .catch((err) => {
+      console.error("IPC Execution Error (check_hlae_ffmpeg):", err);
+      throw err;
+    });
+}
+
+/**
+ * Writes HLAE's `ffmpeg.ini` so it can find the FFmpeg the app already uses.
+ * Never overwrites an existing one — the backend refuses and says why.
+ */
+export async function linkHlaeFfmpeg(hlaePath, ffmpegPath, elevated = false) {
+  return await invoke('link_hlae_ffmpeg', { hlaePath, ffmpegPath, elevated })
+    .catch((err) => {
+      console.error("IPC Execution Error (link_hlae_ffmpeg):", err);
+      showToast(STRINGS.CAPTURE_CONFIG.HLAE_FFMPEG_LINK_FAILED(err), 'error');
       throw err;
     });
 }
@@ -33,7 +150,7 @@ export async function analyzeDemoFull(demoPath) {
   return await invoke('analyze_demo_full', { demoPath })
     .catch((err) => {
       console.error("IPC Execution Error (analyze_demo_full):", err);
-      showToast(`Analysis error: ${err}`, 'error');
+      showToast(STRINGS.IPC.analysisError(err), 'error');
       throw err;
     });
 }
@@ -53,7 +170,7 @@ export async function launchDemoPreview(hlaePath, gamePath, streaks) {
   return invoke("launch_demo_preview", { hlaePath, gamePath, streaks })
     .catch((err) => {
       console.error("IPC Execution Error (launch_demo_preview):", err);
-      showToast(`Preview failed: ${err}`, 'error');
+      showToast(STRINGS.IPC.previewFailed(err), 'error');
       throw err;
     });
 }
@@ -65,7 +182,7 @@ export async function checkEngineProcesses() {
   return invoke("check_engine_processes")
     .catch((err) => {
       console.error("IPC Execution Error (check_engine_processes):", err);
-      showToast(`Process check failed: ${err}`, 'error');
+      showToast(STRINGS.IPC.processCheckFailed(err), 'error');
       throw err;
     });
 }
@@ -76,7 +193,7 @@ export async function launchStandaloneGame() {
   return invoke("launch_standalone_game")
     .catch((err) => {
       console.error("IPC Execution Error (launch_standalone_game):", err);
-      showToast(`Launch failed: ${err}`, 'error');
+      showToast(STRINGS.IPC.launchFailed(err), 'error');
       throw err;
     });
 }
@@ -86,7 +203,7 @@ export async function killEngineProcesses() {
   return invoke("kill_engine_processes")
     .catch((err) => {
       console.error("IPC Execution Error (kill_engine_processes):", err);
-      showToast(`Failed to close running engine processes: ${err}`, 'error');
+      showToast(STRINGS.IPC.killEngineFailed(err), 'error');
       throw err;
     });
 }
@@ -98,7 +215,7 @@ export async function generateAllPreviews(hlaePath, gamePath, streaks) {
   return invoke("generate_all_previews", { hlaePath, gamePath, streaks })
     .catch((err) => {
       console.error("IPC Execution Error (generate_all_previews):", err);
-      showToast(`Batch preview generation failed: ${err}`, 'error');
+      showToast(STRINGS.IPC.batchPreviewFailed(err), 'error');
       throw err;
     });
 }
@@ -127,6 +244,18 @@ export async function calculateExportPoolSpace(paths) {
     });
 }
 
+/** Per-path reason a Capture Output entry isn't usable — "ok" | "not_absolute"
+ *  | "malformed" | "not_found" | "not_a_directory". Only worth calling once
+ *  the aggregate space check has already found a problem; a per-path OS stat
+ *  isn't cheap enough to run on every keystroke. */
+export async function diagnoseCaptureOutputPaths(paths) {
+  return invoke("diagnose_capture_output_paths", { paths: paths })
+    .catch((err) => {
+      console.error("IPC Execution Error (diagnose_capture_output_paths):", err);
+      throw err;
+    });
+}
+
 export async function simulateAotCapacity(streaks, fps, bytesPerFrame, availableBytes) {
   return invoke("simulate_aot_capacity", { 
     streaks, 
@@ -135,25 +264,26 @@ export async function simulateAotCapacity(streaks, fps, bytesPerFrame, available
     availableBytes 
   }).catch((err) => {
     console.error("IPC Execution Error (simulate_aot_capacity):", err);
-    showToast(`Simulation error: ${err}`, 'error');
+    showToast(STRINGS.IPC.simulationError(err), 'error');
     throw err;
   });
 }
 
-export async function scanRenderDirectories(renderFolders) {
-  return invoke("scan_render_directories", { paths: renderFolders })
+export async function queueRenderBatch(payload) {
+  // payload must match RenderBatchPayload:
+  //   { render_directories, codec, fps, ffmpeg_path?, export_directories, max_concurrent_renders }
+  // Resolves to the number of takes found and staged as Queued jobs.
+  return invoke("queue_render_batch", { payload: payload })
     .catch((err) => {
-      console.error("IPC Execution Error (scan_render_directories):", err);
+      console.error("IPC Execution Error (queue_render_batch):", err);
       throw err;
     });
 }
 
-export async function executeRenderBatch(payload) {
-  // payload must match RenderBatchPayload:
-  //   { render_directories, codec, fps, ffmpeg_path?, export_directories, max_concurrent_renders }
-  return invoke("execute_render_batch", { payload: payload })
+export async function startQueuedRender() {
+  return invoke("start_queued_render")
     .catch((err) => {
-      console.error("IPC Execution Error (execute_render_batch):", err);
+      console.error("IPC Execution Error (start_queued_render):", err);
       throw err;
     });
 }
@@ -178,6 +308,14 @@ export async function resetRenderJob(jobId) {
   return invoke("reset_render_job", { jobId })
     .catch((err) => {
       console.error("IPC Execution Error (reset_render_job):", err);
+      throw err;
+    });
+}
+
+export async function setRenderJobCodec(jobId, codec) {
+  return invoke("set_render_job_codec", { jobId, codec })
+    .catch((err) => {
+      console.error("IPC Execution Error (set_render_job_codec):", err);
       throw err;
     });
 }
@@ -218,7 +356,7 @@ export async function cancelScan() {
   return invoke("cancel_scan")
     .catch((err) => {
       console.error("IPC Execution Error (cancel_scan):", err);
-      showToast(`Cancel scan error: ${err}`, 'error');
+      showToast(STRINGS.IPC.cancelScanError(err), 'error');
       throw err;
     });
 }
@@ -227,7 +365,7 @@ export async function getSettings() {
   return invoke("get_settings")
     .catch((err) => {
       console.error("IPC Execution Error (get_settings):", err);
-      showToast(`Failed to load settings: ${err}`, 'error');
+      showToast(STRINGS.IPC.settingsLoadFailed(err), 'error');
       throw err;
     });
 }
@@ -236,7 +374,7 @@ export async function saveSettings(settings) {
   return invoke("save_settings", { settings })
     .catch((err) => {
       console.error("IPC Execution Error (save_settings):", err);
-      showToast(`Failed to save settings: ${err}`, 'error');
+      showToast(STRINGS.IPC.settingsSaveFailed(err), 'error');
       throw err;
     });
 }
@@ -245,7 +383,7 @@ export async function runDemoAudit(paths) {
   return invoke("run_demo_audit", { paths })
     .catch((err) => {
       console.error("IPC Execution Error (run_demo_audit):", err);
-      showToast(`Audit failed: ${err}`, 'error');
+      showToast(STRINGS.IPC.auditFailed(err), 'error');
       throw err;
     });
 }
@@ -254,7 +392,7 @@ export async function deleteAuditFiles(paths) {
   return invoke("delete_audit_files", { paths })
     .catch((err) => {
       console.error("IPC Execution Error (delete_audit_files):", err);
-      showToast(`Deletion failed: ${err}`, 'error');
+      showToast(STRINGS.IPC.deletionFailed(err), 'error');
       throw err;
     });
 }
@@ -263,7 +401,7 @@ export async function cancelAudit() {
   return invoke("cancel_audit")
     .catch((err) => {
       console.error("IPC Execution Error (cancel_audit):", err);
-      showToast(`Cancel audit error: ${err}`, 'error');
+      showToast(STRINGS.IPC.cancelAuditError(err), 'error');
       throw err;
     });
 }
@@ -272,7 +410,7 @@ export async function revealInExplorer(path) {
   return invoke("reveal_in_explorer", { path })
     .catch((err) => {
       console.error("IPC Execution Error (reveal_in_explorer):", err);
-      showToast(`Could not open folder: ${err}`, 'error');
+      showToast(STRINGS.IPC.folderOpenFailed(err), 'error');
       throw err;
     });
 }
@@ -284,7 +422,7 @@ export async function scanOrphanedPreviews(gameDir) {
   return invoke("scan_orphaned_previews", { gameDir })
     .catch((err) => {
       console.error("IPC Execution Error (scan_orphaned_previews):", err);
-      showToast(`Preview scan failed: ${err}`, 'error');
+      showToast(STRINGS.IPC.previewScanFailed(err), 'error');
       throw err;
     });
 }
@@ -295,7 +433,7 @@ export async function deleteOrphanedPreviews(filePaths) {
   return invoke("delete_orphaned_previews", { filePaths })
     .catch((err) => {
       console.error("IPC Execution Error (delete_orphaned_previews):", err);
-      showToast(`Preview deletion failed: ${err}`, 'error');
+      showToast(STRINGS.IPC.previewDeletionFailed(err), 'error');
       throw err;
     });
 }
@@ -344,5 +482,38 @@ export async function scanDemoFolders(root) {
     .catch((err) => {
       console.error("IPC Execution Error (scan_demo_folders):", err);
       return [];
+    });
+}
+
+/** Checks `channel` ("stable" or "dev") for a newer release. Resolves to
+ *  `{ version, current_version, notes, pub_date }` or `null` when already
+ *  up to date. See issue #133. */
+export async function checkForUpdate(channel) {
+  return invoke("check_for_update", { channel })
+    .catch((err) => {
+      console.error("IPC Execution Error (check_for_update):", err);
+      showToast(STRINGS.IPC.updateCheckFailed(err), 'error');
+      throw err;
+    });
+}
+
+/** Downloads and installs whatever update the last checkForUpdate() call
+ *  found — throws if none is pending. Progress arrives via the
+ *  `update_download_progress`/`update_ready` events, not this call's
+ *  return value. */
+export async function downloadAndInstallUpdate() {
+  return invoke("download_and_install_update")
+    .catch((err) => {
+      console.error("IPC Execution Error (download_and_install_update):", err);
+      showToast(STRINGS.IPC.updateInstallFailed(err), 'error');
+      throw err;
+    });
+}
+
+export async function restartApp() {
+  return invoke("restart_app")
+    .catch((err) => {
+      console.error("IPC Execution Error (restart_app):", err);
+      throw err;
     });
 }
