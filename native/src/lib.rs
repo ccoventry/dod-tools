@@ -368,6 +368,19 @@ pub fn log_markdown(msg: &str) {
 mod activity_log_tests {
     use super::*;
 
+    /// `DOD_TOOLS_LOG_DIR` is process-global, not thread-local, but `cargo
+    /// test` runs every test in this file on its own thread of the same
+    /// process by default. Without this, `the_env_override_outranks_everything`
+    /// temporarily overriding the var could interleave with
+    /// `writing_a_line_lands_in_the_redirected_directory`'s write-then-read
+    /// (both go through `redirected_log_dir()`), so the write landed under
+    /// one directory and the read checked another — reproduced reliably in CI
+    /// (2/2 runs) once these tests started running in the same binary as
+    /// enough others to make the interleaving likely. Any test that reads or
+    /// writes through `redirected_log_dir()` must hold this for its full
+    /// touch-env-through-assert span, not just the `set_var` call.
+    static ENV_VAR_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     /// The invariant: a test run must not write outside the repo and its
     /// scratch. This is the one that matters — everything else here just
     /// explains how it is held.
@@ -387,15 +400,12 @@ mod activity_log_tests {
 
     #[test]
     fn the_env_override_outranks_everything() {
+        let _guard = ENV_VAR_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         // The override exists for the case cfg(test) cannot reach: a binary or
         // integration test that links this crate as an ordinary dependency, so
         // it is compiled without cfg(test) and would otherwise write to the
         // user's real log.
         let want = std::env::temp_dir().join("dod_tools_override_probe");
-        // SAFETY-adjacent: this test is the only one touching the variable, and
-        // it restores it, but the process is shared with other tests — so it
-        // asserts on the redirect helper rather than leaving the var set across
-        // a logging call somebody else makes.
         let previous = std::env::var_os("DOD_TOOLS_LOG_DIR");
         unsafe { std::env::set_var("DOD_TOOLS_LOG_DIR", &want) };
         let got = redirected_log_dir();
@@ -408,6 +418,7 @@ mod activity_log_tests {
 
     #[test]
     fn writing_a_line_lands_in_the_redirected_directory() {
+        let _guard = ENV_VAR_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         // Not just the path calculation — the whole write path, since
         // `log_markdown` computes the directory itself rather than taking one.
         log_markdown("activity log redirect probe");
