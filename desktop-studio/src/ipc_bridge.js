@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { getVersion } from '@tauri-apps/api/app';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { showToast } from './toast.js';
 import { STRINGS } from './strings.js';
@@ -508,6 +509,30 @@ export async function downloadAndInstallUpdate() {
       showToast(STRINGS.IPC.updateInstallFailed(err), 'error');
       throw err;
     });
+}
+
+/** Reads the actual compiled-in app version (Cargo.toml's `version`, stamped
+ *  by the release workflows) — never hardcoded, so it always matches what
+ *  was really built, whether that's a stable release, a dev build, or a
+ *  local `npm run tauri dev` session. Best-effort: a version label isn't
+ *  worth interrupting the user over. */
+export async function getAppVersion() {
+  return getVersion().catch((err) => {
+    console.error("IPC Execution Error (getVersion):", err);
+    return null;
+  });
+}
+
+/** Whether this binary was compiled with debug_assertions on — true for
+ *  `tauri build --debug` (a real installed bundle, unlike `npm run tauri
+ *  dev`), false for a genuine `--release` build. Best-effort, same as
+ *  getAppVersion(): a mislabeled build kind isn't worth interrupting the
+ *  user over. */
+export async function isDebugBuild() {
+  return invoke("is_debug_build").catch((err) => {
+    console.error("IPC Execution Error (is_debug_build):", err);
+    return false;
+  });
 }
 
 export async function restartApp() {

@@ -49,6 +49,11 @@ pub async fn check_for_update(
         .updater_builder()
         .endpoints(vec![endpoint])
         .map_err(|e| format!("Failed to set updater endpoint: {}", e))?
+        // Default semver comparison only offers upgrades, but a channel is a
+        // deliberate choice, not a version target — switching from dev back
+        // to stable is a legitimate "downgrade" (dev's version number is
+        // always ahead) that should still be offered, not silently blocked.
+        .version_comparator(|current, remote| remote.version != current)
         .build()
         .map_err(|e| format!("Failed to build updater: {}", e))?;
 
@@ -110,6 +115,16 @@ pub async fn download_and_install_update(
         .map_err(|e| e.to_string())?;
 
     Ok(())
+}
+
+/// `cfg!(debug_assertions)` is compile-time info baked into the binary — the
+/// frontend has no other way to tell a `tauri build --debug` bundle (still a
+/// real installed build, unlike `npm run tauri dev`) apart from a genuine
+/// `--release` build, since both go through the same production Vite build
+/// and report `import.meta.env.DEV === false`.
+#[tauri::command]
+pub fn is_debug_build() -> bool {
+    cfg!(debug_assertions)
 }
 
 #[tauri::command]

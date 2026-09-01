@@ -696,14 +696,33 @@ button.primary-btn:hover:not(:disabled) {
 
 /* Sits outside the four .pinned-footer-content tabs above (index.html), so
    it stays put regardless of which one switchNavTab() has toggled visible —
-   margin-left: auto pushes it to the far right of #pinned-action-bar's flex
-   row without needing a copy in each per-tab footer. */
+   the wrapper's own margin-left: auto (below) pushes the whole group to the
+   far right of #pinned-action-bar's flex row without needing a copy in each
+   per-tab footer. */
 .view-logs-btn {
-  margin-left: auto;
   font-size: 11px;
   padding: 3px 8px;
   white-space: nowrap;
   flex-shrink: 0;
+}
+
+/* Groups Check for Updates/View Logs/the version label as one flex item so
+   they right-align together regardless of how much space the active
+   .pinned-footer-content sibling claims (varies per tab — see index.html's
+   comment above this element), instead of each button fending for its own
+   margin-left: auto against a different neighbor on every tab. */
+.footer-trailing-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.app-version-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
 }
 
 #export-pool-free-indicator,

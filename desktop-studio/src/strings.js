@@ -974,11 +974,21 @@ export const STRINGS = {
     CHECK_UPDATES_TITLE: 'Check for app updates',
     UPDATE_AVAILABLE_BUTTON: 'Update Available',
     UPDATE_AVAILABLE_TITLE: 'A new version is ready — click to install it.',
+    // baseVersion excludes the dev channel's `-<run number>` suffix — the
+    // footer just needs "what kind of build is this", not which exact run.
+    // buildKind: 'local' (npm run tauri dev), 'debug' (tauri build --debug —
+    // a real bundle, just not a release-profile one), 'dev'
+    // (release_dev.yml), or anything else for a real stable build (no tag).
+    appVersionLabel: (baseVersion, buildKind) => {
+      const tags = { local: ' | local build', debug: ' | debug build', dev: ' | dev build' };
+      return `v${baseVersion}${tags[buildKind] || ''}`;
+    },
   },
 
   // ── Update check/install modal (issue #133) ──────────────────────────────
   UPDATE_MODAL: {
     TITLE: 'Check for Updates',
+    currentVersionLabel: (v) => `Current version: v${v}`,
     CHANNEL_LABEL: 'Update Channel:',
     CHANNEL_STABLE: 'Stable (from main)',
     CHANNEL_DEV: 'Dev (from dev, on-demand builds)',
