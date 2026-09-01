@@ -19,7 +19,7 @@
 import { scanGameConfigs } from './ipc_bridge.js';
 import { STRINGS } from './strings.js';
 
-const EMPTY = { unseen: [], overrides: [], shadowed: [], custom: [] };
+const EMPTY = { unseen: [], overrides: [], shadowed: [], custom: [], launchConfigMissing: null };
 
 let report = EMPTY;
 
@@ -73,6 +73,7 @@ function render() {
   const overrides = report?.overrides ?? [];
   const shadowed = report?.shadowed ?? [];
   const custom = report?.custom ?? [];
+  const launchConfigMissing = report?.launchConfigMissing ?? null;
   const hazards = custom.filter((c) => c.kind === 'hazard');
   const customOverrides = custom.filter((c) => c.kind !== 'hazard');
 
@@ -80,7 +81,8 @@ function render() {
     unseen.length === 0 &&
     overrides.length === 0 &&
     shadowed.length === 0 &&
-    custom.length === 0
+    custom.length === 0 &&
+    !launchConfigMissing
   ) {
     el.hidden = true;
     el.innerHTML = '';
@@ -160,6 +162,11 @@ function render() {
       })
       .join('');
     html += section(STRINGS.CFG.OVERRIDE_TITLE, STRINGS.CFG.OVERRIDE_ADVICE, rows);
+  }
+
+  if (launchConfigMissing) {
+    const rows = `<li><code>${STRINGS.CFG.launchConfigMissingRow(launchConfigMissing)}</code></li>`;
+    html += section(STRINGS.CFG.LAUNCH_CONFIG_MISSING_TITLE, STRINGS.CFG.LAUNCH_CONFIG_MISSING_ADVICE, rows);
   }
 
   el.innerHTML = html;

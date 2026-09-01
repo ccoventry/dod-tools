@@ -87,6 +87,7 @@ pub use types::{
     PatcherConfig,
     HighlightRules,
     HighlightStatus,
+    sanitize_launch_config_name,
 };
 
 #[cfg(not(target_arch = "wasm32"))]

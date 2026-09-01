@@ -564,8 +564,12 @@ pub fn spawn_capture_engine(
             // appends it when its alpha box is ticked — but that dialog is the
             // path we do not use. Under `-customLoader` we build the game
             // command line ourselves, so nothing appends it and the hook never
-            // sees it. The `-forceAlpha true` passed to HLAE.exe below is a
-            // Launcher-mode switch and does not reach the hook from here.
+            // sees it. HLAE's own `-forceAlpha` is a Launcher-mode switch,
+            // read only by `-afxHookGoldSrc`/`-csgoLauncher` mode's own arg
+            // parsing — under `-customLoader`, HLAE's `ProcessArgsCustomLoader`
+            // (see advancedfx/advancedfx's `hlae/Program.cs`) doesn't
+            // recognise it at all, so passing it here would be a silent
+            // no-op. Not passed for that reason.
             //
             // `-afxForceAlpha8` TAKES A VALUE. From HLAE's own Launcher.cs, the
             // dialog builds it as:
@@ -596,35 +600,32 @@ pub fn spawn_capture_engine(
             } else {
                 ""
             };
+            // Launch Config (#149) runs before dodtools_helper.cfg — same
+            // ordering `final_init_commands` uses for the pipeline's own
+            // demo-time settings, so a user's own launch-time setup can
+            // never be shadowed by anything the pipeline appends after it.
+            // Nothing pipeline-critical (mirv_movie_fps, the r_decals pin)
+            // lives here regardless — those are injected into the demo
+            // itself, well after every launch-time exec below has run.
+            let launch_cfg_exec = match config.sanitized_launch_config_name() {
+                Some(name) => format!("+exec {}.cfg ", name),
+                None => String::new(),
+            };
+            // MUST be embedded here, not appended to `cmd` below: HLAE's own
+            // `-customLoader` argument parsing (`ProcessArgsCustomLoader` in
+            // advancedfx/advancedfx's `hlae/Program.cs`) reads exactly six
+            // flags and silently drops everything else on its own argv —
+            // only text folded into this string reaches `hl.exe`, via the
+            // single `-cmdLine` value `build_hlae_process` composes below.
             let extra_args = format!(
-                "{}{}+exec dodtools_helper.cfg +playdemo primer",
-                condebug_flag, alpha_flags
+                "{}{}{}+exec dodtools_helper.cfg +playdemo primer",
+                condebug_flag, alpha_flags, launch_cfg_exec
             );
 
             let dummy_path = active_export_dir.join("DOD_BATCH_DONE");
             let _ = std::fs::remove_dir_all(&dummy_path);
 
             let mut cmd = config.build_hlae_process(&extra_args);
-
-            let width_str = config.resolution_width.to_string();
-            let height_str = config.resolution_height.to_string();
-            cmd.args([
-                "-w",
-                &width_str,
-                "-h",
-                &height_str,
-                "-forceAlpha",
-                "true",
-            ]);
-
-            if !config.movie_config.trim().is_empty() {
-                let mut cfg_name = config.movie_config.trim().to_string();
-                if cfg_name.ends_with(".cfg") {
-                    cfg_name.truncate(cfg_name.len() - 4);
-                }
-                cmd.arg("+exec");
-                cmd.arg(format!("{}.cfg", cfg_name));
-            }
 
             let cfg_path = dod_dir.join("dod_quit.cfg");
             std::fs::write(&cfg_path, "quit\n").ok();

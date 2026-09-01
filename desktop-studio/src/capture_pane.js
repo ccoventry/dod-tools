@@ -105,6 +105,7 @@ export function refreshInitCommandWarnings() {
       captureFps: parseInt(document.querySelector('#config-capture-fps')?.value, 10) || null,
       separateHud: document.querySelector('#config-separate-hud')?.checked ?? null,
       decalFlush: document.querySelector('#config-decal-flush')?.checked ?? true,
+      launchConfig: document.querySelector('#config-launch-config')?.value?.trim() || null,
     }
   );
 }
@@ -645,6 +646,27 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
     const el = document.querySelector(sel);
     if (el) el.addEventListener("change", refreshInitCommandWarnings);
   });
+  // Not a cvar override like the fields above — just needs the same
+  // "does this file exist" advisory recheck whenever it changes (#149).
+  const launchConfigInput = document.querySelector('#config-launch-config');
+  if (launchConfigInput) {
+    launchConfigInput.addEventListener('change', refreshInitCommandWarnings);
+    // Strips anything outside [A-Za-z0-9_.] as the user types. This value
+    // gets folded raw into HLAE's single flat -cmdLine string (see the
+    // sanitize_launch_config_name doc comment in native/src/patch/types.rs)
+    // — nothing downstream of that is quote-aware, so a `-` risks reading
+    // as a launch flag and a space/`+` risks splitting into extra console
+    // commands. The backend re-validates independently; this is just so a
+    // rejected character doesn't silently vanish only once a batch starts.
+    launchConfigInput.addEventListener('input', () => {
+      const cleaned = launchConfigInput.value.replace(/[^A-Za-z0-9_.]/g, '');
+      if (cleaned !== launchConfigInput.value) {
+        const pos = launchConfigInput.selectionStart - (launchConfigInput.value.length - cleaned.length);
+        launchConfigInput.value = cleaned;
+        launchConfigInput.setSelectionRange(pos, pos);
+      }
+    });
+  }
 
   const addInitCommandBtn = document.querySelector('#add-init-command-btn');
   if (addInitCommandBtn) {

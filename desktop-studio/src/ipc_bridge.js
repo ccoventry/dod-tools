@@ -89,10 +89,11 @@ export async function scanGameConfigs(
     captureFps: context.captureFps ?? null,
     separateHud: context.separateHud ?? null,
     decalFlush: context.decalFlush ?? null,
+    launchConfig: context.launchConfig || null,
   })
     .catch((err) => {
       console.error("IPC Execution Error (scan_game_configs):", err);
-      return { unseen: [], overrides: [], shadowed: [], custom: [] };
+      return { unseen: [], overrides: [], shadowed: [], custom: [], launchConfigMissing: null };
     });
 }
 

@@ -407,6 +407,10 @@ pub struct PatcherConfig {
     pub resolution_width: i32,
     pub resolution_height: i32,
     pub primary_media_dir: Option<std::path::PathBuf>,
+    /// `.cfg` name execed at HLAE/hl.exe launch, before the demo loads. Raw
+    /// (unsanitised) — `capture_engine.rs` runs it through
+    /// `sanitize_launch_config_name` before folding it into the launch
+    /// command line. See that function's doc comment for why.
     pub movie_config: String,
     pub save_local_patched_copy: bool,
     pub add_condebug: bool,
@@ -450,6 +454,33 @@ fn default_decal_ring_limit() -> u32 {
 
 fn default_capture_fov() -> f32 {
     90.0
+}
+
+/// Restricts a Launch Config name (see `PatcherConfig::movie_config`) to
+/// `[A-Za-z0-9_.]`, and returns it with any single trailing `.cfg` removed.
+/// Returns `None` if nothing valid remains.
+///
+/// The name is folded into `extra_engine_args` in `build_hlae_process`,
+/// which becomes the single flat string HLAE.exe passes to `hl.exe` as its
+/// entire `-cmdLine` value (confirmed against HLAE's own source —
+/// `Loader.Load` in advancedfx/advancedfx's `hlae/Loader.cs` does
+/// `"\"" + programPath + "\" " + cmdLine` verbatim into `CreateProcessW`,
+/// no further composition). Nothing that touches that string is
+/// quote-aware: not HLAE's own `-flag` matching in `ProcessArgsCustomLoader`
+/// (`hlae/Program.cs`), and not the engine's own startup argv parser on the
+/// far end. A name starting with `-` risks being read as a launch flag
+/// instead of a filename; whitespace or `+` risks splitting into extra
+/// console commands. Restricting to a bare alphanumeric/underscore/dot
+/// name sidesteps all of that rather than trying to quote around it.
+pub fn sanitize_launch_config_name(raw: &str) -> Option<String> {
+    let mut name = raw.trim();
+    if let Some(stripped) = name.strip_suffix(".cfg") {
+        name = stripped;
+    }
+    if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.') {
+        return None;
+    }
+    Some(name.to_string())
 }
 
 impl PatcherConfig {
@@ -517,6 +548,15 @@ impl PatcherConfig {
         }
 
         cmd
+    }
+
+    /// The bare (extension-stripped) name of `movie_config`, or `None` if it
+    /// is empty or fails `sanitize_launch_config_name`. Centralises what
+    /// both the launch itself and any advisory "does this file exist" check
+    /// must agree on, so they can never validate one string and act on
+    /// another.
+    pub fn sanitized_launch_config_name(&self) -> Option<String> {
+        sanitize_launch_config_name(&self.movie_config)
     }
 
     pub fn calculate_total_capture_duration(&self, base_action_secs: f32) -> f32 {
@@ -665,5 +705,43 @@ mod capture_codec_tests {
     #[test]
     fn test_default_is_the_one_proven_in_a_real_capture() {
         assert_eq!(CaptureCodec::default(), CaptureCodec::UtVideo);
+    }
+}
+
+#[cfg(test)]
+mod sanitize_launch_config_name_tests {
+    use super::sanitize_launch_config_name;
+
+    #[test]
+    fn test_strips_one_trailing_cfg_extension() {
+        assert_eq!(sanitize_launch_config_name("myconfig.cfg"), Some("myconfig".to_string()));
+        assert_eq!(sanitize_launch_config_name("myconfig"), Some("myconfig".to_string()));
+    }
+
+    #[test]
+    fn test_trims_surrounding_whitespace() {
+        assert_eq!(sanitize_launch_config_name("  myconfig  "), Some("myconfig".to_string()));
+    }
+
+    #[test]
+    fn test_rejects_hyphen() {
+        // A leading `-` risks being read as an HLAE/engine launch flag
+        // rather than a filename — see this function's doc comment.
+        assert_eq!(sanitize_launch_config_name("my-config"), None);
+        assert_eq!(sanitize_launch_config_name("-noGui"), None);
+    }
+
+    #[test]
+    fn test_rejects_whitespace_and_plus_prefixed_tokens() {
+        // A pasted alias/config line, not a bare filename — must not turn
+        // into extra console commands once folded into the launch string.
+        assert_eq!(sanitize_launch_config_name("movie.cfg +mp_friendlyfire 0"), None);
+    }
+
+    #[test]
+    fn test_empty_or_whitespace_only_is_none() {
+        assert_eq!(sanitize_launch_config_name(""), None);
+        assert_eq!(sanitize_launch_config_name("   "), None);
+        assert_eq!(sanitize_launch_config_name(".cfg"), None);
     }
 }

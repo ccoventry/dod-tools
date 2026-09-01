@@ -178,6 +178,12 @@ pub struct CfgReport {
     pub shadowed: Vec<CfgShadowRow>,
     /// Scheduled commands that displace something, or that must not run mid-demo.
     pub custom: Vec<CustomCommandWarning>,
+    /// The Launch Config's file name (`<name>.cfg`), if one is set and
+    /// doesn't exist under the mod's config directory. Advisory only, same
+    /// as everything else on this report — the file may still resolve via a
+    /// search path this check doesn't know about, so this never blocks a
+    /// batch, only flags a likely typo.
+    pub launch_config_missing: Option<String>,
 }
 
 /// Scheduled commands in the order the engine reaches them.
@@ -217,6 +223,7 @@ pub async fn scan_game_configs(
     capture_fps: Option<i32>,
     separate_hud: Option<bool>,
     decal_flush: Option<bool>,
+    launch_config: Option<String>,
 ) -> Result<CfgReport, String> {
     let exe = PathBuf::from(&game_path);
     let Some(dir) = exe.parent().map(|p| p.join("dod")) else {
@@ -228,6 +235,16 @@ pub async fn scan_game_configs(
 
     tokio::task::spawn_blocking(move || {
         let scan = native::patch::cfg_scan::scan(&dir);
+
+        // Same sanitisation the launch itself applies (capture_engine.rs) —
+        // an invalid name never reaches `+exec` either, so checking existence
+        // against the raw string would report a false positive against a
+        // file that was never going to be execed in the first place.
+        let launch_config_missing = launch_config.as_deref().and_then(|raw| {
+            let name = native::patch::sanitize_launch_config_name(raw)?;
+            let file = format!("{}.cfg", name);
+            if dir.join(&file).exists() { None } else { Some(file) }
+        });
 
         // The list the engine will actually receive, so the app's own additions
         // — the movie fps, the decal pin — are checked too.
@@ -373,7 +390,7 @@ pub async fn scan_game_configs(
             }
         }
 
-        CfgReport { unseen, overrides, shadowed, custom }
+        CfgReport { unseen, overrides, shadowed, custom, launch_config_missing }
     })
     .await
     .map_err(|e| format!("config scan failed: {}", e))
@@ -565,6 +582,7 @@ mod tests {
             Some(120),
             Some(false),
             Some(true),
+            None,
         ))
         .unwrap()
     }
@@ -644,6 +662,7 @@ mod tests {
             Some(fps),
             Some(false),
             Some(true),
+            None,
         ))
         .unwrap()
     }
@@ -753,5 +772,49 @@ mod tests {
             "{:?}",
             r.overrides
         );
+    }
+
+    fn report_with_launch_config(tag: &str, launch_config: Option<&str>) -> CfgReport {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(scan_game_configs(
+            fake_game(tag),
+            Vec::new(),
+            Vec::new(),
+            Some(120),
+            Some(false),
+            Some(true),
+            launch_config.map(str::to_string),
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_launch_config_that_exists_is_not_flagged() {
+        // fake_game already writes a movie.cfg into the mod's dod/ folder.
+        let r = report_with_launch_config("launch_exists", Some("movie"));
+        assert_eq!(r.launch_config_missing, None);
+    }
+
+    #[test]
+    fn a_launch_config_that_does_not_exist_is_flagged() {
+        let r = report_with_launch_config("launch_missing", Some("no_such_config"));
+        assert_eq!(r.launch_config_missing, Some("no_such_config.cfg".to_string()));
+    }
+
+    #[test]
+    fn an_unsanitisable_launch_config_is_not_flagged() {
+        // Mirrors capture_engine.rs: an invalid name never reaches `+exec`
+        // either, so there is nothing meaningful to check existence against.
+        let r = report_with_launch_config("launch_invalid", Some("my-config"));
+        assert_eq!(r.launch_config_missing, None);
+    }
+
+    #[test]
+    fn no_launch_config_is_not_flagged() {
+        let r = report_with_launch_config("launch_none", None);
+        assert_eq!(r.launch_config_missing, None);
     }
 }
