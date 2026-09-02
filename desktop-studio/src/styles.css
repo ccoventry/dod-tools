@@ -1604,3 +1604,12 @@ tr.keyboard-selected {
   font-size: 0.85em;
   color: #ffa726;
 }
+
+/* cfg-warning-banner's sections are built inline (cfg_warnings.js) except
+   for this one rule: the last stacked warning type shouldn't trail a
+   divider with nothing after it. */
+#cfg-warning-banner .cfg-warning-section:last-child {
+  margin-bottom: 0;
+  padding-bottom: 0;
+  border-bottom: none;
+}

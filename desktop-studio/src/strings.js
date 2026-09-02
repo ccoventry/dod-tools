@@ -864,7 +864,7 @@ export const STRINGS = {
       `${cvar} ${initValue} replaces ${cfgValue} from ${file}, line ${line}`,
     LAUNCH_CONFIG_MISSING_TITLE: "This Launch Config file wasn't found:",
     LAUNCH_CONFIG_MISSING_ADVICE:
-      "Checked the mod's config folder next to hl.exe. The exec may still resolve elsewhere in the engine's own search path, so this isn't blocking — but if the name is a typo, the exec silently does nothing at launch.",
+      "Checked in the dod folder next to hl.exe. Not blocking — the exec might still resolve elsewhere — but a typo here means nothing happens at launch.",
     launchConfigMissingRow: (file) => `${file} not found`,
   },
 

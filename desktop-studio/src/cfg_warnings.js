@@ -57,8 +57,11 @@ function valueOf(command) {
 
 function section(title, advice, rows, accent) {
   const style = accent ? ` style="color:${accent}"` : '';
+  // Stacked sections in one banner used to sit 8px apart, which read as one
+  // wall of text once three or four warning types fired at once. A border
+  // plus more room separates them without changing the shared amber style.
   return `
-    <div style="margin-bottom:8px;">
+    <div class="cfg-warning-section" style="margin-bottom:16px; padding-bottom:16px; border-bottom:1px solid rgba(255,255,255,.12);">
       <strong${style}>${title}</strong>
       <ul style="margin:6px 0 6px 18px; padding:0;">${rows}</ul>
       <div style="opacity:.8">${advice}</div>
