@@ -7,6 +7,7 @@ import {
   resetRenderJob,
   setRenderJobCodec,
   getExportPoolFreeGb,
+  getExportReservationTotalGb,
   checkRenderAutosave,
   discardRenderAutosave,
   recoverRenderBatch,
@@ -277,11 +278,22 @@ async function refreshExportPoolFree(getExportDirs) {
   if (dirs.length === 0) {
     if (freeEl) freeEl.textContent = STRINGS.RENDER.EXPORT_POOL_FREE_DEFAULT;
     if (footerFreeEl) footerFreeEl.textContent = STRINGS.RENDER.RENDER_POOL_FREE_DEFAULT;
-    return;
+  } else {
+    const gb = await getExportPoolFreeGb(dirs);
+    if (freeEl) freeEl.textContent = STRINGS.RENDER.exportPoolFreeGb(gb.toFixed(1));
+    if (footerFreeEl) footerFreeEl.textContent = STRINGS.RENDER.exportPoolFreeFooter(gb.toFixed(1));
   }
-  const gb = await getExportPoolFreeGb(dirs);
-  if (freeEl) freeEl.textContent = STRINGS.RENDER.exportPoolFreeGb(gb.toFixed(1));
-  if (footerFreeEl) footerFreeEl.textContent = STRINGS.RENDER.exportPoolFreeFooter(gb.toFixed(1));
+
+  // Issue #119: mirrors Capture's Free+Required footer pair. Independent of
+  // getExportDirs — the reservation ledger reports whatever is currently
+  // claimed across drives regardless of how many export directories are
+  // configured, so this isn't gated on dirs.length the way the free-space
+  // half above is.
+  const footerRequiredEl = document.querySelector('#render-footer-required-space');
+  if (footerRequiredEl) {
+    const reservedGb = await getExportReservationTotalGb();
+    footerRequiredEl.textContent = STRINGS.RENDER.requiredEstimatedFooter(reservedGb.toFixed(2));
+  }
 }
 
 // ── Startup crash-recovery prompt ────────────────────────────────────────────

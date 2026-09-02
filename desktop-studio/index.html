@@ -761,7 +761,10 @@
         <div id="footer-render-studio" class="pinned-footer-content" style="display: none;">
           <div class="footer-row-grid-centered" style="flex: 1;">
             <div id="render-footer-queue-summary" data-str="RENDER.QUEUE_SUMMARY_DEFAULT">0 queued &middot; 0 rendering &middot; 0 done</div>
-            <div id="render-footer-pool-free" data-str="RENDER.RENDER_POOL_FREE_DEFAULT">Export Pool Free: 0.0 GB</div>
+            <div class="footer-row-center">
+              <div id="render-footer-pool-free" data-str="RENDER.RENDER_POOL_FREE_DEFAULT">Export Pool Free: 0.0 GB</div>
+              <div id="render-footer-required-space" data-str="RENDER.REQUIRED_ESTIMATED_DEFAULT">Required (Estimated): 0.00 GB</div>
+            </div>
           </div>
         </div>
         <!-- Intentionally empty for now — showing Capture's Start/Cancel Batch

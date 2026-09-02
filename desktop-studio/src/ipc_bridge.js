@@ -329,6 +329,17 @@ export async function getExportPoolFreeGb(directories) {
     });
 }
 
+/** Sum of everything currently reserved across every export drive — the JIT
+ *  ledger of bytes each in-flight render job has provisionally claimed. A
+ *  loose upper bound, not a tight prediction (issue #119). */
+export async function getExportReservationTotalGb() {
+  return invoke("get_export_reservation_total_gb")
+    .catch((err) => {
+      console.error("IPC Execution Error (get_export_reservation_total_gb):", err);
+      return 0;
+    });
+}
+
 export async function checkRenderAutosave() {
   return invoke("check_render_autosave")
     .catch((err) => {

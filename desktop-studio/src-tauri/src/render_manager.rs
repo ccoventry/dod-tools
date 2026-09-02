@@ -693,6 +693,20 @@ pub async fn reset_render_job(app: AppHandle, state: tauri::State<'_, RenderMana
     Ok(())
 }
 
+/// Sum of everything currently reserved across every export drive in
+/// `export_reservations` — the JIT ledger of bytes each in-flight
+/// `run_render_job` has provisionally claimed. Exposed so the Render footer
+/// can show a "Required (Estimated)" figure mirroring Capture's own
+/// Free+Required pair (issue #119). Deliberately a loose upper bound, not a
+/// tight prediction, unlike Capture's figure — see `export_reservations`'
+/// own doc comment and #116's PR description for real-vs-estimated size
+/// ratios observed live (~70-160x for h264_nvenc).
+#[tauri::command]
+pub fn get_export_reservation_total_gb(state: tauri::State<'_, RenderManager>) -> f64 {
+    let total: u64 = state.export_reservations.lock().unwrap().values().sum();
+    total as f64 / 1_073_741_824.0
+}
+
 #[tauri::command]
 pub fn get_export_pool_free_gb(directories: Vec<String>) -> f64 {
     let mut total: u64 = 0;

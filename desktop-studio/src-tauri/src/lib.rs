@@ -11,6 +11,7 @@ use capture_manager::{CaptureManager, CapturePayload, launch_demo_preview, gener
 use render_manager::{
     RenderManager, queue_render_batch, start_queued_render, cancel_render_batch,
     cancel_render_job, reset_render_job, set_render_job_codec, get_export_pool_free_gb,
+    get_export_reservation_total_gb,
     check_render_autosave, discard_render_autosave, recover_render_batch,
 };
 use settings_manager::{AppSettings, SettingsManager};
@@ -564,6 +565,7 @@ pub fn run() {
             reset_render_job,
             set_render_job_codec,
             get_export_pool_free_gb,
+            get_export_reservation_total_gb,
             check_render_autosave,
             discard_render_autosave,
             recover_render_batch,

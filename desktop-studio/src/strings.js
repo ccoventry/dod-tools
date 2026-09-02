@@ -460,6 +460,11 @@ export const STRINGS = {
     errorLogTitleForJob: (name) => `FFmpeg Error Log — ${name}`,
     exportPoolFreeFooter: (gb) => `Export Pool Free: ${gb} GB`,
     RENDER_POOL_FREE_DEFAULT: 'Export Pool Free: 0.0 GB',
+    // "(Estimated)" matters here in a way it doesn't for Capture's Required
+    // figure — this is a deliberately loose upper bound (raw-frame math),
+    // not a tight prediction. See get_export_reservation_total_gb.
+    requiredEstimatedFooter: (gb) => `Required (Estimated): ${gb} GB`,
+    REQUIRED_ESTIMATED_DEFAULT: 'Required (Estimated): 0.00 GB',
     recoveredJobsToast: (completed, pending) => `Recovered ${completed} completed, ${pending} pending render job(s).`,
     recoverFailed: (err) => `Failed to recover render batch: ${err}`,
     renderingStatus: (done, total) => `Status: Rendering (${done}/${total} done)`,
