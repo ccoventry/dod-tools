@@ -360,6 +360,14 @@ export function renderDetailView(demo, selectedDemoIdx) {
   const titleEl = document.querySelector('#detail-demo-title');
   const container = document.querySelector('#detail-streaks-container');
   const telemetryBtn = document.querySelector('#view-telemetry-btn');
+  const btnSelectAll = document.querySelector('#btn-select-all');
+  const btnDeselectAll = document.querySelector('#btn-deselect-all');
+
+  // Mirrors telemetryBtn's own gate below — with no demo selected, neither
+  // button has anything to act on. See #10.
+  const noDemoSelected = !demo || !demo.path;
+  if (btnSelectAll) btnSelectAll.disabled = noDemoSelected;
+  if (btnDeselectAll) btnDeselectAll.disabled = noDemoSelected;
 
   if (telemetryBtn) {
     if (!demo || !demo.path) {
