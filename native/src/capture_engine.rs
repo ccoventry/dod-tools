@@ -600,13 +600,18 @@ pub fn spawn_capture_engine(
             } else {
                 ""
             };
-            // Launch Config (#149) runs before dodtools_helper.cfg — same
-            // ordering `final_init_commands` uses for the pipeline's own
-            // demo-time settings, so a user's own launch-time setup can
-            // never be shadowed by anything the pipeline appends after it.
-            // Nothing pipeline-critical (mirv_movie_fps, the r_decals pin)
-            // lives here regardless — those are injected into the demo
-            // itself, well after every launch-time exec below has run.
+            // Launch Config (#149) runs before dodtools_helper.cfg, so it
+            // can never be shadowed by anything the pipeline's own
+            // dodtools_helper.cfg sets. It is NOT guaranteed to outrank the
+            // user's own config.cfg/movie.cfg, though: measured 2026-09-01
+            // (see docs/goldsrc_dod_quirks.md's Command Precedence entry),
+            // config.cfg fires only once the primer demo starts loading —
+            // after every command-line +exec, this one included — so a cvar
+            // both Launch Config and config.cfg set resolves to whatever
+            // config.cfg says. Nothing pipeline-critical (mirv_movie_fps,
+            // the r_decals pin) lives here regardless — those are injected
+            // into the demo itself, after Initial Commands run, which is
+            // the only layer confirmed to always win.
             let launch_cfg_exec = match config.sanitized_launch_config_name() {
                 Some(name) => format!("+exec {}.cfg ", name),
                 None => String::new(),

@@ -336,7 +336,7 @@ export const STRINGS = {
     // demo even loads. See issue #149.
     LAUNCH_CONFIG_LABEL: 'Launch Config:',
     LAUNCH_CONFIG_PLACEHOLDER: 'Optional .cfg name, e.g. myconfig',
-    LAUNCH_CONFIG_HINT: 'Runs once before the demo loads, as part of the HLAE/hl.exe launch — use this for exec <yourconfig.cfg>. Initial Commands below run during demo playback and cannot exec. Letters, numbers, underscores and dots only — no hyphens or spaces, which HLAE\'s own launch parsing can misread as flags.',
+    LAUNCH_CONFIG_HINT: 'Runs once before the demo loads, as part of the HLAE/hl.exe launch — use this for exec <yourconfig.cfg>. Initial Commands below run during demo playback and cannot exec. Letters, numbers, underscores and dots only — no hyphens or spaces, which HLAE\'s own launch parsing can misread as flags. Your own config.cfg/movie.cfg execs after this and can override the same cvar — only Initial Commands are guaranteed to win over everything.',
     INIT_COMMANDS_LABEL: 'Initial Commands (run once at demo load):',
     ADD_INIT_COMMAND_BUTTON: '+ Add Initial Command',
     // Both lists on this tab are custom commands; only one is scheduled, so
