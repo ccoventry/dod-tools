@@ -548,7 +548,13 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
         crate::VERSION,
         date_time
     ));
-    
+    // Marks exactly where this file execs relative to Launch Config and the
+    // engine's own config.cfg/movie.cfg chain, all of which land in
+    // qconsole.log too (with Add Condebug on) — cheap enough to leave in
+    // permanently rather than re-add it every time this ordering question
+    // comes up again.
+    helper_cfg_content.push_str("echo dodtools_helper.cfg exec'd here\n\n");
+
     helper_cfg_content.push_str("# Global aliases\n");
     helper_cfg_content.push_str("alias sys_autodir \"spec_autodirector 1\"\n");
     helper_cfg_content.push_str("alias sys_normal_speed \"sys_autodir; clear; host_framerate 0\"\n");
