@@ -605,13 +605,14 @@ pub fn spawn_capture_engine(
             // dodtools_helper.cfg sets. It is NOT guaranteed to outrank the
             // user's own config.cfg/movie.cfg, though: measured 2026-09-01
             // (see docs/goldsrc_dod_quirks.md's Command Precedence entry),
-            // config.cfg fires only once the primer demo starts loading —
-            // after every command-line +exec, this one included — so a cvar
-            // both Launch Config and config.cfg set resolves to whatever
-            // config.cfg says. Nothing pipeline-critical (mirv_movie_fps,
-            // the r_decals pin) lives here regardless — those are injected
-            // into the demo itself, after Initial Commands run, which is
-            // the only layer confirmed to always win.
+            // config.cfg fires only once the engine finishes processing the
+            // command line — after every command-line +exec, this one
+            // included, whatever that command line actually contains — so a
+            // cvar both Launch Config and config.cfg set resolves to
+            // whatever config.cfg says. Nothing pipeline-critical
+            // (mirv_movie_fps, the r_decals pin) lives here regardless —
+            // those are injected into the demo itself, after Initial
+            // Commands run, which is the only layer confirmed to always win.
             let launch_cfg_exec = match config.sanitized_launch_config_name() {
                 Some(name) => format!("+exec {}.cfg ", name),
                 None => String::new(),
