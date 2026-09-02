@@ -412,20 +412,29 @@
                    folds into the HLAE/hl.exe launch args instead, where
                    +exec runs before the demo even loads. See issue #149. -->
               <p class="setting-hint" data-str="CAPTURE_CONFIG.LAUNCH_CONFIG_HINT">Runs once before the demo loads, as part of the HLAE/hl.exe launch — use this for exec &lt;yourconfig.cfg&gt;. Initial Commands below run during demo playback and cannot exec.</p>
+              <!-- Populated by cfg_warnings.js: whether the file named above
+                   was found under the mod's dod/ folder. Advisory only —
+                   nothing in this app ever edits a config file. -->
+              <div id="launch-config-warning-banner" hidden></div>
 
               <div class="input-row" style="margin-top: 16px;">
                 <strong data-str="CAPTURE_CONFIG.INIT_COMMANDS_LABEL">Initial Commands (run once at demo load):</strong>
               </div>
-              <!-- Populated by cfg_warnings.js when the game's own config files
-                   set a cvar the pipeline reads. Advisory only — nothing in this
-                   app ever edits a config file. -->
-              <div id="cfg-warning-banner" hidden></div>
+              <!-- Populated by cfg_warnings.js: what the game's own config
+                   files set that these commands see, override, or lose to
+                   the app's own appended commands. Advisory only — nothing
+                   in this app ever edits a config file. -->
+              <div id="init-commands-warning-banner" hidden></div>
               <div id="init-commands-list" class="list-editor-list"></div>
               <button id="add-init-command-btn" data-str="CAPTURE_CONFIG.ADD_INIT_COMMAND_BUTTON">+ Add Initial Command</button>
 
               <div class="input-row" style="margin-top: 16px;">
                 <strong data-str="CAPTURE_CONFIG.CUSTOM_COMMANDS_LABEL">Scheduled Commands (run relative to each highlight):</strong>
               </div>
+              <!-- Populated by cfg_warnings.js: scheduled commands that break
+                   the decal flush or displace an earlier value. Advisory
+                   only — nothing in this app ever edits a config file. -->
+              <div id="scheduled-commands-warning-banner" hidden></div>
               <div id="custom-commands-list" class="list-editor-list"></div>
               <button id="add-custom-command-btn" data-str="CAPTURE_CONFIG.ADD_CUSTOM_COMMAND_BUTTON">+ Add Scheduled Command</button>
             </div>
