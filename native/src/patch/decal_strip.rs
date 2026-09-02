@@ -2098,7 +2098,13 @@ pub fn capture_fov_from_init(init_commands: &[String]) -> Option<f32> {
         if !rest.starts_with(char::is_whitespace) {
             continue;
         }
-        if let Ok(v) = rest.trim().parse::<f32>() {
+        // Real .cfg syntax quotes every value ("105", not 105) — the same
+        // convention "Load from .cfg file…" carries straight into Initial
+        // Commands. Parsing the raw token instead of the unquoted value
+        // means this silently reads a quoted line as "nothing stated" and
+        // falls through to the default, which is the whole bug this exists
+        // to prevent.
+        if let Ok(v) = cfg_scan::unquote(rest.trim()).parse::<f32>() {
             if v > 0.0 {
                 return Some(v);
             }
@@ -2214,7 +2220,10 @@ pub fn ring_limit_from_init(init_commands: &[String]) -> Option<u32> {
         if !rest.starts_with(char::is_whitespace) {
             continue;
         }
-        if let Ok(v) = rest.trim().parse::<u32>() {
+        // Quoted, same as capture_fov_from_init above and for the same
+        // reason: real .cfg syntax quotes every value, and a raw parse on
+        // `"512"` fails silently, reading a stated line as unstated.
+        if let Ok(v) = cfg_scan::unquote(rest.trim()).parse::<u32>() {
             return Some(v.min(crate::patch::MAX_RENDER_DECALS));
         }
     }
@@ -2347,8 +2356,15 @@ pub fn prepare_flushed_source(job: &PatchJob, config: &PatcherConfig) -> Option<
 
     // `r_decals 0` turns decals off outright. There is then no ring to turn and
     // no bullet hole to clear, and a sweep sized zero would be a burst with
-    // nowhere to put anything.
+    // nowhere to put anything. Flush Decals Between Clips being on and r_decals
+    // being 0 is a real, reachable contradiction — logged the same as every
+    // other skip path, since this one is otherwise completely silent.
     if ring_limit(config) == 0 {
+        crate::log_markdown(
+            "⚠️ **Decal flush skipped** — Flush Decals Between Clips is on, but r_decals \
+             resolves to 0 (stated in Initial Commands, or the app's own configured default). \
+             There is no ring to sweep. Capture continues; walls will not be cleaned between clips.",
+        );
         return None;
     }
 
@@ -2912,6 +2928,34 @@ mod tests {
         };
 
         assert_eq!(ring_limit(&config), 64);
+    }
+
+    #[test]
+    fn a_quoted_r_decals_in_init_commands_is_still_recognised() {
+        // Real .cfg syntax quotes every value, and "Load from .cfg file…"
+        // carries that straight into Initial Commands — a raw, unquoted
+        // parse would silently read `r_decals "512"` as unstated and fall
+        // through to the app's own default instead of the user's value.
+        let config = PatcherConfig {
+            decal_ring_limit: 128,
+            init_commands: vec!["r_decals \"512\"".to_string()],
+            ..PatcherConfig::default()
+        };
+
+        assert_eq!(ring_limit_from_init(&config.init_commands), Some(512));
+        assert_eq!(ring_limit(&config), 512);
+    }
+
+    #[test]
+    fn a_quoted_mirv_fov_in_init_commands_is_still_recognised() {
+        let config = PatcherConfig {
+            capture_fov: 90.0,
+            init_commands: vec!["mirv_fov \"105\"".to_string()],
+            ..PatcherConfig::default()
+        };
+
+        assert_eq!(capture_fov_from_init(&config.init_commands), Some(105.0));
+        assert_eq!(capture_fov(&config), 105.0);
     }
 
     #[test]

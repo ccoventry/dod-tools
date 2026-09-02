@@ -167,6 +167,16 @@ pub struct CustomCommandWarning {
     pub source: String,
 }
 
+/// A command from `cfg_scan::BANNED_COMMANDS` found in either command list.
+/// Refused outright — see that constant's doc comment for why these specific
+/// cvars, and not the wider `MID_DEMO_HAZARDS` set, get this treatment.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BannedCommandRow {
+    pub cvar: String,
+    pub command: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct CfgReport {
@@ -178,6 +188,20 @@ pub struct CfgReport {
     pub shadowed: Vec<CfgShadowRow>,
     /// Scheduled commands that displace something, or that must not run mid-demo.
     pub custom: Vec<CustomCommandWarning>,
+    /// Banned commands (`cfg_scan::BANNED_COMMANDS`) found in Initial
+    /// Commands. Not merely advisory: `start_capture_batch` must refuse to
+    /// run while this is non-empty.
+    pub banned_init: Vec<BannedCommandRow>,
+    /// Same, found in Scheduled (Custom) Commands.
+    pub banned_scheduled: Vec<BannedCommandRow>,
+    /// The `r_decals` ring size this capture will silently use, when nothing
+    /// — no config file, no Initial Command — states one. `None` whenever
+    /// Flush Decals Between Clips is off (nothing pins a value at all) or the
+    /// user's own Initial Commands already state `r_decals` (their value
+    /// applies, not the default — see `ring_limit_from_init`). Informational,
+    /// not a warning: there is nothing wrong with taking the default, only a
+    /// silent decision worth surfacing.
+    pub decal_default_ring: Option<u32>,
 }
 
 /// Scheduled commands in the order the engine reaches them.
@@ -244,6 +268,16 @@ pub async fn scan_game_configs(
         if let Some(v) = decal_flush {
             cfg.decal_flush = v;
         }
+
+        // Nothing states r_decals themselves, so the app's own default is
+        // about to silently apply — worth saying so, even though there is
+        // nothing actually wrong with taking the default. Guarded to a
+        // nonzero ring: a 0 default would mean the flush is a no-op, which
+        // is a different (and louder) fact than "here is the default".
+        let decal_default_ring = (cfg.decal_flush
+            && native::patch::ring_limit_from_init(&cfg.init_commands).is_none())
+        .then(|| native::patch::ring_limit(&cfg))
+        .filter(|&ring| ring > 0);
         let effective_commands = native::patch::final_init_commands(&cfg);
         let user_typed: std::collections::HashSet<String> =
             init_commands.iter().map(|c| c.trim().to_string()).collect();
@@ -304,10 +338,26 @@ pub async fn scan_game_configs(
             .iter()
             .filter_map(|c| c.trim().split_whitespace().next().map(str::to_lowercase))
             .collect();
+        // mirv_fov/default_fov are the other cvar r_decals' "not unseen"
+        // comment above describes, just reached a different way: nothing
+        // appends either to init_commands the way r_decals gets appended, but
+        // whenever neither is stated there, decal_strip::capture_fov_resolved
+        // already reads whichever the config sets and uses it — the same
+        // fact "unseen" exists to surface, already handled. Reporting it here
+        // too would tell the user to do something the pipeline is already
+        // doing. Scoped to exactly that case: a config naming one fov cvar
+        // while Initial Commands name the *other* is a real (separate, more
+        // involved) cross-cvar precedence question, left alone here.
+        let capture_fov_stated = native::patch::capture_fov_from_init(&init_commands).is_some();
         let unseen = scan
             .effective_settings()
             .into_iter()
             .filter(|s| !named.contains(&s.cvar.to_lowercase()))
+            .filter(|s| {
+                let is_fov_cvar =
+                    s.cvar.eq_ignore_ascii_case("mirv_fov") || s.cvar.eq_ignore_ascii_case("default_fov");
+                !is_fov_cvar || capture_fov_stated
+            })
             .map(|s| CfgWarningRow {
                 cvar: s.cvar.clone(),
                 value: s.value.clone(),
@@ -316,12 +366,22 @@ pub async fn scan_game_configs(
             })
             .collect();
 
+        // Refused outright, in both lists — see BANNED_COMMANDS' doc comment.
+        let banned_init: Vec<BannedCommandRow> = native::patch::cfg_scan::banned_commands(&init_commands)
+            .into_iter()
+            .map(|(cvar, command)| BannedCommandRow { cvar, command })
+            .collect();
+
         // Custom commands are scheduled into playback, so they run after the
         // configs AND after the init commands — they are the last word on any
         // cvar they touch, and the only place a value can change mid-demo.
         let mut custom = Vec::new();
         let command_texts: Vec<String> =
             custom_commands.iter().map(|c| c.command.clone()).collect();
+        let banned_scheduled: Vec<BannedCommandRow> = native::patch::cfg_scan::banned_commands(&command_texts)
+            .into_iter()
+            .map(|(cvar, command)| BannedCommandRow { cvar, command })
+            .collect();
         // Every scheduled `r_decals` breaks the flush, however many there are,
         // so the hazard list is not deduplicated the way the overrides are.
         for (cvar, command) in native::patch::cfg_scan::mid_demo_hazards(&command_texts) {
@@ -373,7 +433,15 @@ pub async fn scan_game_configs(
             }
         }
 
-        CfgReport { unseen, overrides, shadowed, custom }
+        CfgReport {
+            unseen,
+            overrides,
+            shadowed,
+            custom,
+            banned_init,
+            banned_scheduled,
+            decal_default_ring,
+        }
     })
     .await
     .map_err(|e| format!("config scan failed: {}", e))
@@ -650,18 +718,46 @@ mod tests {
 
     #[test]
     fn a_cvar_only_a_config_sets_is_reported_as_unseen() {
-        // Nothing names mirv_fov, so the engine renders at 105 and the app is
-        // working from its own default. That is the silent case.
-        let r = report("unseen", &[], &[], 120);
+        // r_decals is only ever named in effective_commands when Flush
+        // Decals is on — with it off, nothing pins the cvar at all, so a
+        // config setting it really is invisible to the pipeline. That is
+        // the genuinely silent case this category exists for.
+        let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
+        let r = rt
+            .block_on(scan_game_configs(
+                fake_game("unseen"),
+                Vec::new(),
+                Vec::new(),
+                Some(120),
+                Some(false),
+                Some(false),
+            ))
+            .unwrap();
 
         assert!(
-            r.unseen.iter().any(|u| u.cvar == "mirv_fov" && u.value == "105"),
+            r.unseen.iter().any(|u| u.cvar == "r_decals" && u.value == "0"),
             "{:?}",
+            r.unseen
+        );
+    }
+
+    #[test]
+    fn a_config_only_fov_is_not_reported_as_unseen() {
+        // Regression: decal_strip::capture_fov_resolved already adopts a
+        // config's mirv_fov/default_fov whenever Initial Commands state
+        // neither — reporting it as unseen here would tell the user to do
+        // something the pipeline is already doing (the same reasoning
+        // r_decals already gets when Flush Decals is on).
+        let r = report("fov_seen_via_resolve", &[], &[], 120);
+
+        assert!(
+            !r.unseen.iter().any(|u| u.cvar == "mirv_fov"),
+            "capture_fov_resolved already reads this: {:?}",
             r.unseen
         );
         assert!(
             !r.unseen.iter().any(|u| u.cvar == "r_decals"),
-            "the decal pin names r_decals, so it is not unseen: {:?}",
+            "the decal pin names r_decals when flush is on, so it is not unseen: {:?}",
             r.unseen
         );
     }
@@ -676,6 +772,81 @@ mod tests {
             !r.unseen.iter().any(|u| u.cvar == "mirv_fov"),
             "it is in Init Commands — it is seen: {:?}",
             r.unseen
+        );
+    }
+
+    #[test]
+    fn a_banned_command_in_initial_commands_is_reported() {
+        let r = report("banned_init", &["mirv_movie_filename foo"], &[], 120);
+
+        assert_eq!(r.banned_init.len(), 1, "{:?}", r.banned_init);
+        assert_eq!(r.banned_init[0].cvar, "mirv_movie_filename");
+        assert!(r.banned_scheduled.is_empty());
+    }
+
+    #[test]
+    fn a_banned_command_in_scheduled_commands_is_reported() {
+        let r = report("banned_scheduled", &[], &["host_framerate 0.05"], 120);
+
+        assert_eq!(r.banned_scheduled.len(), 1, "{:?}", r.banned_scheduled);
+        assert_eq!(r.banned_scheduled[0].cvar, "host_framerate");
+        assert!(r.banned_init.is_empty());
+    }
+
+    #[test]
+    fn tier_2_and_tier_3_cvars_are_never_reported_as_banned() {
+        let r = report(
+            "not_banned",
+            &["mirv_movie_fps 500", "r_decals \"256\""],
+            &["mirv_fov 90"],
+            120,
+        );
+
+        assert!(r.banned_init.is_empty(), "{:?}", r.banned_init);
+        assert!(r.banned_scheduled.is_empty(), "{:?}", r.banned_scheduled);
+    }
+
+    #[test]
+    fn the_default_ring_is_reported_when_nothing_states_r_decals() {
+        let r = report("decal_default_unset", &[], &[], 120);
+        assert_eq!(r.decal_default_ring, Some(native::patch::PatcherConfig::default().decal_ring_limit));
+    }
+
+    #[test]
+    fn the_default_ring_is_not_reported_once_the_user_states_one() {
+        let r = report("decal_default_stated", &["r_decals \"512\""], &[], 120);
+        assert_eq!(r.decal_default_ring, None);
+    }
+
+    #[test]
+    fn the_default_ring_is_not_reported_when_flush_is_off() {
+        let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
+        let r = rt
+            .block_on(scan_game_configs(
+                fake_game("decal_default_flush_off"),
+                Vec::new(),
+                Vec::new(),
+                Some(120),
+                Some(false),
+                Some(false),
+            ))
+            .unwrap();
+        assert_eq!(r.decal_default_ring, None);
+    }
+
+    #[test]
+    fn a_quoted_r_decals_the_user_typed_is_respected_not_shadowed() {
+        // Regression: real .cfg syntax quotes every value, and the app used
+        // to parse r_decals from Initial Commands without unquoting first —
+        // `r_decals "512"` silently read as "nothing stated" and the app
+        // appended its own default afterward, shadowing the user's own line
+        // even though nothing was actually wrong with it.
+        let r = report("quoted_decals", &["r_decals \"512\""], &[], 120);
+
+        assert!(
+            !r.shadowed.iter().any(|s| s.cvar.eq_ignore_ascii_case("r_decals")),
+            "the user's own r_decals must not be reported as dead: {:?}",
+            r.shadowed
         );
     }
 
@@ -730,16 +901,18 @@ mod tests {
     #[test]
     fn a_scheduled_command_is_reported_against_whatever_it_displaces() {
         // Scheduled commands run last of all, so they beat the init commands as
-        // well as the configs.
-        let r = report("custom", &["mirv_fov 90"], &["mirv_fov 130"], 120);
+        // well as the configs. Not mirv_fov/r_decals/gl_widescreenfov — those
+        // are hazards regardless of what they'd otherwise displace, and are
+        // covered by their own tests below.
+        let r = report("custom", &["sensitivity 3"], &["sensitivity 5"], 120);
 
         let row = r
             .custom
             .iter()
-            .find(|c| c.cvar.eq_ignore_ascii_case("mirv_fov"))
+            .find(|c| c.cvar.eq_ignore_ascii_case("sensitivity"))
             .expect("reported");
         assert_eq!(row.kind, "overridesInit");
-        assert_eq!(row.replaced_value, "90");
+        assert_eq!(row.replaced_value, "3");
     }
 
     #[test]

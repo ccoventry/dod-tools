@@ -342,7 +342,12 @@ export const STRINGS = {
     NOTIFY_ERROR_LABEL: 'Errors',
     NOTIFY_ERROR_TITLE: 'Fires immediately if a patch, capture, or render step fails.',
     INIT_COMMANDS_LABEL: 'Initial Commands (run once at demo load):',
+    INIT_COMMANDS_INFO_TITLE:
+      "If you already exec a movie config from your config.cfg or autoexec, you don't need to add anything here. If you exec one manually instead, use Import Config below to pull its lines in as Initial Commands.",
     ADD_INIT_COMMAND_BUTTON: '+ Add Initial Command',
+    IMPORT_CFG_BUTTON: 'Import Config...',
+    importedCfgToast: (n) => `Imported ${n} command(s) from the config.`,
+    IMPORTED_CFG_EMPTY_TOAST: 'That config had no commands to import.',
     // Both lists on this tab are custom commands; only one is scheduled, so
     // that is what the label says. Paired with INIT_COMMANDS_LABEL's "once at
     // demo load", the two read as the distinction they actually are.
@@ -372,6 +377,7 @@ export const STRINGS = {
     NO_DRIVES_CONFIGURED_WARNING: 'No Capture Output directories configured — add at least one with free space before starting a capture.',
     OBS_NOT_CONNECTED_WARNING: 'Not connected to OBS — capture mode is OBS, but the last connection check failed. Fix the connection in Configuration → Output Format before starting a capture.',
     OBS_CHECKING_WARNING: 'Checking the OBS connection…',
+    bannedCommandsWarning: (n) => `${n} command${n === 1 ? '' : 's'} in Initial or Scheduled Commands ${n === 1 ? 'is' : 'are'} not allowed — remove ${n === 1 ? 'it' : 'them'} in the Commands tab before starting a capture.`,
     // Measured 2026-08-28, see docs/direct_to_video_capture.md. Spelled out
     // because both halves report success and the broken output only shows up
     // after rendering — the user has no other way to find out.
@@ -838,7 +844,7 @@ export const STRINGS = {
     location: (file, line) => `set in ${file}, line ${line}`,
     OVERRIDE_TITLE: 'These Initial Commands will override your config files:',
     OVERRIDE_ADVICE:
-      'Init commands run after the game loads its configs, so these values win. That is usually the point — but the config line stops applying, and nothing else would tell you.',
+      'Initial Commands run after the game loads its configs, so these values win. That is usually the point — but the config line stops applying, and nothing else would tell you.',
     FROM_APP_NOTE: 'added by the app',
     SHADOWED_TITLE: 'These Initial Commands will not take effect:',
     SHADOWED_ADVICE:
@@ -850,14 +856,18 @@ export const STRINGS = {
     // Which setting owns a value the pipeline appends for itself, so the advice
     // can name the control rather than leaving the user to hunt for it.
     SETTING_FOR_CVAR: {
-      mirv_movie_fps: 'Timing Options → Capture FPS',
-      mirv_movie_separate_hud: 'Capture Config → Separate HUD',
-      r_decals: 'Capture Config → Flush Decals Between Clips',
+      mirv_movie_fps: 'Output Format → Capture FPS',
+      mirv_movie_separate_hud: 'Output Format → Separate HUD',
+      r_decals: 'Pipeline → Flush Decals Between Clips',
     },
     UNKNOWN_SETTING: 'its own setting',
+    BANNED_TITLE: 'These commands are not allowed:',
+    BANNED_ADVICE:
+      'Too dangerous to run at all — remove them. Start Capture Batch stays disabled while any are present.',
+    bannedRow: (command) => `${command} — not allowed`,
     HAZARD_TITLE: 'These Scheduled Commands will break the decal flush:',
     HAZARD_ADVICE:
-      'r_decals bounds how far the engine\'s decal ring may travel before it wraps — it evicts nothing. Setting it during playback strands every decal above the new limit for the rest of the demo, and the capture still completes looking plausible. Set the ring once, in Initial Commands, and leave it alone.',
+      'r_decals, mirv_fov and gl_widescreenfov all need to stay the same for the whole demo — clearing old decals between clips depends on none of them changing. Set them once in Initial Commands instead.',
     CUSTOM_TITLE: 'These Scheduled Commands override earlier values:',
     CUSTOM_ADVICE:
       'Scheduled commands run during playback, so they come after your configs and after the Initial Commands — they are the last word on whatever they set, and the only place a value changes partway through a capture.',
@@ -868,6 +878,10 @@ export const STRINGS = {
       `${cvar} ${value} replaces ${previous} from ${source}`,
     override: (cvar, initValue, cfgValue, file, line) =>
       `${cvar} ${initValue} replaces ${cfgValue} from ${file}, line ${line}`,
+    DECAL_DEFAULT_TITLE: 'No r_decals value is set anywhere:',
+    DECAL_DEFAULT_ADVICE:
+      "The engine will use its default, 256, for the decal ring. That's a safe value on most maps — state r_decals in Initial Commands if you want a different one.",
+    decalDefaultRow: (ring) => `r_decals — defaulting to ${ring}`,
   },
 
   // Pre-roll and post-roll are load-bearing: playback returns to real time one
@@ -894,6 +908,8 @@ export const STRINGS = {
 
     JSON_PROJECT_FILTER_NAME: 'JSON Project File',
     EXECUTABLE_FILTER_NAME: 'Executable',
+    CONFIG_FILTER_NAME: 'Config File',
+    SELECT_MOVIE_CFG_TITLE: 'Select Movie Config',
     DEMO_FILES_FILTER_NAME: 'Demo Files',
 
     NOTHING_TO_SAVE: 'Nothing to save yet — add demo files or load a session first.',
@@ -967,6 +983,7 @@ export const STRINGS = {
     validationError: (err) => `Validation error: ${err}`,
     analysisError: (err) => `Analysis error: ${err}`,
     previewFailed: (err) => `Preview failed: ${err}`,
+    cfgImportFailed: (err) => `Could not read that config: ${err}`,
     processCheckFailed: (err) => `Process check failed: ${err}`,
     launchFailed: (err) => `Launch failed: ${err}`,
     killEngineFailed: (err) => `Failed to close running engine processes: ${err}`,

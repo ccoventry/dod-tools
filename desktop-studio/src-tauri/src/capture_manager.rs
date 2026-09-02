@@ -618,12 +618,42 @@ fn emit_take_verification(app: &tauri::AppHandle, manifest_slot: &Arc<Mutex<Opti
 
 // ── Public command handler ─────────────────────────────────────────────────────
 
+/// `Some(message)` when `init_commands` or any `custom_commands` entry names
+/// a `native::patch::cfg_scan::BANNED_COMMANDS` cvar — the first one found,
+/// checking Initial Commands before Scheduled. `None` means clean.
+///
+/// Pure so it can be tested without a `tauri::AppHandle`; `start_capture_batch_impl`
+/// is the only caller.
+fn first_banned_command_error(
+    init_commands: &[String],
+    custom_commands: &[CustomCommandPayload],
+) -> Option<String> {
+    let custom_texts: Vec<String> = custom_commands.iter().map(|c| c.command.clone()).collect();
+    let mut banned = native::patch::cfg_scan::banned_commands(init_commands);
+    banned.extend(native::patch::cfg_scan::banned_commands(&custom_texts));
+    banned.first().map(|(cvar, command)| {
+        format!(
+            "\"{command}\" is not allowed in Initial or Scheduled Commands — {cvar} is controlled entirely by the app."
+        )
+    })
+}
+
 /// Async entry point called by the Tauri `start_capture_batch` command.
 pub async fn start_capture_batch_impl(
     app_handle: tauri::AppHandle,
     manager: &CaptureManager,
     payload: CapturePayload,
 ) -> Result<(), String> {
+    // ── Guard: banned commands (native::patch::cfg_scan::BANNED_COMMANDS) ─────
+    // The frontend already disables Start Capture Batch while one is present
+    // (capture_pane.js's refreshLaunchGuard) — this is the same "the frontend
+    // check is only as good as the frontend" reasoning as the separate-HUD
+    // guard below: whatever reaches this command directly must be refused
+    // independently, not trusted because some UI state claimed it was clean.
+    if let Some(err) = first_banned_command_error(&payload.init_commands, &payload.custom_commands) {
+        return Err(err);
+    }
+
     // ── Guard: separate HUD cannot be captured through mirv_movie_ffmpeg ──────
     // HLAE writes blank frames to the HUD stream on the FFmpeg path — measured
     // both ways against one demo, see docs/direct_to_video_capture.md. Capture
@@ -1291,6 +1321,66 @@ pub async fn generate_all_previews(
     .map_err(|e| format!("Task join error: {}", e))?
 }
 
+// ── Initial Commands import ──────────────────────────────────────────────────
+//
+// A manually-`exec`'d movie config never gets a guaranteed exec point: a
+// command-line `+exec` fires *before* the user's own config.cfg/movie.cfg
+// chain, not after it, so config.cfg silently wins any cvar both set — see
+// docs/goldsrc_dod_quirks.md's Command Precedence entry. STUFFTEXT-injected
+// Initial Commands are the only mechanism confirmed to always win over
+// everything, config.cfg/movie.cfg included, so importing a movie config's
+// lines directly into Initial Commands is the reliable substitute.
+
+/// Collapses runs of spaces/tabs outside double-quoted spans into a single
+/// space, and trims the ends. A `.cfg` hand-aligned into columns —
+/// `r_decals               "0"` — reads fine in a text editor but carries all
+/// that padding into an Initial Command row, where it just looks broken.
+/// Whitespace *inside* quotes (a path with a space in it, say) is left alone:
+/// only alignment padding between tokens is collapsing, not a value's own
+/// content.
+fn collapse_whitespace_outside_quotes(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut in_quotes = false;
+    let mut last_was_space = false;
+    for c in line.chars() {
+        if c == '"' {
+            in_quotes = !in_quotes;
+            out.push(c);
+            last_was_space = false;
+        } else if !in_quotes && (c == ' ' || c == '\t') {
+            if !last_was_space {
+                out.push(' ');
+            }
+            last_was_space = true;
+        } else {
+            out.push(c);
+            last_was_space = false;
+        }
+    }
+    out.trim().to_string()
+}
+
+/// Reads a `.cfg` file the user picked through a native dialog (never a typed
+/// path — see CLAUDE.md's filesystem-picking rule) and returns its console
+/// commands: one per line, blank lines and full-line `//` comments dropped,
+/// alignment whitespace outside quotes collapsed. Read-only, same as
+/// `cfg_scan.rs` — this never writes the file it reads.
+#[tauri::command]
+pub async fn read_cfg_commands(path: String) -> Result<Vec<String>, String> {
+    tokio::task::spawn_blocking(move || {
+        let content = std::fs::read_to_string(&path)
+            .map_err(|e| format!("Failed to read {}: {}", path, e))?;
+        Ok(content
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty() && !line.starts_with("//"))
+            .map(collapse_whitespace_outside_quotes)
+            .collect())
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
+}
+
 // ── Standalone Game Launch ──────────────────────────────────────────────────────
 //
 // Boots the GoldSrc engine environment through HLAE without a demo loaded —
@@ -1299,28 +1389,13 @@ pub async fn generate_all_previews(
 // (not an IPC payload) since this is a standalone action triggered from the
 // global actions area rather than the per-demo detail pane.
 
-/// Builds the `+`-prefixed startup console command string from the user's
-/// configured init commands. Demo-time injection (STUFFTEXT frames patched
-/// into the .dem, see `build_preview_patch_jobs`) isn't available here since
-/// there's no demo — this is the standalone-launch equivalent, so any
-/// `playdemo`/`viewdemo` command is stripped defensively even though
-/// `init_commands` shouldn't carry one by convention.
-fn build_standalone_extra_args(init_commands: &[String]) -> String {
-    init_commands
-        .iter()
-        .map(|c| c.trim())
-        .filter(|c| !c.is_empty())
-        .filter(|c| {
-            let lower = c.to_lowercase();
-            !lower.starts_with("playdemo") && !lower.starts_with("viewdemo")
-        })
-        .map(|c| format!("+{}", c))
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
 /// Launches HLAE directly against `hl.exe` with no demo loaded, applying the
-/// persisted resolution/HUD/init-command configuration from `AppSettings`.
+/// persisted resolution/HUD configuration from `AppSettings`. Deliberately
+/// does not apply Initial Commands: this button is for quickly opening
+/// HLAE+DoD, not for reproducing a capture batch's config state, and Initial
+/// Commands lack the guaranteed-last-word property here that they have in a
+/// real batch (no demo to STUFFTEXT-inject into, so they would just be raw
+/// command-line args that config.cfg/movie.cfg can still override).
 #[tauri::command]
 pub async fn launch_standalone_game(app: tauri::AppHandle) -> Result<(), String> {
     let settings_state = app.state::<crate::settings_manager::SettingsManager>();
@@ -1354,9 +1429,7 @@ pub async fn launch_standalone_game(app: tauri::AppHandle) -> Result<(), String>
             ..PatcherConfig::default()
         };
 
-        let extra_args = build_standalone_extra_args(&settings.init_commands);
-
-        let mut cmd = patcher_config.build_hlae_process(&extra_args);
+        let mut cmd = patcher_config.build_hlae_process("");
         cmd.spawn()
             .map_err(|e| format!("Failed to launch HLAE: {}", e))?;
 
@@ -1712,5 +1785,107 @@ mod tests {
         // An unrecognised relation string must fail safe to Before rather than
         // rejecting the whole batch payload (see CustomCommandPayload's doc comment).
         assert_eq!(cfg.custom_commands[1].relation, CommandRelation::Before);
+    }
+
+    fn write_temp_cfg(tag: &str, content: &str) -> String {
+        let path = std::env::temp_dir().join(format!("dod_cfgimport_{}_{}.cfg", tag, std::process::id()));
+        std::fs::write(&path, content).unwrap();
+        path.to_string_lossy().to_string()
+    }
+
+    fn read_cfg_commands_blocking(path: String) -> Result<Vec<String>, String> {
+        let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
+        rt.block_on(read_cfg_commands(path))
+    }
+
+    #[test]
+    fn test_read_cfg_commands_strips_blank_lines_and_full_line_comments() {
+        let path = write_temp_cfg(
+            "basic",
+            "// header comment\nmirv_fov 90\n\n  mirv_movie_fps 300  \n// trailing comment\nsensitivity 3\n",
+        );
+        let commands = read_cfg_commands_blocking(path.clone()).unwrap();
+        assert_eq!(commands, vec!["mirv_fov 90", "mirv_movie_fps 300", "sensitivity 3"]);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_read_cfg_commands_on_an_all_comment_file_is_empty() {
+        let path = write_temp_cfg("empty", "// just a header\n// nothing else\n");
+        let commands = read_cfg_commands_blocking(path.clone()).unwrap();
+        assert!(commands.is_empty());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_read_cfg_commands_missing_file_errs() {
+        let path = std::env::temp_dir()
+            .join(format!("dod_cfgimport_missing_{}.cfg", std::process::id()))
+            .to_string_lossy()
+            .to_string();
+        assert!(read_cfg_commands_blocking(path).is_err());
+    }
+
+    #[test]
+    fn test_read_cfg_commands_collapses_column_alignment_padding() {
+        // A hand-aligned .cfg — cvar and value padded into columns with extra
+        // spaces so they line up in a text editor.
+        let path = write_temp_cfg(
+            "aligned",
+            "r_decals               \"0\"\ncl_hud_objectives\t\t\"1\"\n",
+        );
+        let commands = read_cfg_commands_blocking(path.clone()).unwrap();
+        assert_eq!(commands, vec!["r_decals \"0\"", "cl_hud_objectives \"1\""]);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_read_cfg_commands_preserves_whitespace_inside_quotes() {
+        // A quoted value's own spaces (a path, say) are content, not
+        // alignment padding, and must survive verbatim.
+        let path = write_temp_cfg(
+            "quoted_spaces",
+            "mirv_movie_filename    \"F:\\DICE  WSOD25\\02 Audio Video\\clip\"\n",
+        );
+        let commands = read_cfg_commands_blocking(path.clone()).unwrap();
+        assert_eq!(
+            commands,
+            vec!["mirv_movie_filename \"F:\\DICE  WSOD25\\02 Audio Video\\clip\""]
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_banned_command_in_init_commands_is_refused() {
+        let err = first_banned_command_error(&["mirv_movie_filename foo".to_string()], &[]);
+        assert!(err.is_some(), "must be refused");
+        assert!(err.unwrap().contains("mirv_movie_filename"));
+    }
+
+    #[test]
+    fn a_banned_command_in_scheduled_commands_is_refused() {
+        let scheduled = vec![CustomCommandPayload {
+            command: "host_framerate 0.05".to_string(),
+            relation: "Before".to_string(),
+            offset_seconds: 1.0,
+        }];
+        let err = first_banned_command_error(&[], &scheduled);
+        assert!(err.is_some(), "must be refused");
+        assert!(err.unwrap().contains("host_framerate"));
+    }
+
+    #[test]
+    fn tier_2_and_tier_3_commands_are_not_refused() {
+        let err = first_banned_command_error(
+            &["mirv_movie_fps 500".to_string(), "r_decals \"256\"".to_string(), "mirv_fov 90".to_string()],
+            &[],
+        );
+        assert!(err.is_none(), "{:?}", err);
+    }
+
+    #[test]
+    fn clean_commands_are_not_refused() {
+        let err = first_banned_command_error(&["sensitivity 3".to_string()], &[]);
+        assert!(err.is_none());
     }
 }

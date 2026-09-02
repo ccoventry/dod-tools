@@ -1,15 +1,17 @@
-import { startCaptureBatch, cancelCaptureBatch, validatePaths, calculateExportPoolSpace, diagnoseCaptureOutputPaths, scanOrphanedPreviews, deleteOrphanedPreviews, checkEngineProcesses, launchStandaloneGame } from './ipc_bridge.js';
+import { startCaptureBatch, cancelCaptureBatch, validatePaths, calculateExportPoolSpace, diagnoseCaptureOutputPaths, scanOrphanedPreviews, deleteOrphanedPreviews, checkEngineProcesses, launchStandaloneGame, readCfgCommands } from './ipc_bridge.js';
 import { listen } from '@tauri-apps/api/event';
+import { open } from '@tauri-apps/plugin-dialog';
 import { themedConfirm } from './themed_confirm.js';
 import { showToast } from './toast.js';
 import { requestProcessGuardedLaunch } from './detail_pane.js';
 import { createListEditor } from './list_editor.js';
-import { refreshCfgWarnings } from './cfg_warnings.js';
+import { refreshCfgWarnings, bannedCommandCount } from './cfg_warnings.js';
 import { isObsConnected, obsConnectionChecked } from './obs_status.js';
 import { refreshRollFloors } from './roll_floors.js';
 import { streakUid, recordTake } from './take_index.js';
 import { STRINGS } from './strings.js';
 import { notify, isNotificationEnabled } from './os_notifications.js';
+import { isLocalOrDebugBuild } from './updater_pane.js';
 
 let unlistenCaptureStatus = null;
 let unlistenDemoLoading = null;
@@ -87,9 +89,9 @@ const FIELDS_THAT_BECOME_COMMANDS = [
  * the hl.exe path changes, by the command editors on every edit, and by the
  * settings below that the pipeline turns into commands of its own.
  */
-export function refreshInitCommandWarnings() {
+export async function refreshInitCommandWarnings() {
   const gamePath = document.querySelector('#hl-path-input')?.value?.trim() || '';
-  refreshCfgWarnings(
+  await refreshCfgWarnings(
     gamePath,
     initCommands.map((c) => c.trim()).filter((c) => c.length > 0),
     // Relation and offset travel with the command: they decide which one the
@@ -108,6 +110,10 @@ export function refreshInitCommandWarnings() {
       decalFlush: document.querySelector('#config-decal-flush')?.checked ?? true,
     }
   );
+  // A banned command appearing or disappearing has to reach Start Capture
+  // Batch immediately, not wait for some unrelated field to trigger the next
+  // refreshLaunchGuard() — this scan is the only thing that would ever know.
+  refreshLaunchGuard();
 }
 
 /** Generates a `session_YYYYMMDD_HHMMSS` id so each batch routes into its own
@@ -310,16 +316,26 @@ export async function refreshLaunchGuard(state) {
   // actually record anything.
   const obsMode = document.querySelector('#config-capture-mode')?.value === 'obs';
   const obsNotReady = obsMode && !isObsConnected();
-  const blocked = obsNotReady || noHighlightsSelected || noDrivesConfigured || noUsableSpace || insufficientSpace;
+  // Reflects cfg_warnings.js's own most recent scan rather than fetching its
+  // own — a banned command (cfg_scan::BANNED_COMMANDS) is a correctness bug
+  // waiting to happen, not a resource problem, so it takes priority over
+  // every check below it, OBS included.
+  const bannedCount = bannedCommandCount();
+  const bannedCommandsPresent = bannedCount > 0;
+  const blocked = bannedCommandsPresent || obsNotReady || noHighlightsSelected || noDrivesConfigured || noUsableSpace || insufficientSpace;
 
   if (!capturingInFlight) {
     startBtn.disabled = blocked;
   }
 
   if (warningEl) {
-    // First of all, ahead of even the calm cases below: OBS not being ready
-    // means this batch cannot record anything at all.
-    if (obsNotReady) {
+    // First of all, ahead of even the calm cases below: a banned command is
+    // an active correctness bug, not an incomplete-but-normal state.
+    if (bannedCommandsPresent) {
+      warningEl.style.color = '#f44336';
+      warningEl.textContent = STRINGS.CAPTURE.bannedCommandsWarning(bannedCount);
+      warningEl.style.display = 'block';
+    } else if (obsNotReady) {
       warningEl.style.color = '#f44336';
       warningEl.textContent = obsConnectionChecked()
         ? STRINGS.CAPTURE.OBS_NOT_CONNECTED_WARNING
@@ -492,9 +508,17 @@ function renderClearPreviewsResults() {
 // via `requestProcessGuardedLaunch` instead of duplicating that modal's
 // click listeners here.
 
-function initStandaloneLaunchButton() {
+async function initStandaloneLaunchButton() {
   const btn = document.querySelector('#btn-launch-standalone-game');
   if (!btn) return;
+
+  // Only useful for iterating on the pipeline itself — most users never need
+  // to open HLAE+DoD with no demo loaded, so this stays hidden outside a
+  // local/debug build.
+  if (!(await isLocalOrDebugBuild())) {
+    btn.style.display = 'none';
+    return;
+  }
 
   async function performLaunch() {
     btn.disabled = true;
@@ -526,6 +550,42 @@ function initStandaloneLaunchButton() {
     }
 
     await performLaunch();
+  });
+}
+
+// ── Import Config ─────────────────────────────────────────────────────────
+//
+// Lets a manually exec'd movie config's lines land in Initial Commands
+// directly — STUFFTEXT there reliably wins over anything a config.cfg or
+// movie.cfg sets, which is what makes this the alternative to relying on an
+// autoexec'd movie config the pipeline never sees (see the info tooltip on
+// the Initial Commands label).
+
+function initImportCfgButton() {
+  const btn = document.querySelector('#import-cfg-btn');
+  if (!btn) return;
+
+  btn.addEventListener('click', async () => {
+    const picked = await open({
+      title: STRINGS.MAIN.SELECT_MOVIE_CFG_TITLE,
+      multiple: false,
+      filters: [{ name: STRINGS.MAIN.CONFIG_FILTER_NAME, extensions: ['cfg'] }],
+    });
+    if (!picked || Array.isArray(picked)) return;
+
+    try {
+      const lines = await readCfgCommands(picked);
+      if (lines.length === 0) {
+        showToast(STRINGS.CAPTURE_CONFIG.IMPORTED_CFG_EMPTY_TOAST, 'info');
+        return;
+      }
+      lines.forEach((line) => initCommandsEditor.addItem(line));
+      notifySettingsChange();
+      refreshInitCommandWarnings();
+      showToast(STRINGS.CAPTURE_CONFIG.importedCfgToast(lines.length), 'success');
+    } catch (err) {
+      // Already toasted by ipc_bridge.js.
+    }
   });
 }
 
@@ -654,6 +714,7 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
 
   initClearPreviewsModal();
   initStandaloneLaunchButton();
+  initImportCfgButton();
 
   // The pipeline turns some settings into init commands, so the warnings go
   // stale when one changes.

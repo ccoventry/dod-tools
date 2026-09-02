@@ -92,7 +92,7 @@ export async function scanGameConfigs(
   })
     .catch((err) => {
       console.error("IPC Execution Error (scan_game_configs):", err);
-      return { unseen: [], overrides: [], shadowed: [], custom: [] };
+      return { unseen: [], overrides: [], shadowed: [], custom: [], bannedInit: [], bannedScheduled: [], decalDefaultRing: null };
     });
 }
 
@@ -195,6 +195,19 @@ export async function launchStandaloneGame() {
     .catch((err) => {
       console.error("IPC Execution Error (launch_standalone_game):", err);
       showToast(STRINGS.IPC.launchFailed(err), 'error');
+      throw err;
+    });
+}
+
+/** Reads a `.cfg` file's console commands (blank lines and full-line comments
+ *  stripped) for the Commands tab's Import Config button — lets a manually
+ *  exec'd movie config's lines land in Initial Commands directly, since
+ *  STUFFTEXT there reliably wins over anything a config.cfg/movie.cfg sets. */
+export async function readCfgCommands(path) {
+  return invoke("read_cfg_commands", { path })
+    .catch((err) => {
+      console.error("IPC Execution Error (read_cfg_commands):", err);
+      showToast(STRINGS.IPC.cfgImportFailed(err), 'error');
       throw err;
     });
 }

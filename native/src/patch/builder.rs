@@ -548,7 +548,13 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
         crate::VERSION,
         date_time
     ));
-    
+    // Marks exactly where this file execs relative to the engine's own
+    // config.cfg/movie.cfg chain, which lands in qconsole.log too (with
+    // Add Condebug on) — cheap enough to leave in permanently rather than
+    // re-add it every time this ordering question comes up again. See
+    // docs/goldsrc_dod_quirks.md's Command Precedence entry.
+    helper_cfg_content.push_str("echo dodtools_helper.cfg exec'd here\n\n");
+
     helper_cfg_content.push_str("# Global aliases\n");
     helper_cfg_content.push_str("alias sys_autodir \"spec_autodirector 1\"\n");
     helper_cfg_content.push_str("alias sys_normal_speed \"sys_autodir; clear; host_framerate 0\"\n");

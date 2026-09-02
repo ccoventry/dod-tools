@@ -42,7 +42,7 @@ function setFooterButtonState(updateAvailable) {
 // "different" essentially always — for a local session in particular,
 // that's actively backwards (it's typically running the newest code,
 // ahead of anything published), not just a noisy false positive.
-async function isLocalOrDebugBuild() {
+export async function isLocalOrDebugBuild() {
   return import.meta.env.DEV || (await isDebugBuild());
 }
 

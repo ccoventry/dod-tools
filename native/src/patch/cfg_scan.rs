@@ -161,29 +161,117 @@ pub struct CommandShadow {
 
 /// Cvars that must not change once a demo is playing.
 ///
-/// `r_decals` is the one that matters and the reason this list exists. It bounds
-/// how far the engine's rotating decal index may travel before it wraps; it
-/// evicts nothing. Lowering it mid-demo strands every decal sitting above the
-/// new limit — permanently, for the rest of playback — and the decal flush's
-/// entire design rests on the ring being set once at demo load and never
-/// touched again. A scheduled command that sets it is not a preference; it
-/// breaks the feature, and the capture still completes and still looks
-/// plausible.
-pub const MID_DEMO_HAZARDS: &[&str] = &["r_decals"];
+/// `r_decals` is the reason this list exists. It bounds how far the engine's
+/// rotating decal index may travel before it wraps; it evicts nothing.
+/// Lowering it mid-demo strands every decal sitting above the new limit —
+/// permanently, for the rest of playback — and the decal flush's entire
+/// design rests on the ring being set once at demo load and never touched
+/// again.
+///
+/// `mirv_fov` is the same shape of problem: `decal_strip::capture_fov_resolved`
+/// reads it once, from `init_commands`/the detected game config, as a pre-pass
+/// before the demo plays, and sizes the whole sweep's on-screen test against
+/// that single value. A Scheduled Command changing it mid-demo does not
+/// retroactively resize anything — the flush already decided what counts as
+/// on screen for the entire clip.
+///
+/// `gl_widescreenfov` widens the effective on-screen FOV for a wide aspect
+/// ratio the same way `mirv_fov`/`default_fov` do, but `capture_fov_resolved`
+/// never reads it at all — the pipeline has no idea it exists, let alone that
+/// it changed. A mid-demo toggle is strictly worse than a mid-demo `mirv_fov`:
+/// the flush's sizing goes wrong with nothing anywhere that could have caught it.
+///
+/// The rest are `builder::write_helper_cfg`'s own recording mechanics —
+/// `mirv_movie_filename` is what the `<demo>_route_N` aliases set once per
+/// block to route that block's frames to the right take folder, and a
+/// scheduled one firing mid-clip would silently write frames into whatever
+/// folder it named instead, with nothing to notice the manifest and the disk
+/// have diverged. `mirv_recordmovie_start`/`_stop` are what `sys_record_start`/
+/// `sys_record_stop` schedule at the block's own record bounds — a stray one
+/// races that and can start or end a take at the wrong tick. `mirv_movie_fps`
+/// and `mirv_movie_separate_hud` are pinned once at load (see
+/// `builder::final_init_commands`) and everything downstream — the fps
+/// stamped into take metadata, Render Studio's own expectation — assumes that
+/// never changes mid-batch. `mirv_movie_ffmpeg` configures the direct-to-video
+/// encoder pipe the same way, once, before anything records into it.
+/// `host_framerate` is `sys_fast_forward`/`sys_normal_speed`'s own mechanism
+/// for the real-time run-up before recording (`docs/goldsrc_dod_quirks.md`'s
+/// audio-resync entry) — a scheduled one races that timing, not the record
+/// itself (recording pins its own timestep regardless).
+///
+/// All of these share the same failure mode: the capture still completes and
+/// still looks plausible.
+pub const MID_DEMO_HAZARDS: &[&str] = &[
+    "r_decals",
+    "mirv_fov",
+    "gl_widescreenfov",
+    "mirv_movie_filename",
+    "mirv_recordmovie_start",
+    "mirv_recordmovie_stop",
+    "mirv_movie_fps",
+    "mirv_movie_separate_hud",
+    "mirv_movie_ffmpeg",
+    "host_framerate",
+];
 
-/// Commands from this list that must not be run during playback.
-pub fn mid_demo_hazards(commands: &[String]) -> Vec<(String, String)> {
+/// Commands the pipeline owns outright — no dedicated setting exists for any
+/// of them, and no scenario has been found where a user typing one is
+/// anything but a misunderstanding. Refused wherever a command can be typed
+/// (Initial Commands and Scheduled Commands alike), not merely shadowed or
+/// flagged as a mid-demo hazard the way the rest of `MID_DEMO_HAZARDS` is.
+///
+/// Distinct from `mirv_movie_fps`/`mirv_movie_separate_hud`, which the
+/// pipeline also always pins but which correspond to a real setting
+/// (Output Format → Capture FPS / Separate HUD) — typing those is redundant,
+/// not dangerous, so they stay shadowed-with-a-warning rather than refused.
+/// User-confirmed tier list, 2026-09-02.
+///
+/// - `mirv_movie_filename` — what the `<demo>_route_N` aliases set to route
+///   each block's frames to the right take folder. A user's own value here
+///   would silently misroute frames with nothing to notice the manifest and
+///   the disk have diverged.
+/// - `mirv_recordmovie_start` / `mirv_recordmovie_stop` — the pipeline's own
+///   `sys_record_start`/`sys_record_stop` scheduling relies on being the only
+///   thing calling these, at exactly the block's own record bounds.
+/// - `mirv_movie_ffmpeg` — the direct-to-video encoder pipe, configured once
+///   before anything records into it.
+/// - `host_framerate` — `sys_fast_forward`/`sys_normal_speed`'s own mechanism
+///   for the real-time run-up before recording. Floated as possibly having a
+///   legitimate creative use (frame-by-frame stepping, per
+///   `docs/goldsrc_dod_quirks.md`'s High-Precision Frame Pacing entry) and
+///   rejected: "It's dangerous and nobody uses that."
+pub const BANNED_COMMANDS: &[&str] = &[
+    "mirv_movie_filename",
+    "mirv_recordmovie_start",
+    "mirv_recordmovie_stop",
+    "mirv_movie_ffmpeg",
+    "host_framerate",
+];
+
+/// Commands from `list` that appear in `commands`, as (matched cvar, whole
+/// trimmed line) pairs, in the order they were found.
+fn commands_matching(list: &[&str], commands: &[String]) -> Vec<(String, String)> {
     commands
         .iter()
         .filter_map(|raw| {
             let trimmed = raw.trim();
             let head = trimmed.split_whitespace().next()?;
-            MID_DEMO_HAZARDS
-                .iter()
+            list.iter()
                 .find(|h| head.eq_ignore_ascii_case(h))
                 .map(|h| ((*h).to_string(), trimmed.to_string()))
         })
         .collect()
+}
+
+/// Commands from `MID_DEMO_HAZARDS` that must not be run during playback.
+pub fn mid_demo_hazards(commands: &[String]) -> Vec<(String, String)> {
+    commands_matching(MID_DEMO_HAZARDS, commands)
+}
+
+/// Commands from `BANNED_COMMANDS` present anywhere in `commands` — Initial
+/// or Scheduled alike. Refused outright, not merely shadowed or flagged.
+pub fn banned_commands(commands: &[String]) -> Vec<(String, String)> {
+    commands_matching(BANNED_COMMANDS, commands)
 }
 
 /// What a list of commands leaves a cvar set to, last one winning.
@@ -466,7 +554,7 @@ fn is_cvar_name(token: &str) -> bool {
         && token.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-fn unquote(token: &str) -> String {
+pub(crate) fn unquote(token: &str) -> String {
     token.trim().trim_matches('"').to_string()
 }
 
@@ -596,13 +684,123 @@ mod tests {
         // breaks the flush, while the capture still completes and still looks
         // plausible — so this is the one that has to be caught by name.
         let hits = mid_demo_hazards(&[
-            "mirv_movie_fps 500".to_string(),
+            "sensitivity 3".to_string(),
             "R_Decals 128".to_string(),
         ]);
 
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].0, "r_decals");
         assert_eq!(hits[0].1, "R_Decals 128");
+    }
+
+    #[test]
+    fn a_scheduled_mirv_fov_is_flagged() {
+        // The decal flush sizes its whole sweep's on-screen test against
+        // capture_fov_resolved, read once as a pre-pass before the demo
+        // plays — a Scheduled Command changing it mid-clip doesn't
+        // retroactively resize anything the flush already decided.
+        let hits = mid_demo_hazards(&[
+            "sensitivity 3".to_string(),
+            "mirv_fov 105".to_string(),
+        ]);
+
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].0, "mirv_fov");
+        assert_eq!(hits[0].1, "mirv_fov 105");
+    }
+
+    #[test]
+    fn a_scheduled_gl_widescreenfov_is_flagged() {
+        // Widens the effective on-screen FOV the same way mirv_fov/default_fov
+        // do, but capture_fov_resolved never reads it — a mid-demo toggle
+        // invalidates the flush's sizing with nothing that could have caught it.
+        let hits = mid_demo_hazards(&["gl_widescreenfov 1".to_string()]);
+
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].0, "gl_widescreenfov");
+        assert_eq!(hits[0].1, "gl_widescreenfov 1");
+    }
+
+    #[test]
+    fn every_pipeline_owned_recording_mechanic_is_flagged() {
+        // mirv_movie_filename races the block-routing aliases and can
+        // misroute frames to the wrong take folder; mirv_recordmovie_start/
+        // stop race the pipeline's own record-bounds scheduling;
+        // mirv_movie_fps/mirv_movie_separate_hud are pinned once at load and
+        // everything downstream assumes they never change; mirv_movie_ffmpeg
+        // configures the direct-to-video pipe before anything records into
+        // it; host_framerate races sys_fast_forward/sys_normal_speed's own
+        // timing. All of them dangerous scheduled mid-demo — whether typing
+        // them anywhere at all is banned outright is `banned_commands`'
+        // narrower list, tested separately below.
+        let hits = mid_demo_hazards(&[
+            "mirv_movie_filename foo".to_string(),
+            "mirv_recordmovie_start".to_string(),
+            "mirv_recordmovie_stop".to_string(),
+            "mirv_movie_fps 500".to_string(),
+            "mirv_movie_separate_hud 1".to_string(),
+            "mirv_movie_ffmpeg all enabled 1".to_string(),
+            "host_framerate 0.05".to_string(),
+        ]);
+
+        let flagged: Vec<&str> = hits.iter().map(|(cvar, _)| cvar.as_str()).collect();
+        assert_eq!(
+            flagged,
+            vec![
+                "mirv_movie_filename",
+                "mirv_recordmovie_start",
+                "mirv_recordmovie_stop",
+                "mirv_movie_fps",
+                "mirv_movie_separate_hud",
+                "mirv_movie_ffmpeg",
+                "host_framerate",
+            ]
+        );
+    }
+
+    #[test]
+    fn banned_commands_covers_exactly_the_tier_1_set() {
+        // No dedicated setting corresponds to any of these, and no scenario
+        // has been found where typing one is anything but a misunderstanding
+        // — banned outright, unlike mirv_movie_fps/mirv_movie_separate_hud
+        // (redundant with a real setting, so shadowed-with-a-warning instead)
+        // or r_decals/mirv_fov (the user's own stated value wins).
+        let hits = banned_commands(&[
+            "mirv_movie_filename foo".to_string(),
+            "mirv_recordmovie_start".to_string(),
+            "mirv_recordmovie_stop".to_string(),
+            "mirv_movie_ffmpeg all enabled 1".to_string(),
+            "host_framerate 0.05".to_string(),
+        ]);
+
+        let flagged: Vec<&str> = hits.iter().map(|(cvar, _)| cvar.as_str()).collect();
+        assert_eq!(
+            flagged,
+            vec![
+                "mirv_movie_filename",
+                "mirv_recordmovie_start",
+                "mirv_recordmovie_stop",
+                "mirv_movie_ffmpeg",
+                "host_framerate",
+            ]
+        );
+    }
+
+    #[test]
+    fn banned_commands_does_not_catch_tier_2_or_tier_3_cvars() {
+        // mirv_movie_fps/mirv_movie_separate_hud are redundant-with-a-setting
+        // (shadowed, not banned); r_decals/mirv_fov/gl_widescreenfov are
+        // either respected (Tier 3) or only a Scheduled-Commands hazard, not
+        // an everywhere-ban.
+        let hits = banned_commands(&[
+            "mirv_movie_fps 500".to_string(),
+            "mirv_movie_separate_hud 1".to_string(),
+            "r_decals 256".to_string(),
+            "mirv_fov 90".to_string(),
+            "gl_widescreenfov 1".to_string(),
+        ]);
+
+        assert!(hits.is_empty(), "{:?}", hits);
     }
 
     #[test]
