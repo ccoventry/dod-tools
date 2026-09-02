@@ -1304,28 +1304,44 @@ pub async fn generate_all_previews(
 // (not an IPC payload) since this is a standalone action triggered from the
 // global actions area rather than the per-demo detail pane.
 
-/// Builds the `+`-prefixed startup console command string from the user's
-/// configured init commands. Demo-time injection (STUFFTEXT frames patched
-/// into the .dem, see `build_preview_patch_jobs`) isn't available here since
-/// there's no demo — this is the standalone-launch equivalent, so any
-/// `playdemo`/`viewdemo` command is stripped defensively even though
-/// `init_commands` shouldn't carry one by convention.
-fn build_standalone_extra_args(init_commands: &[String]) -> String {
-    init_commands
-        .iter()
-        .map(|c| c.trim())
-        .filter(|c| !c.is_empty())
-        .filter(|c| {
-            let lower = c.to_lowercase();
-            !lower.starts_with("playdemo") && !lower.starts_with("viewdemo")
-        })
-        .map(|c| format!("+{}", c))
-        .collect::<Vec<_>>()
-        .join(" ")
+/// Builds the `+`-prefixed startup console command string for the
+/// standalone launch: Launch Config's exec first (same as a real capture
+/// batch), then the user's configured init commands. Demo-time injection
+/// (STUFFTEXT frames patched into the .dem, see `build_preview_patch_jobs`)
+/// isn't available here since there's no demo — this is the
+/// standalone-launch equivalent for both, so any `playdemo`/`viewdemo`
+/// command is stripped defensively even though `init_commands` shouldn't
+/// carry one by convention.
+///
+/// Being command-line args here (not STUFFTEXT) means the init commands
+/// lose the guaranteed-last-word status they have in a real capture batch:
+/// config.cfg/movie.cfg fire after the command line finishes processing
+/// regardless of what's on it, so a cvar both sides set resolves to
+/// whatever the user's own config says — true for Launch Config here too,
+/// same as the batch path. Measured 2026-09-01, see
+/// docs/goldsrc_dod_quirks.md's Command Precedence entry.
+fn build_standalone_extra_args(init_commands: &[String], launch_config: &str) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(name) = native::patch::sanitize_launch_config_name(launch_config) {
+        parts.push(format!("+exec {}.cfg", name));
+    }
+    parts.extend(
+        init_commands
+            .iter()
+            .map(|c| c.trim())
+            .filter(|c| !c.is_empty())
+            .filter(|c| {
+                let lower = c.to_lowercase();
+                !lower.starts_with("playdemo") && !lower.starts_with("viewdemo")
+            })
+            .map(|c| format!("+{}", c)),
+    );
+    parts.join(" ")
 }
 
 /// Launches HLAE directly against `hl.exe` with no demo loaded, applying the
-/// persisted resolution/HUD/init-command configuration from `AppSettings`.
+/// persisted resolution/HUD/init-command/Launch Config configuration from
+/// `AppSettings`.
 #[tauri::command]
 pub async fn launch_standalone_game(app: tauri::AppHandle) -> Result<(), String> {
     let settings_state = app.state::<crate::settings_manager::SettingsManager>();
@@ -1359,7 +1375,7 @@ pub async fn launch_standalone_game(app: tauri::AppHandle) -> Result<(), String>
             ..PatcherConfig::default()
         };
 
-        let extra_args = build_standalone_extra_args(&settings.init_commands);
+        let extra_args = build_standalone_extra_args(&settings.init_commands, &settings.launch_config);
 
         let mut cmd = patcher_config.build_hlae_process(&extra_args);
         cmd.spawn()
@@ -1687,5 +1703,36 @@ mod tests {
         // An unrecognised relation string must fail safe to Before rather than
         // rejecting the whole batch payload (see CustomCommandPayload's doc comment).
         assert_eq!(cfg.custom_commands[1].relation, CommandRelation::Before);
+    }
+
+    #[test]
+    fn test_standalone_extra_args_puts_launch_config_first() {
+        let args = build_standalone_extra_args(
+            &["mirv_fov 90".to_string()],
+            "myconfig",
+        );
+        assert_eq!(args, "+exec myconfig.cfg +mirv_fov 90");
+    }
+
+    #[test]
+    fn test_standalone_extra_args_omits_launch_config_when_blank() {
+        let args = build_standalone_extra_args(&["mirv_fov 90".to_string()], "");
+        assert_eq!(args, "+mirv_fov 90");
+    }
+
+    #[test]
+    fn test_standalone_extra_args_omits_an_unsanitisable_launch_config() {
+        // Mirrors capture_engine.rs: an invalid name never reaches +exec here either.
+        let args = build_standalone_extra_args(&["mirv_fov 90".to_string()], "my-config");
+        assert_eq!(args, "+mirv_fov 90");
+    }
+
+    #[test]
+    fn test_standalone_extra_args_still_strips_playdemo_and_viewdemo() {
+        let args = build_standalone_extra_args(
+            &["playdemo primer".to_string(), "mirv_fov 90".to_string(), "viewdemo primer".to_string()],
+            "myconfig",
+        );
+        assert_eq!(args, "+exec myconfig.cfg +mirv_fov 90");
     }
 }

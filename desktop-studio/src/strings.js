@@ -103,7 +103,7 @@ export const STRINGS = {
     GENERATE_ALL_PREVIEWS_TITLE: 'Generates _preview.dem files with BOOKMARK events for all selected highlights across all demos.',
     GENERATING: 'Generating…',
     LAUNCH_STANDALONE_BUTTON: 'Launch Game (HLAE)',
-    LAUNCH_STANDALONE_TITLE: 'Boots HLAE against hl.exe directly with no demo loaded.',
+    LAUNCH_STANDALONE_TITLE: 'Boots HLAE against hl.exe directly with no demo loaded. Applies Launch Config the same as a capture batch, plus your Initial Commands as launch-time arguments instead of demo-injecting them (no demo to inject them into). Your own config.cfg/movie.cfg still runs afterward and can override the same cvar.',
     MIN_KILLS_LABEL: 'Min Kills:',
     EMPTY_SELECT_DEMO: 'Select a demo in the Master List to view its highlights.',
     EMPTY_NO_STREAKS: 'No highlights detected in this demo.',
