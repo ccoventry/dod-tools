@@ -389,6 +389,20 @@ impl ObsClient {
             .to_string())
     }
 
+    /// Profile names and the currently active one, for the settings picker.
+    /// One request carries both, unlike scenes (`scene_names`/`current_scene`
+    /// are separate calls) — `GetProfileList` already returns
+    /// `currentProfileName` alongside the list.
+    pub fn profile_list(&mut self) -> Result<(Vec<String>, String), ObsError> {
+        let list = self.request("GetProfileList", json!({}))?;
+        let profiles = list["profiles"]
+            .as_array()
+            .map(|v| v.iter().filter_map(|s| s.as_str().map(str::to_string)).collect())
+            .unwrap_or_default();
+        let current = list["currentProfileName"].as_str().unwrap_or_default().to_string();
+        Ok((profiles, current))
+    }
+
     /// Switches the active scene.
     ///
     /// A live-state change rather than a settings edit: reversible, destroys
@@ -396,6 +410,16 @@ impl ObsClient {
     /// caller is expected to restore the previous scene when the batch ends.
     pub fn set_scene(&mut self, scene: &str) -> Result<(), ObsError> {
         self.request("SetCurrentProgramScene", json!({ "sceneName": scene }))?;
+        Ok(())
+    }
+
+    /// Switches the active profile. Heavier than `set_scene`: a profile
+    /// bundles Video settings (canvas/output resolution, FPS) alongside
+    /// Output/Audio/Advanced, so this can change what `preflight` needs to
+    /// validate — callers must switch before preflighting, not after. The
+    /// caller is expected to restore the previous profile when the batch ends.
+    pub fn set_profile(&mut self, profile: &str) -> Result<(), ObsError> {
+        self.request("SetCurrentProfile", json!({ "profileName": profile }))?;
         Ok(())
     }
 

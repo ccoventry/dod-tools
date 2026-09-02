@@ -334,6 +334,14 @@ pub struct ObsConfig {
     /// are scoped to a collection — a remembered name alone can silently
     /// resolve to something unrelated after the user switches collections.
     pub scene_collection: String,
+    /// Profile to switch to for the batch, and restore afterwards. Empty
+    /// means "use whatever is already active and change nothing" — same
+    /// convention as `scene`. Unlike scene, OBS profiles bundle Video
+    /// settings (canvas/output resolution, FPS), so switching one can change
+    /// exactly what `ObsClient::preflight` validates — `ObsSession::start`
+    /// switches this *before* calling `preflight`, not after (see that
+    /// function's comment).
+    pub profile: String,
 }
 
 impl Default for ObsConfig {
@@ -344,6 +352,7 @@ impl Default for ObsConfig {
             password: String::new(),
             scene: String::new(),
             scene_collection: String::new(),
+            profile: String::new(),
         }
     }
 }
@@ -357,11 +366,12 @@ impl ObsConfig {
     /// which is the only part of it worth knowing from a log line.
     pub fn redacted(&self) -> String {
         format!(
-            "ws://{}:{} (password: {}, scene: {})",
+            "ws://{}:{} (password: {}, scene: {}, profile: {})",
             self.host,
             self.port,
             if self.password.is_empty() { "none" } else { "set" },
-            if self.scene.is_empty() { "<current>" } else { &self.scene }
+            if self.scene.is_empty() { "<current>" } else { &self.scene },
+            if self.profile.is_empty() { "<current>" } else { &self.profile }
         )
     }
 }

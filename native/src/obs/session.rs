@@ -80,6 +80,8 @@ pub struct ObsSession {
     active_since: Option<std::time::Instant>,
     /// Scene that was active before the batch switched away, to restore.
     previous_scene: Option<String>,
+    /// Profile that was active before the batch switched away, to restore.
+    previous_profile: Option<String>,
     pub recorded: Vec<RecordedBlock>,
     pub skipped: Vec<String>,
 }
@@ -97,6 +99,26 @@ impl ObsSession {
         game_height: i32,
     ) -> Result<(Self, ObsPreflight), ObsError> {
         let mut client = ObsClient::connect(&cfg.address(), &cfg.password)?;
+
+        // Profile before preflight, deliberately: a profile bundles Video
+        // settings (canvas/output resolution, FPS), so switching it can
+        // change exactly what preflight is about to validate. Switching
+        // after preflight would validate the profile that is about to be
+        // replaced, not the one recording will actually use.
+        let previous_profile = if cfg.profile.is_empty() {
+            None
+        } else {
+            let current = client.profile_list().ok().map(|(_, current)| current);
+            if current.as_deref() != Some(cfg.profile.as_str()) {
+                client.set_profile(&cfg.profile)?;
+                log_markdown(&format!(
+                    "🎬 **OBS** — switched to profile `{}` for this batch (restored afterwards).",
+                    cfg.profile
+                ));
+            }
+            current
+        };
+
         let preflight = client.preflight(game_width, game_height)?;
 
         if !preflight.missing_requests.is_empty() {
@@ -157,6 +179,7 @@ impl ObsSession {
                 active: None,
                 active_since: None,
                 previous_scene,
+                previous_profile,
                 recorded: Vec::new(),
                 skipped: Vec::new(),
             },
@@ -356,7 +379,7 @@ impl ObsSession {
         ok
     }
 
-    /// Stops anything still recording and restores the previous scene.
+    /// Stops anything still recording and restores the previous scene/profile.
     pub fn finish(&mut self) {
         self.end_block();
         let mut guard = self.client.lock().unwrap_or_else(|p| p.into_inner());
@@ -364,6 +387,11 @@ impl ObsSession {
             if let Some(scene) = self.previous_scene.take() {
                 if !scene.is_empty() {
                     let _ = client.set_scene(&scene);
+                }
+            }
+            if let Some(profile) = self.previous_profile.take() {
+                if !profile.is_empty() {
+                    let _ = client.set_profile(&profile);
                 }
             }
         }

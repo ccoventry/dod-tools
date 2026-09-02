@@ -60,6 +60,8 @@ pub struct CapturePayload {
     #[serde(default)]
     pub obs_scene_collection: String,
     #[serde(default)]
+    pub obs_profile: String,
+    #[serde(default)]
     pub save_local_patched_copy: bool,
     #[serde(default = "default_add_condebug")]
     pub add_condebug: bool,
@@ -244,6 +246,7 @@ fn config_from_payload(payload: &CapturePayload) -> PatcherConfig {
         password: payload.obs_password.clone(),
         scene: payload.obs_scene.clone(),
         scene_collection: payload.obs_scene_collection.clone(),
+        profile: payload.obs_profile.clone(),
     };
     cfg.save_local_patched_copy = payload.save_local_patched_copy;
     cfg.add_condebug = payload.add_condebug;
@@ -1363,6 +1366,39 @@ pub async fn launch_standalone_game(app: tauri::AppHandle) -> Result<(), String>
     .map_err(|e| format!("Task join error: {}", e))?
 }
 
+/// Launches OBS Studio from the configured `obs_exe_path`, spawn-and-forget —
+/// same shape as `launch_standalone_game`, minus the whole HLAE/hl.exe
+/// process-building step, since this just starts the user's own program.
+/// No lifecycle tracking: OBS is the user's software, not ours to manage,
+/// and this button exists only so the user doesn't have to alt-tab to a
+/// shortcut before configuring the connection above it.
+#[tauri::command]
+pub async fn launch_obs(app: tauri::AppHandle) -> Result<(), String> {
+    let settings_state = app.state::<crate::settings_manager::SettingsManager>();
+    let obs_exe_path = {
+        let guard = settings_state
+            .inner
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        guard.obs_exe_path.clone()
+    };
+
+    tokio::task::spawn_blocking(move || {
+        if obs_exe_path.trim().is_empty() {
+            return Err("Configure the OBS executable path before launching.".to_string());
+        }
+        if !Path::new(&obs_exe_path).is_file() {
+            return Err("OBS executable not found at the configured path.".to_string());
+        }
+        std::process::Command::new(&obs_exe_path)
+            .spawn()
+            .map_err(|e| format!("Failed to launch OBS: {}", e))?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
+}
+
 // ── Running Process Guard ───────────────────────────────────────────────────────
 //
 // Launching a fresh HLAE Game Capture preview against a demo while a prior
@@ -1557,6 +1593,7 @@ mod tests {
             obs_password: String::new(),
             obs_scene: String::new(),
             obs_scene_collection: String::new(),
+            obs_profile: String::new(),
             save_local_patched_copy: false,
             add_condebug: true,
             streaks: Vec::new(),

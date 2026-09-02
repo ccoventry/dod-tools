@@ -12,7 +12,8 @@ import {
   openActivityLog,
   checkHlaeFfmpeg,
   linkHlaeFfmpeg,
-  diagnoseExecutablePaths
+  diagnoseExecutablePaths,
+  launchObs
 } from './ipc_bridge.js';
 import { renderMasterList, initMasterPane } from './master_pane.js';
 import { initMapWarnings, refreshMapWarnings, resetMapWarnings } from './map_warnings.js';
@@ -20,6 +21,7 @@ import { initRollFloors } from './roll_floors.js';
 
 import { renderDetailView, initDetailPane } from './detail_pane.js';
 import { initCaptureUI, getCommandsState, hydrateCommandsState, refreshLaunchGuard, refreshInitCommandWarnings } from './capture_pane.js';
+import { setObsConnected } from './obs_status.js';
 import { initRenderUI, checkRenderRecoveryOnStartup } from './render_pane.js';
 import { initAuditorPane } from './auditor_pane.js';
 import { initThemedConfirm, themedConfirm } from './themed_confirm.js';
@@ -83,6 +85,49 @@ async function refreshPathWarnings() {
   });
 }
 
+/**
+ * Runs `obs_test_connection` and renders the result — the manual Test
+ * Connection button's own logic, extracted so it can also be run
+ * automatically (issue #147: "make preflight warnings proactive") when
+ * switching into OBS mode or when OBS mode is already selected at startup,
+ * not only on a manual click.
+ *
+ * `auto` skips the button disable/relabel churn (there was no click to
+ * originate it) but still populates the same status panel — quiet the same
+ * way `obs_check_orphan` is quiet at startup: "OBS is not running yet" is
+ * the ordinary case here, not something to interrupt the user over.
+ */
+async function runObsConnectionTest({ auto = false } = {}) {
+  const btn = document.querySelector('#obs-test-btn');
+  const status = document.querySelector('#obs-status');
+  if (!status) return;
+  const label = btn ? btn.textContent : '';
+  if (!auto && btn) { btn.disabled = true; btn.textContent = STRINGS.CAPTURE_CONFIG.OBS_TESTING; }
+  status.style.display = '';
+  status.textContent = STRINGS.CAPTURE_CONFIG.OBS_TESTING;
+  try {
+    const report = await invoke('obs_test_connection', {
+      host: document.querySelector('#config-obs-host')?.value?.trim() || '127.0.0.1',
+      port: parseInt(document.querySelector('#config-obs-port')?.value, 10) || 4455,
+      password: document.querySelector('#config-obs-password')?.value || '',
+      gameWidth: parseInt(document.querySelector('#config-res-width')?.value, 10) || 1280,
+      gameHeight: parseInt(document.querySelector('#config-res-height')?.value, 10) || 720,
+    });
+    renderObsReport(report);
+  } catch (e) {
+    // Every invoke needs this: without it a Rust-side failure is swallowed
+    // and the button simply appears to do nothing.
+    status.textContent = STRINGS.CAPTURE_CONFIG.obsTestFailed(e);
+    setObsConnected(false);
+  } finally {
+    if (!auto && btn) { btn.disabled = false; btn.textContent = label || STRINGS.CAPTURE_CONFIG.OBS_TEST_BUTTON; }
+    // Whatever this check found, Start Capture Batch's gate (issue #147)
+    // needs to reflect it immediately, not wait for some unrelated field to
+    // trigger the next refreshLaunchGuard().
+    refreshLaunchGuard();
+  }
+}
+
 /** Highlights whichever side of the capture-mode toggle is currently in force. */
 /**
  * Renders an `obs_test_connection` result into the status row and scene list.
@@ -95,6 +140,8 @@ function renderObsReport(report) {
   const status = document.querySelector('#obs-status');
   if (!status) return;
   status.style.display = '';
+
+  setObsConnected(!!report?.connected);
 
   if (!report?.connected) {
     status.textContent = report?.error || STRINGS.CAPTURE_CONFIG.OBS_UNREACHABLE;
@@ -132,6 +179,24 @@ function renderObsReport(report) {
       sel.appendChild(opt);
     }
     sel.value = report.scenes.includes(wanted) ? wanted : '';
+  }
+
+  // Same treatment as the scene list above.
+  const profileSel = document.querySelector('#config-obs-profile');
+  if (profileSel && Array.isArray(report.profiles)) {
+    const wanted = profileSel.value;
+    profileSel.innerHTML = '';
+    const none = document.createElement('option');
+    none.value = '';
+    none.textContent = STRINGS.CAPTURE_CONFIG.OBS_PROFILE_CURRENT;
+    profileSel.appendChild(none);
+    for (const name of report.profiles) {
+      const opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = name;
+      profileSel.appendChild(opt);
+    }
+    profileSel.value = report.profiles.includes(wanted) ? wanted : '';
   }
 }
 
@@ -479,6 +544,8 @@ window.addEventListener("DOMContentLoaded", async () => {
     const obsPort = parseInt(document.querySelector('#config-obs-port')?.value, 10) || 4455;
     const obsPassword = document.querySelector('#config-obs-password')?.value || '';
     const obsScene = document.querySelector('#config-obs-scene')?.value || '';
+    const obsProfile = document.querySelector('#config-obs-profile')?.value || '';
+    const obsExePath = document.querySelector('#config-obs-exe-path')?.value?.trim() || '';
     const addCondebug = document.querySelector('#config-add-condebug')?.checked || false;
 
     const autoClearLogs = document.querySelector('#config-auto-clear-logs')?.checked || false;
@@ -534,6 +601,8 @@ window.addEventListener("DOMContentLoaded", async () => {
       obs_port: obsPort,
       obs_password: obsPassword,
       obs_scene: obsScene,
+      obs_profile: obsProfile,
+      obs_exe_path: obsExePath,
       add_condebug: addCondebug,
       auto_clear_logs: autoClearLogs,
       auto_clear_previews: autoClearPreviews,
@@ -651,7 +720,31 @@ window.addEventListener("DOMContentLoaded", async () => {
         }
         obsSceneEl.value = settings.obs_scene;
       }
+      const obsProfileEl = document.querySelector('#config-obs-profile');
+      if (obsProfileEl && settings.obs_profile) {
+        // Same reasoning as obs_scene above: the saved profile may not exist
+        // in this install, so it is added as an option rather than assumed
+        // present. Test Connection replaces the list with what OBS actually has.
+        if (!Array.from(obsProfileEl.options).some((o) => o.value === settings.obs_profile)) {
+          const opt = document.createElement('option');
+          opt.value = settings.obs_profile;
+          opt.textContent = settings.obs_profile;
+          obsProfileEl.appendChild(opt);
+        }
+        obsProfileEl.value = settings.obs_profile;
+      }
+      const obsExePathEl = document.querySelector('#config-obs-exe-path');
+      if (obsExePathEl) obsExePathEl.value = settings.obs_exe_path || '';
       applyCaptureModeUI();
+      // Issue #147: proactive preflight — the existing warnings (canvas
+      // mismatch, already recording, missing requests) only ever surfaced on
+      // a manual Test Connection click. If OBS mode is already the persisted
+      // choice, check now rather than waiting for the user to press the
+      // button themselves; quiet on failure (OBS not running yet is the
+      // ordinary case at startup), same as the orphan-recovery check.
+      if (currentCaptureMode() === 'obs') {
+        runObsConnectionTest({ auto: true });
+      }
       const addCondebugEl = document.querySelector('#config-add-condebug');
       if (addCondebugEl) addCondebugEl.checked = !!settings.add_condebug;
       const autoClearLogsEl = document.querySelector('#config-auto-clear-logs');
@@ -952,34 +1045,54 @@ window.addEventListener("DOMContentLoaded", async () => {
       applyCaptureModeUI();
       const legacy = document.querySelector('#config-ffmpeg-capture');
       if (legacy) legacy.dispatchEvent(new Event('change', { bubbles: true }));
+      // Issue #147: switching into OBS mode is exactly the moment the
+      // existing preflight warnings become relevant — check immediately
+      // instead of waiting for a manual Test Connection click.
+      if (currentCaptureMode() === 'obs') {
+        runObsConnectionTest({ auto: true });
+      }
     });
   applyCaptureModeUI();
 
-  document.querySelector('#obs-test-btn')?.addEventListener('click', async () => {
-    const btn = document.querySelector('#obs-test-btn');
-    const status = document.querySelector('#obs-status');
-    if (!status) return;
-    const label = btn ? btn.textContent : '';
-    if (btn) { btn.disabled = true; btn.textContent = STRINGS.CAPTURE_CONFIG.OBS_TESTING; }
-    status.style.display = '';
-    status.textContent = STRINGS.CAPTURE_CONFIG.OBS_TESTING;
-    try {
-      const report = await invoke('obs_test_connection', {
-        host: document.querySelector('#config-obs-host')?.value?.trim() || '127.0.0.1',
-        port: parseInt(document.querySelector('#config-obs-port')?.value, 10) || 4455,
-        password: document.querySelector('#config-obs-password')?.value || '',
-        gameWidth: parseInt(document.querySelector('#config-res-width')?.value, 10) || 1280,
-        gameHeight: parseInt(document.querySelector('#config-res-height')?.value, 10) || 720,
-      });
-      renderObsReport(report);
-    } catch (e) {
-      // Every invoke needs this: without it a Rust-side failure is swallowed
-      // and the button simply appears to do nothing.
-      status.textContent = STRINGS.CAPTURE_CONFIG.obsTestFailed(e);
-    } finally {
-      if (btn) { btn.disabled = false; btn.textContent = label || STRINGS.CAPTURE_CONFIG.OBS_TEST_BUTTON; }
-    }
-  });
+  document.querySelector('#obs-test-btn')?.addEventListener('click', () => runObsConnectionTest());
+
+  const obsBrowseBtn = document.querySelector('#obs-browse-btn');
+  if (obsBrowseBtn) {
+    obsBrowseBtn.addEventListener('click', async () => {
+      try {
+        const selected = await open({
+          multiple: false,
+          filters: [{ name: STRINGS.MAIN.EXECUTABLE_FILTER_NAME, extensions: ['exe'] }],
+          title: STRINGS.MAIN.SELECT_OBS_EXE_TITLE
+        });
+        if (selected) {
+          const path = Array.isArray(selected) ? selected[0] : selected;
+          const inputEl = document.querySelector('#config-obs-exe-path');
+          if (inputEl) inputEl.value = path;
+          await persistAppSettings();
+        }
+      } catch (err) {
+        console.error("Error selecting OBS executable:", err);
+      }
+    });
+  }
+
+  const obsLaunchBtn = document.querySelector('#obs-launch-btn');
+  if (obsLaunchBtn) {
+    obsLaunchBtn.addEventListener('click', async () => {
+      const label = obsLaunchBtn.textContent;
+      obsLaunchBtn.disabled = true;
+      obsLaunchBtn.textContent = STRINGS.CAPTURE_CONFIG.OBS_LAUNCHING;
+      try {
+        await launchObs();
+      } catch (err) {
+        showToast(STRINGS.CAPTURE_CONFIG.obsLaunchFailed(err), 'error');
+      } finally {
+        obsLaunchBtn.disabled = false;
+        obsLaunchBtn.textContent = label;
+      }
+    });
+  }
 
   const hlaeFfmpegLinkBtn = document.querySelector('#hlae-ffmpeg-link-btn');
   if (hlaeFfmpegLinkBtn) {

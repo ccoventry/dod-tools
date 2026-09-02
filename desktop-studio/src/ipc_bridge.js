@@ -199,6 +199,16 @@ export async function launchStandaloneGame() {
     });
 }
 
+/** Launches OBS Studio from the configured path, spawn-and-forget — no
+ *  lifecycle tracking, OBS is the user's own software. */
+export async function launchObs() {
+  return invoke("launch_obs")
+    .catch((err) => {
+      console.error("IPC Execution Error (launch_obs):", err);
+      throw err;
+    });
+}
+
 /** Aggressively kills any running `hl.exe`/`hlae.exe` instances. */
 export async function killEngineProcesses() {
   return invoke("kill_engine_processes")

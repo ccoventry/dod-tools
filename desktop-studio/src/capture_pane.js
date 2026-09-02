@@ -5,6 +5,7 @@ import { showToast } from './toast.js';
 import { requestProcessGuardedLaunch } from './detail_pane.js';
 import { createListEditor } from './list_editor.js';
 import { refreshCfgWarnings } from './cfg_warnings.js';
+import { isObsConnected, obsConnectionChecked } from './obs_status.js';
 import { refreshRollFloors } from './roll_floors.js';
 import { streakUid, recordTake } from './take_index.js';
 import { STRINGS } from './strings.js';
@@ -300,16 +301,31 @@ export async function refreshLaunchGuard(state) {
   // Pool is usable overall (at least one real drive with room) but not every
   // configured entry is — worth a heads-up, not worth blocking the batch.
   const hasPartialProblems = !noDrivesConfigured && !noUsableSpace && !insufficientSpace && problemPaths.length > 0;
-  const blocked = noHighlightsSelected || noDrivesConfigured || noUsableSpace || insufficientSpace;
+  // Issue #147: nothing used to stop a batch from starting in OBS mode with
+  // OBS closed or unauthenticated — it failed deep inside the capture engine
+  // instead of up front. Reflects obs_status.js's own most recent check
+  // (main.js runs it manually, on switching into OBS mode, and at startup)
+  // rather than re-querying OBS here; "never checked yet" blocks the same as
+  // "checked and unreachable" — both mean this batch cannot be trusted to
+  // actually record anything.
+  const obsMode = document.querySelector('#config-capture-mode')?.value === 'obs';
+  const obsNotReady = obsMode && !isObsConnected();
+  const blocked = obsNotReady || noHighlightsSelected || noDrivesConfigured || noUsableSpace || insufficientSpace;
 
   if (!capturingInFlight) {
     startBtn.disabled = blocked;
   }
 
   if (warningEl) {
-    // First, and in the calm colour: an empty selection is the ordinary state
-    // of a freshly scanned workspace, not a misconfiguration to shout about.
-    if (noHighlightsSelected) {
+    // First of all, ahead of even the calm cases below: OBS not being ready
+    // means this batch cannot record anything at all.
+    if (obsNotReady) {
+      warningEl.style.color = '#f44336';
+      warningEl.textContent = obsConnectionChecked()
+        ? STRINGS.CAPTURE.OBS_NOT_CONNECTED_WARNING
+        : STRINGS.CAPTURE.OBS_CHECKING_WARNING;
+      warningEl.style.display = 'block';
+    } else if (noHighlightsSelected) {
       warningEl.style.color = '#64b5f6';
       warningEl.textContent = STRINGS.CAPTURE.NO_HIGHLIGHTS_SELECTED_WARNING;
       warningEl.style.display = 'block';
@@ -679,7 +695,7 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
   // connection fields and the capture-mode selector — all three read at
   // capture/save time but never saved on their own change, so edits looked
   // like they took but silently reverted on the next launch/refresh.
-  ['#config-initial-delay', '#config-obs-host', '#config-obs-port', '#config-obs-password'].forEach(selector => {
+  ['#config-initial-delay', '#config-obs-host', '#config-obs-port', '#config-obs-password', '#config-obs-exe-path'].forEach(selector => {
     const el = document.querySelector(selector);
     if (el) el.addEventListener('input', () => notifySettingsChange());
   });
@@ -692,7 +708,7 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
    '#config-notify-captures-done', '#config-notify-renders-done', '#config-notify-error',
    // A <select> fires `change`, not `input` — it belongs here rather than in
    // the list above, which is wired for text/number/checkbox inputs.
-   '#config-capture-codec', '#config-capture-mode', '#config-obs-scene'].forEach(selector => {
+   '#config-capture-codec', '#config-capture-mode', '#config-obs-scene', '#config-obs-profile'].forEach(selector => {
     const el = document.querySelector(selector);
     if (el) el.addEventListener('change', () => notifySettingsChange());
   });
@@ -943,6 +959,7 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
     const obsPortVal = parseInt(document.querySelector("#config-obs-port")?.value, 10) || 4455;
     const obsPasswordVal = document.querySelector("#config-obs-password")?.value || "";
     const obsSceneVal = document.querySelector("#config-obs-scene")?.value || "";
+    const obsProfileVal = document.querySelector("#config-obs-profile")?.value || "";
     const saveLocalPatchedCopyVal = document.querySelector("#config-save-local-patched")?.checked || false;
     const addCondebugVal = document.querySelector("#config-add-condebug")?.checked || false;
 
@@ -995,6 +1012,7 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
       obs_port: obsPortVal,
       obs_password: obsPasswordVal,
       obs_scene: obsSceneVal,
+      obs_profile: obsProfileVal,
       save_local_patched_copy: saveLocalPatchedCopyVal,
       add_condebug: addCondebugVal,
       streaks: selectedStreaks,

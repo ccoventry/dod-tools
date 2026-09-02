@@ -200,6 +200,11 @@ export const STRINGS = {
         'Keep Day of Defeat focused — it stops fast-forwarding between clips when it loses focus, and the batch takes far longer.',
     // ── OBS connection ──────────────────────────────────────────────────────
     OBS_SECTION_TITLE: 'OBS Connection',
+    OBS_EXE_PATH_LABEL: 'OBS Path:',
+    OBS_EXE_PATH_PLACEHOLDER: 'Path to obs64.exe',
+    OBS_LAUNCH_BUTTON: 'Launch OBS',
+    OBS_LAUNCHING: 'Launching…',
+    obsLaunchFailed: (err) => `Could not launch OBS: ${err}`,
     OBS_HOST_LABEL: 'Host:',
     OBS_PORT_LABEL: 'Port:',
     OBS_PASSWORD_LABEL: 'Password:',
@@ -210,6 +215,10 @@ export const STRINGS = {
     OBS_SCENE_TITLE:
         'Scene to switch to for the batch, and switch back from afterwards. Leave on "Use current scene" to change nothing. The scene must contain a capture source pointed at hl.exe and an audio source.',
     OBS_SCENE_CURRENT: 'Use current scene',
+    OBS_PROFILE_LABEL: 'Profile:',
+    OBS_PROFILE_TITLE:
+        'Profile to switch to for the batch, and switch back from afterwards. Leave on "Use current profile" to change nothing. A profile bundles OBS\'s own Video/Output/Audio settings, so switching one can change canvas resolution and FPS along with everything else.',
+    OBS_PROFILE_CURRENT: 'Use current profile',
     OBS_TEST_BUTTON: 'Test Connection',
     OBS_TESTING: 'Connecting…',
     OBS_UNREACHABLE: 'Could not reach OBS.',
@@ -223,6 +232,8 @@ export const STRINGS = {
     obsTestFailed: (err) => `OBS test failed: ${err}`,
     OBS_ENABLE_HINT:
         'OBS Studio 28+ has obs-websocket built in. Enable it under Tools → WebSocket Server Settings — the checkbox at the top of that dialog is the switch, not the Connect Info panel.',
+    OBS_FPS_HINT:
+        "Capture frame rate above what you're seeing is an OBS setting, not something dod-tools controls — set it under Settings → Output → Recording (or Settings → Video → Common FPS Values), not here.",
     // ── Orphaned recording left by a previous run ───────────────────────────
     OBS_ORPHAN_TITLE: 'OBS is still recording',
     obsOrphanPrompt: (directory) =>
@@ -359,6 +370,8 @@ export const STRINGS = {
     andNMore: (n) => `...and ${n} more`,
     NO_HIGHLIGHTS_SELECTED_WARNING: 'No highlights selected — pick at least one in the Highlights tab before starting a capture.',
     NO_DRIVES_CONFIGURED_WARNING: 'No Capture Output directories configured — add at least one with free space before starting a capture.',
+    OBS_NOT_CONNECTED_WARNING: 'Not connected to OBS — capture mode is OBS, but the last connection check failed. Fix the connection in Configuration → Output Format before starting a capture.',
+    OBS_CHECKING_WARNING: 'Checking the OBS connection…',
     // Measured 2026-08-28, see docs/direct_to_video_capture.md. Spelled out
     // because both halves report success and the broken output only shows up
     // after rendering — the user has no other way to find out.
@@ -875,6 +888,7 @@ export const STRINGS = {
     SELECT_HLAE_EXE_TITLE: 'Select HLAE Executable (hlae.exe)',
     SELECT_HL_EXE_TITLE: 'Select Half-Life Executable (hl.exe)',
     SELECT_FFMPEG_EXE_TITLE: 'Select FFmpeg Executable (ffmpeg.exe)',
+    SELECT_OBS_EXE_TITLE: 'Select OBS Executable (obs64.exe)',
     SELECT_DEMO_FILES_TITLE: 'Select Demo Files (.dem)',
     SELECT_DEMO_FOLDER_TITLE: 'Select Demo Folder',
 

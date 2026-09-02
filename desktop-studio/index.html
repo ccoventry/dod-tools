@@ -299,6 +299,15 @@
                      setup. -->
                 <div id="obs-settings-group" style="display: none;">
                   <h4 data-str="CAPTURE_CONFIG.OBS_SECTION_TITLE">OBS Connection</h4>
+                  <!-- Spawn-and-forget, same as the standalone "Launch Game
+                       (HLAE)" button — no lifecycle tracking, since OBS is
+                       the user's own software, not ours to manage. -->
+                  <div class="control-group">
+                    <label for="config-obs-exe-path" data-str="CAPTURE_CONFIG.OBS_EXE_PATH_LABEL">OBS Path:</label>
+                    <input type="text" id="config-obs-exe-path" data-str-placeholder="CAPTURE_CONFIG.OBS_EXE_PATH_PLACEHOLDER" placeholder="Path to obs64.exe" style="flex: 1;" />
+                    <button id="obs-browse-btn" data-str="CAPTURE_CONFIG.BROWSE_BUTTON">Browse</button>
+                    <button id="obs-launch-btn" data-str="CAPTURE_CONFIG.OBS_LAUNCH_BUTTON">Launch OBS</button>
+                  </div>
                   <div class="control-group">
                     <label for="config-obs-host" data-str="CAPTURE_CONFIG.OBS_HOST_LABEL">Host:</label>
                     <input type="text" id="config-obs-host" value="127.0.0.1" style="width: 10em;" />
@@ -319,11 +328,22 @@
                       <option value="" data-str="CAPTURE_CONFIG.OBS_SCENE_CURRENT">Use current scene</option>
                     </select>
                   </div>
+                  <div class="control-group">
+                    <label for="config-obs-profile" data-str="CAPTURE_CONFIG.OBS_PROFILE_LABEL">Profile:</label>
+                    <select id="config-obs-profile" data-str-title="CAPTURE_CONFIG.OBS_PROFILE_TITLE" style="flex: 1;">
+                      <option value="" data-str="CAPTURE_CONFIG.OBS_PROFILE_CURRENT">Use current profile</option>
+                    </select>
+                  </div>
                   <div id="obs-status" class="path-warning" style="display: none;"></div>
                   <p class="setting-hint" data-str="CAPTURE_CONFIG.OBS_ENABLE_HINT">
                     OBS Studio 28+ has obs-websocket built in. Enable it under Tools → WebSocket
                     Server Settings — the checkbox at the top of that dialog is the switch, not the
                     Connect Info panel.
+                  </p>
+                  <p class="setting-hint" data-str="CAPTURE_CONFIG.OBS_FPS_HINT">
+                    Capture frame rate above what you're seeing is an OBS setting, not something
+                    dod-tools controls — set it under Settings → Output → Recording (or Settings →
+                    Video → Common FPS Values), not here.
                   </p>
                 </div>
               </div>
