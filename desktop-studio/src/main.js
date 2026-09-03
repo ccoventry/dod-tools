@@ -579,10 +579,6 @@ window.addEventListener("DOMContentLoaded", async () => {
       if (settings.hlae_path) {
         const inputEl = document.querySelector('#hlae-path-input');
         if (inputEl) inputEl.value = settings.hlae_path;
-        // Not awaited: it is a status line, and blocking startup on a
-        // filesystem check of somebody else's install directory would trade a
-        // real cost for a cosmetic one.
-        refreshHlaeFfmpegStatus();
       }
       if (settings.hl_path) {
         const inputEl = document.querySelector('#hl-path-input');
@@ -595,6 +591,21 @@ window.addEventListener("DOMContentLoaded", async () => {
       if (settings.ffmpeg_path) {
         const inputEl = document.querySelector('#ffmpeg-override-path-input');
         if (inputEl) inputEl.value = settings.ffmpeg_path;
+      }
+      if (settings.hlae_path) {
+        // Issue #101: this reads both #hlae-path-input and
+        // #ffmpeg-override-path-input, so it has to run after *both* are
+        // populated above, not right after hlae_path alone — calling it
+        // there read the override field before its own value had landed,
+        // silently fell back to the bare "ffmpeg" PATH lookup, and produced
+        // a false "there is no file at \"ffmpeg\"" warning that then never
+        // got re-checked, since setting .value programmatically fires no
+        // 'change' event to trigger the listener further down this file.
+        //
+        // Not awaited: it is a status line, and blocking startup on a
+        // filesystem check of somebody else's install directory would trade a
+        // real cost for a cosmetic one.
+        refreshHlaeFfmpegStatus();
       }
       if (settings.capture_fps) {
         const inputEl = document.querySelector('#config-capture-fps');
