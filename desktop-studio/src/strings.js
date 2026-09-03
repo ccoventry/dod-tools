@@ -441,10 +441,13 @@ export const STRINGS = {
     TABLE_EMPTY: 'No render jobs queued. Scan a folder, then click Start Render Batch.',
     START_RENDER_BUTTON: 'Start Render Batch',
     CANCEL_ALL_BUTTON: 'Cancel All',
+    RESET_ALL_BUTTON: 'Reset All',
+    REMOVE_ALL_BUTTON: 'Remove All (Not Rendering)',
     STATUS_WAITING: 'Status: Waiting...',
 
     CANCEL_JOB_TITLE: 'Cancel this job',
     RESET_JOB_TITLE: 'Reset to Queued',
+    REMOVE_JOB_TITLE: 'Remove this row — cannot be undone',
     SKIP_TOGGLE_LABEL: 'Skip',
     SKIP_TOGGLE_TITLE: 'Leave this OBS take exactly as recorded — no re-encode, just routed into the export pool under the pipeline naming.',
     setJobCodecFailed: (err) => `Could not change this job's render setting: ${err}`,
