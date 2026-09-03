@@ -927,6 +927,12 @@ button.primary-btn:hover:not(:disabled) {
   cursor: not-allowed;
 }
 
+.scan-status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 /* Small inline scan/audit-in-progress indicator */
 .spinner {
   display: inline-block;
