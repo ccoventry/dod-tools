@@ -1398,9 +1398,15 @@ pub async fn launch_obs(app: tauri::AppHandle) -> Result<(), String> {
         if !Path::new(&obs_exe_path).is_file() {
             return Err("OBS executable not found at the configured path.".to_string());
         }
-        std::process::Command::new(&obs_exe_path)
-            .spawn()
-            .map_err(|e| format!("Failed to launch OBS: {}", e))?;
+        let mut cmd = std::process::Command::new(&obs_exe_path);
+        // Without this OBS inherits dod-tools' own CWD instead of its own
+        // install directory, and fails to find its own relative-pathed data
+        // (locale/en-US.ini, etc.) — measured, not theoretical. Same fix
+        // `build_hlae_process` already applies for HLAE/hl.exe.
+        if let Some(parent) = Path::new(&obs_exe_path).parent() {
+            cmd.current_dir(parent);
+        }
+        cmd.spawn().map_err(|e| format!("Failed to launch OBS: {}", e))?;
         Ok(())
     })
     .await
