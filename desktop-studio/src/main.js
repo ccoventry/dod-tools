@@ -32,6 +32,7 @@ import { getCheckedDemoPaths, clearCheckedPaths, setCheckedDemoPaths, getVisible
 import { initErrorReporter } from './error_reporter.js';
 import { STRINGS } from './strings.js';
 import { applyStaticStrings } from './apply_strings.js';
+import { initInfoTooltips } from './info_tooltip.js';
 import { initOsNotifications, updateNotificationSettings } from './os_notifications.js';
 import { initUpdater, checkForUpdatesNow } from './updater_pane.js';
 import { initAppMenu } from './app_menu.js';
@@ -331,6 +332,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   // [data-str-aria-label] element's text/attribute from STRINGS before any
   // other DOM-dependent init runs below.
   applyStaticStrings();
+  initInfoTooltips();
 
   // Not awaited: the permission prompt (first run only) shouldn't block the
   // rest of startup, and every call site in os_notifications.js already
