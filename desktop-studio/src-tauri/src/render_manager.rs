@@ -587,12 +587,20 @@ pub async fn cancel_render_batch(app: AppHandle, state: tauri::State<'_, RenderM
     } else {
         // Nothing is actively rendering, so this is a staged batch (queued
         // via queue_render_batch, Start not yet clicked) — no scheduler loop
-        // is running to ever observe global_cancel in that state, so clear
-        // the queue directly instead of setting a flag nothing will read.
-        *state.jobs.lock().unwrap() = Vec::new();
-        *state.last_config.lock().unwrap() = None;
-        let _ = std::fs::remove_file(autosave_path());
-        *state.render_session.lock().unwrap() = None;
+        // is running to ever observe global_cancel in that state. Mark every
+        // Queued job Cancelled directly instead — mirrors exactly what the
+        // scheduler loop above does when global_cancel fires mid-render, so
+        // Cancel All behaves the same regardless of whether Start was ever
+        // clicked. Rows stay in the list (Reset can still revive one, Remove
+        // All clears them) rather than being wiped outright.
+        let mut jobs = state.jobs.lock().unwrap();
+        for job in jobs.iter_mut() {
+            if job.status == "Queued" {
+                job.cancel_flag.store(true, Ordering::Relaxed);
+                job.status = "Cancelled".to_string();
+            }
+        }
+        drop(jobs);
         emit_jobs_snapshot(&app, &state.jobs);
     }
     Ok(())
@@ -651,6 +659,58 @@ pub async fn cancel_render_job(app: AppHandle, state: tauri::State<'_, RenderMan
     Ok(())
 }
 
+/// Once a removal empties the job list entirely, there's nothing left to
+/// Reset against — clear the same batch-scoped state `cancel_render_batch`
+/// used to wipe unconditionally, so a stale `last_config`/autosave file
+/// doesn't linger describing a batch that no longer has any rows.
+fn clear_batch_state_if_empty(state: &RenderManager) {
+    if state.jobs.lock().unwrap().is_empty() {
+        *state.last_config.lock().unwrap() = None;
+        let _ = std::fs::remove_file(autosave_path());
+        *state.render_session.lock().unwrap() = None;
+    }
+}
+
+/// Deletes one row outright — unlike Cancel, there's no Reset back from this.
+/// Refused for a Rendering job: pulling its row out from under a live ffmpeg
+/// process (still writing to `export_reservations`) has no defined outcome.
+/// The frontend never shows the button in that state either; this is the
+/// defense-in-depth backstop, matching `set_render_job_codec`'s own guard.
+#[tauri::command]
+pub async fn remove_render_job(app: AppHandle, state: tauri::State<'_, RenderManager>, job_id: String) -> Result<(), String> {
+    let mut jobs = state.jobs.lock().unwrap();
+    let Some(idx) = jobs.iter().position(|j| j.id == job_id) else {
+        return Err(format!("No such job: {}", job_id));
+    };
+    if jobs[idx].status == "Rendering" {
+        return Err(format!("Job {} is still rendering — cancel it first", job_id));
+    }
+    jobs.remove(idx);
+    drop(jobs);
+    log_markdown(&format!("[render] remove_render_job {} removed", job_id));
+    clear_batch_state_if_empty(&state);
+    emit_jobs_snapshot(&app, &state.jobs);
+    Ok(())
+}
+
+/// Bulk form of `remove_render_job` — clears every row except whatever is
+/// actively Rendering (Queued, Cancelled, Finished and Error all qualify).
+#[tauri::command]
+pub async fn remove_non_rendering_render_jobs(app: AppHandle, state: tauri::State<'_, RenderManager>) -> Result<(), String> {
+    let mut jobs = state.jobs.lock().unwrap();
+    let before = jobs.len();
+    jobs.retain(|j| j.status == "Rendering");
+    let removed_count = before - jobs.len();
+    drop(jobs);
+    if removed_count == 0 {
+        return Ok(());
+    }
+    log_markdown(&format!("[render] remove_non_rendering_render_jobs removed {} job(s)", removed_count));
+    clear_batch_state_if_empty(&state);
+    emit_jobs_snapshot(&app, &state.jobs);
+    Ok(())
+}
+
 /// Resets a Finished/Error/Cancelled job back to Queued. If the batch has
 /// already fully drained (nothing else Rendering/Queued), immediately
 /// resumes the scheduler on the existing job list — a small UX improvement
@@ -663,6 +723,39 @@ pub async fn cancel_render_job(app: AppHandle, state: tauri::State<'_, RenderMan
 /// whatever the panel currently shows. The `last_config` used below to
 /// resume the scheduler only supplies batch-wide infrastructure (ffmpeg
 /// path, export pool, concurrency) — never per-job creative settings.
+/// Shared tail of `reset_render_job`/`reset_all_render_jobs`: a reset job is
+/// worthless sitting at Queued forever, so bring the scheduler back if
+/// nothing is already driving it. If one is already running (mid-batch reset
+/// of one row while others are still Rendering), it will pick the newly
+/// Queued row(s) up on its own next tick — nothing more to do here.
+fn resume_scheduler_if_idle(app: AppHandle, state: &RenderManager, context: &str) {
+    if !state.is_rendering.swap(true, Ordering::SeqCst) {
+        let config = state.last_config.lock().unwrap().clone();
+        match config {
+            Some(config) => {
+                log_markdown(&format!("[render] {} resumed the scheduler", context));
+                state.global_cancel.store(false, Ordering::SeqCst);
+                if state.wake_lock.lock().unwrap().is_none() {
+                    *state.wake_lock.lock().unwrap() = hold_render_wake_lock();
+                }
+                spawn_scheduler(app, state.handles(), config);
+            }
+            None => {
+                log_markdown(&format!(
+                    "[render] {} could not resume: no last_config to schedule against",
+                    context
+                ));
+                state.is_rendering.store(false, Ordering::SeqCst);
+            }
+        }
+    } else {
+        log_markdown(&format!(
+            "[render] {} left as Queued — a scheduler is already running and will pick it up",
+            context
+        ));
+    }
+}
+
 #[tauri::command]
 pub async fn reset_render_job(app: AppHandle, state: tauri::State<'_, RenderManager>, job_id: String) -> Result<(), String> {
     let mut previous_status = None;
@@ -683,33 +776,37 @@ pub async fn reset_render_job(app: AppHandle, state: tauri::State<'_, RenderMana
         job_id, previous_status
     ));
     emit_jobs_snapshot(&app, &state.jobs);
+    resume_scheduler_if_idle(app, &state, &format!("reset_render_job {}", job_id));
+    Ok(())
+}
 
-    if !state.is_rendering.swap(true, Ordering::SeqCst) {
-        let config = state.last_config.lock().unwrap().clone();
-        match config {
-            Some(config) => {
-                log_markdown(&format!("[render] reset_render_job {} resumed the scheduler", job_id));
-                state.global_cancel.store(false, Ordering::SeqCst);
-                if state.wake_lock.lock().unwrap().is_none() {
-                    *state.wake_lock.lock().unwrap() = hold_render_wake_lock();
-                }
-                spawn_scheduler(app, state.handles(), config);
-            }
-            None => {
-                log_markdown(&format!(
-                    "[render] reset_render_job {} could not resume: no last_config to schedule against",
-                    job_id
-                ));
-                state.is_rendering.store(false, Ordering::SeqCst);
+/// Bulk form of `reset_render_job` — every Cancelled/Finished/Error row goes
+/// back to Queued in one shot, e.g. after fixing whatever caused a batch of
+/// failures and wanting to retry all of them without clicking Reset one row
+/// at a time.
+#[tauri::command]
+pub async fn reset_all_render_jobs(app: AppHandle, state: tauri::State<'_, RenderManager>) -> Result<(), String> {
+    let mut reset_count = 0usize;
+    {
+        let mut jobs = state.jobs.lock().unwrap();
+        for job in jobs.iter_mut() {
+            if job.status == "Cancelled" || job.status == "Finished" || job.status == "Error" {
+                job.status = "Queued".to_string();
+                job.progress = 0;
+                job.speed = String::new();
+                job.error_log = None;
+                job.output_size_bytes = None;
+                job.cancel_flag = Arc::new(AtomicBool::new(false));
+                reset_count += 1;
             }
         }
-    } else {
-        log_markdown(&format!(
-            "[render] reset_render_job {} left as Queued — a scheduler is already running and will pick it up",
-            job_id
-        ));
     }
-
+    if reset_count == 0 {
+        return Ok(());
+    }
+    log_markdown(&format!("[render] reset_all_render_jobs: {} job(s) -> Queued", reset_count));
+    emit_jobs_snapshot(&app, &state.jobs);
+    resume_scheduler_if_idle(app, &state, "reset_all_render_jobs");
     Ok(())
 }
 

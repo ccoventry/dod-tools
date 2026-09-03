@@ -273,6 +273,75 @@ test.describe('Export Pool Free / Required (Over-estimated) footer refresh', () 
   });
 });
 
+test.describe('Remove row / Reset All / Remove All', () => {
+  test('Remove is shown for a Queued row, alongside Cancel', async ({ page }) => {
+    await gotoHarness(page);
+    await emitSnapshot(page, [job({ id: '0', status: 'Queued' })]);
+    await expect(page.locator('tr[data-job-id="0"] .render-job-cancel-btn')).toBeVisible();
+    await expect(page.locator('tr[data-job-id="0"] .render-job-remove-btn')).toBeVisible();
+  });
+
+  test('Remove is withheld for a Rendering row', async ({ page }) => {
+    await gotoHarness(page);
+    await emitSnapshot(page, [job({ id: '0', status: 'Rendering' })]);
+    await expect(page.locator('tr[data-job-id="0"] .render-job-remove-btn')).toHaveCount(0);
+  });
+
+  test('Remove is shown alongside Reset for a terminal-state row', async ({ page }) => {
+    await gotoHarness(page);
+    await emitSnapshot(page, [job({ id: '0', status: 'Cancelled' })]);
+    await expect(page.locator('tr[data-job-id="0"] .render-job-reset-btn')).toBeVisible();
+    await expect(page.locator('tr[data-job-id="0"] .render-job-remove-btn')).toBeVisible();
+  });
+
+  test('clicking Remove calls remove_render_job with that job id', async ({ page }) => {
+    await gotoHarness(page);
+    await emitSnapshot(page, [job({ id: '0', status: 'Queued' })]);
+    await page.locator('tr[data-job-id="0"] .render-job-remove-btn').click();
+    const calls = await invocationsFor(page, 'remove_render_job');
+    expect(calls).toEqual([{ jobId: '0' }]);
+  });
+
+  test('Reset All and Remove All start disabled, enable once an eligible row exists', async ({ page }) => {
+    await gotoHarness(page);
+    await expect(page.locator('#reset-all-render-btn')).toBeDisabled();
+    await expect(page.locator('#remove-all-render-btn')).toBeDisabled();
+
+    await emitSnapshot(page, [job({ id: '0', status: 'Queued' })]);
+    // Nothing resettable yet (Queued isn't Cancelled/Finished/Error) but it
+    // isn't Rendering either, so Remove All should already be live.
+    await expect(page.locator('#reset-all-render-btn')).toBeDisabled();
+    await expect(page.locator('#remove-all-render-btn')).toBeEnabled();
+
+    await emitSnapshot(page, [job({ id: '0', status: 'Cancelled' })]);
+    await expect(page.locator('#reset-all-render-btn')).toBeEnabled();
+    await expect(page.locator('#remove-all-render-btn')).toBeEnabled();
+  });
+
+  test('Reset All and Remove All disable again once everything is Rendering', async ({ page }) => {
+    await gotoHarness(page);
+    await emitSnapshot(page, [job({ id: '0', status: 'Rendering' }), job({ id: '1', status: 'Rendering' })]);
+    await expect(page.locator('#reset-all-render-btn')).toBeDisabled();
+    await expect(page.locator('#remove-all-render-btn')).toBeDisabled();
+  });
+
+  test('clicking Reset All calls reset_all_render_jobs with no payload', async ({ page }) => {
+    await gotoHarness(page);
+    await emitSnapshot(page, [job({ id: '0', status: 'Error' })]);
+    await page.locator('#reset-all-render-btn').click();
+    const calls = await invocationsFor(page, 'reset_all_render_jobs');
+    expect(calls).toEqual([undefined]);
+  });
+
+  test('clicking Remove All calls remove_non_rendering_render_jobs with no payload', async ({ page }) => {
+    await gotoHarness(page);
+    await emitSnapshot(page, [job({ id: '0', status: 'Finished' })]);
+    await page.locator('#remove-all-render-btn').click();
+    const calls = await invocationsFor(page, 'remove_non_rendering_render_jobs');
+    expect(calls).toEqual([undefined]);
+  });
+});
+
 test.describe('Skip (keep original) toggle', () => {
   test('the Skip checkbox only appears for an OBS-shaped, Queued job', async ({ page }) => {
     await gotoHarness(page);
