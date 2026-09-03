@@ -313,6 +313,36 @@ export async function resetRenderJob(jobId) {
     });
 }
 
+/** Requeues every Cancelled/Finished/Error job in one shot — resumes the
+ *  scheduler immediately if nothing else is currently Rendering, same as a
+ *  single Reset does. */
+export async function resetAllRenderJobs() {
+  return invoke("reset_all_render_jobs")
+    .catch((err) => {
+      console.error("IPC Execution Error (reset_all_render_jobs):", err);
+      throw err;
+    });
+}
+
+/** Deletes one render job's row outright — no Reset back from this, unlike
+ *  Cancel. Refused server-side for a Rendering job. */
+export async function removeRenderJob(jobId) {
+  return invoke("remove_render_job", { jobId })
+    .catch((err) => {
+      console.error("IPC Execution Error (remove_render_job):", err);
+      throw err;
+    });
+}
+
+/** Clears every row except whatever is actively Rendering. */
+export async function removeNonRenderingRenderJobs() {
+  return invoke("remove_non_rendering_render_jobs")
+    .catch((err) => {
+      console.error("IPC Execution Error (remove_non_rendering_render_jobs):", err);
+      throw err;
+    });
+}
+
 export async function setRenderJobCodec(jobId, codec) {
   return invoke("set_render_job_codec", { jobId, codec })
     .catch((err) => {

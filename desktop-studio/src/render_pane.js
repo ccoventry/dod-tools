@@ -5,6 +5,9 @@ import {
   cancelRenderBatch,
   cancelRenderJob,
   resetRenderJob,
+  resetAllRenderJobs,
+  removeRenderJob,
+  removeNonRenderingRenderJobs,
   setRenderJobCodec,
   getExportPoolFreeGb,
   checkRenderAutosave,
@@ -85,6 +88,13 @@ function actionsCellHtml(j) {
   } else if (j.status === 'Cancelled' || j.status === 'Finished' || j.status === 'Error') {
     html += `<button class="render-job-reset-btn" data-job-id="${esc(j.id)}" title="${STRINGS.RENDER.RESET_JOB_TITLE}">🔄</button>`;
   }
+  // Coexists with either button above — a Queued job can be removed directly
+  // without cancelling it first, same as a Cancelled/Finished/Error one. Only
+  // withheld while actually Rendering, where removing the row out from under
+  // a live ffmpeg process has no defined outcome.
+  if (j.status !== 'Rendering') {
+    html += `<button class="render-job-remove-btn" data-job-id="${esc(j.id)}" title="${STRINGS.RENDER.REMOVE_JOB_TITLE}">🗑</button>`;
+  }
   if (j.error_log) {
     html += `<button class="render-job-view-log-btn" data-job-id="${esc(j.id)}" title="${STRINGS.RENDER.VIEW_LOG_TITLE}">${STRINGS.RENDER.VIEW_LOG_BUTTON}</button>`;
   }
@@ -101,6 +111,9 @@ function wireActionsCell(cell) {
   });
   cell.querySelectorAll('.render-job-reset-btn').forEach((btn) => {
     btn.addEventListener('click', () => resetRenderJob(btn.dataset.jobId).catch(() => {}));
+  });
+  cell.querySelectorAll('.render-job-remove-btn').forEach((btn) => {
+    btn.addEventListener('click', () => removeRenderJob(btn.dataset.jobId).catch(() => {}));
   });
   cell.querySelectorAll('.render-job-reveal-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -326,6 +339,8 @@ export function initRenderUI(getCaptureLocations, getExportDirs, onSettingsChang
   const scanRenderBtn = document.querySelector('#scan-render-btn');
   const startRenderBtn = document.querySelector('#start-render-btn');
   const cancelRenderBtn = document.querySelector('#cancel-render-btn');
+  const resetAllRenderBtn = document.querySelector('#reset-all-render-btn');
+  const removeAllRenderBtn = document.querySelector('#remove-all-render-btn');
   const renderStatusEl = document.querySelector('#render-status');
 
   const getTakeIndex = takeTracking?.getTakeIndex || null;
@@ -403,12 +418,21 @@ export function initRenderUI(getCaptureLocations, getExportDirs, onSettingsChang
     if (scanRenderBtn) scanRenderBtn.disabled = activeOrQueued > 0;
     if (startRenderBtn) startRenderBtn.disabled = !(queuedCount > 0 && renderingCount === 0);
     if (cancelRenderBtn) cancelRenderBtn.disabled = activeOrQueued === 0;
+    // Mirror each bulk button's per-row equivalent: Reset All wants at least
+    // one Cancelled/Finished/Error row, Remove All wants at least one row
+    // that isn't actively Rendering.
+    const resettableCount = jobs.filter((j) => j.status === 'Cancelled' || j.status === 'Finished' || j.status === 'Error').length;
+    if (resetAllRenderBtn) resetAllRenderBtn.disabled = resettableCount === 0;
+    if (removeAllRenderBtn) removeAllRenderBtn.disabled = jobs.length - renderingCount === 0;
   });
 
   listen('render_batch_finished', () => {
     if (scanRenderBtn) scanRenderBtn.disabled = false;
     if (startRenderBtn) startRenderBtn.disabled = true;
     if (cancelRenderBtn) cancelRenderBtn.disabled = true;
+    const resettableCount = jobs.filter((j) => j.status === 'Cancelled' || j.status === 'Finished' || j.status === 'Error').length;
+    if (resetAllRenderBtn) resetAllRenderBtn.disabled = resettableCount === 0;
+    if (removeAllRenderBtn) removeAllRenderBtn.disabled = jobs.length === 0;
     // Counted, not `some()`. The old check asked "was anything cancelled?"
     // before "did anything finish?", so one cancelled job in a batch of any
     // size reported the whole batch as cancelled — including the common case
@@ -521,6 +545,26 @@ export function initRenderUI(getCaptureLocations, getExportDirs, onSettingsChang
       cancelRenderBatch().catch((err) => {
         console.error('IPC Execution Error (cancelRenderBatch):', err);
         if (startRenderBtn) startRenderBtn.disabled = false;
+      });
+    });
+  }
+
+  if (resetAllRenderBtn) {
+    resetAllRenderBtn.addEventListener('click', () => {
+      resetAllRenderBtn.disabled = true;
+      resetAllRenderJobs().catch((err) => {
+        console.error('IPC Execution Error (resetAllRenderJobs):', err);
+        resetAllRenderBtn.disabled = false;
+      });
+    });
+  }
+
+  if (removeAllRenderBtn) {
+    removeAllRenderBtn.addEventListener('click', () => {
+      removeAllRenderBtn.disabled = true;
+      removeNonRenderingRenderJobs().catch((err) => {
+        console.error('IPC Execution Error (removeNonRenderingRenderJobs):', err);
+        removeAllRenderBtn.disabled = false;
       });
     });
   }
