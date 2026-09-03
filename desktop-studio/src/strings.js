@@ -457,6 +457,11 @@ export const STRINGS = {
     TABLE_HEADER_STATUS: 'Status',
     TABLE_HEADER_SPEED: 'Speed',
     TABLE_HEADER_PROGRESS: 'Progress',
+    TABLE_HEADER_FILE_SIZE: 'File Size',
+    TABLE_HEADER_FILE_SIZE_TITLE: "The real encoded size, once finished — not shown ahead of time, since it can't be predicted accurately (see Required (Over-estimated) in the footer).",
+    fileSizeGb: (gb) => `${gb} GB`,
+    fileSizeMb: (mb) => `${mb} MB`,
+    FILE_SIZE_UNKNOWN: '—',
     TABLE_HEADER_ACTIONS: 'Actions',
     TABLE_EMPTY: 'No render jobs queued. Scan a folder, then click Start Render Batch.',
     START_RENDER_BUTTON: 'Start Render Batch',
@@ -483,6 +488,12 @@ export const STRINGS = {
     errorLogTitleForJob: (name) => `FFmpeg Error Log — ${name}`,
     exportPoolFreeFooter: (gb) => `Export Pool Free: ${gb} GB`,
     RENDER_POOL_FREE_DEFAULT: 'Export Pool Free: 0.0 GB',
+    // "Over-estimated" matters here in a way it doesn't for Capture's
+    // Required figure — this is a deliberately loose upper bound (raw-frame
+    // math), not a tight prediction. See get_render_required_estimate_gb.
+    requiredEstimatedFooter: (gb) => `Required (Over-estimated): ${gb} GB`,
+    REQUIRED_ESTIMATED_FOOTER_TITLE: "A loose upper bound, not a tight prediction — most codecs compress well below this, and it can't be known ahead of time how much. Covers every job that hasn't finished yet (Queued + Rendering).",
+    REQUIRED_ESTIMATED_DEFAULT: 'Required (Over-estimated): 0.00 GB',
     recoveredJobsToast: (completed, pending) => `Recovered ${completed} completed, ${pending} pending render job(s).`,
     recoverFailed: (err) => `Failed to recover render batch: ${err}`,
     renderingStatus: (done, total) => `Status: Rendering (${done}/${total} done)`,

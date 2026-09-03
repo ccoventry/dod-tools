@@ -359,6 +359,18 @@ export async function getExportPoolFreeGb(directories) {
     });
 }
 
+/** Summed required-bytes estimate across every job still ahead of the export
+ *  pool (Queued + Rendering, not Finished/Error/Cancelled). A loose upper
+ *  bound, not a tight prediction — codec compression isn't known ahead of
+ *  time (issue #119). */
+export async function getRenderRequiredEstimateGb() {
+  return invoke("get_render_required_estimate_gb")
+    .catch((err) => {
+      console.error("IPC Execution Error (get_render_required_estimate_gb):", err);
+      return 0;
+    });
+}
+
 export async function checkRenderAutosave() {
   return invoke("check_render_autosave")
     .catch((err) => {

@@ -17,7 +17,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use native::hlcr::autosave::{RenderJob as AutosaveJob, RenderJobStatus as AutosaveJobStatus, RenderSessionData};
 use native::hlcr::config::{RenderCodec, RenderConfig};
-use native::hlcr::renderer::{hold_render_wake_lock, run_render_job, RenderUpdate, RenderWakeLock};
+use native::hlcr::renderer::{hold_render_wake_lock, job_reservation_estimate, run_render_job, RenderUpdate, RenderWakeLock};
 use native::hlcr::scanner::{scan_folder_background, clip_is_skip_eligible, ClipData};
 use native::shared::paths::take_key;
 use native::log_markdown;
@@ -77,6 +77,13 @@ struct RenderJobRuntime {
     /// successfully (empty until then, and for recovered jobs — the autosave
     /// snapshot doesn't persist it).
     output_path: String,
+    /// Real size of the encoded file, stat'd once at the moment `output_path`
+    /// is set (never re-stat'd afterward, so a file deleted later still
+    /// shows what it was). `None` until then — the frontend shows a dash
+    /// rather than an estimate for anything not yet Finished; see
+    /// `job_reservation_estimate`'s own doc comment for why a per-row
+    /// estimate isn't shown instead.
+    output_size_bytes: Option<u64>,
     cancel_flag: Arc<AtomicBool>,
     // Snapshotted onto the job itself (VirtualDub-style job queue, not one
     // shared live config) so Reset to Queued always re-renders with exactly
@@ -105,6 +112,10 @@ pub struct RenderJobView {
     pub settings_summary: String,
     /// Encoded output file, once finished. Empty until then.
     pub output_path: String,
+    /// Real size of the encoded file, once finished. `None` otherwise — the
+    /// frontend shows a dash rather than a per-row estimate for anything not
+    /// yet Finished.
+    pub output_size_bytes: Option<u64>,
     /// Source take folder (captured BMPs/WAV) — always known, even before
     /// this job has rendered, so "reveal in Explorer" works pre- and
     /// post-render.
@@ -141,6 +152,7 @@ impl RenderJobRuntime {
                 format!("{} @ {}fps", self.codec.label(), self.fps)
             },
             output_path: self.output_path.clone(),
+            output_size_bytes: self.output_size_bytes,
             take_folder: self.clip.take_folder.clone(),
             codec_id: self.codec.to_str_id().to_string(),
             skip_available: clip_is_skip_eligible(&self.clip),
@@ -252,6 +264,12 @@ fn apply_render_update(
         }
         RenderUpdate::OutputPath(id, path) => {
             if let Some(job) = jobs.lock().unwrap().iter_mut().find(|j| j.id == id) {
+                // Stat'd once, here, rather than on every `to_view()` call —
+                // this only ever arrives once per job, right after the file
+                // has been fully written (see run_render_job), so this is
+                // both the one moment the size is knowable and the only
+                // moment it needs computing.
+                job.output_size_bytes = std::fs::metadata(&path).ok().map(|m| m.len());
                 job.output_path = path;
             }
         }
@@ -520,6 +538,7 @@ pub async fn queue_render_batch(
         progress: 0,
         error_log: None,
         output_path: String::new(),
+        output_size_bytes: None,
         cancel_flag: Arc::new(AtomicBool::new(false)),
         codec: config.target_codec,
         fps: config.fps,
@@ -748,6 +767,7 @@ pub async fn reset_render_job(app: AppHandle, state: tauri::State<'_, RenderMana
             job.progress = 0;
             job.speed = String::new();
             job.error_log = None;
+            job.output_size_bytes = None;
             job.cancel_flag = Arc::new(AtomicBool::new(false));
         }
     }
@@ -775,6 +795,7 @@ pub async fn reset_all_render_jobs(app: AppHandle, state: tauri::State<'_, Rende
                 job.progress = 0;
                 job.speed = String::new();
                 job.error_log = None;
+                job.output_size_bytes = None;
                 job.cancel_flag = Arc::new(AtomicBool::new(false));
                 reset_count += 1;
             }
@@ -787,6 +808,30 @@ pub async fn reset_all_render_jobs(app: AppHandle, state: tauri::State<'_, Rende
     emit_jobs_snapshot(&app, &state.jobs);
     resume_scheduler_if_idle(app, &state, "reset_all_render_jobs");
     Ok(())
+}
+
+/// Summed required-bytes estimate across every job still ahead of the
+/// export pool — Queued and Rendering, not Finished/Error/Cancelled, which
+/// have either already landed on disk or never will. Exposed so the Render
+/// footer can show a "Required (Estimated)" figure mirroring Capture's own
+/// Free+Required pair (issue #119).
+///
+/// Deliberately whole-queue, not just `export_reservations` (the JIT ledger,
+/// which only ever holds bytes for jobs *currently* rendering) — a figure
+/// that only reflects what's already in flight can't answer "will my batch
+/// fit," which is the question this exists to answer. And deliberately a
+/// loose upper bound, not a tight prediction, unlike Capture's figure — see
+/// `job_reservation_estimate`'s own doc comment and #116's PR description
+/// for real-vs-estimated size ratios observed live (~70-160x for
+/// h264_nvenc). The frontend's label says so explicitly rather than implying
+/// a number this loose is a real prediction.
+#[tauri::command]
+pub fn get_render_required_estimate_gb(state: tauri::State<'_, RenderManager>) -> f64 {
+    let total: u64 = state.jobs.lock().unwrap().iter()
+        .filter(|j| j.status == "Queued" || j.status == "Rendering")
+        .map(|j| job_reservation_estimate(&j.clip, j.codec == RenderCodec::SourceCopy))
+        .sum();
+    total as f64 / 1_073_741_824.0
 }
 
 #[tauri::command]
@@ -864,6 +909,11 @@ pub fn recover_render_batch(state: tauri::State<'_, RenderManager>) -> Result<Ve
         } else {
             ("Queued".to_string(), 0u32)
         };
+        // Only worth a stat for a job that actually finished and has a real
+        // path recorded — a re-queued job has neither yet.
+        let output_size_bytes = (rj.status == AutosaveJobStatus::Completed && !rj.output_path.is_empty())
+            .then(|| std::fs::metadata(&rj.output_path).ok().map(|m| m.len()))
+            .flatten();
         RenderJobRuntime {
             id: i.to_string(),
             clip: ClipData {
@@ -894,6 +944,7 @@ pub fn recover_render_batch(state: tauri::State<'_, RenderManager>) -> Result<Ve
             progress,
             error_log: None,
             output_path: rj.output_path.clone(),
+            output_size_bytes,
             cancel_flag: Arc::new(AtomicBool::new(false)),
             codec: recovered_codec,
             fps: recovered_fps,

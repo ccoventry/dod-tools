@@ -39,6 +39,26 @@ fn estimate_reservation_bytes(clip: &ClipData) -> u64 {
     clip.width as u64 * clip.height as u64 * 3 * clip.frame_count as u64
 }
 
+/// Best-effort required-bytes estimate for one job, whatever its status —
+/// exact for a SourceCopy job (the source file already exists on disk, so
+/// this just measures it), the same conservative raw-frame estimate as
+/// `estimate_reservation_bytes` above for everything else. Shared by
+/// `run_render_job`'s own JIT drive routing (only ever called there for a
+/// job about to start) and the Render footer's whole-queue "Required
+/// (Estimated)" figure (called for every Queued/Rendering job, not just the
+/// one about to run).
+pub fn job_reservation_estimate(clip: &ClipData, is_source_copy: bool) -> u64 {
+    if is_source_copy {
+        let take_folder = PathBuf::from(&clip.take_folder);
+        let video_name = clip.video_file.as_deref().unwrap_or_default();
+        std::fs::metadata(take_folder.join(&clip.img_folder).join(video_name))
+            .map(|m| m.len())
+            .unwrap_or_else(|_| estimate_reservation_bytes(clip))
+    } else {
+        estimate_reservation_bytes(clip)
+    }
+}
+
 /// RAII release for a JIT export-drive reservation claimed in
 /// `run_render_job`'s routing block below. `run_render_job` has many early
 /// returns after a drive is selected (success, error, cancellation) —
@@ -187,17 +207,7 @@ pub async fn run_render_job(
     // 20 GiB threshold this replaced was only ever sized to be safe for one
     // job at a time. See docs/capture-render-studio-merge-scope.md §4.
     const SAFETY_MARGIN_BYTES: u64 = 1024 * 1024 * 1024; // 1 GiB
-    // SourceCopy's answer is exact — it's just a file copy, so its real size
-    // is already sitting on disk. Every other job gets the conservative
-    // estimate above.
-    let reservation_estimate = if is_source_copy {
-        let video_name = clip.video_file.as_deref().unwrap_or_default();
-        std::fs::metadata(take_folder.join(&clip.img_folder).join(video_name))
-            .map(|m| m.len())
-            .unwrap_or_else(|_| estimate_reservation_bytes(&clip))
-    } else {
-        estimate_reservation_bytes(&clip)
-    };
+    let reservation_estimate = job_reservation_estimate(&clip, is_source_copy);
 
     let mut selected_export_dir: Option<PathBuf> = None;
     {

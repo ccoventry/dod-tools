@@ -17,6 +17,7 @@ function job(overrides = {}) {
     error_log: null,
     settings_summary: 'ProRes @ 300fps',
     output_path: '',
+    output_size_bytes: null,
     take_folder: 'C:\\captures\\demo1\\chain_01_b0\\take0000',
     codec_id: 'prores',
     skip_available: false,
@@ -191,6 +192,84 @@ test.describe('scan stages a batch, Start is a separate step', () => {
     await expect(page.locator('#scan-render-btn')).toBeDisabled();
     await expect(page.locator('#start-render-btn')).toBeDisabled();
     await expect(page.locator('#cancel-render-btn')).toBeEnabled();
+  });
+});
+
+test.describe('File Size column', () => {
+  test('shows a dash for Queued/Rendering — never a per-row estimate', async ({ page }) => {
+    await gotoHarness(page);
+    await emitSnapshot(page, [
+      job({ id: '0', status: 'Queued', output_size_bytes: null }),
+      job({ id: '1', status: 'Rendering', output_size_bytes: null }),
+    ]);
+    await expect(page.locator('tr[data-job-id="0"] .rj-file-size')).toHaveText('—');
+    await expect(page.locator('tr[data-job-id="1"] .rj-file-size')).toHaveText('—');
+  });
+
+  test('shows the real size once Finished, in GB for a large file', async ({ page }) => {
+    await gotoHarness(page);
+    await emitSnapshot(page, [
+      job({ id: '0', status: 'Finished', output_size_bytes: 2_500_000_000 }),
+    ]);
+    await expect(page.locator('tr[data-job-id="0"] .rj-file-size')).toHaveText('2.33 GB');
+  });
+
+  test('shows the real size in MB for a file under 1 GB', async ({ page }) => {
+    await gotoHarness(page);
+    await emitSnapshot(page, [
+      job({ id: '0', status: 'Finished', output_size_bytes: 200_000_000 }),
+    ]);
+    await expect(page.locator('tr[data-job-id="0"] .rj-file-size')).toHaveText('191 MB');
+  });
+
+  test('a Cancelled/Error job also shows a dash, not a stale size from a prior run', async ({ page }) => {
+    await gotoHarness(page);
+    await emitSnapshot(page, [job({ id: '0', status: 'Cancelled', output_size_bytes: null })]);
+    await expect(page.locator('tr[data-job-id="0"] .rj-file-size')).toHaveText('—');
+  });
+});
+
+test.describe('Export Pool Free / Required (Over-estimated) footer refresh', () => {
+  test('a snapshot with Queued/Rendering jobs calls get_render_required_estimate_gb and shows the result', async ({ page }) => {
+    await gotoHarness(page);
+    await page.evaluate(() => {
+      window.__mockInvokeHandlers['get_render_required_estimate_gb'] = () => 42.5;
+    });
+    await emitSnapshot(page, [job({ id: '0', status: 'Queued' })]);
+    await expect(page.locator('#render-footer-required-space')).toHaveText('Required (Over-estimated): 42.50 GB');
+  });
+
+  test('a progress-only update (same id:status) does not re-call get_render_required_estimate_gb', async ({ page }) => {
+    await gotoHarness(page);
+    await emitSnapshot(page, [job({ id: '0', status: 'Rendering', progress: 10 })]);
+    const callsAfterFirst = (await invocationsFor(page, 'get_render_required_estimate_gb')).length;
+    await emitSnapshot(page, [job({ id: '0', status: 'Rendering', progress: 55 })]);
+    const callsAfterSecond = (await invocationsFor(page, 'get_render_required_estimate_gb')).length;
+    expect(callsAfterSecond).toBe(callsAfterFirst);
+  });
+
+  test('a status change (Queued -> Rendering) does re-call get_render_required_estimate_gb', async ({ page }) => {
+    await gotoHarness(page);
+    await emitSnapshot(page, [job({ id: '0', status: 'Queued' })]);
+    const callsAfterFirst = (await invocationsFor(page, 'get_render_required_estimate_gb')).length;
+    await emitSnapshot(page, [job({ id: '0', status: 'Rendering', progress: 5 })]);
+    const callsAfterSecond = (await invocationsFor(page, 'get_render_required_estimate_gb')).length;
+    expect(callsAfterSecond).toBe(callsAfterFirst + 1);
+  });
+
+  test('a job finishing (still present, status changes) re-calls it; a job disappearing from the snapshot also re-calls it', async ({ page }) => {
+    await gotoHarness(page);
+    await emitSnapshot(page, [job({ id: '0', status: 'Rendering' }), job({ id: '1', status: 'Queued' })]);
+    const callsBefore = (await invocationsFor(page, 'get_render_required_estimate_gb')).length;
+
+    await emitSnapshot(page, [job({ id: '0', status: 'Finished' }), job({ id: '1', status: 'Queued' })]);
+    const callsAfterFinish = (await invocationsFor(page, 'get_render_required_estimate_gb')).length;
+    expect(callsAfterFinish).toBe(callsBefore + 1);
+
+    // Simulates Remove: job '0' no longer appears in the snapshot at all.
+    await emitSnapshot(page, [job({ id: '1', status: 'Queued' })]);
+    const callsAfterRemove = (await invocationsFor(page, 'get_render_required_estimate_gb')).length;
+    expect(callsAfterRemove).toBe(callsAfterFinish + 1);
   });
 });
 
