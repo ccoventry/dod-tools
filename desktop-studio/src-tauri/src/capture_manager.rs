@@ -1211,15 +1211,20 @@ fn resolve_preview_env(hlae_path: &str, game_path: &str) -> Result<(PatcherConfi
     Ok((patcher_config, dod_dir))
 }
 
-/// Builds and patches one bookmark-preview `PatchJob` per source demo present
-/// in `streaks`, writing the hidden `.dodtools_preview` sidecar for each.
+/// Builds one bookmark-preview `PatchJob` per source demo present in
+/// `streaks` and patches it — unless a previous run already left a valid
+/// `<stem>_preview.dem` + `.dodtools_preview` sidecar in place, in which case
+/// that existing file is reused as-is rather than regenerated. Returns the
+/// full job list (every source demo, patched or reused — callers need the
+/// resolved output path either way) alongside how many were freshly patched
+/// this call, for a caller that wants to report "N generated" accurately.
 fn patch_bookmark_previews(
     streaks: Vec<SerializedStreak>,
     dod_dir: &Path,
     patcher_config: &PatcherConfig,
-) -> Result<Vec<PatchJob>, String> {
+) -> Result<(Vec<PatchJob>, usize), String> {
     if streaks.is_empty() {
-        return Err("No highlights selected to preview.".to_string());
+        return Err("This demo has no highlights to preview.".to_string());
     }
     let capture_streaks: Vec<CaptureStreak> = streaks.into_iter().map(CaptureStreak::from).collect();
     let jobs = build_preview_patch_jobs(capture_streaks, Some(dod_dir));
@@ -1228,20 +1233,30 @@ fn patch_bookmark_previews(
     }
 
     let cancel_token = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mut generated = 0usize;
     for job in &jobs {
+        let sidecar_path = job.output_demo.with_extension("dodtools_preview");
+        if job.output_demo.is_file() && sidecar_path.is_file() {
+            // Already previewed in an earlier session — the bookmark set is
+            // derived purely from this demo's own highlights, which don't
+            // change between scans, so there's nothing to regenerate.
+            continue;
+        }
+
         StreamPatcher::new(&job.source_demo, &job.output_demo)
             .patch(job, patcher_config, &cancel_token)
             .map_err(|e| format!("Failed to patch preview demo for {}: {}", job.source_demo, e))?;
 
-        let sidecar_path = job.output_demo.with_extension("dodtools_preview");
         write_hidden_sidecar(&sidecar_path)
             .map_err(|e| format!("Failed to write preview sidecar: {}", e))?;
+        generated += 1;
     }
-    Ok(jobs)
+    Ok((jobs, generated))
 }
 
-/// Patches the given demo's selected highlights into a single bookmarked
-/// `<stem>_preview.dem` and immediately launches HLAE against it via
+/// Patches the given demo's highlights into a single bookmarked
+/// `<stem>_preview.dem` — reusing one already on disk from an earlier run
+/// instead of regenerating it — and immediately launches HLAE against it via
 /// `+viewdemo <stem>_preview`.
 #[tauri::command]
 pub async fn launch_demo_preview(
@@ -1251,7 +1266,7 @@ pub async fn launch_demo_preview(
 ) -> Result<(), String> {
     tokio::task::spawn_blocking(move || {
         let (patcher_config, dod_dir) = resolve_preview_env(&hlae_path, &game_path)?;
-        let jobs = patch_bookmark_previews(streaks, &dod_dir, &patcher_config)?;
+        let (jobs, _generated) = patch_bookmark_previews(streaks, &dod_dir, &patcher_config)?;
         let job = jobs.first().ok_or_else(|| "Failed to build the preview patch job".to_string())?;
 
         let preview_stem = job
@@ -1271,8 +1286,10 @@ pub async fn launch_demo_preview(
 }
 
 /// Patches every demo represented in `streaks` into its own bookmarked
-/// `<stem>_preview.dem` without launching HLAE. Resolves to the number of
-/// preview demos generated so the frontend can report a completion toast.
+/// `<stem>_preview.dem` without launching HLAE, skipping any demo that
+/// already has one from an earlier run. Resolves to the number *freshly
+/// generated* this call so the frontend can report an accurate completion
+/// toast rather than re-counting demos that didn't need any work.
 #[tauri::command]
 pub async fn generate_all_previews(
     hlae_path: String,
@@ -1281,8 +1298,8 @@ pub async fn generate_all_previews(
 ) -> Result<usize, String> {
     tokio::task::spawn_blocking(move || {
         let (patcher_config, dod_dir) = resolve_preview_env(&hlae_path, &game_path)?;
-        let jobs = patch_bookmark_previews(streaks, &dod_dir, &patcher_config)?;
-        Ok(jobs.len())
+        let (_jobs, generated) = patch_bookmark_previews(streaks, &dod_dir, &patcher_config)?;
+        Ok(generated)
     })
     .await
     .map_err(|e| format!("Task join error: {}", e))?

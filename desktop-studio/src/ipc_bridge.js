@@ -164,9 +164,10 @@ export async function startCaptureBatch(payload) {
     });
 }
 
-/** Patches the given demo's selected highlights into a single `<stem>_preview.dem`
- *  (BOOKMARK/director events at each highlight) and immediately launches it in
- *  HLAE via `+viewdemo`. */
+/** Patches the given demo's highlights into a single `<stem>_preview.dem`
+ *  (BOOKMARK/director events at each highlight, regardless of selection or
+ *  Min Kills — reuses an existing preview instead of regenerating one) and
+ *  immediately launches it in HLAE via `+viewdemo`. */
 export async function launchDemoPreview(hlaePath, gamePath, streaks) {
   return invoke("launch_demo_preview", { hlaePath, gamePath, streaks })
     .catch((err) => {
@@ -209,9 +210,10 @@ export async function killEngineProcesses() {
     });
 }
 
-/** Patches every demo with selected highlights into its own `<stem>_preview.dem`
- *  (grouped server-side by source demo) without launching HLAE. Resolves to the
- *  number of preview demos generated. */
+/** Patches every demo's highlights into its own `<stem>_preview.dem` (grouped
+ *  server-side by source demo) without launching HLAE, skipping any demo that
+ *  already has one. Resolves to the number of preview demos freshly generated
+ *  this call. */
 export async function generateAllPreviews(hlaePath, gamePath, streaks) {
   return invoke("generate_all_previews", { hlaePath, gamePath, streaks })
     .catch((err) => {

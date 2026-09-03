@@ -206,12 +206,12 @@ window.addEventListener("DOMContentLoaded", () => {
 
   /** Actually invokes launch_demo_preview — shared by the direct click path
    *  (no conflicting process) and the modal's Force Relaunch path. */
-  async function performLaunchPreview(hlaePath, hlPath, selected) {
+  async function performLaunchPreview(hlaePath, hlPath, highlights) {
     btnLaunchPreview.disabled = true;
     const originalLabel = btnLaunchPreview.textContent;
     btnLaunchPreview.textContent = STRINGS.HIGHLIGHTS.LAUNCHING;
     try {
-      await launchDemoPreview(hlaePath, hlPath, selected);
+      await launchDemoPreview(hlaePath, hlPath, highlights);
       showToast(STRINGS.HIGHLIGHTS.PREVIEW_LAUNCHING_TOAST, 'info');
     } catch (err) {
       // Already toasted by ipc_bridge.js.
@@ -230,7 +230,7 @@ window.addEventListener("DOMContentLoaded", () => {
         return;
       }
       if (!currentDemo || !currentDemo.streaks) return;
-      const selected = currentDemo.streaks.filter(s => s.selected);
+      const highlights = allPreviewableStreaks(currentDemo);
 
       let engineAlreadyRunning = false;
       try {
@@ -241,11 +241,11 @@ window.addEventListener("DOMContentLoaded", () => {
       }
 
       if (engineAlreadyRunning) {
-        requestProcessGuardedLaunch(() => performLaunchPreview(hlaePath, hlPath, selected));
+        requestProcessGuardedLaunch(() => performLaunchPreview(hlaePath, hlPath, highlights));
         return;
       }
 
-      await performLaunchPreview(hlaePath, hlPath, selected);
+      await performLaunchPreview(hlaePath, hlPath, highlights);
     });
   }
 
@@ -304,13 +304,13 @@ window.addEventListener("DOMContentLoaded", () => {
         return;
       }
       const allDemos = currentGetAllDemos ? currentGetAllDemos() : [];
-      const allSelected = (allDemos || []).flatMap(d => (d.streaks || []).filter(s => s.selected));
+      const allHighlights = (allDemos || []).flatMap(d => allPreviewableStreaks(d));
 
       btnGenerateAllPreviews.disabled = true;
       const originalLabel = btnGenerateAllPreviews.textContent;
       btnGenerateAllPreviews.textContent = STRINGS.HIGHLIGHTS.GENERATING;
       try {
-        const count = await generateAllPreviews(hlaePath, hlPath, allSelected);
+        const count = await generateAllPreviews(hlaePath, hlPath, allHighlights);
         showToast(STRINGS.HIGHLIGHTS.generatedPreviews(count), 'success');
       } catch (err) {
         // Already toasted by ipc_bridge.js.
@@ -349,6 +349,17 @@ export function isVisibleStreak(demo, streak, minKills) {
   }
   const threshold = minKills ?? parseInt(document.querySelector('#input-min-kills')?.value || "1", 10);
   return streak.kill_count >= threshold;
+}
+
+/** Every one of `demo`'s highlights for the recording player, regardless of
+ *  Min Kills or checkbox selection (minKills 0 bypasses that half of
+ *  isVisibleStreak's filter, keeping only the player filter). Previewing is
+ *  how you decide what's worth checking in the first place, not a view of
+ *  what's already checked — the bookmark-preview patch has nothing to do
+ *  with either filter (see #128). */
+function allPreviewableStreaks(demo) {
+  if (!demo || !demo.streaks) return [];
+  return demo.streaks.filter(s => isVisibleStreak(demo, s, 0));
 }
 
 export function renderDetailView(demo, selectedDemoIdx) {
