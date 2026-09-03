@@ -20,8 +20,7 @@ import { initMapWarnings, refreshMapWarnings, resetMapWarnings } from './map_war
 import { initRollFloors } from './roll_floors.js';
 
 import { renderDetailView, initDetailPane } from './detail_pane.js';
-import { initCaptureUI, getCommandsState, hydrateCommandsState, refreshLaunchGuard, refreshInitCommandWarnings } from './capture_pane.js';
-import { setObsConnected } from './obs_status.js';
+import { initCaptureUI, getCommandsState, hydrateCommandsState, refreshLaunchGuard, refreshInitCommandWarnings, runObsConnectionTest } from './capture_pane.js';
 import { initRenderUI, checkRenderRecoveryOnStartup } from './render_pane.js';
 import { initAuditorPane } from './auditor_pane.js';
 import { initThemedConfirm, themedConfirm } from './themed_confirm.js';
@@ -83,89 +82,6 @@ async function refreshPathWarnings() {
     row.warning.textContent = message;
     row.warning.style.display = message ? '' : 'none';
   });
-}
-
-/**
- * Runs `obs_test_connection` and renders the result — the manual Test
- * Connection button's own logic, extracted so it can also be run
- * automatically (issue #147: "make preflight warnings proactive") when
- * switching into OBS mode or when OBS mode is already selected at startup,
- * not only on a manual click.
- *
- * `auto` skips the button disable/relabel churn (there was no click to
- * originate it) but still populates the same status panel — quiet the same
- * way `obs_check_orphan` is quiet at startup: "OBS is not running yet" is
- * the ordinary case here, not something to interrupt the user over.
- */
-async function runObsConnectionTest({ auto = false } = {}) {
-  const btn = document.querySelector('#obs-test-btn');
-  const status = document.querySelector('#obs-status');
-  if (!status) return;
-  const label = btn ? btn.textContent : '';
-  if (!auto && btn) { btn.disabled = true; btn.textContent = STRINGS.CAPTURE_CONFIG.OBS_TESTING; }
-  status.style.display = '';
-  status.textContent = STRINGS.CAPTURE_CONFIG.OBS_TESTING;
-  try {
-    const report = await invoke('obs_test_connection', {
-      host: document.querySelector('#config-obs-host')?.value?.trim() || '127.0.0.1',
-      port: parseInt(document.querySelector('#config-obs-port')?.value, 10) || 4455,
-      password: document.querySelector('#config-obs-password')?.value || '',
-      gameWidth: parseInt(document.querySelector('#config-res-width')?.value, 10) || 1280,
-      gameHeight: parseInt(document.querySelector('#config-res-height')?.value, 10) || 720,
-      captureFps: parseInt(document.querySelector('#config-capture-fps')?.value, 10) || 300,
-    });
-    renderObsReport(report);
-  } catch (e) {
-    // Every invoke needs this: without it a Rust-side failure is swallowed
-    // and the button simply appears to do nothing.
-    status.textContent = STRINGS.CAPTURE_CONFIG.obsTestFailed(e);
-    setObsConnected(false);
-  } finally {
-    if (!auto && btn) { btn.disabled = false; btn.textContent = label || STRINGS.CAPTURE_CONFIG.OBS_TEST_BUTTON; }
-    // Whatever this check found, Start Capture Batch's gate (issue #147)
-    // needs to reflect it immediately, not wait for some unrelated field to
-    // trigger the next refreshLaunchGuard().
-    refreshLaunchGuard();
-  }
-}
-
-/**
- * Renders an `obs_test_connection` result into the status row.
- *
- * Warnings are shown rather than swallowed: the canvas mismatch in particular
- * costs most of the picture's detail and has no visible symptom, so it would
- * otherwise be found only by comparing a finished clip against expectations.
- * Should be rare now that `obs_test_connection` provisions dod-tools' own
- * profile/scene itself rather than validating whatever the user picked, but
- * still worth surfacing if OBS itself refuses one of those settings.
- */
-function renderObsReport(report) {
-  const status = document.querySelector('#obs-status');
-  if (!status) return;
-  status.style.display = '';
-
-  setObsConnected(!!report?.connected);
-
-  if (!report?.connected) {
-    status.textContent = report?.error || STRINGS.CAPTURE_CONFIG.OBS_UNREACHABLE;
-    return;
-  }
-
-  const lines = [
-    STRINGS.CAPTURE_CONFIG.obsConnectedSummary(report.obs_version, report.websocket_version),
-    // Read-only — dod-tools always targets its own fixed profile/scene now,
-    // there is nothing here for the user to pick.
-    STRINGS.CAPTURE_CONFIG.obsUsingSummary(report.current_profile, report.current_scene),
-    STRINGS.CAPTURE_CONFIG.obsCanvasSummary(report.canvas, report.output, report.fps),
-    STRINGS.CAPTURE_CONFIG.obsRecordingToSummary(report.record_directory),
-  ];
-  if (report.missing_requests?.length) {
-    lines.push(STRINGS.CAPTURE_CONFIG.obsMissingRequests(report.missing_requests));
-  }
-  if (report.recording) lines.push(STRINGS.CAPTURE_CONFIG.OBS_ALREADY_RECORDING);
-  if (report.streaming) lines.push(STRINGS.CAPTURE_CONFIG.OBS_ALREADY_STREAMING);
-  for (const w of report.warnings || []) lines.push(w);
-  status.textContent = lines.join('\n');
 }
 
 /** The selected capture mode id, defaulting to the path that always works. */
@@ -680,15 +596,12 @@ window.addEventListener("DOMContentLoaded", async () => {
       const obsExePathEl = document.querySelector('#config-obs-exe-path');
       if (obsExePathEl) obsExePathEl.value = settings.obs_exe_path || '';
       applyCaptureModeUI();
-      // Issue #147: proactive preflight — the existing warnings (canvas
-      // mismatch, already recording, missing requests) only ever surfaced on
-      // a manual Test Connection click. If OBS mode is already the persisted
-      // choice, check now rather than waiting for the user to press the
-      // button themselves; quiet on failure (OBS not running yet is the
-      // ordinary case at startup), same as the orphan-recovery check.
-      if (currentCaptureMode() === 'obs') {
-        runObsConnectionTest({ auto: true });
-      }
+      // Deliberately NOT checked here at startup — OBS is the user's own
+      // program and, like HLAE, is not expected to already be running just
+      // because dod-tools opened. The connectivity check runs when actively
+      // switching into OBS mode below, and again as Start Capture Batch's
+      // own pre-flight (capture_pane.js) — both are moments the user is
+      // actually about to use it, unlike app launch.
       const addCondebugEl = document.querySelector('#config-add-condebug');
       if (addCondebugEl) addCondebugEl.checked = !!settings.add_condebug;
       const autoClearLogsEl = document.querySelector('#config-auto-clear-logs');

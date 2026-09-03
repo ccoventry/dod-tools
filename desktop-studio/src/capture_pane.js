@@ -1,11 +1,12 @@
 import { startCaptureBatch, cancelCaptureBatch, validatePaths, calculateExportPoolSpace, diagnoseCaptureOutputPaths, scanOrphanedPreviews, deleteOrphanedPreviews, checkEngineProcesses, launchStandaloneGame } from './ipc_bridge.js';
+import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { themedConfirm } from './themed_confirm.js';
 import { showToast } from './toast.js';
 import { requestProcessGuardedLaunch } from './detail_pane.js';
 import { createListEditor } from './list_editor.js';
 import { refreshCfgWarnings } from './cfg_warnings.js';
-import { isObsConnected, obsConnectionChecked } from './obs_status.js';
+import { isObsConnected, obsConnectionChecked, setObsConnected } from './obs_status.js';
 import { refreshRollFloors } from './roll_floors.js';
 import { streakUid, recordTake } from './take_index.js';
 import { STRINGS } from './strings.js';
@@ -211,6 +212,96 @@ function describeProblemPaths(problems) {
 }
 
 /**
+ * Runs `obs_test_connection` and renders the result — the manual Test
+ * Connection button's own logic, extracted so it can also be run
+ * automatically when actively switching into OBS mode (main.js), and as
+ * Start Capture Batch's own pre-flight below. Deliberately NOT run at app
+ * startup even when OBS mode is already the persisted choice — OBS is the
+ * user's own program, not expected to already be running just because
+ * dod-tools opened, same as HLAE.
+ *
+ * `auto` skips the button disable/relabel churn (there was no click to
+ * originate it) but still populates the same status panel — quiet the same
+ * way `obs_check_orphan` is quiet at startup: "OBS is not running yet" is
+ * the ordinary case here, not something to interrupt the user over.
+ *
+ * Lives here rather than main.js (where the OBS Connection UI is otherwise
+ * wired up) specifically so Start Capture Batch's click handler below can
+ * call it directly — main.js already imports from this module, so importing
+ * this back the other way would be circular.
+ */
+export async function runObsConnectionTest({ auto = false } = {}) {
+  const btn = document.querySelector('#obs-test-btn');
+  const status = document.querySelector('#obs-status');
+  if (!status) return;
+  const label = btn ? btn.textContent : '';
+  if (!auto && btn) { btn.disabled = true; btn.textContent = STRINGS.CAPTURE_CONFIG.OBS_TESTING; }
+  status.style.display = '';
+  status.textContent = STRINGS.CAPTURE_CONFIG.OBS_TESTING;
+  try {
+    const report = await invoke('obs_test_connection', {
+      host: document.querySelector('#config-obs-host')?.value?.trim() || '127.0.0.1',
+      port: parseInt(document.querySelector('#config-obs-port')?.value, 10) || 4455,
+      password: document.querySelector('#config-obs-password')?.value || '',
+      gameWidth: parseInt(document.querySelector('#config-res-width')?.value, 10) || 1280,
+      gameHeight: parseInt(document.querySelector('#config-res-height')?.value, 10) || 720,
+      captureFps: parseInt(document.querySelector('#config-capture-fps')?.value, 10) || 300,
+    });
+    renderObsReport(report);
+  } catch (e) {
+    // Every invoke needs this: without it a Rust-side failure is swallowed
+    // and the button simply appears to do nothing.
+    status.textContent = STRINGS.CAPTURE_CONFIG.obsTestFailed(e);
+    setObsConnected(false);
+  } finally {
+    if (!auto && btn) { btn.disabled = false; btn.textContent = label || STRINGS.CAPTURE_CONFIG.OBS_TEST_BUTTON; }
+    // Whatever this check found, Start Capture Batch's gate (issue #147)
+    // needs to reflect it immediately, not wait for some unrelated field to
+    // trigger the next refreshLaunchGuard().
+    refreshLaunchGuard();
+  }
+}
+
+/**
+ * Renders an `obs_test_connection` result into the status row.
+ *
+ * Warnings are shown rather than swallowed: the canvas mismatch in particular
+ * costs most of the picture's detail and has no visible symptom, so it would
+ * otherwise be found only by comparing a finished clip against expectations.
+ * Should be rare now that `obs_test_connection` provisions dod-tools' own
+ * profile/scene itself rather than validating whatever the user picked, but
+ * still worth surfacing if OBS itself refuses one of those settings.
+ */
+function renderObsReport(report) {
+  const status = document.querySelector('#obs-status');
+  if (!status) return;
+  status.style.display = '';
+
+  setObsConnected(!!report?.connected);
+
+  if (!report?.connected) {
+    status.textContent = report?.error || STRINGS.CAPTURE_CONFIG.OBS_UNREACHABLE;
+    return;
+  }
+
+  const lines = [
+    STRINGS.CAPTURE_CONFIG.obsConnectedSummary(report.obs_version, report.websocket_version),
+    // Read-only — dod-tools always targets its own fixed profile/scene now,
+    // there is nothing here for the user to pick.
+    STRINGS.CAPTURE_CONFIG.obsUsingSummary(report.current_profile, report.current_scene),
+    STRINGS.CAPTURE_CONFIG.obsCanvasSummary(report.canvas, report.output, report.fps),
+    STRINGS.CAPTURE_CONFIG.obsRecordingToSummary(report.record_directory),
+  ];
+  if (report.missing_requests?.length) {
+    lines.push(STRINGS.CAPTURE_CONFIG.obsMissingRequests(report.missing_requests));
+  }
+  if (report.recording) lines.push(STRINGS.CAPTURE_CONFIG.OBS_ALREADY_RECORDING);
+  if (report.streaming) lines.push(STRINGS.CAPTURE_CONFIG.OBS_ALREADY_STREAMING);
+  for (const w of report.warnings || []) lines.push(w);
+  status.textContent = lines.join('\n');
+}
+
+/**
  * Recomputes required-vs-available disk space and hard-locks the Launch
  * button (rather than just toasting at click time) whenever the capture
  * pool can't cover it — including the zero-drive case, which previously
@@ -304,12 +395,15 @@ export async function refreshLaunchGuard(state) {
   // Issue #147: nothing used to stop a batch from starting in OBS mode with
   // OBS closed or unauthenticated — it failed deep inside the capture engine
   // instead of up front. Reflects obs_status.js's own most recent check
-  // (main.js runs it manually, on switching into OBS mode, and at startup)
-  // rather than re-querying OBS here; "never checked yet" blocks the same as
-  // "checked and unreachable" — both mean this batch cannot be trusted to
-  // actually record anything.
+  // (main.js runs it on switching into OBS mode; this module's own
+  // runObsConnectionTest also runs fresh as Start Capture Batch's own
+  // pre-flight, below) rather than re-querying OBS here. Deliberately does
+  // NOT block on "never checked yet" — OBS is not expected to already be
+  // running just because dod-tools opened, and the Start Capture Batch click
+  // handler checks for real before ever dispatching a batch. Only an
+  // actually-failed check blocks the button proactively.
   const obsMode = document.querySelector('#config-capture-mode')?.value === 'obs';
-  const obsNotReady = obsMode && !isObsConnected();
+  const obsNotReady = obsMode && obsConnectionChecked() && !isObsConnected();
   const blocked = obsNotReady || noHighlightsSelected || noDrivesConfigured || noUsableSpace || insufficientSpace;
 
   if (!capturingInFlight) {
@@ -321,9 +415,7 @@ export async function refreshLaunchGuard(state) {
     // means this batch cannot record anything at all.
     if (obsNotReady) {
       warningEl.style.color = '#f44336';
-      warningEl.textContent = obsConnectionChecked()
-        ? STRINGS.CAPTURE.OBS_NOT_CONNECTED_WARNING
-        : STRINGS.CAPTURE.OBS_CHECKING_WARNING;
+      warningEl.textContent = STRINGS.CAPTURE.OBS_NOT_CONNECTED_WARNING;
       warningEl.style.display = 'block';
     } else if (noHighlightsSelected) {
       warningEl.style.color = '#64b5f6';
@@ -1033,6 +1125,20 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
   if (startBtn) {
     startBtn.addEventListener('click', async () => {
       const state = getState ? getState() : { scanPaths: [], targetDrives: [], currentScannedDemos: [] };
+
+      // OBS mode: verify live, right before committing to a batch, rather
+      // than trusting whatever a check found minutes (or a whole session)
+      // ago — OBS may not have even been open the last time anything
+      // checked. This is the actual connectivity check now; see
+      // runObsConnectionTest's own doc comment for why it isn't run
+      // proactively at app startup instead.
+      if (document.querySelector('#config-capture-mode')?.value === 'obs') {
+        await runObsConnectionTest();
+        if (!isObsConnected()) {
+          showToast(STRINGS.CAPTURE.OBS_NOT_CONNECTED_WARNING, 'error');
+          return;
+        }
+      }
 
       // Hard safety gate — recomputed fresh on every click regardless of the
       // button's current disabled state, so a stale/unrefreshed guard can

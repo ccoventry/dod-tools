@@ -368,7 +368,6 @@ export const STRINGS = {
     NO_HIGHLIGHTS_SELECTED_WARNING: 'No highlights selected — pick at least one in the Highlights tab before starting a capture.',
     NO_DRIVES_CONFIGURED_WARNING: 'No Capture Output directories configured — add at least one with free space before starting a capture.',
     OBS_NOT_CONNECTED_WARNING: 'Not connected to OBS — capture mode is OBS, but the last connection check failed. Fix the connection in Configuration → Output Format before starting a capture.',
-    OBS_CHECKING_WARNING: 'Checking the OBS connection…',
     // Measured 2026-08-28, see docs/direct_to_video_capture.md. Spelled out
     // because both halves report success and the broken output only shows up
     // after rendering — the user has no other way to find out.
