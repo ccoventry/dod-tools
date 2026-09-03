@@ -309,7 +309,7 @@ export const STRINGS = {
     INITIAL_DELAY_HINT: 'Time between the demo loading and fast-forward starting.',
     // Timing diagram (#150) — a visual timeline under the fields above,
     // showing how they relate to each other and to the recording window.
-    timingDiagramInitialDelayNote: (v) => `Once per demo, before the first fast-forward: Initial Delay (${v}s).`,
+    timingDiagramInitialDelayNote: (v) => `This timeline starts after Initial Delay (${v}s) has already passed — a once-per-demo wait, not part of the per-clip cycle below.`,
     TIMING_DIAGRAM_COL_TIME: 'Relative Time',
     TIMING_DIAGRAM_COL_EVENT: 'Event',
     // Signed offset from the first kill (0.0s) — matches the pre-Tauri egui

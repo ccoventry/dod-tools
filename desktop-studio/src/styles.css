@@ -693,6 +693,18 @@ button.primary-btn:hover:not(:disabled) {
   max-width: 420px;
 }
 
+/* Sits directly above the table it explains, styled distinctly from the
+   plain .setting-hint paragraphs above the fields — the goal is to read as
+   "note about this table" rather than another field's own hint. */
+.timing-diagram-caption {
+  margin: 0 0 6px;
+  padding-bottom: 6px;
+  font-size: 11px;
+  font-style: italic;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border-color);
+}
+
 .timing-diagram-table {
   width: 100%;
   border-collapse: collapse;
