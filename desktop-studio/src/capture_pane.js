@@ -73,6 +73,48 @@ const FIELDS_THAT_BECOME_COMMANDS = [
   '#config-decal-flush',
 ];
 
+// Illustrative gap between the two kill anchors in the timing diagram below
+// — a real streak's length varies per capture; this is just enough to make
+// Start Lead/Stop Trail visually distinct from Pre-roll/Post-roll.
+const TIMING_DIAGRAM_ILLUSTRATIVE_STREAK_SECONDS = 8.0;
+
+/**
+ * Rebuilds the Timings tab's execution-timeline table (#150) — revives the
+ * pre-Tauri egui build's "Mock Execution Timeline" (native/src/bin/gui/views/
+ * capture/panels.rs, dropped in the egui purge): a sorted list of events at
+ * their time relative to the first kill (0.0s), not a to-scale bar. Called
+ * once at init and on every `input` event from the five timing fields.
+ */
+export function renderTimingDiagram() {
+  const preRoll = parseFloat(document.querySelector('#config-pre-roll')?.value) || 0;
+  const postRoll = parseFloat(document.querySelector('#config-post-roll')?.value) || 0;
+  const startLead = parseFloat(document.querySelector('#config-record-start-lead')?.value) || 0;
+  const stopTrail = parseFloat(document.querySelector('#config-record-stop-trail')?.value) || 0;
+  const initialDelay = parseFloat(document.querySelector('#config-initial-delay')?.value) || 0;
+  const streak = TIMING_DIAGRAM_ILLUSTRATIVE_STREAK_SECONDS;
+
+  const note = document.querySelector('#timing-diagram-initial-delay-note');
+  if (note) note.textContent = STRINGS.CAPTURE_CONFIG.timingDiagramInitialDelayNote(initialDelay);
+
+  const C = STRINGS.CAPTURE_CONFIG;
+  const events = [
+    { time: -(startLead + preRoll), label: C.timingDiagramPreRollEvent(preRoll), anchor: false },
+    { time: -startLead, label: C.timingDiagramRecordStartEvent(startLead), anchor: false },
+    { time: 0, label: C.TIMING_DIAGRAM_FIRST_KILL_EVENT, anchor: true },
+    { time: streak, label: C.TIMING_DIAGRAM_LAST_KILL_EVENT, anchor: true },
+    { time: streak + stopTrail, label: C.timingDiagramRecordStopEvent(stopTrail), anchor: false },
+    { time: streak + stopTrail + postRoll, label: C.timingDiagramPostRollEvent(postRoll), anchor: false },
+  ].sort((a, b) => a.time - b.time);
+
+  const tbody = document.querySelector('#timing-diagram-events');
+  if (!tbody) return;
+  tbody.innerHTML = events.map((e) => `
+    <tr${e.anchor ? ' class="timing-diagram-anchor"' : ''}>
+      <td class="timing-diagram-time">${C.timingDiagramTime(e.time)}</td>
+      <td>${e.label}</td>
+    </tr>`).join('');
+}
+
 /**
  * Re-check the game's config files against the commands a capture would apply.
  *
@@ -683,6 +725,13 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
     const el = document.querySelector(selector);
     if (el) el.addEventListener('input', () => notifySettingsChange());
   });
+  // Keeps the Timings tab's visual timeline (#150) in step with whichever
+  // of these five fields was just edited.
+  ['#config-pre-roll', '#config-post-roll', '#config-record-start-lead',
+   '#config-record-stop-trail', '#config-initial-delay'].forEach(selector => {
+    document.querySelector(selector)?.addEventListener('input', renderTimingDiagram);
+  });
+  renderTimingDiagram();
   // Checkboxes read by persistAppSettings/buildCapturePayload but with no
   // change listener of their own — same missing-wiring bug as the Timing
   // Options fields above, just on Path Routing / Capture Output checkboxes.
