@@ -103,20 +103,21 @@ function applyProcessModalCopy(forBatch) {
   if (copyBtn) copyBtn.style.display = forBatch ? 'none' : '';
 }
 
-/** Reflects current selection state onto the Launch Preview (per-demo) and
- *  Generate All Previews (global) buttons — disabled whenever there are zero
- *  selected highlights in their respective scope. */
+/** Reflects current demo-load state onto the Launch Preview (per-demo) and
+ *  Generate All Previews (global) buttons — disabled only when there is no
+ *  demo to act on at all. Neither button is gated on highlight selection
+ *  (see #128): clicking with nothing checked now reaches the backend and
+ *  surfaces its own "No highlights selected to preview." error as a toast,
+ *  rather than silently no-op'ing with zero feedback. */
 function updatePreviewButtonStates() {
   const launchBtn = document.querySelector('#btn-launch-preview');
   if (launchBtn) {
-    const hasLocalSelection = !!(currentDemo && currentDemo.streaks && currentDemo.streaks.some(s => s.selected));
-    launchBtn.disabled = !hasLocalSelection;
+    launchBtn.disabled = !currentDemo;
   }
   const generateAllBtn = document.querySelector('#btn-generate-all-previews');
   if (generateAllBtn) {
     const allDemos = currentGetAllDemos ? currentGetAllDemos() : [];
-    const hasGlobalSelection = (allDemos || []).some(d => (d.streaks || []).some(s => s.selected));
-    generateAllBtn.disabled = !hasGlobalSelection;
+    generateAllBtn.disabled = (allDemos || []).length === 0;
   }
   if (currentOnSelectionChange) currentOnSelectionChange();
 }
@@ -230,7 +231,6 @@ window.addEventListener("DOMContentLoaded", () => {
       }
       if (!currentDemo || !currentDemo.streaks) return;
       const selected = currentDemo.streaks.filter(s => s.selected);
-      if (selected.length === 0) return;
 
       let engineAlreadyRunning = false;
       try {
@@ -305,7 +305,6 @@ window.addEventListener("DOMContentLoaded", () => {
       }
       const allDemos = currentGetAllDemos ? currentGetAllDemos() : [];
       const allSelected = (allDemos || []).flatMap(d => (d.streaks || []).filter(s => s.selected));
-      if (allSelected.length === 0) return;
 
       btnGenerateAllPreviews.disabled = true;
       const originalLabel = btnGenerateAllPreviews.textContent;
