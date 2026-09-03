@@ -19,7 +19,7 @@ import { initMapWarnings, refreshMapWarnings, resetMapWarnings } from './map_war
 import { initRollFloors } from './roll_floors.js';
 
 import { renderDetailView, initDetailPane } from './detail_pane.js';
-import { initCaptureUI, getCommandsState, hydrateCommandsState, refreshLaunchGuard, refreshInitCommandWarnings } from './capture_pane.js';
+import { initCaptureUI, getCommandsState, hydrateCommandsState, refreshLaunchGuard, refreshInitCommandWarnings, renderTimingDiagram } from './capture_pane.js';
 import { initRenderUI, checkRenderRecoveryOnStartup } from './render_pane.js';
 import { initAuditorPane } from './auditor_pane.js';
 import { initThemedConfirm, themedConfirm } from './themed_confirm.js';
@@ -701,6 +701,9 @@ window.addEventListener("DOMContentLoaded", async () => {
         const inputEl = document.querySelector('#config-initial-delay');
         if (inputEl) inputEl.value = settings.initial_delay;
       }
+      // All five timing fields are set by this point — reflect the loaded
+      // values in the Timings tab's visual timeline (#150).
+      renderTimingDiagram();
       if (settings.fast_forward_speed) {
         const inputEl = document.querySelector('#config-fast-forward-speed');
         if (inputEl) inputEl.value = settings.fast_forward_speed;

@@ -298,12 +298,32 @@ export const STRINGS = {
     SAVE_LOCAL_PATCHED_LABEL: 'Save Local Patched Copy',
     ADD_CONDEBUG_LABEL: 'Add Condebug',
     PRE_ROLL_LABEL: 'Pre-roll (s):',
+    PRE_ROLL_HINT: 'Time between fast-forward stopping and capture starting.',
     POST_ROLL_LABEL: 'Post-roll (s):',
+    POST_ROLL_HINT: 'Time between capture stopping and fast-forward resuming.',
     START_LEAD_LABEL: 'Start Lead (s):',
+    START_LEAD_HINT: 'Time between capture starting and the first kill.',
     STOP_TRAIL_LABEL: 'Stop Trail (s):',
+    STOP_TRAIL_HINT: 'Time between the last kill and capture stopping.',
     INITIAL_DELAY_LABEL: 'Initial Delay (s):',
+    INITIAL_DELAY_HINT: 'Time between the demo loading and fast-forward starting.',
+    // Timing diagram (#150) — a visual timeline under the fields above,
+    // showing how they relate to each other and to the recording window.
+    timingDiagramInitialDelayNote: (v) => `This timeline starts after Initial Delay (${v}s) has already passed — a once-per-demo wait, not part of the per-clip cycle below.`,
+    TIMING_DIAGRAM_COL_TIME: 'Relative Time',
+    TIMING_DIAGRAM_COL_EVENT: 'Event',
+    // Signed offset from the first kill (0.0s) — matches the pre-Tauri egui
+    // build's "+{n} sec" / "{n} sec" formatting.
+    timingDiagramTime: (v) => (v >= 0 ? `+${v.toFixed(1)}s` : `${v.toFixed(1)}s`),
+    timingDiagramPreRollEvent: (v) => `Pre-roll ends (speed back to normal) — Pre-roll is ${v}s`,
+    timingDiagramRecordStartEvent: (v) => `Recording starts — Start Lead is ${v}s`,
+    TIMING_DIAGRAM_FIRST_KILL_EVENT: 'First kill (anchor)',
+    TIMING_DIAGRAM_LAST_KILL_EVENT: 'Last kill (anchor — illustrative gap, not a real streak length)',
+    timingDiagramRecordStopEvent: (v) => `Recording stops — Stop Trail is ${v}s`,
+    timingDiagramPostRollEvent: (v) => `Post-roll ends, fast-forward resumes — Post-roll is ${v}s`,
     FF_SPEED_LABEL: 'FF Speed (x):',
     FF_SPEED_TITLE: 'Locked, matching dev — not currently user-editable.',
+    FF_SPEED_HINT: 'How fast playback races toward each clip between kills, as a multiple of real time. Locked at 0.05x, matching dev — not currently user-editable.',
     CAPTURE_FPS_LABEL: 'Capture FPS:',
     // Worth stating outright. This used to sit under Timing Options, and the
     // adjacency invited exactly the confusion that cost real time: the demo's
