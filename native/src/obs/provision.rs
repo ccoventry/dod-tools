@@ -137,15 +137,17 @@ fn ensure_game_capture_source(
         "priority": 0,
         "anti_cheat_hook": false,
     });
-    if client.input_names()?.iter().any(|i| i == GAME_CAPTURE_SOURCE) {
+    let existed = client.input_names()?.iter().any(|i| i == GAME_CAPTURE_SOURCE);
+    if existed {
         client.set_input_settings(GAME_CAPTURE_SOURCE, settings)?;
     } else {
         client.create_input(SCENE_NAME, GAME_CAPTURE_SOURCE, "game_capture", settings)?;
     }
+    ensure_scene_item(client, GAME_CAPTURE_SOURCE, existed)?;
     // Best-effort: a canvas already matching the game's resolution (set just
     // above, in ensure_dod_tools_setup) makes this a no-op in practice, and a
-    // source that was just freshly created is worth more than failing
-    // provisioning over its bounding box specifically.
+    // source that's now in the scene is worth more than failing provisioning
+    // over its bounding box specifically.
     if let Ok(item_id) = client.scene_item_id(SCENE_NAME, GAME_CAPTURE_SOURCE) {
         let _ = client.set_scene_item_bounds(SCENE_NAME, item_id, width as f64, height as f64);
     }
@@ -157,10 +159,29 @@ fn ensure_game_audio_source(client: &mut ObsClient) -> Result<(), ObsError> {
         "window": HL_WINDOW,
         "priority": 0,
     });
-    if client.input_names()?.iter().any(|i| i == GAME_AUDIO_SOURCE) {
+    let existed = client.input_names()?.iter().any(|i| i == GAME_AUDIO_SOURCE);
+    if existed {
         client.set_input_settings(GAME_AUDIO_SOURCE, settings)?;
     } else {
         client.create_input(SCENE_NAME, GAME_AUDIO_SOURCE, "wasapi_process_output_capture", settings)?;
     }
-    Ok(())
+    ensure_scene_item(client, GAME_AUDIO_SOURCE, existed)
+}
+
+/// Makes sure `source` is actually placed in `SCENE_NAME` — only relevant
+/// when the input `existed` already (inputs are global objects in
+/// obs-websocket's model, so `create_input` above never ran for one, and
+/// never added it to *this* scene). Confirmed necessary, not theoretical: an
+/// input matching one of these exact names from an earlier manual setup
+/// left `[DoD-Tools] Capture` created with no sources in it at all, since
+/// `set_input_settings` repairs a global input's settings but places it
+/// nowhere.
+fn ensure_scene_item(client: &mut ObsClient, source: &str, existed: bool) -> Result<(), ObsError> {
+    if !existed {
+        return Ok(()); // create_input already added it to SCENE_NAME
+    }
+    if client.scene_item_id(SCENE_NAME, source).is_ok() {
+        return Ok(()); // already placed here, nothing to do
+    }
+    client.create_scene_item(SCENE_NAME, source)
 }

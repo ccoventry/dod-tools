@@ -138,6 +138,7 @@ const REQUIRED_REQUESTS: &[&str] = &[
     "GetInputSettings",
     "SetInputSettings",
     "CreateInput",
+    "CreateSceneItem",
     "GetSceneItemId",
     "SetSceneItemTransform",
     "SetInputMute",
@@ -546,6 +547,22 @@ impl ObsClient {
                 "inputKind": kind,
                 "inputSettings": settings,
             }),
+        )?;
+        Ok(())
+    }
+
+    /// Adds an *existing* input (by name) as a scene item in `scene` — the
+    /// input itself is untouched, only its placement in this particular
+    /// scene changes. Needed alongside `create_input`: inputs are global in
+    /// obs-websocket's model, so an input that already existed somewhere
+    /// else (a prior manual setup, an earlier dod-tools run against a scene
+    /// that has since been renamed) never goes through `create_input` at
+    /// all — `provision::ensure_game_capture_source`/`ensure_game_audio_source`
+    /// call this when `scene_item_id` comes back empty for exactly that case.
+    pub fn create_scene_item(&mut self, scene: &str, source: &str) -> Result<(), ObsError> {
+        self.request(
+            "CreateSceneItem",
+            json!({ "sceneName": scene, "sourceName": source }),
         )?;
         Ok(())
     }
