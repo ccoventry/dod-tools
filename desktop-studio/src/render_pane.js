@@ -7,7 +7,7 @@ import {
   resetRenderJob,
   setRenderJobCodec,
   getExportPoolFreeGb,
-  getExportReservationTotalGb,
+  getRenderRequiredEstimateGb,
   checkRenderAutosave,
   discardRenderAutosave,
   recoverRenderBatch,
@@ -19,6 +19,11 @@ import { STRINGS } from './strings.js';
 import { notify } from './os_notifications.js';
 
 let jobs = []; // RenderJobView[] — latest snapshot from 'render_jobs_snapshot'
+// id:status pairs from the last snapshot Export Pool Free/Required
+// (Estimated) were refreshed against — lets the snapshot listener tell "a
+// job was added/removed/changed status" (worth a refresh) apart from "only
+// progress% ticked" (not worth one), without a blind polling interval.
+let lastJobsFingerprint = null;
 
 function esc(s) {
   return String(s ?? '')
@@ -285,14 +290,14 @@ async function refreshExportPoolFree(getExportDirs) {
   }
 
   // Issue #119: mirrors Capture's Free+Required footer pair. Independent of
-  // getExportDirs — the reservation ledger reports whatever is currently
-  // claimed across drives regardless of how many export directories are
-  // configured, so this isn't gated on dirs.length the way the free-space
-  // half above is.
+  // getExportDirs — sums every Queued/Rendering job's own estimate
+  // regardless of how many export directories are configured, so this isn't
+  // gated on dirs.length the way the free-space half above is.
   const footerRequiredEl = document.querySelector('#render-footer-required-space');
   if (footerRequiredEl) {
-    const reservedGb = await getExportReservationTotalGb();
-    footerRequiredEl.textContent = STRINGS.RENDER.requiredEstimatedFooter(reservedGb.toFixed(2));
+    const requiredGb = (await getRenderRequiredEstimateGb()) ?? 0;
+    footerRequiredEl.textContent = STRINGS.RENDER.requiredEstimatedFooter(requiredGb.toFixed(2));
+    footerRequiredEl.title = STRINGS.RENDER.REQUIRED_ESTIMATED_FOOTER_TITLE;
   }
 }
 
@@ -415,6 +420,17 @@ export function initRenderUI(getCaptureLocations, getExportDirs, onSettingsChang
     if (scanRenderBtn) scanRenderBtn.disabled = activeOrQueued > 0;
     if (startRenderBtn) startRenderBtn.disabled = !(queuedCount > 0 && renderingCount === 0);
     if (cancelRenderBtn) cancelRenderBtn.disabled = activeOrQueued === 0;
+
+    // Export Pool Free / Required (Estimated) only change when a job is
+    // added, removed, or crosses a status boundary (started, finished,
+    // cancelled, reset) — not on every progress-percentage tick a snapshot
+    // can carry. Comparing id:status fingerprints skips the refresh (and its
+    // two IPC round-trips) on the ticks that can't have moved either figure.
+    const fingerprint = jobs.map((j) => `${j.id}:${j.status}`).join('|');
+    if (fingerprint !== lastJobsFingerprint) {
+      lastJobsFingerprint = fingerprint;
+      refreshExportPoolFree(getExportDirs);
+    }
   });
 
   listen('render_batch_finished', () => {
@@ -566,8 +582,9 @@ export function initRenderUI(getCaptureLocations, getExportDirs, onSettingsChang
   if (codecEl) codecEl.addEventListener('change', checkNvencConcurrencyWarning);
   if (maxConcurrentEl) maxConcurrentEl.addEventListener('change', checkNvencConcurrencyWarning);
 
+  // Paints once at startup (before any snapshot has arrived, so before
+  // anything could have changed) — the `render_jobs_snapshot` listener above
+  // takes over from here, refreshing on every add/remove/status change
+  // instead of blindly polling.
   refreshExportPoolFree(getExportDirs);
-  // Re-check free space periodically while the pane is open — cheap
-  // filesystem calls, avoids the readout going stale during a long batch.
-  setInterval(() => refreshExportPoolFree(getExportDirs), 15000);
 }

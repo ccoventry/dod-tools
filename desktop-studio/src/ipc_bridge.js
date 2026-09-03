@@ -329,13 +329,14 @@ export async function getExportPoolFreeGb(directories) {
     });
 }
 
-/** Sum of everything currently reserved across every export drive — the JIT
- *  ledger of bytes each in-flight render job has provisionally claimed. A
- *  loose upper bound, not a tight prediction (issue #119). */
-export async function getExportReservationTotalGb() {
-  return invoke("get_export_reservation_total_gb")
+/** Summed required-bytes estimate across every job still ahead of the export
+ *  pool (Queued + Rendering, not Finished/Error/Cancelled). A loose upper
+ *  bound, not a tight prediction — codec compression isn't known ahead of
+ *  time (issue #119). */
+export async function getRenderRequiredEstimateGb() {
+  return invoke("get_render_required_estimate_gb")
     .catch((err) => {
-      console.error("IPC Execution Error (get_export_reservation_total_gb):", err);
+      console.error("IPC Execution Error (get_render_required_estimate_gb):", err);
       return 0;
     });
 }

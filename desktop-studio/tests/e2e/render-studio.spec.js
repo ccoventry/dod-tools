@@ -194,6 +194,50 @@ test.describe('scan stages a batch, Start is a separate step', () => {
   });
 });
 
+test.describe('Export Pool Free / Required (Over-estimated) footer refresh', () => {
+  test('a snapshot with Queued/Rendering jobs calls get_render_required_estimate_gb and shows the result', async ({ page }) => {
+    await gotoHarness(page);
+    await page.evaluate(() => {
+      window.__mockInvokeHandlers['get_render_required_estimate_gb'] = () => 42.5;
+    });
+    await emitSnapshot(page, [job({ id: '0', status: 'Queued' })]);
+    await expect(page.locator('#render-footer-required-space')).toHaveText('Required (Over-estimated): 42.50 GB');
+  });
+
+  test('a progress-only update (same id:status) does not re-call get_render_required_estimate_gb', async ({ page }) => {
+    await gotoHarness(page);
+    await emitSnapshot(page, [job({ id: '0', status: 'Rendering', progress: 10 })]);
+    const callsAfterFirst = (await invocationsFor(page, 'get_render_required_estimate_gb')).length;
+    await emitSnapshot(page, [job({ id: '0', status: 'Rendering', progress: 55 })]);
+    const callsAfterSecond = (await invocationsFor(page, 'get_render_required_estimate_gb')).length;
+    expect(callsAfterSecond).toBe(callsAfterFirst);
+  });
+
+  test('a status change (Queued -> Rendering) does re-call get_render_required_estimate_gb', async ({ page }) => {
+    await gotoHarness(page);
+    await emitSnapshot(page, [job({ id: '0', status: 'Queued' })]);
+    const callsAfterFirst = (await invocationsFor(page, 'get_render_required_estimate_gb')).length;
+    await emitSnapshot(page, [job({ id: '0', status: 'Rendering', progress: 5 })]);
+    const callsAfterSecond = (await invocationsFor(page, 'get_render_required_estimate_gb')).length;
+    expect(callsAfterSecond).toBe(callsAfterFirst + 1);
+  });
+
+  test('a job finishing (still present, status changes) re-calls it; a job disappearing from the snapshot also re-calls it', async ({ page }) => {
+    await gotoHarness(page);
+    await emitSnapshot(page, [job({ id: '0', status: 'Rendering' }), job({ id: '1', status: 'Queued' })]);
+    const callsBefore = (await invocationsFor(page, 'get_render_required_estimate_gb')).length;
+
+    await emitSnapshot(page, [job({ id: '0', status: 'Finished' }), job({ id: '1', status: 'Queued' })]);
+    const callsAfterFinish = (await invocationsFor(page, 'get_render_required_estimate_gb')).length;
+    expect(callsAfterFinish).toBe(callsBefore + 1);
+
+    // Simulates Remove: job '0' no longer appears in the snapshot at all.
+    await emitSnapshot(page, [job({ id: '1', status: 'Queued' })]);
+    const callsAfterRemove = (await invocationsFor(page, 'get_render_required_estimate_gb')).length;
+    expect(callsAfterRemove).toBe(callsAfterFinish + 1);
+  });
+});
+
 test.describe('Skip (keep original) toggle', () => {
   test('the Skip checkbox only appears for an OBS-shaped, Queued job', async ({ page }) => {
     await gotoHarness(page);

@@ -17,7 +17,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use native::hlcr::autosave::{RenderJob as AutosaveJob, RenderJobStatus as AutosaveJobStatus, RenderSessionData};
 use native::hlcr::config::{RenderCodec, RenderConfig};
-use native::hlcr::renderer::{hold_render_wake_lock, run_render_job, RenderUpdate, RenderWakeLock};
+use native::hlcr::renderer::{hold_render_wake_lock, job_reservation_estimate, run_render_job, RenderUpdate, RenderWakeLock};
 use native::hlcr::scanner::{scan_folder_background, clip_is_skip_eligible, ClipData};
 use native::shared::paths::take_key;
 use native::log_markdown;
@@ -693,17 +693,27 @@ pub async fn reset_render_job(app: AppHandle, state: tauri::State<'_, RenderMana
     Ok(())
 }
 
-/// Sum of everything currently reserved across every export drive in
-/// `export_reservations` — the JIT ledger of bytes each in-flight
-/// `run_render_job` has provisionally claimed. Exposed so the Render footer
-/// can show a "Required (Estimated)" figure mirroring Capture's own
-/// Free+Required pair (issue #119). Deliberately a loose upper bound, not a
-/// tight prediction, unlike Capture's figure — see `export_reservations`'
-/// own doc comment and #116's PR description for real-vs-estimated size
-/// ratios observed live (~70-160x for h264_nvenc).
+/// Summed required-bytes estimate across every job still ahead of the
+/// export pool — Queued and Rendering, not Finished/Error/Cancelled, which
+/// have either already landed on disk or never will. Exposed so the Render
+/// footer can show a "Required (Estimated)" figure mirroring Capture's own
+/// Free+Required pair (issue #119).
+///
+/// Deliberately whole-queue, not just `export_reservations` (the JIT ledger,
+/// which only ever holds bytes for jobs *currently* rendering) — a figure
+/// that only reflects what's already in flight can't answer "will my batch
+/// fit," which is the question this exists to answer. And deliberately a
+/// loose upper bound, not a tight prediction, unlike Capture's figure — see
+/// `job_reservation_estimate`'s own doc comment and #116's PR description
+/// for real-vs-estimated size ratios observed live (~70-160x for
+/// h264_nvenc). The frontend's label says so explicitly rather than implying
+/// a number this loose is a real prediction.
 #[tauri::command]
-pub fn get_export_reservation_total_gb(state: tauri::State<'_, RenderManager>) -> f64 {
-    let total: u64 = state.export_reservations.lock().unwrap().values().sum();
+pub fn get_render_required_estimate_gb(state: tauri::State<'_, RenderManager>) -> f64 {
+    let total: u64 = state.jobs.lock().unwrap().iter()
+        .filter(|j| j.status == "Queued" || j.status == "Rendering")
+        .map(|j| job_reservation_estimate(&j.clip, j.codec == RenderCodec::SourceCopy))
+        .sum();
     total as f64 / 1_073_741_824.0
 }
 
