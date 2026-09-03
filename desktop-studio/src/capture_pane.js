@@ -1,4 +1,4 @@
-import { startCaptureBatch, cancelCaptureBatch, validatePaths, calculateExportPoolSpace, diagnoseCaptureOutputPaths, scanOrphanedPreviews, deleteOrphanedPreviews, checkEngineProcesses, launchStandaloneGame } from './ipc_bridge.js';
+import { startCaptureBatch, cancelCaptureBatch, validatePaths, calculateExportPoolSpace, diagnoseCaptureOutputPaths, scanOrphanedPreviews, deleteOrphanedPreviews, checkEngineProcesses, launchStandaloneGame, launchObs } from './ipc_bridge.js';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { themedConfirm } from './themed_confirm.js';
@@ -299,6 +299,53 @@ function renderObsReport(report) {
   if (report.streaming) lines.push(STRINGS.CAPTURE_CONFIG.OBS_ALREADY_STREAMING);
   for (const w of report.warnings || []) lines.push(w);
   status.textContent = lines.join('\n');
+}
+
+// obs-websocket does not start accepting connections the instant OBS's
+// process starts — OBS has its own window/plugin init to get through first
+// — so a single immediate retry after launching would still usually find it
+// unreachable. Polls instead of guessing a single fixed wait, since actual
+// startup time depends entirely on the machine and how many plugins/scenes
+// OBS has to load; not a measured constant like this codebase's other
+// timing figures, just a reasonable ceiling.
+const OBS_LAUNCH_RETRY_ATTEMPTS = 10;
+const OBS_LAUNCH_RETRY_DELAY_MS = 2000;
+
+/**
+ * Launches OBS (via the configured "OBS Path") and retries the connection —
+ * which also provisions dod-tools' own profile/scene, same as any other
+ * check — while it starts up. Used by Start Capture Batch's pre-flight below
+ * so OBS doesn't have to already be open (much like HLAE doesn't) — the
+ * batch can bring it up itself. Returns whether OBS ended up reachable.
+ *
+ * No-ops (returns false immediately) if no OBS path is configured — nothing
+ * to launch, and the caller's existing "not connected" error already covers
+ * that case correctly.
+ */
+async function launchObsAndRetry() {
+  const obsExePath = document.querySelector('#config-obs-exe-path')?.value?.trim();
+  if (!obsExePath) return false;
+
+  const status = document.querySelector('#obs-status');
+  if (status) {
+    status.style.display = '';
+    status.textContent = STRINGS.CAPTURE_CONFIG.OBS_LAUNCHING_AND_CONNECTING;
+  }
+
+  try {
+    await launchObs();
+  } catch (err) {
+    // Already toasted by ipc_bridge.js (missing/invalid path, etc.) — nothing
+    // was launched, so there is nothing to wait for.
+    return false;
+  }
+
+  for (let attempt = 0; attempt < OBS_LAUNCH_RETRY_ATTEMPTS; attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, OBS_LAUNCH_RETRY_DELAY_MS));
+    await runObsConnectionTest({ auto: true });
+    if (isObsConnected()) return true;
+  }
+  return false;
 }
 
 /**
@@ -1131,10 +1178,12 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
       // ago — OBS may not have even been open the last time anything
       // checked. This is the actual connectivity check now; see
       // runObsConnectionTest's own doc comment for why it isn't run
-      // proactively at app startup instead.
+      // proactively at app startup instead. If it's not reachable, launch
+      // it (much like HLAE doesn't need to already be open either) and wait
+      // for it to come up before giving up.
       if (document.querySelector('#config-capture-mode')?.value === 'obs') {
         await runObsConnectionTest();
-        if (!isObsConnected()) {
+        if (!isObsConnected() && !(await launchObsAndRetry())) {
           showToast(STRINGS.CAPTURE.OBS_NOT_CONNECTED_WARNING, 'error');
           return;
         }

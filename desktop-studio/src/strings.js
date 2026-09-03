@@ -213,6 +213,7 @@ export const STRINGS = {
         'The obs-websocket password, if OBS has authentication enabled. Use the Copy button in OBS rather than retyping it.',
     OBS_TEST_BUTTON: 'Test Connection',
     OBS_TESTING: 'Connecting…',
+    OBS_LAUNCHING_AND_CONNECTING: 'Launching OBS and waiting for it to be ready…',
     OBS_UNREACHABLE: 'Could not reach OBS.',
     obsConnectedSummary: (obsVersion, websocketVersion) =>
         `Connected — OBS ${obsVersion} (obs-websocket ${websocketVersion})`,
