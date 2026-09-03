@@ -56,12 +56,6 @@ pub struct CapturePayload {
     #[serde(default)]
     pub obs_password: String,
     #[serde(default)]
-    pub obs_scene: String,
-    #[serde(default)]
-    pub obs_scene_collection: String,
-    #[serde(default)]
-    pub obs_profile: String,
-    #[serde(default)]
     pub save_local_patched_copy: bool,
     #[serde(default = "default_add_condebug")]
     pub add_condebug: bool,
@@ -244,9 +238,6 @@ fn config_from_payload(payload: &CapturePayload) -> PatcherConfig {
         host: if payload.obs_host.is_empty() { "127.0.0.1".to_string() } else { payload.obs_host.clone() },
         port: if payload.obs_port == 0 { 4455 } else { payload.obs_port },
         password: payload.obs_password.clone(),
-        scene: payload.obs_scene.clone(),
-        scene_collection: payload.obs_scene_collection.clone(),
-        profile: payload.obs_profile.clone(),
     };
     cfg.save_local_patched_copy = payload.save_local_patched_copy;
     cfg.add_condebug = payload.add_condebug;
@@ -304,8 +295,8 @@ pub struct ObsConnectionReport {
     pub output: String,
     pub fps: f64,
     pub current_scene: String,
+    pub current_profile: String,
     pub scene_collection: String,
-    pub scenes: Vec<String>,
     pub warnings: Vec<String>,
 }
 
@@ -324,23 +315,28 @@ impl ObsConnectionReport {
             output: String::new(),
             fps: 0.0,
             current_scene: String::new(),
+            current_profile: String::new(),
             scene_collection: String::new(),
-            scenes: Vec::new(),
             warnings: Vec::new(),
         }
     }
 }
 
-/// Tests the OBS connection and reports everything the settings panel shows.
+/// Tests the OBS connection, provisions (and switches into) dod-tools' own
+/// profile and scene, and reports everything the settings panel shows.
 ///
-/// Read-only. Nothing about the user's OBS is changed by asking — no scene
-/// switch, no settings write — so this is safe to call whenever the panel is
-/// opened.
+/// **Not read-only**, unlike its old contract — this is the "validated" hook
+/// point `obs::provision::ensure_dod_tools_setup` runs from (see that
+/// module's docs): creates/repairs the dod-tools profile, scene and sources
+/// if needed, and switches into them. Refuses first if OBS is already
+/// recording or streaming under whatever the user's own profile is, so this
+/// never mutates live state out from under something unrelated. Called on
+/// every proactive check (mode switch, startup, manual Test Connection
+/// click) as well as before a real batch — see main.js's
+/// `runObsConnectionTest`.
 ///
-/// `game_width`/`game_height` are passed in so the report can flag the canvas
-/// mismatch that silently costs the most quality: a canvas larger than the game
-/// means the capture is scaled up onto it and the whole canvas scaled back
-/// down, discarding most of the pixels before the encoder sees them.
+/// `game_width`/`game_height`/`capture_fps` are what the profile's video
+/// settings get set to.
 #[tauri::command]
 pub async fn obs_test_connection(
     host: String,
@@ -348,6 +344,7 @@ pub async fn obs_test_connection(
     password: String,
     game_width: i32,
     game_height: i32,
+    capture_fps: i32,
 ) -> Result<ObsConnectionReport, String> {
     let url = format!("ws://{}:{}", if host.is_empty() { "127.0.0.1".into() } else { host }, if port == 0 { 4455 } else { port });
     tokio::task::spawn_blocking(move || {
@@ -355,11 +352,22 @@ pub async fn obs_test_connection(
             Ok(c) => c,
             Err(e) => return ObsConnectionReport::failed(e),
         };
+        if let Err(e) = client.refuse_if_busy() {
+            return ObsConnectionReport::failed(e);
+        }
+        if let Err(e) = native::obs::provision::ensure_dod_tools_setup(
+            &mut client,
+            game_width,
+            game_height,
+            capture_fps,
+            1,
+        ) {
+            return ObsConnectionReport::failed(e);
+        }
         let preflight = match client.preflight(game_width, game_height) {
             Ok(p) => p,
             Err(e) => return ObsConnectionReport::failed(e),
         };
-        let scenes = client.scene_names().unwrap_or_default();
         ObsConnectionReport {
             connected: true,
             error: None,
@@ -373,8 +381,8 @@ pub async fn obs_test_connection(
             output: format!("{}x{}", preflight.output_width, preflight.output_height),
             fps: preflight.fps,
             current_scene: preflight.current_scene,
+            current_profile: preflight.current_profile,
             scene_collection: preflight.scene_collection,
-            scenes,
             warnings: preflight.warnings,
         }
     })
@@ -1591,9 +1599,6 @@ mod tests {
             obs_host: String::new(),
             obs_port: 0,
             obs_password: String::new(),
-            obs_scene: String::new(),
-            obs_scene_collection: String::new(),
-            obs_profile: String::new(),
             save_local_patched_copy: false,
             add_condebug: true,
             streaks: Vec::new(),

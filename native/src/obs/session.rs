@@ -24,6 +24,7 @@ use crate::patch::ObsConfig;
 
 use super::client::{ObsClient, ObsError, ObsPreflight};
 use super::log_tail::{Marker, MarkerKind};
+use super::provision;
 use super::{STOP_MARKER, TRIGGER_MARKER};
 
 /// Stream folder a single-stream OBS take lands in.
@@ -87,7 +88,9 @@ pub struct ObsSession {
 }
 
 impl ObsSession {
-    /// Connects, checks the install, and switches to the configured scene.
+    /// Connects, refuses if OBS is busy with something else, provisions (and
+    /// switches into) dod-tools' own profile and scene, then checks the
+    /// install.
     ///
     /// Fails loudly rather than degrading: every failure here otherwise
     /// produces a batch that runs to completion and captures nothing, which is
@@ -97,27 +100,24 @@ impl ObsSession {
         take_folders: Vec<PathBuf>,
         game_width: i32,
         game_height: i32,
+        capture_fps: i32,
     ) -> Result<(Self, ObsPreflight), ObsError> {
         let mut client = ObsClient::connect(&cfg.address(), &cfg.password)?;
 
-        // Profile before preflight, deliberately: a profile bundles Video
-        // settings (canvas/output resolution, FPS), so switching it can
-        // change exactly what preflight is about to validate. Switching
-        // after preflight would validate the profile that is about to be
-        // replaced, not the one recording will actually use.
-        let previous_profile = if cfg.profile.is_empty() {
-            None
-        } else {
-            let current = client.profile_list().ok().map(|(_, current)| current);
-            if current.as_deref() != Some(cfg.profile.as_str()) {
-                client.set_profile(&cfg.profile)?;
-                log_markdown(&format!(
-                    "🎬 **OBS** — switched to profile `{}` for this batch (restored afterwards).",
-                    cfg.profile
-                ));
-            }
-            current
-        };
+        // Before anything below switches profile/scene — see
+        // ObsClient::refuse_if_busy's own doc comment for why the ordering
+        // matters.
+        client.refuse_if_busy()?;
+
+        // Provisioning switches profile before checking the rest of the
+        // install, deliberately: a profile bundles Video settings (canvas/
+        // output resolution, FPS), so switching it changes exactly what
+        // preflight is about to validate. It also hands back whatever was
+        // active before the switch, captured at the one moment that's
+        // knowable — after this call, "current" already reads back as
+        // dod-tools' own profile/scene.
+        let provision::ProvisionResult { previous_profile, previous_scene } =
+            provision::ensure_dod_tools_setup(&mut client, game_width, game_height, capture_fps, 1)?;
 
         let preflight = client.preflight(game_width, game_height)?;
 
@@ -130,44 +130,10 @@ impl ObsSession {
                 ),
             });
         }
-        if preflight.recording {
-            return Err(ObsError::Request {
-                request: "StartRecord".into(),
-                detail: "OBS is already recording. Stop it before starting a batch.".into(),
-            });
-        }
-        // Refuse rather than warn: driving somebody's recorder mid-stream is
-        // not a decision to make on their behalf, and the failure would be
-        // visible to their audience rather than to them.
-        if preflight.streaming {
-            return Err(ObsError::Request {
-                request: "StartRecord".into(),
-                detail: "OBS is streaming. dod-tools will not drive its recorder during a live \
-                         stream."
-                    .into(),
-            });
-        }
 
         for warning in &preflight.warnings {
             log_markdown(&format!("⚠️ **OBS** — {warning}"));
         }
-
-        // Switching scene is a live-state change, not a settings edit: it is
-        // reversible, destroys nothing, and is exactly what choosing a scene
-        // means. The previous one is remembered so the batch puts it back.
-        let previous_scene = if cfg.scene.is_empty() {
-            None
-        } else {
-            let current = client.current_scene().ok();
-            if current.as_deref() != Some(cfg.scene.as_str()) {
-                client.set_scene(&cfg.scene)?;
-                log_markdown(&format!(
-                    "🎬 **OBS** — switched to scene `{}` for this batch (restored afterwards).",
-                    cfg.scene
-                ));
-            }
-            current
-        };
 
         Ok((
             Self {

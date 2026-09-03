@@ -708,7 +708,7 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
    '#config-notify-captures-done', '#config-notify-renders-done', '#config-notify-error',
    // A <select> fires `change`, not `input` — it belongs here rather than in
    // the list above, which is wired for text/number/checkbox inputs.
-   '#config-capture-codec', '#config-capture-mode', '#config-obs-scene', '#config-obs-profile'].forEach(selector => {
+   '#config-capture-codec', '#config-capture-mode'].forEach(selector => {
     const el = document.querySelector(selector);
     if (el) el.addEventListener('change', () => notifySettingsChange());
   });
@@ -958,8 +958,6 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
     const obsHostVal = document.querySelector("#config-obs-host")?.value?.trim() || "127.0.0.1";
     const obsPortVal = parseInt(document.querySelector("#config-obs-port")?.value, 10) || 4455;
     const obsPasswordVal = document.querySelector("#config-obs-password")?.value || "";
-    const obsSceneVal = document.querySelector("#config-obs-scene")?.value || "";
-    const obsProfileVal = document.querySelector("#config-obs-profile")?.value || "";
     const saveLocalPatchedCopyVal = document.querySelector("#config-save-local-patched")?.checked || false;
     const addCondebugVal = document.querySelector("#config-add-condebug")?.checked || false;
 
@@ -1011,8 +1009,6 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
       obs_host: obsHostVal,
       obs_port: obsPortVal,
       obs_password: obsPasswordVal,
-      obs_scene: obsSceneVal,
-      obs_profile: obsProfileVal,
       save_local_patched_copy: saveLocalPatchedCopyVal,
       add_condebug: addCondebugVal,
       streaks: selectedStreaks,

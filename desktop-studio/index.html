@@ -239,6 +239,14 @@
                   <label for="config-capture-fps" data-str="CAPTURE_CONFIG.CAPTURE_FPS_LABEL" data-str-title="CAPTURE_CONFIG.CAPTURE_FPS_TITLE">Capture FPS:</label>
                   <input type="number" id="config-capture-fps" value="300" style="width: 80px;" data-str-title="CAPTURE_CONFIG.CAPTURE_FPS_TITLE" />
                 </div>
+                <!-- OBS mode only: this same field also drives OBS's own recording
+                     rate and the game's fps_max, so it's worth explaining what
+                     changes there — see applyCaptureModeUI's obs branch. -->
+                <p id="capture-fps-obs-hint" class="setting-hint" style="display: none;" data-str="CAPTURE_CONFIG.CAPTURE_FPS_OBS_HINT">
+                  In OBS mode, this also sets OBS's recording rate and the game's own fps_max, so
+                  the two stay in sync. It's a target, not a guarantee — actual output depends on
+                  your computer keeping up.
+                </p>
                 <div class="control-group">
                   <input type="checkbox" id="config-separate-hud" />
                   <label for="config-separate-hud" data-str="CAPTURE_CONFIG.SEPARATE_HUD_LABEL">Separate HUD</label>
@@ -293,10 +301,14 @@
                   </p>
                 </div>
 
-                <!-- Shown only in OBS mode. Read-only against the user's OBS:
-                     testing the connection switches no scene and writes no
-                     setting, so opening this panel cannot disturb a streaming
-                     setup. -->
+                <!-- Shown only in OBS mode. Testing the connection provisions
+                     dod-tools' own [DoD-Tools] profile/scene (creating or
+                     repairing it as needed) and switches into it — see
+                     obs::provision. It refuses first if OBS is already
+                     recording or streaming under something else, so it can
+                     never disturb an unrelated setup, but it is not read-only
+                     any more; there is no scene/profile picker here to make
+                     that promise moot. -->
                 <div id="obs-settings-group" style="display: none;">
                   <h4 data-str="CAPTURE_CONFIG.OBS_SECTION_TITLE">OBS Connection</h4>
                   <!-- Spawn-and-forget, same as the standalone "Launch Game
@@ -322,28 +334,17 @@
                            placeholder="From Tools → WebSocket Server Settings" style="flex: 1;" />
                     <button id="obs-test-btn" data-str="CAPTURE_CONFIG.OBS_TEST_BUTTON">Test Connection</button>
                   </div>
-                  <div class="control-group">
-                    <label for="config-obs-scene" data-str="CAPTURE_CONFIG.OBS_SCENE_LABEL">Scene:</label>
-                    <select id="config-obs-scene" data-str-title="CAPTURE_CONFIG.OBS_SCENE_TITLE" style="flex: 1;">
-                      <option value="" data-str="CAPTURE_CONFIG.OBS_SCENE_CURRENT">Use current scene</option>
-                    </select>
-                  </div>
-                  <div class="control-group">
-                    <label for="config-obs-profile" data-str="CAPTURE_CONFIG.OBS_PROFILE_LABEL">Profile:</label>
-                    <select id="config-obs-profile" data-str-title="CAPTURE_CONFIG.OBS_PROFILE_TITLE" style="flex: 1;">
-                      <option value="" data-str="CAPTURE_CONFIG.OBS_PROFILE_CURRENT">Use current profile</option>
-                    </select>
-                  </div>
                   <div id="obs-status" class="path-warning" style="display: none;"></div>
                   <p class="setting-hint" data-str="CAPTURE_CONFIG.OBS_ENABLE_HINT">
                     OBS Studio 28+ has obs-websocket built in. Enable it under Tools → WebSocket
                     Server Settings — the checkbox at the top of that dialog is the switch, not the
                     Connect Info panel.
                   </p>
-                  <p class="setting-hint" data-str="CAPTURE_CONFIG.OBS_FPS_HINT">
-                    Capture frame rate above what you're seeing is an OBS setting, not something
-                    dod-tools controls — set it under Settings → Output → Recording (or Settings →
-                    Video → Common FPS Values), not here.
+                  <p class="setting-hint" data-str="CAPTURE_CONFIG.OBS_PROVISION_HINT">
+                    dod-tools creates and manages its own OBS profile/scene ([DoD-Tools]) for
+                    capture — your own profiles, scenes and streaming setup are never touched.
+                    Canvas resolution and FPS come from the settings above; see the current
+                    profile/scene it's using once connected.
                   </p>
                 </div>
               </div>

@@ -110,6 +110,7 @@ pub struct ObsPreflight {
     pub output_height: i64,
     pub fps: f64,
     pub current_scene: String,
+    pub current_profile: String,
     pub scene_collection: String,
     /// Non-fatal problems worth showing the user — a canvas that does not match
     /// the game, a low frame rate, no audio source in the scene.
@@ -125,6 +126,21 @@ const REQUIRED_REQUESTS: &[&str] = &[
     "GetRecordDirectory",
     "GetVideoSettings",
     "GetSceneList",
+    // Added for the dod-tools-owned profile/scene auto-provisioning
+    // (see obs::provision) — every one of these is load-bearing for it now,
+    // not just advisory the way GetProfileParameter is below.
+    "GetProfileList",
+    "CreateProfile",
+    "SetCurrentProfile",
+    "SetVideoSettings",
+    "CreateScene",
+    "GetInputList",
+    "GetInputSettings",
+    "SetInputSettings",
+    "CreateInput",
+    "GetSceneItemId",
+    "SetSceneItemTransform",
+    "SetInputMute",
 ];
 
 pub struct ObsClient {
@@ -215,6 +231,7 @@ impl ObsClient {
         let collection = self
             .request("GetSceneCollectionList", json!({}))
             .unwrap_or(json!({}));
+        let current_profile = self.profile_list().map(|(_, current)| current).unwrap_or_default();
 
         let fps_num = video["fpsNumerator"].as_f64().unwrap_or(0.0);
         let fps_den = video["fpsDenominator"].as_f64().unwrap_or(1.0);
@@ -268,6 +285,7 @@ impl ObsClient {
             output_height,
             fps,
             current_scene: scene["currentProgramSceneName"].as_str().unwrap_or("").to_string(),
+            current_profile,
             scene_collection: collection["currentSceneCollectionName"]
                 .as_str()
                 .unwrap_or("")
@@ -281,6 +299,40 @@ impl ObsClient {
         Ok(self.request("GetRecordStatus", json!({}))?["outputActive"]
             .as_bool()
             .unwrap_or(false))
+    }
+
+    /// Whether OBS is streaming right now.
+    pub fn is_streaming(&mut self) -> Result<bool, ObsError> {
+        Ok(self.request("GetStreamStatus", json!({}))?["outputActive"]
+            .as_bool()
+            .unwrap_or(false))
+    }
+
+    /// Refuses if OBS is already recording or streaming, checked against
+    /// whatever is currently active — before anything below this call in the
+    /// connect path switches profile or scene.
+    ///
+    /// The ordering is the point: `obs::provision::ensure_dod_tools_setup`
+    /// mutates the user's live OBS (profile switch, scene switch, source
+    /// creation/repair), and that must never happen out from under a stream
+    /// that has nothing to do with dod-tools, or a recording already running
+    /// under whatever profile the user was on. Call this first.
+    pub fn refuse_if_busy(&mut self) -> Result<(), ObsError> {
+        if self.is_recording()? {
+            return Err(ObsError::Request {
+                request: "StartRecord".into(),
+                detail: "OBS is already recording. Stop it before starting a batch.".into(),
+            });
+        }
+        if self.is_streaming()? {
+            return Err(ObsError::Request {
+                request: "StartRecord".into(),
+                detail: "OBS is streaming. dod-tools will not drive its recorder during a live \
+                         stream."
+                    .into(),
+            });
+        }
+        Ok(())
     }
 
     /// Where OBS is currently set to write recordings.
@@ -430,6 +482,159 @@ impl ObsClient {
     /// and the reason the OBS path ships on Standard mode first.
     pub fn set_record_directory(&mut self, dir: &str) -> Result<(), ObsError> {
         self.request("SetRecordDirectory", json!({ "recordDirectory": dir }))?;
+        Ok(())
+    }
+
+    // ── dod-tools-owned profile/scene provisioning (obs::provision) ──────────
+    //
+    // Everything below writes to OBS, unlike `profile_param`/
+    // `output_settings_warnings` above, which are deliberately read-only —
+    // "the profile is the user's file, detect and warn, never write" — the
+    // same discipline CLAUDE.md holds the game's own .cfg files to. That still
+    // holds for the user's *own* profiles/scenes. What's below only ever
+    // touches the profile/scene/inputs dod-tools creates and names itself
+    // (obs::provision::PROFILE_NAME/SCENE_NAME) — never anything the user
+    // already had, which is the entire reason that profile/scene exists as
+    // its own dedicated thing instead of switching into whatever the user
+    // picked.
+
+    /// Creates a profile. Fails if one by this name already exists —
+    /// callers check `profile_list()` first.
+    pub fn create_profile(&mut self, name: &str) -> Result<(), ObsError> {
+        self.request("CreateProfile", json!({ "profileName": name }))?;
+        Ok(())
+    }
+
+    /// Creates an empty scene. Fails if one by this name already exists in
+    /// the current scene collection — callers check `scene_names()` first.
+    pub fn create_scene(&mut self, name: &str) -> Result<(), ObsError> {
+        self.request("CreateScene", json!({ "sceneName": name }))?;
+        Ok(())
+    }
+
+    /// Every input's name, across the whole OBS instance — inputs are global
+    /// objects in obs-websocket's model, not scoped to one scene, so this is
+    /// not the same question as "what's in scene X."
+    pub fn input_names(&mut self) -> Result<Vec<String>, ObsError> {
+        let list = self.request("GetInputList", json!({}))?;
+        Ok(list["inputs"]
+            .as_array()
+            .map(|v| {
+                v.iter()
+                    .filter_map(|s| s["inputName"].as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+
+    /// Creates a new input of `kind` inside `scene`, with `settings` applied
+    /// immediately. Fails if an input by this name already exists anywhere in
+    /// OBS (names are global) — callers check `input_names()` first and call
+    /// `set_input_settings` instead to repair an existing one.
+    pub fn create_input(
+        &mut self,
+        scene: &str,
+        name: &str,
+        kind: &str,
+        settings: Value,
+    ) -> Result<(), ObsError> {
+        self.request(
+            "CreateInput",
+            json!({
+                "sceneName": scene,
+                "inputName": name,
+                "inputKind": kind,
+                "inputSettings": settings,
+            }),
+        )?;
+        Ok(())
+    }
+
+    /// Overwrites an existing input's settings. `overlay: false` — a full
+    /// replace, not a merge, so a setting this call omits reverts to that
+    /// kind's default rather than surviving from whatever was there before.
+    /// That's the repair behaviour provisioning wants: a drifted or
+    /// hand-edited setting on the dod-tools-owned input gets put back
+    /// exactly, not partially.
+    pub fn set_input_settings(&mut self, name: &str, settings: Value) -> Result<(), ObsError> {
+        self.request(
+            "SetInputSettings",
+            json!({ "inputName": name, "inputSettings": settings, "overlay": false }),
+        )?;
+        Ok(())
+    }
+
+    /// Mutes or unmutes an input by name. Best-effort by design at the call
+    /// site: a renamed or removed default "Desktop Audio"/"Mic/Aux" input is
+    /// a real possibility on someone else's OBS install and not worth failing
+    /// provisioning over.
+    pub fn set_input_mute(&mut self, name: &str, muted: bool) -> Result<(), ObsError> {
+        self.request("SetInputMute", json!({ "inputName": name, "inputMuted": muted }))?;
+        Ok(())
+    }
+
+    /// The scene item id of `source` inside `scene` — needed for
+    /// `SetSceneItemTransform`, which addresses items by id rather than name.
+    pub fn scene_item_id(&mut self, scene: &str, source: &str) -> Result<i64, ObsError> {
+        Ok(self
+            .request("GetSceneItemId", json!({ "sceneName": scene, "sourceName": source }))?
+            ["sceneItemId"]
+            .as_i64()
+            .unwrap_or(0))
+    }
+
+    /// Sets a scene item's bounding box to scale-inner-fit within
+    /// `width`x`height` — matches a manually-configured working setup
+    /// (`OBS_BOUNDS_SCALE_INNER`, `bounds_type: 2` in OBS's own scene JSON).
+    /// A no-op in practice once the canvas already matches the game's own
+    /// resolution (`set_video_settings` below), but kept explicit rather than
+    /// assumed so the scene item is still correct if that ever changes.
+    pub fn set_scene_item_bounds(
+        &mut self,
+        scene: &str,
+        item_id: i64,
+        width: f64,
+        height: f64,
+    ) -> Result<(), ObsError> {
+        self.request(
+            "SetSceneItemTransform",
+            json!({
+                "sceneName": scene,
+                "sceneItemId": item_id,
+                "sceneItemTransform": {
+                    "boundsType": "OBS_BOUNDS_SCALE_INNER",
+                    "boundsWidth": width,
+                    "boundsHeight": height,
+                }
+            }),
+        )?;
+        Ok(())
+    }
+
+    /// Sets canvas (base) and output resolution to the same `width`x`height`,
+    /// and the output frame rate to `fps_num`/`fps_den`. Canvas == output is
+    /// deliberate: a mismatch means every frame is scaled twice for nothing
+    /// (see `preflight`'s own warning for this), and dod-tools owns this
+    /// profile specifically so it can just set both correctly instead of
+    /// warning about it.
+    pub fn set_video_settings(
+        &mut self,
+        width: i32,
+        height: i32,
+        fps_num: i32,
+        fps_den: i32,
+    ) -> Result<(), ObsError> {
+        self.request(
+            "SetVideoSettings",
+            json!({
+                "baseWidth": width,
+                "baseHeight": height,
+                "outputWidth": width,
+                "outputHeight": height,
+                "fpsNumerator": fps_num,
+                "fpsDenominator": fps_den,
+            }),
+        )?;
         Ok(())
     }
 

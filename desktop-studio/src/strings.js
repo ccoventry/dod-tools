@@ -211,19 +211,14 @@ export const STRINGS = {
     OBS_PASSWORD_PLACEHOLDER: 'From Tools → WebSocket Server Settings',
     OBS_PASSWORD_TITLE:
         'The obs-websocket password, if OBS has authentication enabled. Use the Copy button in OBS rather than retyping it.',
-    OBS_SCENE_LABEL: 'Scene:',
-    OBS_SCENE_TITLE:
-        'Scene to switch to for the batch, and switch back from afterwards. Leave on "Use current scene" to change nothing. The scene must contain a capture source pointed at hl.exe and an audio source.',
-    OBS_SCENE_CURRENT: 'Use current scene',
-    OBS_PROFILE_LABEL: 'Profile:',
-    OBS_PROFILE_TITLE:
-        'Profile to switch to for the batch, and switch back from afterwards. Leave on "Use current profile" to change nothing. A profile bundles OBS\'s own Video/Output/Audio settings, so switching one can change canvas resolution and FPS along with everything else.',
-    OBS_PROFILE_CURRENT: 'Use current profile',
     OBS_TEST_BUTTON: 'Test Connection',
     OBS_TESTING: 'Connecting…',
     OBS_UNREACHABLE: 'Could not reach OBS.',
     obsConnectedSummary: (obsVersion, websocketVersion) =>
         `Connected — OBS ${obsVersion} (obs-websocket ${websocketVersion})`,
+    // Read-only — dod-tools always targets its own fixed profile/scene, there
+    // is nothing here for the user to change.
+    obsUsingSummary: (profile, scene) => `Using OBS profile "${profile}", scene "${scene}"`,
     obsCanvasSummary: (canvas, output, fps) => `Canvas ${canvas}, output ${output} @ ${Math.round(fps)} fps`,
     obsRecordingToSummary: (directory) => `Recording to ${directory}`,
     obsMissingRequests: (requests) => `This OBS is missing: ${requests.join(', ')} — capture cannot run.`,
@@ -232,8 +227,8 @@ export const STRINGS = {
     obsTestFailed: (err) => `OBS test failed: ${err}`,
     OBS_ENABLE_HINT:
         'OBS Studio 28+ has obs-websocket built in. Enable it under Tools → WebSocket Server Settings — the checkbox at the top of that dialog is the switch, not the Connect Info panel.',
-    OBS_FPS_HINT:
-        "Capture frame rate above what you're seeing is an OBS setting, not something dod-tools controls — set it under Settings → Output → Recording (or Settings → Video → Common FPS Values), not here.",
+    OBS_PROVISION_HINT:
+        "dod-tools creates and manages its own OBS profile/scene ([DoD-Tools]) for capture — your own profiles, scenes and streaming setup are never touched. Canvas resolution and FPS come from the settings above; see the current profile/scene it's using once connected.",
     // ── Orphaned recording left by a previous run ───────────────────────────
     OBS_ORPHAN_TITLE: 'OBS is still recording',
     obsOrphanPrompt: (directory) =>
@@ -322,6 +317,8 @@ export const STRINGS = {
     // how a "3 second" margin turned out to be 0.6.
     CAPTURE_FPS_TITLE:
       'Frames per second written to the recorded video. Nothing to do with the demo\'s own tickrate, which is a property of how the demo was recorded and is not adjustable here.',
+    CAPTURE_FPS_OBS_HINT:
+      "In OBS mode, this also sets OBS's recording rate and the game's own fps_max, so the two stay in sync. It's a target, not a guarantee — actual output depends on your computer keeping up.",
     OUTPUT_DIR_PLACEHOLDER: 'Capture output directory path...',
     ADD_DIRECTORY_BUTTON: 'Add Directory',
     DESTINATIONS_HELP_TEXT: 'Captures are written here, and Render Studio scans these same locations for takes to render.',

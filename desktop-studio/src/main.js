@@ -112,6 +112,7 @@ async function runObsConnectionTest({ auto = false } = {}) {
       password: document.querySelector('#config-obs-password')?.value || '',
       gameWidth: parseInt(document.querySelector('#config-res-width')?.value, 10) || 1280,
       gameHeight: parseInt(document.querySelector('#config-res-height')?.value, 10) || 720,
+      captureFps: parseInt(document.querySelector('#config-capture-fps')?.value, 10) || 300,
     });
     renderObsReport(report);
   } catch (e) {
@@ -128,13 +129,15 @@ async function runObsConnectionTest({ auto = false } = {}) {
   }
 }
 
-/** Highlights whichever side of the capture-mode toggle is currently in force. */
 /**
- * Renders an `obs_test_connection` result into the status row and scene list.
+ * Renders an `obs_test_connection` result into the status row.
  *
  * Warnings are shown rather than swallowed: the canvas mismatch in particular
  * costs most of the picture's detail and has no visible symptom, so it would
  * otherwise be found only by comparing a finished clip against expectations.
+ * Should be rare now that `obs_test_connection` provisions dod-tools' own
+ * profile/scene itself rather than validating whatever the user picked, but
+ * still worth surfacing if OBS itself refuses one of those settings.
  */
 function renderObsReport(report) {
   const status = document.querySelector('#obs-status');
@@ -150,6 +153,9 @@ function renderObsReport(report) {
 
   const lines = [
     STRINGS.CAPTURE_CONFIG.obsConnectedSummary(report.obs_version, report.websocket_version),
+    // Read-only — dod-tools always targets its own fixed profile/scene now,
+    // there is nothing here for the user to pick.
+    STRINGS.CAPTURE_CONFIG.obsUsingSummary(report.current_profile, report.current_scene),
     STRINGS.CAPTURE_CONFIG.obsCanvasSummary(report.canvas, report.output, report.fps),
     STRINGS.CAPTURE_CONFIG.obsRecordingToSummary(report.record_directory),
   ];
@@ -160,44 +166,6 @@ function renderObsReport(report) {
   if (report.streaming) lines.push(STRINGS.CAPTURE_CONFIG.OBS_ALREADY_STREAMING);
   for (const w of report.warnings || []) lines.push(w);
   status.textContent = lines.join('\n');
-
-  // Replace the list with what OBS actually has, keeping the current choice if
-  // it survived. Scene names are scoped to a collection, so a name saved under
-  // a different one legitimately disappears here.
-  const sel = document.querySelector('#config-obs-scene');
-  if (sel && Array.isArray(report.scenes)) {
-    const wanted = sel.value;
-    sel.innerHTML = '';
-    const none = document.createElement('option');
-    none.value = '';
-    none.textContent = STRINGS.CAPTURE_CONFIG.OBS_SCENE_CURRENT;
-    sel.appendChild(none);
-    for (const name of report.scenes) {
-      const opt = document.createElement('option');
-      opt.value = name;
-      opt.textContent = name;
-      sel.appendChild(opt);
-    }
-    sel.value = report.scenes.includes(wanted) ? wanted : '';
-  }
-
-  // Same treatment as the scene list above.
-  const profileSel = document.querySelector('#config-obs-profile');
-  if (profileSel && Array.isArray(report.profiles)) {
-    const wanted = profileSel.value;
-    profileSel.innerHTML = '';
-    const none = document.createElement('option');
-    none.value = '';
-    none.textContent = STRINGS.CAPTURE_CONFIG.OBS_PROFILE_CURRENT;
-    profileSel.appendChild(none);
-    for (const name of report.profiles) {
-      const opt = document.createElement('option');
-      opt.value = name;
-      opt.textContent = name;
-      profileSel.appendChild(opt);
-    }
-    profileSel.value = report.profiles.includes(wanted) ? wanted : '';
-  }
 }
 
 /** The selected capture mode id, defaulting to the path that always works. */
@@ -285,6 +253,12 @@ function applyCaptureModeUI() {
   // connection to OBS capture that does not exist yet.
   const codecGroup = document.querySelector('#capture-codec-group');
   if (codecGroup) codecGroup.style.display = video ? '' : 'none';
+
+  // Capture FPS also drives OBS's own recording rate and the game's
+  // fps_max in OBS mode (native/src/patch/builder.rs's final_init_commands)
+  // — worth explaining there, meaningless in the other two modes.
+  const captureFpsObsHint = document.querySelector('#capture-fps-obs-hint');
+  if (captureFpsObsHint) captureFpsObsHint.style.display = obs ? '' : 'none';
 
   // The OBS block follows the same rule: hidden rather than disabled,
   // because showing a dead connection form in frame-sequence mode would
@@ -543,8 +517,6 @@ window.addEventListener("DOMContentLoaded", async () => {
     const obsHost = document.querySelector('#config-obs-host')?.value?.trim() || '127.0.0.1';
     const obsPort = parseInt(document.querySelector('#config-obs-port')?.value, 10) || 4455;
     const obsPassword = document.querySelector('#config-obs-password')?.value || '';
-    const obsScene = document.querySelector('#config-obs-scene')?.value || '';
-    const obsProfile = document.querySelector('#config-obs-profile')?.value || '';
     const obsExePath = document.querySelector('#config-obs-exe-path')?.value?.trim() || '';
     const addCondebug = document.querySelector('#config-add-condebug')?.checked || false;
 
@@ -600,8 +572,6 @@ window.addEventListener("DOMContentLoaded", async () => {
       obs_host: obsHost,
       obs_port: obsPort,
       obs_password: obsPassword,
-      obs_scene: obsScene,
-      obs_profile: obsProfile,
       obs_exe_path: obsExePath,
       add_condebug: addCondebug,
       auto_clear_logs: autoClearLogs,
@@ -707,32 +677,6 @@ window.addEventListener("DOMContentLoaded", async () => {
       if (obsPortEl) obsPortEl.value = settings.obs_port || 4455;
       const obsPasswordEl = document.querySelector('#config-obs-password');
       if (obsPasswordEl) obsPasswordEl.value = settings.obs_password || '';
-      const obsSceneEl = document.querySelector('#config-obs-scene');
-      if (obsSceneEl && settings.obs_scene) {
-        // The saved scene may not exist in the active collection — scene names
-        // are scoped to one — so it is added as an option rather than assumed
-        // present. Test Connection replaces the list with what OBS actually has.
-        if (!Array.from(obsSceneEl.options).some((o) => o.value === settings.obs_scene)) {
-          const opt = document.createElement('option');
-          opt.value = settings.obs_scene;
-          opt.textContent = settings.obs_scene;
-          obsSceneEl.appendChild(opt);
-        }
-        obsSceneEl.value = settings.obs_scene;
-      }
-      const obsProfileEl = document.querySelector('#config-obs-profile');
-      if (obsProfileEl && settings.obs_profile) {
-        // Same reasoning as obs_scene above: the saved profile may not exist
-        // in this install, so it is added as an option rather than assumed
-        // present. Test Connection replaces the list with what OBS actually has.
-        if (!Array.from(obsProfileEl.options).some((o) => o.value === settings.obs_profile)) {
-          const opt = document.createElement('option');
-          opt.value = settings.obs_profile;
-          opt.textContent = settings.obs_profile;
-          obsProfileEl.appendChild(opt);
-        }
-        obsProfileEl.value = settings.obs_profile;
-      }
       const obsExePathEl = document.querySelector('#config-obs-exe-path');
       if (obsExePathEl) obsExePathEl.value = settings.obs_exe_path || '';
       applyCaptureModeUI();

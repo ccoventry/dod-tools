@@ -73,22 +73,6 @@ pub struct AppSettings {
     /// switched off. Never logged — see `ObsConfig::redacted`.
     #[serde(default)]
     pub obs_password: String,
-    /// Scene to switch to for a batch, and restore afterwards. Empty means
-    /// "use whatever is active and change nothing".
-    #[serde(default)]
-    pub obs_scene: String,
-    /// The collection `obs_scene` belongs to. Scene names are scoped to a
-    /// collection, so a remembered name alone can resolve to something
-    /// unrelated after the user switches.
-    #[serde(default)]
-    pub obs_scene_collection: String,
-    /// Profile to switch to for a batch, and restore afterwards. Empty means
-    /// "use whatever is active and change nothing" — same convention as
-    /// `obs_scene`. Unlike scene, a profile switch can change OBS's own
-    /// canvas/output resolution, so `ObsSession::start` switches it before
-    /// preflight validates those, not after.
-    #[serde(default)]
-    pub obs_profile: String,
     /// Path to `obs64.exe`/`obs.exe`, for the "Launch OBS" button. Spawn-and-
     /// forget, same as `launch_standalone_game` — OBS is the user's own
     /// software, not ours to manage, so nothing here tracks its lifecycle.
@@ -209,9 +193,6 @@ impl Default for AppSettings {
             obs_host: default_obs_host(),
             obs_port: default_obs_port(),
             obs_password: String::new(),
-            obs_scene: String::new(),
-            obs_scene_collection: String::new(),
-            obs_profile: String::new(),
             obs_exe_path: String::new(),
             add_condebug: default_add_condebug(),
             auto_clear_logs: false,
