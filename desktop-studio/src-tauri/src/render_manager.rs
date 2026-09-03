@@ -606,14 +606,28 @@ pub async fn set_render_job_codec(app: AppHandle, state: tauri::State<'_, Render
 }
 
 #[tauri::command]
-pub async fn cancel_render_job(state: tauri::State<'_, RenderManager>, job_id: String) -> Result<(), String> {
+pub async fn cancel_render_job(app: AppHandle, state: tauri::State<'_, RenderManager>, job_id: String) -> Result<(), String> {
     log_markdown(&format!("[render] cancel_render_job requested for {}", job_id));
     let mut jobs = state.jobs.lock().unwrap();
-    if let Some(job) = jobs.iter_mut().find(|j| j.id == job_id) {
+    let mutated = if let Some(job) = jobs.iter_mut().find(|j| j.id == job_id) {
         job.cancel_flag.store(true, Ordering::Relaxed);
         if job.status == "Queued" {
             job.status = "Cancelled".to_string();
+            true
+        } else {
+            false
         }
+    } else {
+        false
+    };
+    drop(jobs);
+    // A Queued job's status just changed here, directly — not from inside
+    // the scheduler loop, which is what every other snapshot emission relies
+    // on and isn't running at all if Start Render Batch hasn't been clicked
+    // yet. Without this, the row silently stays "Queued" in the UI until
+    // something unrelated happens to trigger the next snapshot. See #121.
+    if mutated {
+        emit_jobs_snapshot(&app, &state.jobs);
     }
     Ok(())
 }
