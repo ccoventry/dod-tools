@@ -17,6 +17,7 @@ function job(overrides = {}) {
     error_log: null,
     settings_summary: 'ProRes @ 300fps',
     output_path: '',
+    output_size_bytes: null,
     take_folder: 'C:\\captures\\demo1\\chain_01_b0\\take0000',
     codec_id: 'prores',
     skip_available: false,
@@ -191,6 +192,40 @@ test.describe('scan stages a batch, Start is a separate step', () => {
     await expect(page.locator('#scan-render-btn')).toBeDisabled();
     await expect(page.locator('#start-render-btn')).toBeDisabled();
     await expect(page.locator('#cancel-render-btn')).toBeEnabled();
+  });
+});
+
+test.describe('File Size column', () => {
+  test('shows a dash for Queued/Rendering — never a per-row estimate', async ({ page }) => {
+    await gotoHarness(page);
+    await emitSnapshot(page, [
+      job({ id: '0', status: 'Queued', output_size_bytes: null }),
+      job({ id: '1', status: 'Rendering', output_size_bytes: null }),
+    ]);
+    await expect(page.locator('tr[data-job-id="0"] .rj-file-size')).toHaveText('—');
+    await expect(page.locator('tr[data-job-id="1"] .rj-file-size')).toHaveText('—');
+  });
+
+  test('shows the real size once Finished, in GB for a large file', async ({ page }) => {
+    await gotoHarness(page);
+    await emitSnapshot(page, [
+      job({ id: '0', status: 'Finished', output_size_bytes: 2_500_000_000 }),
+    ]);
+    await expect(page.locator('tr[data-job-id="0"] .rj-file-size')).toHaveText('2.33 GB');
+  });
+
+  test('shows the real size in MB for a file under 1 GB', async ({ page }) => {
+    await gotoHarness(page);
+    await emitSnapshot(page, [
+      job({ id: '0', status: 'Finished', output_size_bytes: 200_000_000 }),
+    ]);
+    await expect(page.locator('tr[data-job-id="0"] .rj-file-size')).toHaveText('191 MB');
+  });
+
+  test('a Cancelled/Error job also shows a dash, not a stale size from a prior run', async ({ page }) => {
+    await gotoHarness(page);
+    await emitSnapshot(page, [job({ id: '0', status: 'Cancelled', output_size_bytes: null })]);
+    await expect(page.locator('tr[data-job-id="0"] .rj-file-size')).toHaveText('—');
   });
 });
 

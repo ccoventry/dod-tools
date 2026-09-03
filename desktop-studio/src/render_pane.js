@@ -163,6 +163,16 @@ function wireSettingsCell(cell) {
   });
 }
 
+/** The real encoded size once a job is Finished — a dash otherwise. Never an
+ *  estimate: see TABLE_HEADER_FILE_SIZE_TITLE for why. */
+function formatFileSize(bytes) {
+  if (bytes == null) return STRINGS.RENDER.FILE_SIZE_UNKNOWN;
+  const gb = bytes / (1024 * 1024 * 1024);
+  return gb >= 1
+    ? STRINGS.RENDER.fileSizeGb(gb.toFixed(2))
+    : STRINGS.RENDER.fileSizeMb((bytes / (1024 * 1024)).toFixed(0));
+}
+
 /** Builds one job's `<tr>` fresh — only ever called once per job id. */
 function createJobRow(j) {
   const row = document.createElement('tr');
@@ -176,6 +186,7 @@ function createJobRow(j) {
     <td class="rj-status"></td>
     <td class="rj-speed"></td>
     <td><div class="progress-bar-container" style="margin-top:0;"><div class="progress-bar-fill rj-progress-fill" style="width:0%;"></div></div></td>
+    <td class="rj-file-size"></td>
     <td class="rj-actions"></td>`;
   updateJobRow(row, j);
   return row;
@@ -205,6 +216,7 @@ function updateJobRow(row, j) {
   statusCell.style.color = statusColor(j.status);
   row.querySelector('.rj-speed').textContent = j.speed;
   row.querySelector('.rj-progress-fill').style.width = `${j.progress}%`;
+  row.querySelector('.rj-file-size').textContent = formatFileSize(j.output_size_bytes);
 
   // Remembers the last codec this job actually rendered under (i.e. never
   // "source_copy" itself) so unchecking Skip later can restore exactly that,
@@ -236,7 +248,7 @@ function renderJobsTable() {
   if (!tbody) return;
 
   if (jobs.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="9" class="table-empty">${STRINGS.RENDER.TABLE_EMPTY}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="10" class="table-empty">${STRINGS.RENDER.TABLE_EMPTY}</td></tr>`;
     return;
   }
 
