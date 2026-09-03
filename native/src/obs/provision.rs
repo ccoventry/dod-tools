@@ -36,8 +36,15 @@ pub const PROFILE_NAME: &str = "[DoD-Tools]";
 /// the coarser "which show am I running" concept; adding one scene to
 /// whatever the user already has open is the smaller, less disruptive move.
 pub const SCENE_NAME: &str = "[DoD-Tools] Capture";
-const GAME_CAPTURE_SOURCE: &str = "Day of Defeat Game Capture";
-const GAME_AUDIO_SOURCE: &str = "Day of Defeat Game Audio";
+// Bracket-prefixed to match PROFILE_NAME/SCENE_NAME's convention, and to
+// keep these from colliding with a source someone already made by hand —
+// source names are global across a whole scene collection, not scoped to
+// one scene, so an unprefixed "Game Capture" is exactly the kind of name a
+// manual setup would already be using. ensure_scene_item below still covers
+// a collision if one somehow happens anyway (reuses/re-places the existing
+// source rather than failing), this just makes it far less likely to.
+const GAME_CAPTURE_SOURCE: &str = "[DoD-Tools] Game Capture";
+const GAME_AUDIO_SOURCE: &str = "[DoD-Tools] Game Audio";
 /// `title:class:executable` — DoD 1.3's hl.exe window, confirmed empirically
 /// (see module docs). If a future engine/launcher build changes any of the
 /// three, this stops matching and needs re-capturing the same way.
