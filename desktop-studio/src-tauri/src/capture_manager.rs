@@ -68,6 +68,9 @@ pub struct CapturePayload {
     /// Directories used for dynamic drive failover and capture routing.
     pub capture_directories: Vec<String>,
     pub capture_fps: i32,
+    /// OBS mode's own capture rate — see `PatcherConfig::obs_capture_fps`.
+    #[serde(default = "default_obs_capture_fps_payload")]
+    pub obs_capture_fps: i32,
     /// Output drives for AOT capacity simulation and media routing.
     pub drives: Vec<String>,
     #[serde(default)]
@@ -109,6 +112,7 @@ pub struct CapturePayload {
 fn default_initial_delay() -> f32 { 3.0 }
 fn default_fast_forward_speed() -> f32 { 0.05 }
 fn default_resolution_width() -> i32 { 1280 }
+fn default_obs_capture_fps_payload() -> i32 { 120 }
 fn default_resolution_height() -> i32 { 720 }
 fn default_add_condebug() -> bool { true }
 
@@ -221,6 +225,7 @@ fn config_from_payload(payload: &CapturePayload) -> PatcherConfig {
     cfg.post_roll_seconds = payload.post_roll_seconds;
     cfg.capture_directories = payload.capture_directories.iter().map(std::path::PathBuf::from).collect();
     cfg.capture_fps = payload.capture_fps;
+    cfg.obs_capture_fps = payload.obs_capture_fps;
     cfg.record_start_lead = payload.record_start_lead;
     cfg.record_stop_trail = payload.record_stop_trail;
     cfg.initial_delay = payload.initial_delay;
@@ -335,7 +340,7 @@ impl ObsConnectionReport {
 /// click) as well as before a real batch — see main.js's
 /// `runObsConnectionTest`.
 ///
-/// `game_width`/`game_height`/`capture_fps` are what the profile's video
+/// `game_width`/`game_height`/`obs_capture_fps` are what the profile's video
 /// settings get set to.
 #[tauri::command]
 pub async fn obs_test_connection(
@@ -344,7 +349,7 @@ pub async fn obs_test_connection(
     password: String,
     game_width: i32,
     game_height: i32,
-    capture_fps: i32,
+    obs_capture_fps: i32,
 ) -> Result<ObsConnectionReport, String> {
     let url = format!("ws://{}:{}", if host.is_empty() { "127.0.0.1".into() } else { host }, if port == 0 { 4455 } else { port });
     tokio::task::spawn_blocking(move || {
@@ -359,7 +364,7 @@ pub async fn obs_test_connection(
             &mut client,
             game_width,
             game_height,
-            capture_fps,
+            obs_capture_fps,
             1,
         ) {
             return ObsConnectionReport::failed(e);
@@ -1612,6 +1617,7 @@ mod tests {
             post_roll_seconds: 0.6,
             capture_directories: vec!["D:/capture".to_string()],
             capture_fps: 300,
+            obs_capture_fps: 120,
             drives: vec!["D:/capture".to_string(), "E:/capture".to_string()],
             record_start_lead: 0.0,
             record_stop_trail: 0.0,

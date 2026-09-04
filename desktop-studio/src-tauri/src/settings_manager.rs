@@ -26,6 +26,11 @@ pub struct AppSettings {
     pub analyzer_explorer_width: i32,
     pub language: String,
     pub capture_fps: i32,
+    /// OBS mode's own capture rate — see `PatcherConfig::obs_capture_fps`'s
+    /// doc comment for why this is a separate field rather than sharing
+    /// `capture_fps` with frame-sequence/direct-to-video.
+    #[serde(default = "default_obs_capture_fps")]
+    pub obs_capture_fps: i32,
     pub pre_roll_seconds: f32,
     pub post_roll_seconds: f32,
     #[serde(default = "default_resolution_width")]
@@ -142,6 +147,7 @@ pub struct AppSettings {
 }
 
 fn default_resolution_width() -> i32 { 1280 }
+fn default_obs_capture_fps() -> i32 { 120 }
 fn default_resolution_height() -> i32 { 720 }
 fn default_add_condebug() -> bool { true }
 fn default_initial_delay() -> f32 { 3.0 }
@@ -181,6 +187,7 @@ impl Default for AppSettings {
             analyzer_explorer_width: default_analyzer_explorer_width(),
             language: "en".to_string(),
             capture_fps: 300,
+            obs_capture_fps: default_obs_capture_fps(),
             pre_roll_seconds: 2.0,
             post_roll_seconds: 0.6,
             resolution_width: default_resolution_width(),

@@ -509,7 +509,7 @@ pub fn spawn_capture_engine(
                     obs_take_folders.clone(),
                     config.resolution_width,
                     config.resolution_height,
-                    config.capture_fps,
+                    config.obs_capture_fps,
                 ) {
                     Ok((session, preflight)) => {
                         log_markdown(&format!(

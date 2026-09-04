@@ -245,7 +245,7 @@ export async function runObsConnectionTest({ auto = false } = {}) {
       password: document.querySelector('#config-obs-password')?.value || '',
       gameWidth: parseInt(document.querySelector('#config-res-width')?.value, 10) || 1280,
       gameHeight: parseInt(document.querySelector('#config-res-height')?.value, 10) || 720,
-      captureFps: parseInt(document.querySelector('#config-capture-fps')?.value, 10) || 300,
+      obsCaptureFps: parseInt(document.querySelector('#config-obs-capture-fps')?.value, 10) || 120,
     });
     renderObsReport(report);
   } catch (e) {
@@ -834,7 +834,7 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
   // connection fields and the capture-mode selector — all three read at
   // capture/save time but never saved on their own change, so edits looked
   // like they took but silently reverted on the next launch/refresh.
-  ['#config-initial-delay', '#config-obs-host', '#config-obs-port', '#config-obs-password', '#config-obs-exe-path'].forEach(selector => {
+  ['#config-initial-delay', '#config-obs-host', '#config-obs-port', '#config-obs-password', '#config-obs-exe-path', '#config-obs-capture-fps'].forEach(selector => {
     const el = document.querySelector(selector);
     if (el) el.addEventListener('input', () => notifySettingsChange());
   });
@@ -1070,6 +1070,7 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
     lastDispatch = { sessionId, streaks: selectedStreaks, demoPaths: selectedDemoPaths };
 
     const captureFpsVal = parseInt(document.querySelector("#config-capture-fps")?.value, 10) || 300;
+    const obsCaptureFpsVal = parseInt(document.querySelector("#config-obs-capture-fps")?.value, 10) || 120;
     const preRollVal = parseFloat(document.querySelector("#config-pre-roll")?.value) || 2.0;
     const postRollVal = parseFloat(document.querySelector("#config-post-roll")?.value) || 0.6;
     const recordStartLeadVal = parseFloat(document.querySelector("#config-record-start-lead")?.value) || 0.0;
@@ -1155,6 +1156,7 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
       post_roll_seconds: postRollVal,
       capture_directories: outputDrivePool,
       capture_fps: captureFpsVal,
+      obs_capture_fps: obsCaptureFpsVal,
       drives: state.targetDrives || [],
       record_start_lead: recordStartLeadVal,
       record_stop_trail: recordStopTrailVal,

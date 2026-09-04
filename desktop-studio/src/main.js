@@ -170,12 +170,6 @@ function applyCaptureModeUI() {
   const codecGroup = document.querySelector('#capture-codec-group');
   if (codecGroup) codecGroup.style.display = video ? '' : 'none';
 
-  // Capture FPS also drives OBS's own recording rate and the game's
-  // fps_max in OBS mode (native/src/patch/builder.rs's final_init_commands)
-  // — worth explaining there, meaningless in the other two modes.
-  const captureFpsObsHint = document.querySelector('#capture-fps-obs-hint');
-  if (captureFpsObsHint) captureFpsObsHint.style.display = obs ? '' : 'none';
-
   // The OBS block follows the same rule: hidden rather than disabled,
   // because showing a dead connection form in frame-sequence mode would
   // suggest OBS is involved when it is not.
@@ -416,6 +410,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     const hlPath = document.querySelector('#hl-path-input')?.value?.trim() || "";
     const ffmpegPath = document.querySelector('#ffmpeg-override-path-input')?.value?.trim() || null;
     const captureFps = parseInt(document.querySelector('#config-capture-fps')?.value, 10) || 300;
+    const obsCaptureFps = parseInt(document.querySelector('#config-obs-capture-fps')?.value, 10) || 120;
     const preRoll = parseFloat(document.querySelector('#config-pre-roll')?.value) || 2.0;
     const postRoll = parseFloat(document.querySelector('#config-post-roll')?.value) || 0.6;
 
@@ -476,6 +471,7 @@ window.addEventListener("DOMContentLoaded", async () => {
       analyzer_explorer_width: analyzerExplorerWidth,
       language: "en",
       capture_fps: captureFps,
+      obs_capture_fps: obsCaptureFps,
       pre_roll_seconds: preRoll,
       post_roll_seconds: postRoll,
       resolution_width: resWidth,
@@ -554,6 +550,10 @@ window.addEventListener("DOMContentLoaded", async () => {
       if (settings.capture_fps) {
         const inputEl = document.querySelector('#config-capture-fps');
         if (inputEl) inputEl.value = settings.capture_fps;
+      }
+      if (settings.obs_capture_fps) {
+        const inputEl = document.querySelector('#config-obs-capture-fps');
+        if (inputEl) inputEl.value = settings.obs_capture_fps;
       }
       if (settings.pre_roll_seconds) {
         const inputEl = document.querySelector('#config-pre-roll');

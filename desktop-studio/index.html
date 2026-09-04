@@ -239,14 +239,6 @@
                   <label for="config-capture-fps" data-str="CAPTURE_CONFIG.CAPTURE_FPS_LABEL" data-str-title="CAPTURE_CONFIG.CAPTURE_FPS_TITLE">Capture FPS:</label>
                   <input type="number" id="config-capture-fps" value="300" style="width: 80px;" data-str-title="CAPTURE_CONFIG.CAPTURE_FPS_TITLE" />
                 </div>
-                <!-- OBS mode only: this same field also drives OBS's own recording
-                     rate and the game's fps_max, so it's worth explaining what
-                     changes there — see applyCaptureModeUI's obs branch. -->
-                <p id="capture-fps-obs-hint" class="setting-hint" style="display: none;" data-str="CAPTURE_CONFIG.CAPTURE_FPS_OBS_HINT">
-                  In OBS mode, this also sets OBS's recording rate and the game's own fps_max, so
-                  the two stay in sync. It's a target, not a guarantee — actual output depends on
-                  your computer keeping up.
-                </p>
                 <div class="control-group">
                   <input type="checkbox" id="config-separate-hud" />
                   <label for="config-separate-hud" data-str="CAPTURE_CONFIG.SEPARATE_HUD_LABEL">Separate HUD</label>
@@ -334,6 +326,23 @@
                            placeholder="From Tools → WebSocket Server Settings" style="flex: 1;" />
                     <button id="obs-test-btn" data-str="CAPTURE_CONFIG.OBS_TEST_BUTTON">Test Connection</button>
                   </div>
+                  <div class="control-group">
+                    <label for="config-obs-capture-fps" data-str="CAPTURE_CONFIG.OBS_CAPTURE_FPS_LABEL" data-str-title="CAPTURE_CONFIG.OBS_CAPTURE_FPS_TITLE">OBS Capture FPS:</label>
+                    <input type="number" id="config-obs-capture-fps" value="120" style="width: 80px;" data-str-title="CAPTURE_CONFIG.OBS_CAPTURE_FPS_TITLE" />
+                  </div>
+                  <!-- Confirmed live, not theoretical: 300fps @ 2560x1440 dropped
+                       98.5% of frames (see ObsSession::warn_if_frames_dropped, which
+                       catches this after the fact if it happens anyway) — a real
+                       warning, not boilerplate caution. -->
+                  <p class="setting-hint" data-str="CAPTURE_CONFIG.OBS_CAPTURE_FPS_WARNING">
+                    Unlike the frame-sequence/video Capture FPS above, this drives OBS's actual
+                    live encoding — set it above what your machine can sustain at this
+                    resolution and OBS drops frames rather than falling behind, which makes the
+                    clip choppy or unusable, not just "slightly rougher." There's no safe number
+                    to assume in advance — it depends entirely on your CPU/GPU and encoder. Test
+                    with a short capture first and watch for dropped-frame warnings (the activity
+                    log, or OBS's own Stats window) before committing to a value for real batches.
+                  </p>
                   <div id="obs-status" class="path-warning" style="display: none;"></div>
                   <p class="setting-hint" data-str="CAPTURE_CONFIG.OBS_ENABLE_HINT">
                     OBS Studio 28+ has obs-websocket built in. Enable it under Tools → WebSocket
@@ -343,8 +352,8 @@
                   <p class="setting-hint" data-str="CAPTURE_CONFIG.OBS_PROVISION_HINT">
                     dod-tools creates and manages its own OBS profile/scene ([DoD-Tools]) for
                     capture — your own profiles, scenes and streaming setup are never touched.
-                    Canvas resolution and FPS come from the settings above; see the current
-                    profile/scene it's using once connected.
+                    Canvas resolution comes from the settings above and FPS from OBS Capture FPS
+                    here; see the current profile/scene it's using once connected.
                   </p>
                 </div>
               </div>
