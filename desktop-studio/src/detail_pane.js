@@ -463,7 +463,7 @@ export function renderDetailView(demo, selectedDemoIdx) {
       Rendered: '#2196f3',
       None: '#555',
     };
-    const statusLabel = streak.status || STRINGS.HIGHLIGHTS.STATUS_PENDING_DEFAULT;
+    const statusLabel = streak.status || STRINGS.HIGHLIGHTS.STATUS_UNSET_DEFAULT;
     const statusColor = statusColors[statusLabel] || '#888';
 
     const maxKillIdx = Math.max((streak.kills || []).length - 1, 0);
