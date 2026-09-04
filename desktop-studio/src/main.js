@@ -1144,6 +1144,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     if (!pathsToScan || pathsToScan.length === 0) return;
 
     const scanStatusEl = document.querySelector('#scan-status');
+    const scanSpinnerEl = document.querySelector('#scan-spinner');
     const addFilesBtn = document.querySelector('#add-files-btn');
     const addFolderBtn = document.querySelector('#add-folder-btn');
     const cancelScanBtnInner = document.querySelector('#cancel-scan-btn');
@@ -1151,6 +1152,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     if (addFilesBtn) addFilesBtn.disabled = true;
     if (addFolderBtn) addFolderBtn.disabled = true;
     if (cancelScanBtnInner) cancelScanBtnInner.disabled = false;
+    if (scanSpinnerEl) scanSpinnerEl.style.display = 'inline-block';
     if (scanStatusEl) scanStatusEl.textContent = STRINGS.MAIN.SCANNING_STATUS;
     showToast(STRINGS.MAIN.SCANNING_TOAST, 'info');
 
@@ -1209,6 +1211,7 @@ window.addEventListener("DOMContentLoaded", async () => {
       if (addFilesBtn) addFilesBtn.disabled = false;
       if (addFolderBtn) addFolderBtn.disabled = false;
       if (cancelScanBtnInner) cancelScanBtnInner.disabled = true;
+      if (scanSpinnerEl) scanSpinnerEl.style.display = 'none';
     }
   }
 
