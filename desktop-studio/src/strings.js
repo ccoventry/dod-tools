@@ -64,6 +64,7 @@ export const STRINGS = {
     SELECT_ALL_CB_TITLE: 'Select/deselect all visible demos',
     TABLE_HEADER_DEMO_FILE: 'Demo File',
     TABLE_HEADER_HIGHLIGHTS: 'Highlights',
+    TABLE_HEADER_SELECTED: 'Selected',
     TABLE_HEADER_PENDING: 'Pending',
     TABLE_HEADER_CAPTURED: 'Captured',
     TABLE_HEADER_RENDERED: 'Rendered',
