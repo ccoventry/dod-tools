@@ -157,45 +157,38 @@ function updateStreakVisuals(streak) {
   streak.timeline_string = parts.join(', ');
 }
 
+/** Selects every currently-visible (POV + Min Kills filtered) streak in
+ *  `currentDemo` — the header checkbox's checked state. Only the rows on
+ *  screen. `demo.streaks` holds every player's streaks, and the table shows
+ *  the recording player's at or above Min Kills — so selecting the raw list
+ *  checked highlights belonging to other players that were never rendered
+ *  and could not be unchecked. The batch groups by (demo, target player), so
+ *  each of those became its own chained demo: one 15-row table produced five
+ *  passes over the same file. */
+function selectAllVisibleStreaks() {
+  if (!currentDemo || !currentDemo.streaks) return;
+  currentDemo.streaks.forEach(s => {
+    if (isVisibleStreak(currentDemo, s)) s.selected = true;
+  });
+  renderDetailView(currentDemo, currentDemoIdx);
+}
+
+/** Deselects every streak in `currentDemo` — the header checkbox's
+ *  unchecked state. Deliberately NOT filtered, unlike selectAllVisibleStreaks.
+ *  This is the escape hatch: if anything ever selects a streak the table does
+ *  not show, this is what clears it. Erring wide costs nothing here; erring
+ *  narrow leaves a capture running that nobody asked for. */
+function deselectAllStreaks() {
+  if (!currentDemo || !currentDemo.streaks) return;
+  currentDemo.streaks.forEach(s => { s.selected = false; });
+  renderDetailView(currentDemo, currentDemoIdx);
+}
+
 // Initialize event listeners for detail pane buttons
 window.addEventListener("DOMContentLoaded", () => {
-  const btnSelectAll = document.querySelector('#btn-select-all');
-  const btnDeselectAll = document.querySelector('#btn-deselect-all');
   const inputMinKills = document.querySelector('#input-min-kills');
   const btnLaunchPreview = document.querySelector('#btn-launch-preview');
   const btnGenerateAllPreviews = document.querySelector('#btn-generate-all-previews');
-
-  if (btnSelectAll) {
-    btnSelectAll.addEventListener('click', () => {
-      if (!currentDemo || !currentDemo.streaks) return;
-      // Only the rows on screen. `demo.streaks` holds every player's streaks,
-      // and the table shows the recording player's at or above Min Kills — so
-      // selecting the raw list checked highlights belonging to other players
-      // that were never rendered and could not be unchecked. The batch groups
-      // by (demo, target player), so each of those became its own chained demo:
-      // one 15-row table produced five passes over the same file.
-      currentDemo.streaks.forEach(s => {
-        if (isVisibleStreak(currentDemo, s)) s.selected = true;
-      });
-      const checkboxes = document.querySelectorAll('#detail-streaks-container input[type="checkbox"]');
-      checkboxes.forEach(cb => { cb.checked = true; });
-      renderDetailView(currentDemo, currentDemoIdx);
-    });
-  }
-
-  if (btnDeselectAll) {
-    btnDeselectAll.addEventListener('click', () => {
-      if (!currentDemo || !currentDemo.streaks) return;
-      // Deliberately NOT filtered, unlike Select All. This is the escape hatch:
-      // if anything ever selects a streak the table does not show, this is what
-      // clears it. Erring wide costs nothing here; erring narrow leaves a
-      // capture running that nobody asked for.
-      currentDemo.streaks.forEach(s => { s.selected = false; });
-      const checkboxes = document.querySelectorAll('#detail-streaks-container input[type="checkbox"]');
-      checkboxes.forEach(cb => { cb.checked = false; });
-      renderDetailView(currentDemo, currentDemoIdx);
-    });
-  }
 
   if (inputMinKills) {
     inputMinKills.addEventListener('input', () => {
@@ -406,7 +399,7 @@ export function renderDetailView(demo, selectedDemoIdx) {
     <thead>
       <tr>
         <th>${STRINGS.HIGHLIGHTS.COL_ROW_NUM}</th>
-        <th>${STRINGS.HIGHLIGHTS.COL_SEL}</th>
+        <th>${STRINGS.HIGHLIGHTS.COL_SEL} <input type="checkbox" id="detail-select-all-cb" title="${STRINGS.HIGHLIGHTS.SELECT_ALL_CB_TITLE}" /></th>
         <th>${STRINGS.HIGHLIGHTS.COL_KILL_RANGE}</th>
         <th>${STRINGS.HIGHLIGHTS.COL_KILLS}</th>
         <th>${STRINGS.HIGHLIGHTS.COL_TIME}</th>
@@ -578,6 +571,21 @@ export function renderDetailView(demo, selectedDemoIdx) {
 
     tbody.appendChild(tr);
   });
+
+  // Header checkbox tri-state, reflecting only the same visible rows the
+  // table just rendered — mirrors master_pane.js's syncSelectAllCheckboxState
+  // for the Master Queue's own header checkbox.
+  const selectAllHeaderCb = table.querySelector('#detail-select-all-cb');
+  if (selectAllHeaderCb) {
+    const visibleStreaks = demo.streaks.filter(s => isVisibleStreak(demo, s, minKills));
+    const selectedVisible = visibleStreaks.filter(s => s.selected).length;
+    selectAllHeaderCb.checked = visibleStreaks.length > 0 && selectedVisible === visibleStreaks.length;
+    selectAllHeaderCb.indeterminate = selectedVisible > 0 && selectedVisible < visibleStreaks.length;
+    selectAllHeaderCb.addEventListener('change', (e) => {
+      if (e.target.checked) selectAllVisibleStreaks();
+      else deselectAllStreaks();
+    });
+  }
 
   tableWrapper.appendChild(table);
   container.appendChild(tableWrapper);
