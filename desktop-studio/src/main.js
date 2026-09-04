@@ -1153,7 +1153,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     showToast(STRINGS.MAIN.SCANNING_TOAST, 'info');
 
     const masterTableBody = document.querySelector('#master-demo-table-body');
-    if (masterTableBody) masterTableBody.innerHTML = `<tr style="text-align:center"><td colspan="7">${STRINGS.MAIN.SCANNING_PLEASE_WAIT_ROW}</td></tr>`;
+    if (masterTableBody) masterTableBody.innerHTML = `<tr style="text-align:center"><td colspan="8">${STRINGS.MAIN.SCANNING_PLEASE_WAIT_ROW}</td></tr>`;
 
     try {
       const newlyScanned = await scanDirectory(pathsToScan);

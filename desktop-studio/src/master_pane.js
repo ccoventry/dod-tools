@@ -245,7 +245,7 @@ export function renderMasterList(demos, selectedDemoIdx, onSelectDemo) {
 
   if (filteredDemos.length === 0) {
     tableBody.innerHTML =
-      `<tr><td colspan="7" class="table-empty">${STRINGS.WORKSPACE.TABLE_EMPTY_NO_MATCH_SEARCH}</td></tr>`;
+      `<tr><td colspan="8" class="table-empty">${STRINGS.WORKSPACE.TABLE_EMPTY_NO_MATCH_SEARCH}</td></tr>`;
     syncClearSelectedButtonState();
     return;
   }
@@ -264,6 +264,7 @@ export function renderMasterList(demos, selectedDemoIdx, onSelectDemo) {
     const ownStreaks = recordingPlayerStreaks(demo);
 
     // ── Derive live column values ─────────────────────────────────────────
+    const selected    = ownStreaks.filter((s) => s.selected === true).length;
     const pending     = countByStatus(ownStreaks, 'Pending');    // M4
     const captured    = countByStatus(ownStreaks, 'Captured');   // M4
     const rendered    = countByStatus(ownStreaks, 'Rendered');   // M4
@@ -339,28 +340,36 @@ export function renderMasterList(demos, selectedDemoIdx, onSelectDemo) {
     tdYield.style.textAlign = 'center';
     tdYield.textContent = `${ownStreaks.length}`;
 
-    // Col 4: Pending count   [M4]
+    // Col 4: Selected count — how many of this demo's highlights are checked
+    // for the next capture batch, same predicate refreshLaunchGuard uses.
+    const tdSelected = document.createElement('td');
+    tdSelected.style.padding = '6px 8px';
+    tdSelected.style.textAlign = 'center';
+    tdSelected.style.color = selected > 0 ? '#64b5f6' : '#555';
+    tdSelected.textContent = selected;
+
+    // Col 5: Pending count   [M4]
     const tdPending = document.createElement('td');
     tdPending.style.padding = '6px 8px';
     tdPending.style.textAlign = 'center';
     tdPending.style.color = pending > 0 ? '#ffa726' : '#555';
     tdPending.textContent = pending;
 
-    // Col 5: Captured count  [M4]
+    // Col 6: Captured count  [M4]
     const tdCaptured = document.createElement('td');
     tdCaptured.style.padding = '6px 8px';
     tdCaptured.style.textAlign = 'center';
     tdCaptured.style.color = captured > 0 ? '#4caf50' : '#555';
     tdCaptured.textContent = captured;
 
-    // Col 6: Rendered count  [M4]
+    // Col 7: Rendered count  [M4]
     const tdRendered = document.createElement('td');
     tdRendered.style.padding = '6px 8px';
     tdRendered.style.textAlign = 'center';
     tdRendered.style.color = rendered > 0 ? '#2196f3' : '#555';
     tdRendered.textContent = rendered;
 
-    // Col 7: Actions — remove-from-queue only, no status badge  [M3]
+    // Col 8: Actions — remove-from-queue only, no status badge  [M3]
     const tdActions = document.createElement('td');
     tdActions.style.padding = '6px 8px';
     tdActions.style.textAlign = 'center';
@@ -409,6 +418,7 @@ export function renderMasterList(demos, selectedDemoIdx, onSelectDemo) {
     tr.appendChild(tdCheck);
     tr.appendChild(tdName);
     tr.appendChild(tdYield);
+    tr.appendChild(tdSelected);
     tr.appendChild(tdPending);
     tr.appendChild(tdCaptured);
     tr.appendChild(tdRendered);
