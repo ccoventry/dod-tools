@@ -112,7 +112,7 @@ pub fn delete_audit_files_impl(paths: Vec<String>) -> Result<(), String> {
     for path in paths {
         if let Err(e) = std::fs::remove_file(&path) {
             log::warn!("Failed to delete audit file {}: {}", path, e);
-            return Err(format!("Failed to delete {}: {}", path, e));
+            return Err(crate::messages::failed_to_delete_audit_file(&path, e));
         }
     }
     Ok(())
@@ -124,7 +124,7 @@ pub fn reveal_in_explorer_impl(path: String) -> Result<(), String> {
     let path_buf = PathBuf::from(&path);
 
     if !path_buf.exists() {
-        return Err(format!("Path no longer exists: {}", path));
+        return Err(crate::messages::path_no_longer_exists(&path));
     }
 
     #[cfg(target_os = "windows")]
@@ -133,7 +133,7 @@ pub fn reveal_in_explorer_impl(path: String) -> Result<(), String> {
             .arg("/select,")
             .arg(&path_buf)
             .spawn()
-            .map_err(|e| format!("Failed to open explorer: {}", e))?;
+            .map_err(crate::messages::failed_to_open_explorer)?;
     }
 
     #[cfg(target_os = "macos")]
@@ -142,18 +142,18 @@ pub fn reveal_in_explorer_impl(path: String) -> Result<(), String> {
             .arg("-R")
             .arg(&path_buf)
             .spawn()
-            .map_err(|e| format!("Failed to open Finder: {}", e))?;
+            .map_err(crate::messages::failed_to_open_finder)?;
     }
 
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         // Linux fallback: no universal "select this file" behavior, so just
         // open the parent directory via the desktop's default file manager.
-        let parent = path_buf.parent().ok_or("No parent directory for path")?;
+        let parent = path_buf.parent().ok_or(crate::messages::NO_PARENT_DIRECTORY_FOR_PATH)?;
         std::process::Command::new("xdg-open")
             .arg(parent)
             .spawn()
-            .map_err(|e| format!("Failed to open folder: {}", e))?;
+            .map_err(crate::messages::failed_to_open_folder)?;
     }
 
     Ok(())

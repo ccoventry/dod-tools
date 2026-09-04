@@ -72,7 +72,7 @@ async fn save_settings(
 #[tauri::command]
 async fn save_project_session(path: String, contents: String) -> Result<(), String> {
     messages::flatten_spawn_blocking(tokio::task::spawn_blocking(move || {
-        std::fs::write(&path, contents).map_err(|e| messages::project_session_write_failed(&path, e))
+        std::fs::write(&path, contents).map_err(|e| messages::failed_to_write_file(&path, e))
     }))
     .await
 }
@@ -80,7 +80,7 @@ async fn save_project_session(path: String, contents: String) -> Result<(), Stri
 #[tauri::command]
 async fn load_project_session(path: String) -> Result<String, String> {
     messages::flatten_spawn_blocking(tokio::task::spawn_blocking(move || {
-        std::fs::read_to_string(&path).map_err(|e| messages::project_session_read_failed(&path, e))
+        std::fs::read_to_string(&path).map_err(|e| messages::failed_to_read_file(&path, e))
     }))
     .await
 }

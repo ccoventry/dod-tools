@@ -124,13 +124,13 @@ pub fn browse_directory(path: Option<String>) -> Result<DirListing, String> {
 
     let dir = PathBuf::from(&path);
     if !dir.is_dir() {
-        return Err(format!("Not a directory: {}", path));
+        return Err(crate::messages::not_a_directory(&path));
     }
 
     let mut subdirs = Vec::new();
     let mut demos = Vec::new();
 
-    let entries = std::fs::read_dir(&dir).map_err(|e| format!("Failed to read {}: {}", path, e))?;
+    let entries = std::fs::read_dir(&dir).map_err(|e| crate::messages::failed_to_read_file(&path, e))?;
     for entry in entries.filter_map(Result::ok) {
         let entry_path = entry.path();
         let name = entry.file_name().to_string_lossy().into_owned();
