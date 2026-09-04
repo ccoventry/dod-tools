@@ -319,9 +319,32 @@ body {
   display: block;
 }
 
-.info-icon:hover {
+.info-icon:hover,
+.info-icon:focus-visible {
   opacity: 1;
   color: #ffffff;
+}
+
+/* Custom tooltip for .info-icon — see info_tooltip.js and #164. Position is
+   set inline (fixed, viewport-clamped) by the JS; only presentation lives here. */
+.info-tooltip {
+  position: fixed;
+  z-index: 10000;
+  display: none;
+  max-width: 260px;
+  padding: 5px 9px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  color: #d0d0d0;
+  font-size: 11px;
+  line-height: 1.4;
+  pointer-events: none;
+}
+
+.info-tooltip.visible {
+  display: block;
 }
 
 .setting-label.active {
