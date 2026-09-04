@@ -665,10 +665,95 @@ button.primary-btn:hover:not(:disabled) {
   margin-top: 8px;
 }
 
+/* Timings tab only: each item is a stacked label+input row plus a hint
+   paragraph of its own length, so the items in one flex line are rarely the
+   same height — center alignment let a shorter item's input drift below a
+   taller neighbor's. Top-align instead so every input sits on one line. */
+.grid-controls {
+  align-items: flex-start;
+}
+
 .control-group {
   display: flex;
   align-items: center;
   gap: 4px;
+}
+
+/* A field's label+input stays a compact row (.control-group's own layout
+   above); this modifier stacks that row over a hint paragraph below it
+   instead, for a field whose explanation is a full sentence rather than a
+   tooltip's worth of text — e.g. Timing Options (issue #150). */
+.control-group.control-group-stacked {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+/* No dedicated styling before issue #150 — inherited whatever a bare <p>
+   picked up from its container. Explicit now that it is load-bearing
+   explanatory copy, not incidental. */
+.setting-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  max-width: 260px;
+}
+
+/* Timing diagram (#150) — a sorted event table anchored at the first kill
+   (0.0s), reviving the pre-Tauri egui build's "Mock Execution Timeline"
+   (see index.html's comment above .timing-diagram). Illustrative, not to
+   scale; only the relative-time column updates live as the fields change. */
+.timing-diagram {
+  margin-top: 6px;
+  max-width: 420px;
+}
+
+/* Sits directly above the table it explains, styled distinctly from the
+   plain .setting-hint paragraphs above the fields — the goal is to read as
+   "note about this table" rather than another field's own hint. */
+.timing-diagram-caption {
+  margin: 0 0 6px;
+  padding-bottom: 6px;
+  font-size: 11px;
+  font-style: italic;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.timing-diagram-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.timing-diagram-table th {
+  text-align: left;
+  color: var(--text-muted);
+  font-weight: 600;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.timing-diagram-table td {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border-color);
+  white-space: nowrap;
+}
+
+.timing-diagram-table tr:last-child td {
+  border-bottom: none;
+}
+
+.timing-diagram-time {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+
+/* The two fixed kill anchors (0.0s and the illustrative streak end) stand
+   out from the four fields' derived offsets around them. */
+.timing-diagram-anchor td {
+  color: #ffffff;
+  font-weight: 600;
 }
 
 /* Pinned Bottom Status Bar — one child per tab (index.html), toggled by
@@ -777,6 +862,15 @@ button.primary-btn:hover:not(:disabled) {
    separate opinion. */
 #footer-required-space {
   font-weight: bold;
+  font-size: 12px;
+}
+
+/* No colour threshold, unlike #footer-required-space above: the render-side
+   figure is a deliberately loose upper bound (raw-frame math), not a tight
+   prediction, so treating it as a pass/fail signal the way Capture's figure
+   is would be a false precision this number doesn't have. */
+#render-footer-required-space {
+  color: var(--text-muted);
   font-size: 12px;
 }
 
