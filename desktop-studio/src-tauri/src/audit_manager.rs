@@ -36,7 +36,7 @@ pub async fn run_demo_audit_impl(
     cancel_token.store(false, Ordering::SeqCst);
     let is_running_end = Arc::clone(&is_running);
 
-    let result = tokio::task::spawn_blocking(move || {
+    let result = crate::messages::flatten_spawn_blocking(tokio::task::spawn_blocking(move || {
         let (tx, rx) = mpsc::channel();
         
         // Spawn a thread to forward progress events to Tauri frontend
@@ -101,9 +101,8 @@ pub async fn run_demo_audit_impl(
             .collect();
 
         Ok(serialized)
-    })
-    .await
-    .map_err(|e| format!("Task join error: {}", e))?;
+    }))
+    .await;
 
     is_running_end.store(false, Ordering::SeqCst);
     result

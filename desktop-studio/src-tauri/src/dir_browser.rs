@@ -217,7 +217,7 @@ const SCAN_SKIP_DIRS: [&str; 5] = ["target", "node_modules", ".git", "src", "ass
 /// "Local" Quick Links tier.
 #[tauri::command]
 pub async fn scan_demo_folders(root: Option<String>) -> Result<Vec<DemoFolderHit>, String> {
-    tokio::task::spawn_blocking(move || {
+    crate::messages::spawn_blocking_result(tokio::task::spawn_blocking(move || {
         let root_dir = root
             .map(PathBuf::from)
             .or_else(dirs::document_dir)
@@ -276,7 +276,6 @@ pub async fn scan_demo_folders(root: Option<String>) -> Result<Vec<DemoFolderHit
 
         folders.sort_by(|a, b| a.path.cmp(&b.path));
         folders
-    })
+    }))
     .await
-    .map_err(|e| format!("Task join error: {}", e))
 }

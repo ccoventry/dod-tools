@@ -671,7 +671,7 @@ pub async fn start_capture_batch_impl(
             .lock()
             .unwrap_or_else(|p| p.into_inner());
         if *running {
-            return Err("Capture batch already in progress".to_string());
+            return Err(crate::messages::CAPTURE_BATCH_ALREADY_RUNNING.to_string());
         }
         *running = true;
     }
@@ -707,9 +707,9 @@ pub async fn start_capture_batch_impl(
         let _ = app_handle.emit("capture_status", serde_json::json!({
             "running": false,
             "error": true,
-            "status": "No streaks in payload"
+            "status": crate::messages::NO_STREAKS_IN_PAYLOAD
         }));
-        return Err("No streaks in payload".to_string());
+        return Err(crate::messages::NO_STREAKS_IN_PAYLOAD.to_string());
     }
 
     // ── Clone Arcs into the worker closure ────────────────────────────────────
@@ -1219,15 +1219,15 @@ fn write_hidden_sidecar(path: &Path) -> std::io::Result<()> {
 /// `build_hlae_process` reads (hlae_path/game_path/resolution/separate_hud).
 fn resolve_preview_env(hlae_path: &str, game_path: &str) -> Result<(PatcherConfig, PathBuf), String> {
     if hlae_path.trim().is_empty() || game_path.trim().is_empty() {
-        return Err("Configure the HLAE and Half-Life executable paths before previewing.".to_string());
+        return Err(crate::messages::configure_paths_before("previewing"));
     }
     let hlae_p = Path::new(hlae_path);
     let hl_p = Path::new(game_path);
     if !hlae_p.is_file() {
-        return Err("HLAE executable not found at the configured path.".to_string());
+        return Err(crate::messages::HLAE_NOT_FOUND_AT_CONFIGURED_PATH.to_string());
     }
     if !hl_p.is_file() {
-        return Err("Half-Life executable not found at the configured path.".to_string());
+        return Err(crate::messages::HL_NOT_FOUND_AT_CONFIGURED_PATH.to_string());
     }
 
     let dod_dir = hl_p
@@ -1258,12 +1258,12 @@ fn patch_bookmark_previews(
     patcher_config: &PatcherConfig,
 ) -> Result<(Vec<PatchJob>, usize), String> {
     if streaks.is_empty() {
-        return Err("This demo has no highlights to preview.".to_string());
+        return Err(crate::messages::NO_HIGHLIGHTS_TO_PREVIEW.to_string());
     }
     let capture_streaks: Vec<CaptureStreak> = streaks.into_iter().map(CaptureStreak::from).collect();
     let jobs = build_preview_patch_jobs(capture_streaks, Some(dod_dir));
     if jobs.is_empty() {
-        return Err("Failed to build any preview patch jobs.".to_string());
+        return Err(crate::messages::FAILED_TO_BUILD_PREVIEW_JOBS.to_string());
     }
 
     let cancel_token = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -1298,7 +1298,7 @@ pub async fn launch_demo_preview(
     game_path: String,
     streaks: Vec<SerializedStreak>,
 ) -> Result<(), String> {
-    tokio::task::spawn_blocking(move || {
+    crate::messages::flatten_spawn_blocking(tokio::task::spawn_blocking(move || {
         let (patcher_config, dod_dir) = resolve_preview_env(&hlae_path, &game_path)?;
         let (jobs, _generated) = patch_bookmark_previews(streaks, &dod_dir, &patcher_config)?;
         let job = jobs.first().ok_or_else(|| "Failed to build the preview patch job".to_string())?;
@@ -1314,9 +1314,8 @@ pub async fn launch_demo_preview(
             .map_err(|e| format!("Failed to launch HLAE for preview: {}", e))?;
 
         Ok(())
-    })
+    }))
     .await
-    .map_err(|e| format!("Task join error: {}", e))?
 }
 
 /// Patches every demo represented in `streaks` into its own bookmarked
@@ -1330,13 +1329,12 @@ pub async fn generate_all_previews(
     game_path: String,
     streaks: Vec<SerializedStreak>,
 ) -> Result<usize, String> {
-    tokio::task::spawn_blocking(move || {
+    crate::messages::flatten_spawn_blocking(tokio::task::spawn_blocking(move || {
         let (patcher_config, dod_dir) = resolve_preview_env(&hlae_path, &game_path)?;
         let (_jobs, generated) = patch_bookmark_previews(streaks, &dod_dir, &patcher_config)?;
         Ok(generated)
-    })
+    }))
     .await
-    .map_err(|e| format!("Task join error: {}", e))?
 }
 
 // ── Standalone Game Launch ──────────────────────────────────────────────────────
@@ -1380,15 +1378,15 @@ pub async fn launch_standalone_game(app: tauri::AppHandle) -> Result<(), String>
         guard.clone()
     };
 
-    tokio::task::spawn_blocking(move || {
+    crate::messages::flatten_spawn_blocking(tokio::task::spawn_blocking(move || {
         if settings.hlae_path.trim().is_empty() || settings.hl_path.trim().is_empty() {
-            return Err("Configure the HLAE and Half-Life executable paths before launching.".to_string());
+            return Err(crate::messages::configure_paths_before("launching"));
         }
         if !Path::new(&settings.hlae_path).is_file() {
-            return Err("HLAE executable not found at the configured path.".to_string());
+            return Err(crate::messages::HLAE_NOT_FOUND_AT_CONFIGURED_PATH.to_string());
         }
         if !Path::new(&settings.hl_path).is_file() {
-            return Err("Half-Life executable not found at the configured path.".to_string());
+            return Err(crate::messages::HL_NOT_FOUND_AT_CONFIGURED_PATH.to_string());
         }
 
         let patcher_config = PatcherConfig {
@@ -1409,9 +1407,8 @@ pub async fn launch_standalone_game(app: tauri::AppHandle) -> Result<(), String>
             .map_err(|e| format!("Failed to launch HLAE: {}", e))?;
 
         Ok(())
-    })
+    }))
     .await
-    .map_err(|e| format!("Task join error: {}", e))?
 }
 
 /// Launches OBS Studio from the configured `obs_exe_path`, spawn-and-forget —
@@ -1431,12 +1428,12 @@ pub async fn launch_obs(app: tauri::AppHandle) -> Result<(), String> {
         guard.obs_exe_path.clone()
     };
 
-    tokio::task::spawn_blocking(move || {
+    crate::messages::flatten_spawn_blocking(tokio::task::spawn_blocking(move || {
         if obs_exe_path.trim().is_empty() {
-            return Err("Configure the OBS executable path before launching.".to_string());
+            return Err(crate::messages::CONFIGURE_OBS_PATH_BEFORE_LAUNCHING.to_string());
         }
         if !Path::new(&obs_exe_path).is_file() {
-            return Err("OBS executable not found at the configured path.".to_string());
+            return Err(crate::messages::OBS_NOT_FOUND_AT_CONFIGURED_PATH.to_string());
         }
         let mut cmd = std::process::Command::new(&obs_exe_path);
         // Without this OBS inherits dod-tools' own CWD instead of its own
@@ -1448,9 +1445,8 @@ pub async fn launch_obs(app: tauri::AppHandle) -> Result<(), String> {
         }
         cmd.spawn().map_err(|e| format!("Failed to launch OBS: {}", e))?;
         Ok(())
-    })
+    }))
     .await
-    .map_err(|e| format!("Task join error: {}", e))?
 }
 
 // ── Running Process Guard ───────────────────────────────────────────────────────
@@ -1551,7 +1547,7 @@ fn resolve_dod_dir_for_sweep(game_dir: &str) -> Result<PathBuf, String> {
 /// (with combined demo + sidecar size) for the audit modal.
 #[tauri::command]
 pub async fn scan_orphaned_previews(game_dir: String) -> Result<Vec<PreviewFileSummary>, String> {
-    tokio::task::spawn_blocking(move || {
+    crate::messages::flatten_spawn_blocking(tokio::task::spawn_blocking(move || {
         let dod_dir = resolve_dod_dir_for_sweep(&game_dir)?;
         if !dod_dir.is_dir() {
             return Ok(Vec::new());
@@ -1599,9 +1595,8 @@ pub async fn scan_orphaned_previews(game_dir: String) -> Result<Vec<PreviewFileS
 
         results.sort_by(|a, b| a.file_name.cmp(&b.file_name));
         Ok(results)
-    })
+    }))
     .await
-    .map_err(|e| format!("Task join error: {}", e))?
 }
 
 /// Deletes the given orphaned preview demos and their `.dodtools_preview`
@@ -1611,7 +1606,7 @@ pub async fn scan_orphaned_previews(game_dir: String) -> Result<Vec<PreviewFileS
 /// missing sidecar does not fail the entry.
 #[tauri::command]
 pub async fn delete_orphaned_previews(file_paths: Vec<String>) -> Result<u32, String> {
-    tokio::task::spawn_blocking(move || {
+    crate::messages::flatten_spawn_blocking(tokio::task::spawn_blocking(move || {
         let mut deleted: u32 = 0;
         for demo_path in file_paths {
             let path = PathBuf::from(&demo_path);
@@ -1632,9 +1627,8 @@ pub async fn delete_orphaned_previews(file_paths: Vec<String>) -> Result<u32, St
             }
         }
         Ok(deleted)
-    })
+    }))
     .await
-    .map_err(|e| format!("Task join error: {}", e))?
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
