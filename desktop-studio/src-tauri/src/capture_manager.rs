@@ -56,10 +56,6 @@ pub struct CapturePayload {
     #[serde(default)]
     pub obs_password: String,
     #[serde(default)]
-    pub obs_scene: String,
-    #[serde(default)]
-    pub obs_scene_collection: String,
-    #[serde(default)]
     pub save_local_patched_copy: bool,
     #[serde(default = "default_add_condebug")]
     pub add_condebug: bool,
@@ -72,6 +68,9 @@ pub struct CapturePayload {
     /// Directories used for dynamic drive failover and capture routing.
     pub capture_directories: Vec<String>,
     pub capture_fps: i32,
+    /// OBS mode's own capture rate — see `PatcherConfig::obs_capture_fps`.
+    #[serde(default = "default_obs_capture_fps_payload")]
+    pub obs_capture_fps: i32,
     /// Output drives for AOT capacity simulation and media routing.
     pub drives: Vec<String>,
     #[serde(default)]
@@ -113,6 +112,7 @@ pub struct CapturePayload {
 fn default_initial_delay() -> f32 { 3.0 }
 fn default_fast_forward_speed() -> f32 { 0.05 }
 fn default_resolution_width() -> i32 { 1280 }
+fn default_obs_capture_fps_payload() -> i32 { 120 }
 fn default_resolution_height() -> i32 { 720 }
 fn default_add_condebug() -> bool { true }
 
@@ -225,6 +225,7 @@ fn config_from_payload(payload: &CapturePayload) -> PatcherConfig {
     cfg.post_roll_seconds = payload.post_roll_seconds;
     cfg.capture_directories = payload.capture_directories.iter().map(std::path::PathBuf::from).collect();
     cfg.capture_fps = payload.capture_fps;
+    cfg.obs_capture_fps = payload.obs_capture_fps;
     cfg.record_start_lead = payload.record_start_lead;
     cfg.record_stop_trail = payload.record_stop_trail;
     cfg.initial_delay = payload.initial_delay;
@@ -242,8 +243,6 @@ fn config_from_payload(payload: &CapturePayload) -> PatcherConfig {
         host: if payload.obs_host.is_empty() { "127.0.0.1".to_string() } else { payload.obs_host.clone() },
         port: if payload.obs_port == 0 { 4455 } else { payload.obs_port },
         password: payload.obs_password.clone(),
-        scene: payload.obs_scene.clone(),
-        scene_collection: payload.obs_scene_collection.clone(),
     };
     cfg.save_local_patched_copy = payload.save_local_patched_copy;
     cfg.add_condebug = payload.add_condebug;
@@ -301,8 +300,8 @@ pub struct ObsConnectionReport {
     pub output: String,
     pub fps: f64,
     pub current_scene: String,
+    pub current_profile: String,
     pub scene_collection: String,
-    pub scenes: Vec<String>,
     pub warnings: Vec<String>,
 }
 
@@ -321,23 +320,28 @@ impl ObsConnectionReport {
             output: String::new(),
             fps: 0.0,
             current_scene: String::new(),
+            current_profile: String::new(),
             scene_collection: String::new(),
-            scenes: Vec::new(),
             warnings: Vec::new(),
         }
     }
 }
 
-/// Tests the OBS connection and reports everything the settings panel shows.
+/// Tests the OBS connection, provisions (and switches into) dod-tools' own
+/// profile and scene, and reports everything the settings panel shows.
 ///
-/// Read-only. Nothing about the user's OBS is changed by asking — no scene
-/// switch, no settings write — so this is safe to call whenever the panel is
-/// opened.
+/// **Not read-only**, unlike its old contract — this is the "validated" hook
+/// point `obs::provision::ensure_dod_tools_setup` runs from (see that
+/// module's docs): creates/repairs the dod-tools profile, scene and sources
+/// if needed, and switches into them. Refuses first if OBS is already
+/// recording or streaming under whatever the user's own profile is, so this
+/// never mutates live state out from under something unrelated. Called on
+/// every proactive check (mode switch, startup, manual Test Connection
+/// click) as well as before a real batch — see main.js's
+/// `runObsConnectionTest`.
 ///
-/// `game_width`/`game_height` are passed in so the report can flag the canvas
-/// mismatch that silently costs the most quality: a canvas larger than the game
-/// means the capture is scaled up onto it and the whole canvas scaled back
-/// down, discarding most of the pixels before the encoder sees them.
+/// `game_width`/`game_height`/`obs_capture_fps` are what the profile's video
+/// settings get set to.
 #[tauri::command]
 pub async fn obs_test_connection(
     host: String,
@@ -345,18 +349,48 @@ pub async fn obs_test_connection(
     password: String,
     game_width: i32,
     game_height: i32,
+    obs_capture_fps: i32,
 ) -> Result<ObsConnectionReport, String> {
-    let url = format!("ws://{}:{}", if host.is_empty() { "127.0.0.1".into() } else { host }, if port == 0 { 4455 } else { port });
+    let resolved_host = if host.is_empty() { "127.0.0.1".to_string() } else { host };
+    let resolved_port = if port == 0 { 4455 } else { port };
+    let url = format!("ws://{resolved_host}:{resolved_port}");
     tokio::task::spawn_blocking(move || {
         let mut client = match native::obs::ObsClient::connect(&url, &password) {
             Ok(c) => c,
+            // A bare socket error ("actively refused it (os error 10061)") makes
+            // the user guess whether that means OBS is closed or just
+            // unreachable. `is_transport` narrows it to "never got past the
+            // socket/handshake" (as opposed to OBS answering and refusing), and
+            // for that case whether the process is even running is a fact we
+            // can just check instead of leaving it to the raw OS text.
+            Err(e) if e.is_transport() => {
+                let msg = if is_obs_process_running() {
+                    format!(
+                        "OBS is running, but dod-tools can't reach it at {resolved_host}:{resolved_port}. Check Tools -> WebSocket Server Settings is enabled and the port matches."
+                    )
+                } else {
+                    "OBS isn't running. Launch it (or use Launch OBS above), then try again.".to_string()
+                };
+                return ObsConnectionReport::failed(msg);
+            }
             Err(e) => return ObsConnectionReport::failed(e),
         };
+        if let Err(e) = client.refuse_if_busy() {
+            return ObsConnectionReport::failed(e);
+        }
+        if let Err(e) = native::obs::provision::ensure_dod_tools_setup(
+            &mut client,
+            game_width,
+            game_height,
+            obs_capture_fps,
+            1,
+        ) {
+            return ObsConnectionReport::failed(e);
+        }
         let preflight = match client.preflight(game_width, game_height) {
             Ok(p) => p,
             Err(e) => return ObsConnectionReport::failed(e),
         };
-        let scenes = client.scene_names().unwrap_or_default();
         ObsConnectionReport {
             connected: true,
             error: None,
@@ -370,8 +404,8 @@ pub async fn obs_test_connection(
             output: format!("{}x{}", preflight.output_width, preflight.output_height),
             fps: preflight.fps,
             current_scene: preflight.current_scene,
+            current_profile: preflight.current_profile,
             scene_collection: preflight.scene_collection,
-            scenes,
             warnings: preflight.warnings,
         }
     })
@@ -1363,6 +1397,45 @@ pub async fn launch_standalone_game(app: tauri::AppHandle) -> Result<(), String>
     .map_err(|e| format!("Task join error: {}", e))?
 }
 
+/// Launches OBS Studio from the configured `obs_exe_path`, spawn-and-forget —
+/// same shape as `launch_standalone_game`, minus the whole HLAE/hl.exe
+/// process-building step, since this just starts the user's own program.
+/// No lifecycle tracking: OBS is the user's software, not ours to manage,
+/// and this button exists only so the user doesn't have to alt-tab to a
+/// shortcut before configuring the connection above it.
+#[tauri::command]
+pub async fn launch_obs(app: tauri::AppHandle) -> Result<(), String> {
+    let settings_state = app.state::<crate::settings_manager::SettingsManager>();
+    let obs_exe_path = {
+        let guard = settings_state
+            .inner
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        guard.obs_exe_path.clone()
+    };
+
+    tokio::task::spawn_blocking(move || {
+        if obs_exe_path.trim().is_empty() {
+            return Err("Configure the OBS executable path before launching.".to_string());
+        }
+        if !Path::new(&obs_exe_path).is_file() {
+            return Err("OBS executable not found at the configured path.".to_string());
+        }
+        let mut cmd = std::process::Command::new(&obs_exe_path);
+        // Without this OBS inherits dod-tools' own CWD instead of its own
+        // install directory, and fails to find its own relative-pathed data
+        // (locale/en-US.ini, etc.) — measured, not theoretical. Same fix
+        // `build_hlae_process` already applies for HLAE/hl.exe.
+        if let Some(parent) = Path::new(&obs_exe_path).parent() {
+            cmd.current_dir(parent);
+        }
+        cmd.spawn().map_err(|e| format!("Failed to launch OBS: {}", e))?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
+}
+
 // ── Running Process Guard ───────────────────────────────────────────────────────
 //
 // Launching a fresh HLAE Game Capture preview against a demo while a prior
@@ -1375,6 +1448,18 @@ pub async fn launch_standalone_game(app: tauri::AppHandle) -> Result<(), String>
 fn is_engine_process_name(name: &str) -> bool {
     let lower = name.to_lowercase();
     lower == "hl.exe" || lower == "hlae.exe"
+}
+
+/// True if an OBS Studio process is currently running, under any of its
+/// installed binary names. Used to turn a bare "could not connect" into a
+/// deterministic answer instead of asking the user to interpret a raw OS
+/// socket error themselves.
+fn is_obs_process_running() -> bool {
+    let sys = sysinfo::System::new_all();
+    sys.processes().values().any(|p| {
+        let lower = p.name().to_lowercase();
+        lower == "obs64.exe" || lower == "obs32.exe" || lower == "obs.exe"
+    })
 }
 
 /// True if any `hl.exe` or `hlae.exe` process is currently running.
@@ -1555,8 +1640,6 @@ mod tests {
             obs_host: String::new(),
             obs_port: 0,
             obs_password: String::new(),
-            obs_scene: String::new(),
-            obs_scene_collection: String::new(),
             save_local_patched_copy: false,
             add_condebug: true,
             streaks: Vec::new(),
@@ -1564,6 +1647,7 @@ mod tests {
             post_roll_seconds: 0.6,
             capture_directories: vec!["D:/capture".to_string()],
             capture_fps: 300,
+            obs_capture_fps: 120,
             drives: vec!["D:/capture".to_string(), "E:/capture".to_string()],
             record_start_lead: 0.0,
             record_stop_trail: 0.0,

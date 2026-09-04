@@ -509,6 +509,7 @@ pub fn spawn_capture_engine(
                     obs_take_folders.clone(),
                     config.resolution_width,
                     config.resolution_height,
+                    config.obs_capture_fps,
                 ) {
                     Ok((session, preflight)) => {
                         log_markdown(&format!(
@@ -664,6 +665,20 @@ pub fn spawn_capture_engine(
             // because the deadline had nothing to count from. Seen in a real
             // run: 398s with hl.exe alive and not one marker.
             let mut hl_first_seen: Option<std::time::Instant> = None;
+            // Set the instant the BATCH_COMPLETE marker is seen, in OBS mode
+            // only — a faster, side-effect-free alternative to waiting on
+            // `exit_trigger` there. `sys_capture_done_path`'s
+            // `mirv_recordmovie_start`/`_stop` (which is what actually writes
+            // `exit_trigger`) restarts the whole demo from the top as a side
+            // effect — harmless in frame-sequence mode (which is already
+            // mid-movie-recording throughout), but in OBS mode it replayed
+            // primer.dem *and* chain_01.dem from tick 0, twice, adding ~50s to
+            // a real batch before `exit_trigger` ever got written. The
+            // BATCH_COMPLETE marker already exists and already fires
+            // `ObsSession::on_marker`'s `end_block()` moments before this —
+            // taskkilling right after it means hl.exe is dead before it ever
+            // gets to process the command that would restart it. See #obs.
+            let mut obs_batch_complete_seen = false;
             let mut sys = {
                 use sysinfo::SystemExt;
                 sysinfo::System::new_all()
@@ -683,6 +698,9 @@ pub fn spawn_capture_engine(
                     last_marker_at = Some(now);
                     if let Some(session) = obs_session.as_mut() {
                         session.on_marker(&marker);
+                    }
+                    if obs_mode && marker.kind == crate::obs::MarkerKind::BatchComplete {
+                        obs_batch_complete_seen = true;
                     }
                     if marker.kind == crate::obs::MarkerKind::DemoStart {
                         if let Some((job_idx, total, clips)) = marker.demo_progress {
@@ -764,12 +782,24 @@ pub fn spawn_capture_engine(
                     std::process::Command::new("taskkill").args(&["/F", "/IM", "hl.exe"]).output().ok();
                     break;
                 }
-                if start_time.elapsed().as_secs() > 10 && (dummy_path.exists() || exit_trigger.exists()) {
+                if start_time.elapsed().as_secs() > 10
+                    && (dummy_path.exists() || exit_trigger.exists() || obs_batch_complete_seen)
+                {
+                    let via = if obs_batch_complete_seen && !exit_trigger.exists() {
+                        // The common OBS-mode case: caught it off the marker,
+                        // ahead of exit_trigger ever needing to be written.
+                        "BATCH_COMPLETE marker".to_string()
+                    } else {
+                        format!(
+                            "done marker: {}, exit trigger: {}",
+                            dummy_path.exists(),
+                            exit_trigger.exists()
+                        )
+                    };
                     log_markdown(&format!(
-                        "[HLAE] Exit trigger detected after {:.1}s (done marker: {}, exit trigger: {}) — taskkilling hl.exe",
+                        "[HLAE] Batch complete after {:.1}s (via {}) — taskkilling hl.exe",
                         start_time.elapsed().as_secs_f32(),
-                        dummy_path.exists(),
-                        exit_trigger.exists()
+                        via
                     ));
                     std::process::Command::new("taskkill").args(&["/F", "/IM", "hl.exe"]).output().ok();
                     break;

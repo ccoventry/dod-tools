@@ -1,5 +1,19 @@
 # OBS as an Alternate Capture Method
 
+> **Update 2026-09-03 — the scene/profile design below was superseded, not followed.**
+> "The scene picker" and "Building a scene (low priority)" sections recommended a dropdown over the
+> user's existing scenes/profiles, with scene *creation* explicitly deferred as a low-priority
+> nice-to-have, invoked only on request. What actually shipped (`native/src/obs/provision.rs`) goes
+> further in the direction "If it is ever automated, it goes through a profile" already pointed:
+> a dedicated `[DoD-Tools]` profile *and* scene, auto-created and **re-verified/repaired on every
+> connect** rather than created once and left alone — no picker at all, since there is nothing left
+> for the user to choose between. The "detect and state, never mutate" discipline these sections
+> argue for still holds, just narrowed to its actual point: never mutate the user's *own* profiles/
+> scenes. A profile/scene dod-tools creates and names itself was always the doc's own answer to "if
+> it is ever automated" — this just stopped waiting to automate it. See that module's doc comment for
+> the current design and reasoning; the sections below are the historical case for it, still useful
+> context but no longer the plan.
+
 > **Status 2026-08-28 — built and tested against a live OBS.** Tracks
 > [#65](https://github.com/ccoventry/dod-tools/issues/65), in PRs
 > [#72](https://github.com/ccoventry/dod-tools/pull/72) (this document) →

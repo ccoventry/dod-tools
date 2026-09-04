@@ -24,6 +24,7 @@ use crate::patch::ObsConfig;
 
 use super::client::{ObsClient, ObsError, ObsPreflight};
 use super::log_tail::{Marker, MarkerKind};
+use super::provision;
 use super::{STOP_MARKER, TRIGGER_MARKER};
 
 /// Stream folder a single-stream OBS take lands in.
@@ -80,12 +81,24 @@ pub struct ObsSession {
     active_since: Option<std::time::Instant>,
     /// Scene that was active before the batch switched away, to restore.
     previous_scene: Option<String>,
+    /// Profile that was active before the batch switched away, to restore.
+    previous_profile: Option<String>,
+    /// `(outputTotalFrames, outputSkippedFrames)` snapshotted at the moment
+    /// the current block's recording started — `None` while no block is
+    /// active, or if the snapshot itself failed (best-effort, see
+    /// `ObsClient::output_frame_stats`). Diffed against a fresh read at
+    /// `end_block` to report this specific block's dropped-frame rate,
+    /// since the counters themselves are cumulative across the whole OBS
+    /// process, not scoped to one recording.
+    frame_stats_baseline: Option<(i64, i64)>,
     pub recorded: Vec<RecordedBlock>,
     pub skipped: Vec<String>,
 }
 
 impl ObsSession {
-    /// Connects, checks the install, and switches to the configured scene.
+    /// Connects, refuses if OBS is busy with something else, provisions (and
+    /// switches into) dod-tools' own profile and scene, then checks the
+    /// install.
     ///
     /// Fails loudly rather than degrading: every failure here otherwise
     /// produces a batch that runs to completion and captures nothing, which is
@@ -95,8 +108,25 @@ impl ObsSession {
         take_folders: Vec<PathBuf>,
         game_width: i32,
         game_height: i32,
+        capture_fps: i32,
     ) -> Result<(Self, ObsPreflight), ObsError> {
         let mut client = ObsClient::connect(&cfg.address(), &cfg.password)?;
+
+        // Before anything below switches profile/scene — see
+        // ObsClient::refuse_if_busy's own doc comment for why the ordering
+        // matters.
+        client.refuse_if_busy()?;
+
+        // Provisioning switches profile before checking the rest of the
+        // install, deliberately: a profile bundles Video settings (canvas/
+        // output resolution, FPS), so switching it changes exactly what
+        // preflight is about to validate. It also hands back whatever was
+        // active before the switch, captured at the one moment that's
+        // knowable — after this call, "current" already reads back as
+        // dod-tools' own profile/scene.
+        let provision::ProvisionResult { previous_profile, previous_scene } =
+            provision::ensure_dod_tools_setup(&mut client, game_width, game_height, capture_fps, 1)?;
+
         let preflight = client.preflight(game_width, game_height)?;
 
         if !preflight.missing_requests.is_empty() {
@@ -108,44 +138,10 @@ impl ObsSession {
                 ),
             });
         }
-        if preflight.recording {
-            return Err(ObsError::Request {
-                request: "StartRecord".into(),
-                detail: "OBS is already recording. Stop it before starting a batch.".into(),
-            });
-        }
-        // Refuse rather than warn: driving somebody's recorder mid-stream is
-        // not a decision to make on their behalf, and the failure would be
-        // visible to their audience rather than to them.
-        if preflight.streaming {
-            return Err(ObsError::Request {
-                request: "StartRecord".into(),
-                detail: "OBS is streaming. dod-tools will not drive its recorder during a live \
-                         stream."
-                    .into(),
-            });
-        }
 
         for warning in &preflight.warnings {
             log_markdown(&format!("⚠️ **OBS** — {warning}"));
         }
-
-        // Switching scene is a live-state change, not a settings edit: it is
-        // reversible, destroys nothing, and is exactly what choosing a scene
-        // means. The previous one is remembered so the batch puts it back.
-        let previous_scene = if cfg.scene.is_empty() {
-            None
-        } else {
-            let current = client.current_scene().ok();
-            if current.as_deref() != Some(cfg.scene.as_str()) {
-                client.set_scene(&cfg.scene)?;
-                log_markdown(&format!(
-                    "🎬 **OBS** — switched to scene `{}` for this batch (restored afterwards).",
-                    cfg.scene
-                ));
-            }
-            current
-        };
 
         Ok((
             Self {
@@ -157,6 +153,8 @@ impl ObsSession {
                 active: None,
                 active_since: None,
                 previous_scene,
+                previous_profile,
+                frame_stats_baseline: None,
                 recorded: Vec::new(),
                 skipped: Vec::new(),
             },
@@ -227,6 +225,13 @@ impl ObsSession {
 
         self.active = Some(dest);
         self.active_since = Some(std::time::Instant::now());
+        // Best-effort, and deliberately after start_record rather than
+        // before: a slow/failed stats fetch must never delay or block the
+        // actual recording starting.
+        self.frame_stats_baseline = {
+            let mut guard = self.client.lock().unwrap_or_else(|p| p.into_inner());
+            guard.as_mut().and_then(|c| c.output_frame_stats())
+        };
     }
 
     // Split out so `begin_block` can run it twice around a reconnect without
@@ -294,6 +299,8 @@ impl ObsSession {
             }
         };
 
+        self.warn_if_frames_dropped();
+
         match fold_into_take(Path::new(&path), &dest) {
             Ok(video) => {
                 let take_folder = take_folder_of(&dest);
@@ -306,6 +313,56 @@ impl ObsSession {
             }
             Err(e) => self.skipped.push(e),
         }
+    }
+
+    /// Fraction of a block's own output frames OBS had to skip before this
+    /// is worth interrupting the user over — occasional single-frame drops
+    /// are normal on real hardware and not what this is for. The confirmed
+    /// real case (2560x1440 @ 300fps against an encoder that could sustain
+    /// neither) was 98.5%; 5% is a conservative floor well below "quality
+    /// nobody would notice" and well above "the recording ran the machine
+    /// out of the encoding headroom it needed."
+    const FRAME_DROP_WARNING_THRESHOLD: f64 = 0.05;
+
+    /// Diffs `frame_stats_baseline` against a fresh read to report how many
+    /// of *this block's* output frames OBS had to skip due to encoding lag
+    /// — the counters `ObsClient::output_frame_stats` reads are cumulative
+    /// for the whole OBS process, not scoped to one recording, which is why
+    /// this needs a before/after pair rather than a single read.
+    ///
+    /// Best-effort like the baseline snapshot: a missing baseline (the
+    /// snapshot at `begin_block` failed) or a failed fresh read here just
+    /// skips the check silently rather than blocking anything — this is
+    /// advisory, not a correctness gate.
+    fn warn_if_frames_dropped(&mut self) {
+        let Some((base_total, base_skipped)) = self.frame_stats_baseline.take() else {
+            return;
+        };
+        let current = {
+            let mut guard = self.client.lock().unwrap_or_else(|p| p.into_inner());
+            guard.as_mut().and_then(|c| c.output_frame_stats())
+        };
+        let Some((total, skipped)) = current else {
+            return;
+        };
+
+        let total_delta = total - base_total;
+        let skipped_delta = skipped - base_skipped;
+        if total_delta <= 0 || skipped_delta <= 0 {
+            return;
+        }
+        let rate = skipped_delta as f64 / total_delta as f64;
+        if rate < Self::FRAME_DROP_WARNING_THRESHOLD {
+            return;
+        }
+        log_markdown(&format!(
+            "⚠️ **OBS** — this block dropped {skipped_delta}/{total_delta} frames \
+             ({:.1}%) due to encoding lag — the recorded clip is missing most of its \
+             motion, not just slightly rougher. OBS's canvas/output is set past what this \
+             machine's encoder can sustain in real time; lower Capture FPS (and/or \
+             resolution) for OBS mode.",
+            rate * 100.0
+        ));
     }
 
     fn try_stop(&self) -> Result<String, ObsError> {
@@ -356,7 +413,7 @@ impl ObsSession {
         ok
     }
 
-    /// Stops anything still recording and restores the previous scene.
+    /// Stops anything still recording and restores the previous scene/profile.
     pub fn finish(&mut self) {
         self.end_block();
         let mut guard = self.client.lock().unwrap_or_else(|p| p.into_inner());
@@ -364,6 +421,11 @@ impl ObsSession {
             if let Some(scene) = self.previous_scene.take() {
                 if !scene.is_empty() {
                     let _ = client.set_scene(&scene);
+                }
+            }
+            if let Some(profile) = self.previous_profile.take() {
+                if !profile.is_empty() {
+                    let _ = client.set_profile(&profile);
                 }
             }
         }

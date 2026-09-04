@@ -7,7 +7,7 @@ mod map_manager;
 mod updater_manager;
 
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
-use capture_manager::{CaptureManager, CapturePayload, launch_demo_preview, generate_all_previews, launch_standalone_game, check_engine_processes, kill_engine_processes, scan_orphaned_previews, delete_orphaned_previews};
+use capture_manager::{CaptureManager, CapturePayload, launch_demo_preview, generate_all_previews, launch_standalone_game, launch_obs, check_engine_processes, kill_engine_processes, scan_orphaned_previews, delete_orphaned_previews};
 use render_manager::{
     RenderManager, queue_render_batch, start_queued_render, cancel_render_batch,
     cancel_render_job, reset_render_job, reset_all_render_jobs, remove_render_job,
@@ -546,6 +546,7 @@ pub fn run() {
             capture_manager::obs_test_connection,
             capture_manager::obs_check_orphan,
             capture_manager::obs_recover_orphan,
+            launch_obs,
             launch_standalone_game,
             check_engine_processes,
             kill_engine_processes,

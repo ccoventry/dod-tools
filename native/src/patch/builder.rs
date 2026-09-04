@@ -206,6 +206,19 @@ pub fn final_init_commands(config: &PatcherConfig) -> Vec<String> {
         if config.separate_hud { "1" } else { "0" }
     ));
 
+    // OBS mode is real time: HLAE issues no `mirv_movie_start` at all, so
+    // `mirv_movie_fps` above is inert on this path — nothing reads it. What
+    // OBS actually records is however fast the engine renders, so that rate
+    // has to be pinned to the same `obs_capture_fps` OBS's own canvas is set
+    // to (obs::provision::ensure_dod_tools_setup), or the two drift against
+    // each other. `fps_override 1` first: GoldSrc's default `fps_max`
+    // ceiling (~100) is below what obs_capture_fps is commonly set to, and
+    // `fps_max` alone is silently clamped under that ceiling without it.
+    if config.capture_mode == crate::patch::CaptureMode::Obs {
+        out.push("fps_override 1".to_string());
+        out.push(format!("fps_max {}", config.obs_capture_fps));
+    }
+
     // The decal flush needs the ring set once, at demo load, and never again.
     // r_decals bounds how far the rotating index may travel before it wraps; it
     // does not evict anything, so lowering it once decals have accumulated
@@ -1763,6 +1776,38 @@ mod tests {
         config.game_path = root.join("hl.exe").to_string_lossy().to_string();
         config.primary_media_dir = Some(root);
         config
+    }
+
+    #[test]
+    fn obs_mode_pins_fps_override_and_fps_max_to_obs_capture_fps() {
+        let mut config = PatcherConfig::default();
+        config.capture_mode = crate::patch::CaptureMode::Obs;
+        config.capture_fps = 300; // must not leak into fps_max — see below
+        config.obs_capture_fps = 120;
+        let commands = final_init_commands(&config);
+        assert!(
+            commands.iter().any(|c| c == "fps_override 1"),
+            "expected fps_override 1, got: {commands:?}"
+        );
+        assert!(
+            commands.iter().any(|c| c == "fps_max 120"),
+            "expected fps_max 120 (from obs_capture_fps, not capture_fps), got: {commands:?}"
+        );
+    }
+
+    #[test]
+    fn frame_sequence_and_direct_to_video_never_touch_fps_max() {
+        for mode in [crate::patch::CaptureMode::FrameSequence, crate::patch::CaptureMode::DirectToVideo] {
+            let mut config = PatcherConfig::default();
+            config.capture_mode = mode;
+            config.capture_fps = 120;
+            config.obs_capture_fps = 120;
+            let commands = final_init_commands(&config);
+            assert!(
+                !commands.iter().any(|c| c.starts_with("fps_override") || c.starts_with("fps_max")),
+                "{mode:?} should not touch fps_override/fps_max, got: {commands:?}"
+            );
+        }
     }
 
     #[test]

@@ -200,29 +200,41 @@ export const STRINGS = {
         'Keep Day of Defeat focused — it stops fast-forwarding between clips when it loses focus, and the batch takes far longer.',
     // ── OBS connection ──────────────────────────────────────────────────────
     OBS_SECTION_TITLE: 'OBS Connection',
+    OBS_EXE_PATH_LABEL: 'OBS Path:',
+    OBS_EXE_PATH_PLACEHOLDER: 'Path to obs64.exe',
+    OBS_LAUNCH_BUTTON: 'Launch OBS',
+    OBS_LAUNCHING: 'Launching…',
+    obsLaunchFailed: (err) => `Could not launch OBS: ${err}`,
     OBS_HOST_LABEL: 'Host:',
     OBS_PORT_LABEL: 'Port:',
     OBS_PASSWORD_LABEL: 'Password:',
     OBS_PASSWORD_PLACEHOLDER: 'From Tools → WebSocket Server Settings',
     OBS_PASSWORD_TITLE:
         'The obs-websocket password, if OBS has authentication enabled. Use the Copy button in OBS rather than retyping it.',
-    OBS_SCENE_LABEL: 'Scene:',
-    OBS_SCENE_TITLE:
-        'Scene to switch to for the batch, and switch back from afterwards. Leave on "Use current scene" to change nothing. The scene must contain a capture source pointed at hl.exe and an audio source.',
-    OBS_SCENE_CURRENT: 'Use current scene',
     OBS_TEST_BUTTON: 'Test Connection',
     OBS_TESTING: 'Connecting…',
+    OBS_LAUNCHING_AND_CONNECTING: 'Launching OBS and waiting for it to be ready…',
     OBS_UNREACHABLE: 'Could not reach OBS.',
     obsConnectedSummary: (obsVersion, websocketVersion) =>
         `Connected — OBS ${obsVersion} (obs-websocket ${websocketVersion})`,
+    // Read-only — dod-tools always targets its own fixed profile/scene, there
+    // is nothing here for the user to change.
+    obsUsingSummary: (profile, scene) => `Using OBS profile "${profile}", scene "${scene}"`,
     obsCanvasSummary: (canvas, output, fps) => `Canvas ${canvas}, output ${output} @ ${Math.round(fps)} fps`,
     obsRecordingToSummary: (directory) => `Recording to ${directory}`,
     obsMissingRequests: (requests) => `This OBS is missing: ${requests.join(', ')} — capture cannot run.`,
     OBS_ALREADY_RECORDING: 'OBS is already recording — stop it before starting a batch.',
     OBS_ALREADY_STREAMING: 'OBS is streaming — dod-tools will not drive its recorder.',
     obsTestFailed: (err) => `OBS test failed: ${err}`,
+    OBS_CAPTURE_FPS_LABEL: 'OBS Capture FPS:',
+    OBS_CAPTURE_FPS_TITLE:
+        "OBS's own live recording rate and the game's fps_max — separate from Capture FPS above, which is non-real-time for the other two modes. Set above what your machine can sustain and OBS drops frames instead of falling behind, making the clip choppy or unusable. Test a short capture first and watch for dropped-frame warnings before committing to a value.",
+    OBS_CAPTURE_FPS_WARNING:
+        'Too high for your machine and OBS drops frames — test a short capture first.',
     OBS_ENABLE_HINT:
-        'OBS Studio 28+ has obs-websocket built in. Enable it under Tools → WebSocket Server Settings — the checkbox at the top of that dialog is the switch, not the Connect Info panel.',
+        'OBS 28+: enable this under Tools → WebSocket Server Settings (the checkbox, not the Connect Info panel).',
+    OBS_PROVISION_HINT:
+        'dod-tools manages its own OBS profile/scene ([DoD-Tools]) — your own setup is never touched.',
     // ── Orphaned recording left by a previous run ───────────────────────────
     OBS_ORPHAN_TITLE: 'OBS is still recording',
     obsOrphanPrompt: (directory) =>
@@ -330,7 +342,7 @@ export const STRINGS = {
     // own tickrate is a different number entirely, and conflating the two is
     // how a "3 second" margin turned out to be 0.6.
     CAPTURE_FPS_TITLE:
-      'Frames per second written to the recorded video. Nothing to do with the demo\'s own tickrate, which is a property of how the demo was recorded and is not adjustable here.',
+      'Frames per second written to the recorded video. Nothing to do with the demo\'s own tickrate, which is a property of how the demo was recorded and is not adjustable here. Not used in OBS mode — see OBS Capture FPS in the OBS Connection section below.',
     OUTPUT_DIR_PLACEHOLDER: 'Capture output directory path...',
     ADD_DIRECTORY_BUTTON: 'Add Directory',
     DESTINATIONS_HELP_TEXT: 'Captures are written here, and Render Studio scans these same locations for takes to render.',
@@ -379,6 +391,7 @@ export const STRINGS = {
     andNMore: (n) => `...and ${n} more`,
     NO_HIGHLIGHTS_SELECTED_WARNING: 'No highlights selected — pick at least one in the Highlights tab before starting a capture.',
     NO_DRIVES_CONFIGURED_WARNING: 'No Capture Output directories configured — add at least one with free space before starting a capture.',
+    OBS_NOT_CONNECTED_WARNING: 'Not connected to OBS — capture mode is OBS, but the last connection check failed. Fix the connection in Configuration → Output Format before starting a capture.',
     // Measured 2026-08-28, see docs/direct_to_video_capture.md. Spelled out
     // because both halves report success and the broken output only shows up
     // after rendering — the user has no other way to find out.
@@ -909,6 +922,7 @@ export const STRINGS = {
     SELECT_HLAE_EXE_TITLE: 'Select HLAE Executable (hlae.exe)',
     SELECT_HL_EXE_TITLE: 'Select Half-Life Executable (hl.exe)',
     SELECT_FFMPEG_EXE_TITLE: 'Select FFmpeg Executable (ffmpeg.exe)',
+    SELECT_OBS_EXE_TITLE: 'Select OBS Executable (obs64.exe)',
     SELECT_DEMO_FILES_TITLE: 'Select Demo Files (.dem)',
     SELECT_DEMO_FOLDER_TITLE: 'Select Demo Folder',
 
