@@ -397,14 +397,8 @@ async fn link_hlae_ffmpeg(
 ) -> Result<serde_json::Value, String> {
     use native::shared::hlae_ffmpeg::{self, LinkError};
 
-    let ffmpeg = hlae_ffmpeg::resolve_absolute(&ffmpeg_path).ok_or_else(|| {
-        format!(
-            "Could not resolve an FFmpeg from \"{}\". Set Render Studio's FFmpeg path to a real \
-             ffmpeg.exe first — HLAE's ini needs an absolute path and cannot use a bare command \
-             name.",
-            ffmpeg_path
-        )
-    })?;
+    let ffmpeg = hlae_ffmpeg::resolve_absolute(&ffmpeg_path)
+        .ok_or_else(|| messages::ffmpeg_could_not_be_resolved(&ffmpeg_path))?;
 
     let hlae = std::path::Path::new(&hlae_path);
     let result = if elevated.unwrap_or(false) {

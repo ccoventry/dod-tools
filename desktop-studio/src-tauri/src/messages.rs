@@ -77,6 +77,15 @@ pub fn analyzer_error(err: impl Display) -> String {
     format!("Analyzer error: {}", err)
 }
 
+pub fn ffmpeg_could_not_be_resolved(ffmpeg_path: &str) -> String {
+    format!(
+        "Could not resolve an FFmpeg from \"{}\". Set Render Studio's FFmpeg path to a real \
+         ffmpeg.exe first — HLAE's ini needs an absolute path and cannot use a bare command \
+         name.",
+        ffmpeg_path
+    )
+}
+
 // ── capture_manager.rs ──────────────────────────────────────────────────────
 
 pub const CAPTURE_BATCH_ALREADY_RUNNING: &str = "Capture batch already in progress";
@@ -132,6 +141,13 @@ pub fn failed_to_launch_obs(err: impl Display) -> String {
 pub fn game_directory_not_found(game_dir: &str) -> String {
     format!("Game directory not found: {}", game_dir)
 }
+
+/// Same text independently authored twice (`resolve_preview_env` and
+/// `resolve_dod_dir_for_sweep`) — both derive `dod_dir` from `hl.exe`'s
+/// parent and fail identically when that parent can't be resolved.
+pub const COULD_NOT_RESOLVE_DOD_DIRECTORY: &str = "Could not resolve the 'dod' directory next to hl.exe";
+pub const FAILED_TO_BUILD_PREVIEW_PATCH_JOB: &str = "Failed to build the preview patch job";
+pub const COULD_NOT_RESOLVE_PREVIEW_FILE_STEM: &str = "Could not resolve the preview demo's file stem";
 
 pub fn failed_to_read_dod_directory(err: impl Display) -> String {
     format!("Failed to read dod directory: {}", err)

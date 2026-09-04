@@ -1232,7 +1232,7 @@ fn resolve_preview_env(hlae_path: &str, game_path: &str) -> Result<(PatcherConfi
     let dod_dir = hl_p
         .parent()
         .map(|p| p.join("dod"))
-        .ok_or_else(|| "Could not resolve the 'dod' directory next to hl.exe".to_string())?;
+        .ok_or_else(|| crate::messages::COULD_NOT_RESOLVE_DOD_DIRECTORY.to_string())?;
     std::fs::create_dir_all(&dod_dir)
         .map_err(crate::messages::failed_to_create_dod_directory)?;
 
@@ -1300,13 +1300,13 @@ pub async fn launch_demo_preview(
     crate::messages::flatten_spawn_blocking(tokio::task::spawn_blocking(move || {
         let (patcher_config, dod_dir) = resolve_preview_env(&hlae_path, &game_path)?;
         let (jobs, _generated) = patch_bookmark_previews(streaks, &dod_dir, &patcher_config)?;
-        let job = jobs.first().ok_or_else(|| "Failed to build the preview patch job".to_string())?;
+        let job = jobs.first().ok_or_else(|| crate::messages::FAILED_TO_BUILD_PREVIEW_PATCH_JOB.to_string())?;
 
         let preview_stem = job
             .output_demo
             .file_stem()
             .and_then(|s| s.to_str())
-            .ok_or_else(|| "Could not resolve the preview demo's file stem".to_string())?;
+            .ok_or_else(|| crate::messages::COULD_NOT_RESOLVE_PREVIEW_FILE_STEM.to_string())?;
 
         let mut cmd = patcher_config.build_hlae_process(&format!("+viewdemo {}", preview_stem));
         cmd.spawn()
@@ -1527,7 +1527,7 @@ fn resolve_dod_dir_for_sweep(game_dir: &str) -> Result<PathBuf, String> {
         return p
             .parent()
             .map(|parent| parent.join("dod"))
-            .ok_or_else(|| "Could not resolve the 'dod' directory next to hl.exe".to_string());
+            .ok_or_else(|| crate::messages::COULD_NOT_RESOLVE_DOD_DIRECTORY.to_string());
     }
     if p.is_dir() {
         let is_dod_dir = p
