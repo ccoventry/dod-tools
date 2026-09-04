@@ -240,7 +240,7 @@ impl ObsSession {
         let mut guard = self.client.lock().unwrap_or_else(|p| p.into_inner());
         let client = guard
             .as_mut()
-            .ok_or_else(|| ObsError::Transport("not connected to OBS".into()))?;
+            .ok_or_else(|| ObsError::Transport(crate::messages::NOT_CONNECTED_TO_OBS.into()))?;
         // Pointing OBS at the destination before recording is what makes the
         // later move a rename rather than a cross-drive copy, and it is what
         // keeps blocks routed across the export pool.
@@ -369,7 +369,7 @@ impl ObsSession {
         let mut guard = self.client.lock().unwrap_or_else(|p| p.into_inner());
         let client = guard
             .as_mut()
-            .ok_or_else(|| ObsError::Transport("not connected to OBS".into()))?;
+            .ok_or_else(|| ObsError::Transport(crate::messages::NOT_CONNECTED_TO_OBS.into()))?;
         client.stop_record()
     }
 
@@ -495,10 +495,7 @@ fn salvage_orphan(dest: &Path) -> Option<PathBuf> {
 /// about itself to every tool downstream.
 pub(super) fn fold_into_take(recorded: &Path, dest: &Path) -> Result<PathBuf, String> {
     if !recorded.is_file() {
-        return Err(format!(
-            "OBS reported {} but no file is there",
-            recorded.display()
-        ));
+        return Err(crate::messages::obs_reported_file_missing(recorded.display()));
     }
     let ext = recorded
         .extension()
@@ -529,11 +526,11 @@ pub(super) fn fold_into_take(recorded: &Path, dest: &Path) -> Result<PathBuf, St
             Err(e) => last = e,
         }
     }
-    Err(format!(
-        "could not move {} to {} after {:.1}s of retries: {last}",
+    Err(crate::messages::could_not_move_after_retries(
         recorded.display(),
         target.display(),
-        (FOLD_RETRY_ATTEMPTS as f64 * FOLD_RETRY_DELAY.as_secs_f64()),
+        FOLD_RETRY_ATTEMPTS as f64 * FOLD_RETRY_DELAY.as_secs_f64(),
+        last,
     ))
 }
 

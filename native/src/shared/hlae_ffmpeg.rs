@@ -480,7 +480,7 @@ fn search_path(name: &str) -> Option<PathBuf> {
 /// Returns the version banner on success, so a caller can show what it found.
 pub fn verify_is_ffmpeg(exe: &Path) -> Result<String, String> {
     if !exe.is_file() {
-        return Err(format!("{} is not a file", exe.display()));
+        return Err(crate::messages::not_a_file(exe.display()));
     }
 
     let mut cmd = std::process::Command::new(exe);
@@ -496,7 +496,7 @@ pub fn verify_is_ffmpeg(exe: &Path) -> Result<String, String> {
 
     let mut child = cmd
         .spawn()
-        .map_err(|e| format!("could not run {}: {}", exe.display(), e))?;
+        .map_err(|e| crate::messages::could_not_run(exe.display(), e))?;
 
     // Bounded rather than a blocking wait: this runs on a user-chosen
     // executable, and one that never exits must not hang the caller.
@@ -509,9 +509,9 @@ pub fn verify_is_ffmpeg(exe: &Path) -> Result<String, String> {
             }
             Ok(None) => {
                 let _ = child.kill();
-                return Err(format!("{} did not respond to -version", exe.display()));
+                return Err(crate::messages::did_not_respond_to_version_flag(exe.display()));
             }
-            Err(e) => return Err(format!("{}", e)),
+            Err(e) => return Err(e.to_string()),
         }
     }
 
@@ -526,16 +526,12 @@ pub fn verify_is_ffmpeg(exe: &Path) -> Result<String, String> {
     if banner.to_ascii_lowercase().starts_with("ffmpeg version") {
         Ok(banner)
     } else if banner.is_empty() {
-        Err(format!("{} did not identify itself as FFmpeg", exe.display()))
+        Err(crate::messages::did_not_identify_as_ffmpeg(exe.display()))
     } else {
         // Naming what it actually is beats "invalid": the usual mistake is
         // picking a sibling tool, and saying which one points straight at the
         // fix.
-        Err(format!(
-            "{} is not FFmpeg — it reports itself as \"{}\"",
-            exe.display(),
-            banner
-        ))
+        Err(crate::messages::reports_itself_as(exe.display(), &banner))
     }
 }
 
