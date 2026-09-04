@@ -351,10 +351,28 @@ pub async fn obs_test_connection(
     game_height: i32,
     obs_capture_fps: i32,
 ) -> Result<ObsConnectionReport, String> {
-    let url = format!("ws://{}:{}", if host.is_empty() { "127.0.0.1".into() } else { host }, if port == 0 { 4455 } else { port });
+    let resolved_host = if host.is_empty() { "127.0.0.1".to_string() } else { host };
+    let resolved_port = if port == 0 { 4455 } else { port };
+    let url = format!("ws://{resolved_host}:{resolved_port}");
     tokio::task::spawn_blocking(move || {
         let mut client = match native::obs::ObsClient::connect(&url, &password) {
             Ok(c) => c,
+            // A bare socket error ("actively refused it (os error 10061)") makes
+            // the user guess whether that means OBS is closed or just
+            // unreachable. `is_transport` narrows it to "never got past the
+            // socket/handshake" (as opposed to OBS answering and refusing), and
+            // for that case whether the process is even running is a fact we
+            // can just check instead of leaving it to the raw OS text.
+            Err(e) if e.is_transport() => {
+                let msg = if is_obs_process_running() {
+                    format!(
+                        "OBS is running, but dod-tools can't reach it at {resolved_host}:{resolved_port}. Check Tools -> WebSocket Server Settings is enabled and the port matches."
+                    )
+                } else {
+                    "OBS isn't running. Launch it (or use Launch OBS above), then try again.".to_string()
+                };
+                return ObsConnectionReport::failed(msg);
+            }
             Err(e) => return ObsConnectionReport::failed(e),
         };
         if let Err(e) = client.refuse_if_busy() {
@@ -1430,6 +1448,18 @@ pub async fn launch_obs(app: tauri::AppHandle) -> Result<(), String> {
 fn is_engine_process_name(name: &str) -> bool {
     let lower = name.to_lowercase();
     lower == "hl.exe" || lower == "hlae.exe"
+}
+
+/// True if an OBS Studio process is currently running, under any of its
+/// installed binary names. Used to turn a bare "could not connect" into a
+/// deterministic answer instead of asking the user to interpret a raw OS
+/// socket error themselves.
+fn is_obs_process_running() -> bool {
+    let sys = sysinfo::System::new_all();
+    sys.processes().values().any(|p| {
+        let lower = p.name().to_lowercase();
+        lower == "obs64.exe" || lower == "obs32.exe" || lower == "obs.exe"
+    })
 }
 
 /// True if any `hl.exe` or `hlae.exe` process is currently running.
