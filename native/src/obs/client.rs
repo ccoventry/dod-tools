@@ -344,6 +344,24 @@ impl ObsClient {
             .to_string())
     }
 
+    /// `(outputTotalFrames, outputSkippedFrames)` from `GetStats` — system-
+    /// wide output-thread counters, not scoped to one recording. Callers
+    /// snapshot this at the start of a block and diff against the end to get
+    /// a per-block figure, the same way OBS's own "skipped frames due to
+    /// encoding lag" log line is derived internally.
+    ///
+    /// Like `GetProfileParameter` below, deliberately not in
+    /// `REQUIRED_REQUESTS`: this only produces advice (a warning about
+    /// dropped frames), and an OBS too old to answer it should still be able
+    /// to capture. `None` on any failure, for the same reason.
+    pub fn output_frame_stats(&mut self) -> Option<(i64, i64)> {
+        let stats = self.request("GetStats", json!({})).ok()?;
+        Some((
+            stats["outputTotalFrames"].as_i64()?,
+            stats["outputSkippedFrames"].as_i64()?,
+        ))
+    }
+
     /// A profile setting, read-only.
     ///
     /// `GetProfileParameter` is deliberately not in `REQUIRED_REQUESTS`: these

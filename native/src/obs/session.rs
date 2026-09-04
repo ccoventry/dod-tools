@@ -83,6 +83,14 @@ pub struct ObsSession {
     previous_scene: Option<String>,
     /// Profile that was active before the batch switched away, to restore.
     previous_profile: Option<String>,
+    /// `(outputTotalFrames, outputSkippedFrames)` snapshotted at the moment
+    /// the current block's recording started — `None` while no block is
+    /// active, or if the snapshot itself failed (best-effort, see
+    /// `ObsClient::output_frame_stats`). Diffed against a fresh read at
+    /// `end_block` to report this specific block's dropped-frame rate,
+    /// since the counters themselves are cumulative across the whole OBS
+    /// process, not scoped to one recording.
+    frame_stats_baseline: Option<(i64, i64)>,
     pub recorded: Vec<RecordedBlock>,
     pub skipped: Vec<String>,
 }
@@ -146,6 +154,7 @@ impl ObsSession {
                 active_since: None,
                 previous_scene,
                 previous_profile,
+                frame_stats_baseline: None,
                 recorded: Vec::new(),
                 skipped: Vec::new(),
             },
@@ -216,6 +225,13 @@ impl ObsSession {
 
         self.active = Some(dest);
         self.active_since = Some(std::time::Instant::now());
+        // Best-effort, and deliberately after start_record rather than
+        // before: a slow/failed stats fetch must never delay or block the
+        // actual recording starting.
+        self.frame_stats_baseline = {
+            let mut guard = self.client.lock().unwrap_or_else(|p| p.into_inner());
+            guard.as_mut().and_then(|c| c.output_frame_stats())
+        };
     }
 
     // Split out so `begin_block` can run it twice around a reconnect without
@@ -283,6 +299,8 @@ impl ObsSession {
             }
         };
 
+        self.warn_if_frames_dropped();
+
         match fold_into_take(Path::new(&path), &dest) {
             Ok(video) => {
                 let take_folder = take_folder_of(&dest);
@@ -295,6 +313,56 @@ impl ObsSession {
             }
             Err(e) => self.skipped.push(e),
         }
+    }
+
+    /// Fraction of a block's own output frames OBS had to skip before this
+    /// is worth interrupting the user over — occasional single-frame drops
+    /// are normal on real hardware and not what this is for. The confirmed
+    /// real case (2560x1440 @ 300fps against an encoder that could sustain
+    /// neither) was 98.5%; 5% is a conservative floor well below "quality
+    /// nobody would notice" and well above "the recording ran the machine
+    /// out of the encoding headroom it needed."
+    const FRAME_DROP_WARNING_THRESHOLD: f64 = 0.05;
+
+    /// Diffs `frame_stats_baseline` against a fresh read to report how many
+    /// of *this block's* output frames OBS had to skip due to encoding lag
+    /// — the counters `ObsClient::output_frame_stats` reads are cumulative
+    /// for the whole OBS process, not scoped to one recording, which is why
+    /// this needs a before/after pair rather than a single read.
+    ///
+    /// Best-effort like the baseline snapshot: a missing baseline (the
+    /// snapshot at `begin_block` failed) or a failed fresh read here just
+    /// skips the check silently rather than blocking anything — this is
+    /// advisory, not a correctness gate.
+    fn warn_if_frames_dropped(&mut self) {
+        let Some((base_total, base_skipped)) = self.frame_stats_baseline.take() else {
+            return;
+        };
+        let current = {
+            let mut guard = self.client.lock().unwrap_or_else(|p| p.into_inner());
+            guard.as_mut().and_then(|c| c.output_frame_stats())
+        };
+        let Some((total, skipped)) = current else {
+            return;
+        };
+
+        let total_delta = total - base_total;
+        let skipped_delta = skipped - base_skipped;
+        if total_delta <= 0 || skipped_delta <= 0 {
+            return;
+        }
+        let rate = skipped_delta as f64 / total_delta as f64;
+        if rate < Self::FRAME_DROP_WARNING_THRESHOLD {
+            return;
+        }
+        log_markdown(&format!(
+            "⚠️ **OBS** — this block dropped {skipped_delta}/{total_delta} frames \
+             ({:.1}%) due to encoding lag — the recorded clip is missing most of its \
+             motion, not just slightly rougher. OBS's canvas/output is set past what this \
+             machine's encoder can sustain in real time; lower Capture FPS (and/or \
+             resolution) for OBS mode.",
+            rate * 100.0
+        ));
     }
 
     fn try_stop(&self) -> Result<String, ObsError> {
