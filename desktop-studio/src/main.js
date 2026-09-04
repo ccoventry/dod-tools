@@ -170,6 +170,12 @@ function applyCaptureModeUI() {
   const codecGroup = document.querySelector('#capture-codec-group');
   if (codecGroup) codecGroup.style.display = video ? '' : 'none';
 
+  // Capture FPS is non-real-time for the other two modes but meaningless for
+  // OBS, which has its own separate OBS Capture FPS field below — showing
+  // both invites setting the wrong one.
+  const captureFpsGroup = document.querySelector('#capture-fps-group');
+  if (captureFpsGroup) captureFpsGroup.style.display = obs ? 'none' : '';
+
   // The OBS block follows the same rule: hidden rather than disabled,
   // because showing a dead connection form in frame-sequence mode would
   // suggest OBS is involved when it is not.
@@ -902,12 +908,11 @@ window.addEventListener("DOMContentLoaded", async () => {
       applyCaptureModeUI();
       const legacy = document.querySelector('#config-ffmpeg-capture');
       if (legacy) legacy.dispatchEvent(new Event('change', { bubbles: true }));
-      // Issue #147: switching into OBS mode is exactly the moment the
-      // existing preflight warnings become relevant — check immediately
-      // instead of waiting for a manual Test Connection click.
-      if (currentCaptureMode() === 'obs') {
-        runObsConnectionTest({ auto: true });
-      }
+      // Deliberately no auto-check here: OBS is not expected to already be
+      // open just because the user switched into OBS mode, and warning about
+      // that on every switch was pure noise. Test Connection covers the
+      // manual case; Start Capture Batch runs the real pre-flight (and
+      // launches/retries OBS itself) right before it matters.
     });
   applyCaptureModeUI();
 

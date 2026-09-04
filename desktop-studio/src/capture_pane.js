@@ -439,19 +439,19 @@ export async function refreshLaunchGuard(state) {
   // Pool is usable overall (at least one real drive with room) but not every
   // configured entry is — worth a heads-up, not worth blocking the batch.
   const hasPartialProblems = !noDrivesConfigured && !noUsableSpace && !insufficientSpace && problemPaths.length > 0;
-  // Issue #147: nothing used to stop a batch from starting in OBS mode with
-  // OBS closed or unauthenticated — it failed deep inside the capture engine
-  // instead of up front. Reflects obs_status.js's own most recent check
+  // Issue #147: surface OBS-not-reachable up front rather than failing deep
+  // inside the capture engine. Reflects obs_status.js's own most recent check
   // (main.js runs it on switching into OBS mode; this module's own
   // runObsConnectionTest also runs fresh as Start Capture Batch's own
-  // pre-flight, below) rather than re-querying OBS here. Deliberately does
-  // NOT block on "never checked yet" — OBS is not expected to already be
-  // running just because dod-tools opened, and the Start Capture Batch click
-  // handler checks for real before ever dispatching a batch. Only an
-  // actually-failed check blocks the button proactively.
+  // pre-flight, below) rather than re-querying OBS here. Warning-only, not
+  // blocking: the click handler launches OBS and retries the connection
+  // itself when it finds this state, so disabling the button here would
+  // deny that recovery path a first click ever reaching it — OBS is not
+  // expected to already be open just because dod-tools switched into OBS
+  // mode or even opened at all.
   const obsMode = document.querySelector('#config-capture-mode')?.value === 'obs';
   const obsNotReady = obsMode && obsConnectionChecked() && !isObsConnected();
-  const blocked = obsNotReady || noHighlightsSelected || noDrivesConfigured || noUsableSpace || insufficientSpace;
+  const blocked = noHighlightsSelected || noDrivesConfigured || noUsableSpace || insufficientSpace;
 
   if (!capturingInFlight) {
     startBtn.disabled = blocked;
