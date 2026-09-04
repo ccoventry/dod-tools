@@ -20,7 +20,7 @@ function describeTrackedReasons(demo) {
   const streaks = demo?.streaks || [];
   let hasStatus = false, hasNotes = false, hasRange = false;
   streaks.forEach(s => {
-    if (s.status === 'Captured' || s.status === 'Rendered') hasStatus = true;
+    if (s.status === 'Pending' || s.status === 'Captured' || s.status === 'Rendered') hasStatus = true;
     if (s.notes && s.notes.trim()) hasNotes = true;
     if (isRangeModified(s)) hasRange = true;
   });
@@ -154,9 +154,12 @@ export function recordingPlayerStreaks(demo) {
   return streaks.filter((s) => s.player_index === recPlayer);
 }
 
-/** Count streaks matching a given status string. */
+/** Count streaks matching a given status string. An unset status (still
+ *  `undefined` — see take_index.js's isHighlightTracked doc comment) counts
+ *  as 'None', not 'Pending': Pending is now a deliberate flag the user sets
+ *  to mark a highlight for later capture, not the implicit default. */
 function countByStatus(streaks, status) {
-  return (streaks || []).filter((s) => (s.status || 'Pending') === status).length;
+  return (streaks || []).filter((s) => (s.status || STRINGS.HIGHLIGHTS.STATUS_UNSET_DEFAULT) === status).length;
 }
 
 // ── Row selection (Clear Selected) ──────────────────────────────────────────

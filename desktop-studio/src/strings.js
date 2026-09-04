@@ -79,7 +79,7 @@ export const STRINGS = {
     trackedBadgeTooltip: (reasons) => `Tracked — has ${reasons.join(', ')}. Protected from Clear Untracked in Workspace mode.`,
     rowDeleteLog: (name, trackedNote) => `[queue] Row delete: removed "${name}"${trackedNote}`,
     TRACKED_NOTE_SUFFIX: ' (had tracked work; user confirmed)',
-    REASON_STATUS: 'a Captured/Rendered status',
+    REASON_STATUS: 'a Pending/Captured/Rendered status',
     REASON_NOTE: 'a note',
     REASON_RANGE: 'an edited kill range',
     EMPTY_DASH: '—',
@@ -122,7 +122,11 @@ export const STRINGS = {
     KR_RESET_TITLE: 'Reset to full range',
     fallbackKillCount: (count) => `${count} kills`,
     STATUS_OPTIONS: ['None', 'Pending', 'Captured', 'Rendered'],
-    STATUS_PENDING_DEFAULT: 'Pending',
+    // What an untouched highlight (streak.status still undefined) displays
+    // and counts as. 'Pending' is now a deliberate, user-set flag ("capture
+    // this one later") rather than the implicit default every unset row
+    // used to show — see isHighlightTracked's doc comment (take_index.js).
+    STATUS_UNSET_DEFAULT: 'None',
     mergedTakeBadge: (takeName) => `merged → ${takeName}`,
     mergedBadgeTitle: (mergedCount) => `Merged with ${mergedCount - 1} other highlight(s) into one take — they were recorded together and share this take folder.`,
     tickLabel: (tick) => `Tick ${tick}`,
