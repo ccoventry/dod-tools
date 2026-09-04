@@ -298,6 +298,13 @@ body {
   white-space: nowrap;
 }
 
+.setting-hint {
+  font-size: 11px;
+  font-style: italic;
+  color: var(--text-muted);
+  margin: 4px 0;
+}
+
 .info-icon {
   display: inline-flex;
   align-items: center;

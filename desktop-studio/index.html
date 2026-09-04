@@ -235,7 +235,7 @@
                   <label for="config-res-height" data-str="CAPTURE_CONFIG.HEIGHT_LABEL">Height:</label>
                   <input type="number" id="config-res-height" value="720" style="width: 80px;" />
                 </div>
-                <div class="control-group">
+                <div class="control-group" id="capture-fps-group">
                   <label for="config-capture-fps" data-str="CAPTURE_CONFIG.CAPTURE_FPS_LABEL" data-str-title="CAPTURE_CONFIG.CAPTURE_FPS_TITLE">Capture FPS:</label>
                   <input type="number" id="config-capture-fps" value="300" style="width: 80px;" data-str-title="CAPTURE_CONFIG.CAPTURE_FPS_TITLE" />
                 </div>
@@ -292,70 +292,57 @@
                     game, and that ranking is likely to change.
                   </p>
                 </div>
+              </div>
 
-                <!-- Shown only in OBS mode. Testing the connection provisions
-                     dod-tools' own [DoD-Tools] profile/scene (creating or
-                     repairing it as needed) and switches into it — see
-                     obs::provision. It refuses first if OBS is already
-                     recording or streaming under something else, so it can
-                     never disturb an unrelated setup, but it is not read-only
-                     any more; there is no scene/profile picker here to make
-                     that promise moot. -->
-                <div id="obs-settings-group" style="display: none;">
-                  <h4 data-str="CAPTURE_CONFIG.OBS_SECTION_TITLE">OBS Connection</h4>
-                  <!-- Spawn-and-forget, same as the standalone "Launch Game
-                       (HLAE)" button — no lifecycle tracking, since OBS is
-                       the user's own software, not ours to manage. -->
-                  <div class="control-group">
-                    <label for="config-obs-exe-path" data-str="CAPTURE_CONFIG.OBS_EXE_PATH_LABEL">OBS Path:</label>
-                    <input type="text" id="config-obs-exe-path" data-str-placeholder="CAPTURE_CONFIG.OBS_EXE_PATH_PLACEHOLDER" placeholder="Path to obs64.exe" style="flex: 1;" />
-                    <button id="obs-browse-btn" data-str="CAPTURE_CONFIG.BROWSE_BUTTON">Browse</button>
-                    <button id="obs-launch-btn" data-str="CAPTURE_CONFIG.OBS_LAUNCH_BUTTON">Launch OBS</button>
-                  </div>
-                  <div class="control-group">
-                    <label for="config-obs-host" data-str="CAPTURE_CONFIG.OBS_HOST_LABEL">Host:</label>
-                    <input type="text" id="config-obs-host" value="127.0.0.1" style="width: 10em;" />
-                    <label for="config-obs-port" data-str="CAPTURE_CONFIG.OBS_PORT_LABEL">Port:</label>
-                    <input type="number" id="config-obs-port" value="4455" min="1" max="65535" style="width: 6em;" />
-                  </div>
-                  <div class="control-group">
-                    <label for="config-obs-password" data-str="CAPTURE_CONFIG.OBS_PASSWORD_LABEL">Password:</label>
-                    <input type="password" id="config-obs-password"
-                           data-str-placeholder="CAPTURE_CONFIG.OBS_PASSWORD_PLACEHOLDER"
-                           data-str-title="CAPTURE_CONFIG.OBS_PASSWORD_TITLE"
-                           placeholder="From Tools → WebSocket Server Settings" style="flex: 1;" />
-                    <button id="obs-test-btn" data-str="CAPTURE_CONFIG.OBS_TEST_BUTTON">Test Connection</button>
-                  </div>
-                  <div class="control-group">
-                    <label for="config-obs-capture-fps" data-str="CAPTURE_CONFIG.OBS_CAPTURE_FPS_LABEL" data-str-title="CAPTURE_CONFIG.OBS_CAPTURE_FPS_TITLE">OBS Capture FPS:</label>
-                    <input type="number" id="config-obs-capture-fps" value="120" style="width: 80px;" data-str-title="CAPTURE_CONFIG.OBS_CAPTURE_FPS_TITLE" />
-                  </div>
-                  <!-- Confirmed live, not theoretical: 300fps @ 2560x1440 dropped
-                       98.5% of frames (see ObsSession::warn_if_frames_dropped, which
-                       catches this after the fact if it happens anyway) — a real
-                       warning, not boilerplate caution. -->
-                  <p class="setting-hint" data-str="CAPTURE_CONFIG.OBS_CAPTURE_FPS_WARNING">
-                    Unlike the frame-sequence/video Capture FPS above, this drives OBS's actual
-                    live encoding — set it above what your machine can sustain at this
-                    resolution and OBS drops frames rather than falling behind, which makes the
-                    clip choppy or unusable, not just "slightly rougher." There's no safe number
-                    to assume in advance — it depends entirely on your CPU/GPU and encoder. Test
-                    with a short capture first and watch for dropped-frame warnings (the activity
-                    log, or OBS's own Stats window) before committing to a value for real batches.
-                  </p>
-                  <div id="obs-status" class="path-warning" style="display: none;"></div>
-                  <p class="setting-hint" data-str="CAPTURE_CONFIG.OBS_ENABLE_HINT">
-                    OBS Studio 28+ has obs-websocket built in. Enable it under Tools → WebSocket
-                    Server Settings — the checkbox at the top of that dialog is the switch, not the
-                    Connect Info panel.
-                  </p>
-                  <p class="setting-hint" data-str="CAPTURE_CONFIG.OBS_PROVISION_HINT">
-                    dod-tools creates and manages its own OBS profile/scene ([DoD-Tools]) for
-                    capture — your own profiles, scenes and streaming setup are never touched.
-                    Canvas resolution comes from the settings above and FPS from OBS Capture FPS
-                    here; see the current profile/scene it's using once connected.
-                  </p>
+              <!-- Shown only in OBS mode. Testing the connection provisions
+                   dod-tools' own [DoD-Tools] profile/scene (creating or
+                   repairing it as needed) and switches into it — see
+                   obs::provision. It refuses first if OBS is already
+                   recording or streaming under something else, so it can
+                   never disturb an unrelated setup, but it is not read-only
+                   any more; there is no scene/profile picker here to make
+                   that promise moot. Deliberately kept outside .inline-controls
+                   — as a flex item there it competed for a row with Width/
+                   Height/etc. instead of sitting below them as its own block. -->
+              <div id="obs-settings-group" style="display: none;">
+                <h4 data-str="CAPTURE_CONFIG.OBS_SECTION_TITLE">OBS Connection</h4>
+                <p class="setting-hint" data-str="CAPTURE_CONFIG.OBS_PROVISION_HINT">
+                  dod-tools manages its own OBS profile/scene ([DoD-Tools]) — your own setup is never touched.
+                </p>
+                <!-- Spawn-and-forget, same as the standalone "Launch Game
+                     (HLAE)" button — no lifecycle tracking, since OBS is
+                     the user's own software, not ours to manage. -->
+                <div class="control-group">
+                  <label for="config-obs-exe-path" data-str="CAPTURE_CONFIG.OBS_EXE_PATH_LABEL">OBS Path:</label>
+                  <input type="text" id="config-obs-exe-path" data-str-placeholder="CAPTURE_CONFIG.OBS_EXE_PATH_PLACEHOLDER" placeholder="Path to obs64.exe" style="flex: 1; max-width: 420px;" />
+                  <button id="obs-browse-btn" data-str="CAPTURE_CONFIG.BROWSE_BUTTON">Browse</button>
+                  <button id="obs-launch-btn" data-str="CAPTURE_CONFIG.OBS_LAUNCH_BUTTON">Launch OBS</button>
                 </div>
+                <div class="control-group">
+                  <label for="config-obs-host" data-str="CAPTURE_CONFIG.OBS_HOST_LABEL">Host:</label>
+                  <input type="text" id="config-obs-host" value="127.0.0.1" style="width: 10em;" />
+                  <label for="config-obs-port" data-str="CAPTURE_CONFIG.OBS_PORT_LABEL">Port:</label>
+                  <input type="number" id="config-obs-port" value="4455" min="1" max="65535" style="width: 6em;" />
+                </div>
+                <div class="control-group">
+                  <label for="config-obs-password" data-str="CAPTURE_CONFIG.OBS_PASSWORD_LABEL">Password:</label>
+                  <input type="password" id="config-obs-password"
+                         data-str-placeholder="CAPTURE_CONFIG.OBS_PASSWORD_PLACEHOLDER"
+                         data-str-title="CAPTURE_CONFIG.OBS_PASSWORD_TITLE"
+                         placeholder="From Tools → WebSocket Server Settings" style="flex: 1; max-width: 420px;" />
+                  <button id="obs-test-btn" data-str="CAPTURE_CONFIG.OBS_TEST_BUTTON">Test Connection</button>
+                </div>
+                <p class="setting-hint" data-str="CAPTURE_CONFIG.OBS_ENABLE_HINT">
+                  OBS 28+: enable this under Tools → WebSocket Server Settings (the checkbox, not the Connect Info panel).
+                </p>
+                <div class="control-group">
+                  <label for="config-obs-capture-fps" data-str="CAPTURE_CONFIG.OBS_CAPTURE_FPS_LABEL" data-str-title="CAPTURE_CONFIG.OBS_CAPTURE_FPS_TITLE">OBS Capture FPS:</label>
+                  <input type="number" id="config-obs-capture-fps" value="120" style="width: 80px;" data-str-title="CAPTURE_CONFIG.OBS_CAPTURE_FPS_TITLE" />
+                </div>
+                <p class="setting-hint" data-str="CAPTURE_CONFIG.OBS_CAPTURE_FPS_WARNING">
+                  Too high for your machine and OBS drops frames — test a short capture first.
+                </p>
+                <div id="obs-status" class="path-warning" style="display: none;"></div>
               </div>
             </div>
 

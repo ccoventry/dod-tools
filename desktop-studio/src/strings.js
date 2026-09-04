@@ -228,13 +228,13 @@ export const STRINGS = {
     obsTestFailed: (err) => `OBS test failed: ${err}`,
     OBS_CAPTURE_FPS_LABEL: 'OBS Capture FPS:',
     OBS_CAPTURE_FPS_TITLE:
-        "OBS's own live recording rate and the game's fps_max — separate from Capture FPS above, which is non-real-time for the other two modes. See the warning below before raising this.",
+        "OBS's own live recording rate and the game's fps_max — separate from Capture FPS above, which is non-real-time for the other two modes. Set above what your machine can sustain and OBS drops frames instead of falling behind, making the clip choppy or unusable. Test a short capture first and watch for dropped-frame warnings before committing to a value.",
     OBS_CAPTURE_FPS_WARNING:
-        'Unlike the frame-sequence/video Capture FPS above, this drives OBS\'s actual live encoding — set it above what your machine can sustain at this resolution and OBS drops frames rather than falling behind, which makes the clip choppy or unusable, not just "slightly rougher." There\'s no safe number to assume in advance — it depends entirely on your CPU/GPU and encoder. Test with a short capture first and watch for dropped-frame warnings (the activity log, or OBS\'s own Stats window) before committing to a value for real batches.',
+        'Too high for your machine and OBS drops frames — test a short capture first.',
     OBS_ENABLE_HINT:
-        'OBS Studio 28+ has obs-websocket built in. Enable it under Tools → WebSocket Server Settings — the checkbox at the top of that dialog is the switch, not the Connect Info panel.',
+        'OBS 28+: enable this under Tools → WebSocket Server Settings (the checkbox, not the Connect Info panel).',
     OBS_PROVISION_HINT:
-        "dod-tools creates and manages its own OBS profile/scene ([DoD-Tools]) for capture — your own profiles, scenes and streaming setup are never touched. Canvas resolution comes from the settings above and FPS from OBS Capture FPS here; see the current profile/scene it's using once connected.",
+        'dod-tools manages its own OBS profile/scene ([DoD-Tools]) — your own setup is never touched.',
     // ── Orphaned recording left by a previous run ───────────────────────────
     OBS_ORPHAN_TITLE: 'OBS is still recording',
     obsOrphanPrompt: (directory) =>
