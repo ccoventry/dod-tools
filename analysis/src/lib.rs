@@ -7,6 +7,7 @@ mod player;
 mod round;
 mod scoreboard;
 mod time;
+mod weapon_names;
 
 use crate::{
     chat::use_chat_updates,
@@ -34,6 +35,7 @@ pub use crate::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use crate::localization::add_localization_search_path;
+pub use crate::weapon_names::{all_weapon_display_names, weapon_display_name};
 pub use dod::{Team, Weapon};
 
 #[derive(Debug)]

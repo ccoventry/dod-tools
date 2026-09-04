@@ -515,6 +515,16 @@ async fn analyze_demo_full(
     .map_err(|e| format!("Task join error: {}", e))?
 }
 
+/// Every `Weapon` variant's resolved display name, keyed by its raw JSON tag
+/// (e.g. `"ScopedK98"` -> "Scoped Kar98k") — the same names
+/// `native::patch::scanner` bakes into a kill streak's timeline text, so the
+/// frontend's weapon tables (analyzer_pane.js) can show identical text
+/// instead of independently re-deriving a name from the raw enum tag.
+#[tauri::command]
+fn get_weapon_display_names() -> std::collections::HashMap<String, String> {
+    analysis::all_weapon_display_names()
+}
+
 // ── App entry point ────────────────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -553,6 +563,7 @@ pub fn run() {
             diagnose_executable_paths,
             link_hlae_ffmpeg,
             analyze_demo_full,
+            get_weapon_display_names,
             start_capture_batch,
             launch_demo_preview,
             generate_all_previews,
