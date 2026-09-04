@@ -531,6 +531,19 @@ pub fn run() {
         .manage(SettingsManager::new())
         .manage(AuditManager::default())
         .manage(updater_manager::UpdaterState::default())
+        .setup(|app| {
+            // Dev/debug builds find the repo-root `localizations/` folder via
+            // analysis::translate_key's own walk-up-from-exe search, since the
+            // exe runs from inside the source tree. A packaged install runs from
+            // e.g. Program Files, nowhere near that folder — its `resources`
+            // directory (populated by tauri.conf.json's `bundle.resources`) is
+            // the only place weapon-name strings can come from there.
+            use tauri::Manager;
+            if let Ok(resource_dir) = app.path().resource_dir() {
+                analysis::add_localization_search_path(resource_dir.join("localizations"));
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             test_bridge,
             log_frontend_event,

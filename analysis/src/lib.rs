@@ -32,6 +32,8 @@ pub use crate::{
     player::{Connection, Player, PlayerGlobalId, SteamId},
     round::Round,
 };
+#[cfg(not(target_arch = "wasm32"))]
+pub use crate::localization::add_localization_search_path;
 pub use dod::{Team, Weapon};
 
 #[derive(Debug)]
