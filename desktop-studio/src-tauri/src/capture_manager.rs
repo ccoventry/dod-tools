@@ -846,6 +846,11 @@ pub async fn start_capture_batch_impl(
         // running" no longer means anything.
         let next_index = std::sync::atomic::AtomicUsize::new(0);
         let completed_count = std::sync::atomic::AtomicU32::new(0);
+        // Concurrency is otherwise invisible to the UI: a "completed / total"
+        // counter alone looks identical whether jobs ran one at a time or
+        // several at once, especially since individual patch jobs are often
+        // fast enough that a small batch never visibly lingers either way.
+        let in_flight = std::sync::atomic::AtomicU32::new(0);
         // Only a real patch error populates this -- lets the aggregation
         // below tell "a peer job's failure forced cancel_token_arc true"
         // apart from a genuine user Cancel, which never sets it.
@@ -857,6 +862,7 @@ pub async fn start_capture_batch_impl(
                 let app_handle_clone = app_handle_clone.clone();
                 let next_index = &next_index;
                 let completed_count = &completed_count;
+                let in_flight = &in_flight;
                 let first_error = &first_error;
                 let patch_jobs = &patch_jobs;
                 let patcher_config = &patcher_config;
@@ -870,16 +876,27 @@ pub async fn start_capture_batch_impl(
                         break;
                     }
                     let job = &patch_jobs[idx];
-                    match StreamPatcher::new(&job.source_demo, &job.output_demo)
-                        .patch(job, patcher_config, cancel_token_arc)
-                    {
+                    let started = in_flight.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                    let done_so_far = completed_count.load(std::sync::atomic::Ordering::Relaxed);
+                    let _ = app_handle_clone.emit("capture_status", serde_json::json!({
+                        "running": true,
+                        "index": done_so_far,
+                        "total": total_patch_jobs,
+                        "in_progress": started,
+                        "status": format!("Patching {} / {} ({} in progress)", done_so_far, total_patch_jobs, started)
+                    }));
+                    let result = StreamPatcher::new(&job.source_demo, &job.output_demo)
+                        .patch(job, patcher_config, cancel_token_arc);
+                    let still_running = in_flight.fetch_sub(1, std::sync::atomic::Ordering::Relaxed) - 1;
+                    match result {
                         Ok(()) => {
                             let done = completed_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
                             let _ = app_handle_clone.emit("capture_status", serde_json::json!({
                                 "running": true,
                                 "index": done,
                                 "total": total_patch_jobs,
-                                "status": format!("Patching {} / {}", done, total_patch_jobs)
+                                "in_progress": still_running,
+                                "status": format!("Patching {} / {} ({} in progress)", done, total_patch_jobs, still_running)
                             }));
                         }
                         Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {
