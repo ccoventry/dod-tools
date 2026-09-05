@@ -19,7 +19,7 @@ import { renderMasterList, initMasterPane } from './master_pane.js';
 import { initMapWarnings, refreshMapWarnings, resetMapWarnings } from './map_warnings.js';
 import { initRollFloors } from './roll_floors.js';
 
-import { renderDetailView, initDetailPane } from './detail_pane.js';
+import { renderDetailView, initDetailPane, updateStreakVisuals } from './detail_pane.js';
 import { initCaptureUI, getCommandsState, hydrateCommandsState, refreshLaunchGuard, refreshInitCommandWarnings, runObsConnectionTest, renderTimingDiagram } from './capture_pane.js';
 import { initRenderUI, checkRenderRecoveryOnStartup } from './render_pane.js';
 import { initAuditorPane } from './auditor_pane.js';
@@ -830,6 +830,13 @@ window.addEventListener("DOMContentLoaded", async () => {
             console.log(`[take-index] Loaded from ${selected}: ${Object.keys(takeIndex).length} take(s)`, takeIndex);
             if (data.demos) {
               currentScannedDemos = data.demos;
+              // timeline_string is a derived field, saved as a convenience
+              // snapshot rather than the source of truth — recompute it from
+              // each streak's raw kills on every load so a display-only fix
+              // (e.g. a weapon-name-resolution bug) shows correctly for
+              // sessions saved before the fix, instead of replaying whatever
+              // text got baked in at save time.
+              currentScannedDemos.forEach(demo => (demo.streaks || []).forEach(updateStreakVisuals));
               selectedDemoIdx = currentScannedDemos.length > 0 ? 0 : null;
               renderMasterList(currentScannedDemos, selectedDemoIdx, selectDemoAndRenderDetail);
               if (currentScannedDemos.length > 0) {

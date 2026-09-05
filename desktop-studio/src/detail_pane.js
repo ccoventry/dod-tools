@@ -129,8 +129,13 @@ function updatePreviewButtonStates() {
  * called after any mutation of start_index/end_index so the display and the
  * eventual capture payload (which is built from these same fields) agree.
  */
-function updateStreakVisuals(streak) {
+export function updateStreakVisuals(streak) {
   if (!streak.kills || streak.kills.length === 0) return;
+
+  // A session saved before start_index/end_index existed (or a streak never
+  // touched by the range editor) may have either as undefined.
+  if (streak.end_index === undefined) streak.end_index = streak.kills.length - 1;
+  if (streak.start_index === undefined) streak.start_index = 0;
 
   const end = Math.min(streak.end_index, streak.kills.length - 1);
   const start = Math.min(streak.start_index, end);
