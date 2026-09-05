@@ -72,7 +72,7 @@ async fn save_settings(
 #[tauri::command]
 async fn save_project_session(path: String, contents: String) -> Result<(), String> {
     messages::flatten_spawn_blocking(tokio::task::spawn_blocking(move || {
-        std::fs::write(&path, contents).map_err(|e| messages::project_session_write_failed(&path, e))
+        std::fs::write(&path, contents).map_err(|e| messages::failed_to_write_file(&path, e))
     }))
     .await
 }
@@ -80,7 +80,7 @@ async fn save_project_session(path: String, contents: String) -> Result<(), Stri
 #[tauri::command]
 async fn load_project_session(path: String) -> Result<String, String> {
     messages::flatten_spawn_blocking(tokio::task::spawn_blocking(move || {
-        std::fs::read_to_string(&path).map_err(|e| messages::project_session_read_failed(&path, e))
+        std::fs::read_to_string(&path).map_err(|e| messages::failed_to_read_file(&path, e))
     }))
     .await
 }
@@ -397,14 +397,8 @@ async fn link_hlae_ffmpeg(
 ) -> Result<serde_json::Value, String> {
     use native::shared::hlae_ffmpeg::{self, LinkError};
 
-    let ffmpeg = hlae_ffmpeg::resolve_absolute(&ffmpeg_path).ok_or_else(|| {
-        format!(
-            "Could not resolve an FFmpeg from \"{}\". Set Render Studio's FFmpeg path to a real \
-             ffmpeg.exe first — HLAE's ini needs an absolute path and cannot use a bare command \
-             name.",
-            ffmpeg_path
-        )
-    })?;
+    let ffmpeg = hlae_ffmpeg::resolve_absolute(&ffmpeg_path)
+        .ok_or_else(|| messages::ffmpeg_could_not_be_resolved(&ffmpeg_path))?;
 
     let hlae = std::path::Path::new(&hlae_path);
     let result = if elevated.unwrap_or(false) {

@@ -269,9 +269,9 @@ impl AppSettings {
             let _ = fs::create_dir_all(parent);
         }
         let json = serde_json::to_string_pretty(self)
-            .map_err(|e| format!("Failed to serialize settings: {}", e))?;
+            .map_err(crate::messages::failed_to_serialize_settings)?;
         fs::write(&path, json)
-            .map_err(|e| format!("Failed to write settings file {:?}: {}", path, e))?;
+            .map_err(|e| crate::messages::failed_to_write_settings_file(&path, e))?;
         Ok(())
     }
 }

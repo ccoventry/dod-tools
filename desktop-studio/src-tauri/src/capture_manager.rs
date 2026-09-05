@@ -410,7 +410,7 @@ pub async fn obs_test_connection(
         }
     })
     .await
-    .map_err(|e| format!("OBS connection test failed to run: {e}"))
+    .map_err(crate::messages::obs_connection_test_failed)
 }
 
 /// What a start-up orphan check found.
@@ -456,7 +456,7 @@ pub async fn obs_check_orphan(
         },
     })
     .await
-    .map_err(|e| format!("OBS orphan check failed to run: {e}"))
+    .map_err(crate::messages::obs_orphan_check_failed)
 }
 
 /// Stops an orphaned recording and folds its file into the take folder.
@@ -477,7 +477,7 @@ pub async fn obs_recover_orphan(
         Err(e) => Err(e.to_string()),
     })
     .await
-    .map_err(|e| format!("OBS orphan recovery failed to run: {e}"))?
+    .map_err(crate::messages::obs_orphan_recovery_failed)?
 }
 
 /// Settings-shaped values from the frontend, with the same defaults the
@@ -1025,7 +1025,7 @@ pub async fn scan_directory_impl(
 
     let is_scanning_end = Arc::clone(&is_scanning);
 
-    let result = tokio::task::spawn_blocking(move || {
+    let result = crate::messages::flatten_spawn_blocking(tokio::task::spawn_blocking(move || {
         use native::patch::scan_demo_for_highlights_with_analysis;
         use tauri::Emitter;
 
@@ -1166,9 +1166,8 @@ pub async fn scan_directory_impl(
         );
 
         Ok(results)
-    })
-    .await
-    .map_err(|e| format!("Task failed: {}", e))?;
+    }))
+    .await;
 
     is_scanning_end.store(false, std::sync::atomic::Ordering::SeqCst);
     result
@@ -1233,9 +1232,9 @@ fn resolve_preview_env(hlae_path: &str, game_path: &str) -> Result<(PatcherConfi
     let dod_dir = hl_p
         .parent()
         .map(|p| p.join("dod"))
-        .ok_or_else(|| "Could not resolve the 'dod' directory next to hl.exe".to_string())?;
+        .ok_or_else(|| crate::messages::COULD_NOT_RESOLVE_DOD_DIRECTORY.to_string())?;
     std::fs::create_dir_all(&dod_dir)
-        .map_err(|e| format!("Failed to create dod directory: {}", e))?;
+        .map_err(crate::messages::failed_to_create_dod_directory)?;
 
     let patcher_config = PatcherConfig {
         hlae_path: hlae_path.to_string(),
@@ -1279,10 +1278,10 @@ fn patch_bookmark_previews(
 
         StreamPatcher::new(&job.source_demo, &job.output_demo)
             .patch(job, patcher_config, &cancel_token)
-            .map_err(|e| format!("Failed to patch preview demo for {}: {}", job.source_demo, e))?;
+            .map_err(|e| crate::messages::failed_to_patch_preview_demo(&job.source_demo, e))?;
 
         write_hidden_sidecar(&sidecar_path)
-            .map_err(|e| format!("Failed to write preview sidecar: {}", e))?;
+            .map_err(crate::messages::failed_to_write_preview_sidecar)?;
         generated += 1;
     }
     Ok((jobs, generated))
@@ -1301,17 +1300,17 @@ pub async fn launch_demo_preview(
     crate::messages::flatten_spawn_blocking(tokio::task::spawn_blocking(move || {
         let (patcher_config, dod_dir) = resolve_preview_env(&hlae_path, &game_path)?;
         let (jobs, _generated) = patch_bookmark_previews(streaks, &dod_dir, &patcher_config)?;
-        let job = jobs.first().ok_or_else(|| "Failed to build the preview patch job".to_string())?;
+        let job = jobs.first().ok_or_else(|| crate::messages::FAILED_TO_BUILD_PREVIEW_PATCH_JOB.to_string())?;
 
         let preview_stem = job
             .output_demo
             .file_stem()
             .and_then(|s| s.to_str())
-            .ok_or_else(|| "Could not resolve the preview demo's file stem".to_string())?;
+            .ok_or_else(|| crate::messages::COULD_NOT_RESOLVE_PREVIEW_FILE_STEM.to_string())?;
 
         let mut cmd = patcher_config.build_hlae_process(&format!("+viewdemo {}", preview_stem));
         cmd.spawn()
-            .map_err(|e| format!("Failed to launch HLAE for preview: {}", e))?;
+            .map_err(crate::messages::failed_to_launch_hlae_for_preview)?;
 
         Ok(())
     }))
@@ -1404,7 +1403,7 @@ pub async fn launch_standalone_game(app: tauri::AppHandle) -> Result<(), String>
 
         let mut cmd = patcher_config.build_hlae_process(&extra_args);
         cmd.spawn()
-            .map_err(|e| format!("Failed to launch HLAE: {}", e))?;
+            .map_err(crate::messages::failed_to_launch_hlae)?;
 
         Ok(())
     }))
@@ -1443,7 +1442,7 @@ pub async fn launch_obs(app: tauri::AppHandle) -> Result<(), String> {
         if let Some(parent) = Path::new(&obs_exe_path).parent() {
             cmd.current_dir(parent);
         }
-        cmd.spawn().map_err(|e| format!("Failed to launch OBS: {}", e))?;
+        cmd.spawn().map_err(crate::messages::failed_to_launch_obs)?;
         Ok(())
     }))
     .await
@@ -1528,7 +1527,7 @@ fn resolve_dod_dir_for_sweep(game_dir: &str) -> Result<PathBuf, String> {
         return p
             .parent()
             .map(|parent| parent.join("dod"))
-            .ok_or_else(|| "Could not resolve the 'dod' directory next to hl.exe".to_string());
+            .ok_or_else(|| crate::messages::COULD_NOT_RESOLVE_DOD_DIRECTORY.to_string());
     }
     if p.is_dir() {
         let is_dod_dir = p
@@ -1540,7 +1539,7 @@ fn resolve_dod_dir_for_sweep(game_dir: &str) -> Result<PathBuf, String> {
         }
         return Ok(p.join("dod"));
     }
-    Err(format!("Game directory not found: {}", game_dir))
+    Err(crate::messages::game_directory_not_found(game_dir))
 }
 
 /// Sweeps `<hl>/dod` for orphaned bookmark-preview demos and reports them
@@ -1554,7 +1553,7 @@ pub async fn scan_orphaned_previews(game_dir: String) -> Result<Vec<PreviewFileS
         }
 
         let entries = std::fs::read_dir(&dod_dir)
-            .map_err(|e| format!("Failed to read dod directory: {}", e))?;
+            .map_err(crate::messages::failed_to_read_dod_directory)?;
 
         let mut results = Vec::new();
         for entry in entries.flatten() {

@@ -467,10 +467,10 @@ pub async fn queue_render_batch(
     payload: RenderBatchPayload,
 ) -> Result<usize, String> {
     if state.is_rendering.load(Ordering::SeqCst) {
-        return Err("A render batch is already running.".to_string());
+        return Err(crate::messages::RENDER_BATCH_ALREADY_RUNNING_LONG.to_string());
     }
     if state.jobs.lock().unwrap().iter().any(|j| j.status == "Queued" || j.status == "Rendering") {
-        return Err("A batch is already queued — start it or cancel it before scanning again.".to_string());
+        return Err(crate::messages::BATCH_ALREADY_QUEUED.to_string());
     }
     log_markdown(&format!(
         "[render] queue_render_batch starting: {} source dir(s), codec={}, fps={}, max_concurrent={}",
@@ -479,7 +479,7 @@ pub async fn queue_render_batch(
     state.global_cancel.store(false, Ordering::SeqCst);
 
     let scan_app = app.clone();
-    let scan_result: Vec<ClipData> = tokio::task::spawn_blocking({
+    let scan_result: Vec<ClipData> = crate::messages::spawn_blocking_result(tokio::task::spawn_blocking({
         let dirs = payload.render_directories.clone();
         move || {
             let source_folders: Vec<PathBuf> = dirs.into_iter().map(PathBuf::from).collect();
@@ -508,9 +508,8 @@ pub async fn queue_render_batch(
             }
             clips
         }
-    })
-    .await
-    .map_err(|e| format!("Task join failed: {}", e))?;
+    }))
+    .await?;
 
     let count = scan_result.len();
     if scan_result.is_empty() {
@@ -562,13 +561,13 @@ pub async fn queue_render_batch(
 pub async fn start_queued_render(app: AppHandle, state: tauri::State<'_, RenderManager>) -> Result<(), String> {
     if state.is_rendering.swap(true, Ordering::SeqCst) {
         log_markdown("[render] start_queued_render rejected: a batch is already in progress");
-        return Err("Render batch already in progress".to_string());
+        return Err(crate::messages::RENDER_BATCH_ALREADY_IN_PROGRESS.to_string());
     }
     let config = state.last_config.lock().unwrap().clone();
     let has_queued = state.jobs.lock().unwrap().iter().any(|j| j.status == "Queued");
     let Some(config) = config.filter(|_| has_queued) else {
         state.is_rendering.store(false, Ordering::SeqCst);
-        return Err("Nothing queued to render — scan for takes first.".to_string());
+        return Err(crate::messages::NOTHING_QUEUED_TO_RENDER.to_string());
     };
 
     log_markdown("[render] start_queued_render: starting scheduler");
@@ -617,13 +616,13 @@ pub async fn set_render_job_codec(app: AppHandle, state: tauri::State<'_, Render
     let requested = RenderCodec::from_str_id(&codec);
     let mut jobs = state.jobs.lock().unwrap();
     let Some(job) = jobs.iter_mut().find(|j| j.id == job_id) else {
-        return Err(format!("No such job: {}", job_id));
+        return Err(crate::messages::no_such_job(&job_id));
     };
     if job.status != "Queued" {
-        return Err(format!("Job {} is {} — only a Queued job's codec can be changed", job_id, job.status));
+        return Err(crate::messages::job_not_queued(&job_id, &job.status));
     }
     if requested == RenderCodec::SourceCopy && !clip_is_skip_eligible(&job.clip) {
-        return Err("Skip (keep original) is only available for a captured OBS take (its own audio, not a HUD/alpha clip).".to_string());
+        return Err(crate::messages::SKIP_ONLY_FOR_OBS_TAKE.to_string());
     }
     job.codec = requested;
     log_markdown(&format!("[render] set_render_job_codec {} -> {}", job_id, requested.to_str_id()));
@@ -680,10 +679,10 @@ fn clear_batch_state_if_empty(state: &RenderManager) {
 pub async fn remove_render_job(app: AppHandle, state: tauri::State<'_, RenderManager>, job_id: String) -> Result<(), String> {
     let mut jobs = state.jobs.lock().unwrap();
     let Some(idx) = jobs.iter().position(|j| j.id == job_id) else {
-        return Err(format!("No such job: {}", job_id));
+        return Err(crate::messages::no_such_job(&job_id));
     };
     if jobs[idx].status == "Rendering" {
-        return Err(format!("Job {} is still rendering — cancel it first", job_id));
+        return Err(crate::messages::job_still_rendering(&job_id));
     }
     jobs.remove(idx);
     drop(jobs);

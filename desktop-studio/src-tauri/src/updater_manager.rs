@@ -17,9 +17,9 @@ fn endpoint_for_channel(channel: &str) -> Result<url::Url, String> {
     let raw = match channel {
         "dev" => DEV_ENDPOINT,
         "stable" => STABLE_ENDPOINT,
-        other => return Err(format!("Unknown update channel: {}", other)),
+        other => return Err(crate::messages::unknown_update_channel(other)),
     };
-    url::Url::parse(raw).map_err(|e| format!("Invalid updater endpoint URL: {}", e))
+    url::Url::parse(raw).map_err(crate::messages::invalid_updater_endpoint_url)
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -48,14 +48,14 @@ pub async fn check_for_update(
     let updater = app
         .updater_builder()
         .endpoints(vec![endpoint])
-        .map_err(|e| format!("Failed to set updater endpoint: {}", e))?
+        .map_err(crate::messages::failed_to_set_updater_endpoint)?
         // Default semver comparison only offers upgrades, but a channel is a
         // deliberate choice, not a version target — switching from dev back
         // to stable is a legitimate "downgrade" (dev's version number is
         // always ahead) that should still be offered, not silently blocked.
         .version_comparator(|current, remote| remote.version != current)
         .build()
-        .map_err(|e| format!("Failed to build updater: {}", e))?;
+        .map_err(crate::messages::failed_to_build_updater)?;
 
     let update = updater.check().await.map_err(|e| e.to_string())?;
 
@@ -91,7 +91,7 @@ pub async fn download_and_install_update(
         .lock()
         .unwrap_or_else(|p| p.into_inner())
         .take()
-        .ok_or_else(|| "No update available to install — call check_for_update first".to_string())?;
+        .ok_or(crate::messages::NO_UPDATE_AVAILABLE_TO_INSTALL)?;
 
     let progress_app = app.clone();
     let mut downloaded: u64 = 0;
