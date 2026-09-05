@@ -247,3 +247,89 @@ pub fn failed_to_serialize_settings(err: impl Display) -> String {
 pub fn failed_to_write_settings_file(path: impl std::fmt::Debug, err: impl Display) -> String {
     format!("Failed to write settings file {:?}: {}", path, err)
 }
+
+/// Pins every function/constant above against the exact `format!`/literal it
+/// replaced at its original call site (text copied verbatim from the pre-PR
+/// source, not re-derived), so this refactor can't have silently changed any
+/// user-visible wording.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lib_rs_messages_match_their_original_inline_text() {
+        assert_eq!(
+            project_session_write_failed("proj.json", "disk full"),
+            format!("Failed to write {}: {}", "proj.json", "disk full")
+        );
+        assert_eq!(
+            project_session_read_failed("proj.json", "not found"),
+            format!("Failed to read {}: {}", "proj.json", "not found")
+        );
+        assert_eq!(HLAE_EXECUTABLE_NOT_FOUND, "HLAE executable not found at specified path.");
+        assert_eq!(HL_EXECUTABLE_NOT_FOUND, "Half-Life executable not found at specified path.");
+        assert_eq!(
+            demo_file_not_found("demo.dem"),
+            format!("Demo file not found: {}", "demo.dem")
+        );
+        assert_eq!(analyzer_error("bad header"), format!("Analyzer error: {}", "bad header"));
+    }
+
+    #[test]
+    fn capture_manager_messages_match_their_original_inline_text() {
+        assert_eq!(CAPTURE_BATCH_ALREADY_RUNNING, "Capture batch already in progress");
+        assert_eq!(NO_STREAKS_IN_PAYLOAD, "No streaks in payload");
+        assert_eq!(
+            configure_paths_before("previewing"),
+            format!("Configure the HLAE and Half-Life executable paths before {}.", "previewing")
+        );
+        assert_eq!(
+            configure_paths_before("launching"),
+            format!("Configure the HLAE and Half-Life executable paths before {}.", "launching")
+        );
+        assert_eq!(
+            HLAE_NOT_FOUND_AT_CONFIGURED_PATH,
+            "HLAE executable not found at the configured path."
+        );
+        assert_eq!(
+            HL_NOT_FOUND_AT_CONFIGURED_PATH,
+            "Half-Life executable not found at the configured path."
+        );
+        assert_eq!(NO_HIGHLIGHTS_TO_PREVIEW, "This demo has no highlights to preview.");
+        assert_eq!(FAILED_TO_BUILD_PREVIEW_JOBS, "Failed to build any preview patch jobs.");
+        assert_eq!(
+            CONFIGURE_OBS_PATH_BEFORE_LAUNCHING,
+            "Configure the OBS executable path before launching."
+        );
+        assert_eq!(
+            OBS_NOT_FOUND_AT_CONFIGURED_PATH,
+            "OBS executable not found at the configured path."
+        );
+    }
+
+    // Every non-panicking call site's spawn_blocking wrapping was already
+    // exercised implicitly by the crate's existing capture_manager/map_manager
+    // tests once this PR rewired them through these two helpers — what's
+    // unique to test here is the join-error text itself, which only surfaces
+    // if the spawned closure panics.
+    #[tokio::test]
+    async fn flatten_spawn_blocking_reports_a_panic_with_the_original_wording() {
+        let handle: tokio::task::JoinHandle<Result<(), String>> =
+            tokio::task::spawn_blocking(|| panic!("boom"));
+        let err = flatten_spawn_blocking(handle).await.unwrap_err();
+        assert!(
+            err.starts_with("Task join error: "),
+            "expected the original \"Task join error: {{}}\" prefix, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn spawn_blocking_result_reports_a_panic_with_the_original_wording() {
+        let handle: tokio::task::JoinHandle<()> = tokio::task::spawn_blocking(|| panic!("boom"));
+        let err = spawn_blocking_result(handle).await.unwrap_err();
+        assert!(
+            err.starts_with("Task join error: "),
+            "expected the original \"Task join error: {{}}\" prefix, got {err:?}"
+        );
+    }
+}
