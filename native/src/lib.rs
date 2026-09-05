@@ -23,6 +23,8 @@ pub mod sys;
 pub mod utils;
 pub mod shared;
 
+mod messages;
+
 #[cfg(not(target_arch = "wasm32"))]
 pub mod capture_engine;
 
