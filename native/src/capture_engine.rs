@@ -169,7 +169,7 @@ impl Drop for CaptureCleanupGuard {
                 if let Ok(entries) = std::fs::read_dir(&dod_dir) {
                     for entry in entries.flatten() {
                         let filename = entry.file_name().to_string_lossy().to_string();
-                        if filename.starts_with("dodtools_chain_") && filename.ends_with(".dem") {
+                        if filename.starts_with("chain_") && filename.ends_with(".dem") {
                             let _ = std::fs::remove_file(entry.path());
                         }
                     }
