@@ -156,6 +156,17 @@ export async function analyzeDemoFull(demoPath) {
     });
 }
 
+/** Every Weapon variant's resolved display name, keyed by its raw JSON tag —
+ *  same names native/src/patch/scanner.rs bakes into a kill streak's
+ *  timeline text. Best-effort, same as isDebugBuild(): a fetch failure just
+ *  means the analyzer pane's own name-derivation fallback stays in use. */
+export async function getWeaponDisplayNames() {
+  return invoke("get_weapon_display_names").catch((err) => {
+    console.error("IPC Execution Error (get_weapon_display_names):", err);
+    return {};
+  });
+}
+
 export async function startCaptureBatch(payload) {
   return invoke("start_capture_batch", { payload: payload })
     .catch((err) => {
