@@ -48,7 +48,7 @@ const WEAPON_KEYS: &[(Weapon, &str)] = &[
 ];
 
 /// Resolves a weapon's real display name from the loc files (e.g.
-/// `ScopedK98` -> "Scoped Kar98k"). The single source of truth for weapon
+/// `ScopedK98` -> "Scoped K98"). The single source of truth for weapon
 /// text — `native::patch::scanner`'s kill-streak timeline and the frontend's
 /// weapon tables (via [`all_weapon_display_names`]) both go through this
 /// instead of independently deriving a name, which is what let the same
