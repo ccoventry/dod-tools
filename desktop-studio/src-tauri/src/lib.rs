@@ -4,6 +4,7 @@ mod settings_manager;
 mod audit_manager;
 mod dir_browser;
 mod map_manager;
+mod messages;
 mod updater_manager;
 
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
@@ -39,12 +40,11 @@ impl Default for ScanManager {
 #[tauri::command]
 async fn get_settings(state: tauri::State<'_, SettingsManager>) -> Result<AppSettings, String> {
     let inner_arc = Arc::clone(&state.inner);
-    tokio::task::spawn_blocking(move || {
+    messages::flatten_spawn_blocking(tokio::task::spawn_blocking(move || {
         let guard = inner_arc.lock().unwrap_or_else(|p| p.into_inner());
         Ok(guard.clone())
-    })
+    }))
     .await
-    .map_err(|e| format!("Task join error: {}", e))?
 }
 
 #[tauri::command]
@@ -53,14 +53,13 @@ async fn save_settings(
     settings: AppSettings,
 ) -> Result<(), String> {
     let inner_arc = Arc::clone(&state.inner);
-    tokio::task::spawn_blocking(move || {
+    messages::flatten_spawn_blocking(tokio::task::spawn_blocking(move || {
         settings.save()?;
         let mut guard = inner_arc.lock().unwrap_or_else(|p| p.into_inner());
         *guard = settings;
         Ok(())
-    })
+    }))
     .await
-    .map_err(|e| format!("Task join error: {}", e))?
 }
 
 // ── Project Session IPC Commands ───────────────────────────────────────────────
@@ -72,20 +71,18 @@ async fn save_settings(
 
 #[tauri::command]
 async fn save_project_session(path: String, contents: String) -> Result<(), String> {
-    tokio::task::spawn_blocking(move || {
-        std::fs::write(&path, contents).map_err(|e| format!("Failed to write {}: {}", path, e))
-    })
+    messages::flatten_spawn_blocking(tokio::task::spawn_blocking(move || {
+        std::fs::write(&path, contents).map_err(|e| messages::project_session_write_failed(&path, e))
+    }))
     .await
-    .map_err(|e| format!("Task join error: {}", e))?
 }
 
 #[tauri::command]
 async fn load_project_session(path: String) -> Result<String, String> {
-    tokio::task::spawn_blocking(move || {
-        std::fs::read_to_string(&path).map_err(|e| format!("Failed to read {}: {}", path, e))
-    })
+    messages::flatten_spawn_blocking(tokio::task::spawn_blocking(move || {
+        std::fs::read_to_string(&path).map_err(|e| messages::project_session_read_failed(&path, e))
+    }))
     .await
-    .map_err(|e| format!("Task join error: {}", e))?
 }
 
 // ── Auditor IPC Commands ───────────────────────────────────────────────────────
@@ -278,10 +275,10 @@ async fn validate_paths(hlae_path: String, hl_path: String) -> Result<bool, Stri
     let hl_p = std::path::Path::new(&hl_path);
 
     if !hlae_p.exists() || !hlae_p.is_file() {
-        return Err("HLAE executable not found at specified path.".into());
+        return Err(messages::HLAE_EXECUTABLE_NOT_FOUND.into());
     }
     if !hl_p.exists() || !hl_p.is_file() {
-        return Err("Half-Life executable not found at specified path.".into());
+        return Err(messages::HL_EXECUTABLE_NOT_FOUND.into());
     }
     Ok(true)
 }
@@ -458,13 +455,13 @@ async fn analyze_demo_full(
     app_handle: tauri::AppHandle,
     demo_path: String,
 ) -> Result<AnalyzerReportPayload, String> {
-    tokio::task::spawn_blocking(move || {
+    messages::flatten_spawn_blocking(tokio::task::spawn_blocking(move || {
         use tauri::Emitter;
 
         let path = std::path::PathBuf::from(&demo_path);
 
         if !path.exists() || !path.is_file() {
-            return Err(format!("Demo file not found: {}", demo_path));
+            return Err(messages::demo_file_not_found(&demo_path));
         }
 
         // Throttled to ~30fps per CLAUDE.md's telemetry-throttling guardrail —
@@ -508,11 +505,10 @@ async fn analyze_demo_full(
                     state: analysis.state,
                 })
             }
-            Err(e) => Err(format!("Analyzer error: {}", e)),
+            Err(e) => Err(messages::analyzer_error(e)),
         }
-    })
+    }))
     .await
-    .map_err(|e| format!("Task join error: {}", e))?
 }
 
 /// Every `Weapon` variant's resolved display name, keyed by its raw JSON tag
