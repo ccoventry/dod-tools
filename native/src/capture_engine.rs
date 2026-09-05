@@ -212,7 +212,7 @@ pub fn spawn_capture_engine(
     // drive this batch touches (see `native/src/patch/builder.rs`) — the
     // pre-launch check below re-validates these same numbers instead of
     // re-querying disk space itself for just the primary export dir.
-    drive_headroom: Vec<(PathBuf, u64)>,
+    drive_headroom: Vec<crate::patch::DriveHeadroom>,
     // Each planned block's take folder, in the order the batch will record
     // them — the same flattened order the capture manifest uses.
     //
@@ -469,15 +469,37 @@ pub fn spawn_capture_engine(
                 return;
             }
 
-            for (drive_path, free_bytes) in &drive_headroom {
-                if *free_bytes < crate::sys::disk::MIN_DRIVE_HEADROOM_BYTES {
-                    let required_gb = crate::sys::disk::MIN_DRIVE_HEADROOM_BYTES as f64 / (1024.0 * 1024.0 * 1024.0);
+            for entry in &drive_headroom {
+                let required_bytes = if entry.demo_only {
+                    crate::sys::disk::MIN_DEMO_ONLY_HEADROOM_BYTES
+                } else {
+                    crate::sys::disk::MIN_DRIVE_HEADROOM_BYTES
+                };
+                if entry.free_bytes < required_bytes {
+                    let required_gb = required_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
                     log_crash_abort!(tx, format!(
                         "Capture aborted: {:?} has less than {:.1} GB free space.",
-                        drive_path, required_gb
+                        entry.path, required_gb
                     ));
                     return;
                 }
+            }
+
+            // hl.exe's own install drive is never in `drive_headroom` (that
+            // list is only Capture Output drives), yet every patched demo
+            // gets copied into `hl_exe_parent.join("dod")` above (and
+            // optionally `<exe_dir>/demos` when Save Local Patched Copy is
+            // on) before this point — small writes, same demo-only category
+            // as `MIN_DEMO_ONLY_HEADROOM_BYTES` covers for capture_directories[0].
+            // See issue #11.
+            let hl_exe_drive_free = crate::sys::disk::get_available_bytes(hl_exe_parent);
+            if hl_exe_drive_free < crate::sys::disk::MIN_DEMO_ONLY_HEADROOM_BYTES {
+                let required_gb = crate::sys::disk::MIN_DEMO_ONLY_HEADROOM_BYTES as f64 / (1024.0 * 1024.0 * 1024.0);
+                log_crash_abort!(tx, format!(
+                    "Capture aborted: {:?} (hl.exe's own drive) has less than {:.1} GB free space.",
+                    hl_exe_parent, required_gb
+                ));
+                return;
             }
 
             // ── OBS capture mode ──────────────────────────────────────────────

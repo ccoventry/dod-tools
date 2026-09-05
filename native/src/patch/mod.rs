@@ -84,6 +84,7 @@ pub use types::{
     CaptureStreak,
     CaptureBlock,
     PatchJob,
+    DriveHeadroom,
     PatcherConfig,
     HighlightRules,
     HighlightStatus,

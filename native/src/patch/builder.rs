@@ -453,7 +453,7 @@ fn allocate_blocks_first_fit_decreasing(
 
 // ── Batch queue builder ───────────────────────────────────────────────────────
 
-pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig, global_arrays: &std::collections::HashMap<std::path::PathBuf, std::sync::Arc<Vec<f32>>>) -> Result<(Vec<PatchJob>, Vec<(std::path::PathBuf, u64)>), std::io::Error> {
+pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig, global_arrays: &std::collections::HashMap<std::path::PathBuf, std::sync::Arc<Vec<f32>>>) -> Result<(Vec<PatchJob>, Vec<crate::patch::types::DriveHeadroom>), std::io::Error> {
     // tickrate is extracted dynamically from streaks per-demo.
     // Each streak is carried alongside its index in `raw_streaks` so the blocks
     // built below can point back at the exact highlights the caller dispatched,
@@ -691,6 +691,11 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
     if !config.capture_directories.is_empty() {
         utilized_drives.insert(0);
     }
+    // Separate from `utilized_drives`: only ever populated by an actual
+    // block assignment below, never by drive 0's unconditional insert above
+    // — lets `drive_headroom` tell "received a real recording block" apart
+    // from "included only because it's drive 0" (see issue #8).
+    let mut drives_with_blocks = std::collections::HashSet::new();
     for (job_idx, ((source_demo, target_player), mut streak_refs)) in sorted_groups.into_iter().enumerate() {
         // Sort by start_tick in ascending order
         streak_refs.sort_by_key(|(_, s)| s.start_tick);
@@ -839,6 +844,7 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
             let streak = &merged_streaks[block_index];
             block_routes.push((streak.start_tick, streak.end_tick, drive_idx));
             utilized_drives.insert(drive_idx);
+            drives_with_blocks.insert(drive_idx);
             helper_cfg_content.push_str(&format!(
                 "alias {}_route_{} \"mirv_movie_filename _route_{}/{}_b{}\"\n",
                 demo_name, block_index, drive_idx, demo_name, block_index
@@ -1219,9 +1225,13 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
     // handed back so the pre-launch abort in `capture_engine.rs` re-validates
     // the exact numbers this allocation pass already computed instead of
     // recomputing a third, narrower (primary-drive-only) answer.
-    let drive_headroom: Vec<(std::path::PathBuf, u64)> = utilized_drives
+    let drive_headroom: Vec<crate::patch::types::DriveHeadroom> = utilized_drives
         .into_iter()
-        .filter_map(|idx| config.capture_directories.get(idx).map(|p| (p.clone(), drive_free[idx])))
+        .filter_map(|idx| config.capture_directories.get(idx).map(|p| crate::patch::types::DriveHeadroom {
+            path: p.clone(),
+            free_bytes: drive_free[idx],
+            demo_only: !drives_with_blocks.contains(&idx),
+        }))
         .collect();
 
     Ok((jobs, drive_headroom))
@@ -1769,11 +1779,33 @@ mod tests {
 
         assert!(jobs.is_empty(), "no streaks should produce no jobs");
         assert_eq!(drive_headroom.len(), 1, "drive 0 must be reported even though no block was ever routed to it");
-        assert_eq!(drive_headroom[0].0, temp_drive);
+        assert_eq!(drive_headroom[0].path, temp_drive);
         assert!(
-            drive_headroom[0].1 > 0 && drive_headroom[0].1 < u64::MAX,
+            drive_headroom[0].free_bytes > 0 && drive_headroom[0].free_bytes < u64::MAX,
             "expected a real free-byte count for an existing directory, got {}",
-            drive_headroom[0].1
+            drive_headroom[0].free_bytes
+        );
+        assert!(
+            drive_headroom[0].demo_only,
+            "drive 0 received no block in this batch, so it should be flagged demo_only"
+        );
+    }
+
+    #[test]
+    fn test_drive_headroom_is_not_demo_only_when_a_block_actually_lands_there() {
+        let mut config = mock_config();
+        let temp_drive = std::env::temp_dir().join("dod_test_headroom_drive0_with_block");
+        std::fs::create_dir_all(&temp_drive).expect("failed to create dummy capture drive");
+        config.capture_directories = vec![temp_drive.clone()];
+        let raw_streaks = vec![streak_with_kills(1000, 1200, &[1000, 1200])];
+
+        let (_jobs, drive_headroom) =
+            build_batch_queue(raw_streaks, &config, &std::collections::HashMap::new()).unwrap();
+
+        assert_eq!(drive_headroom.len(), 1);
+        assert!(
+            !drive_headroom[0].demo_only,
+            "drive 0 received a real recording block, so it should not be flagged demo_only"
         );
     }
 

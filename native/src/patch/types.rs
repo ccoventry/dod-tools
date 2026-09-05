@@ -243,6 +243,22 @@ pub struct PatchJob {
     pub blocks: Vec<CaptureBlock>,
 }
 
+/// One drive `build_batch_queue`'s AOT allocation touched, and the headroom
+/// figure `capture_engine`'s pre-launch check must re-validate before
+/// spawning `hl.exe`.
+#[derive(Debug, Clone)]
+pub struct DriveHeadroom {
+    pub path: std::path::PathBuf,
+    pub free_bytes: u64,
+    /// True if this drive never received an actual recording block — it's
+    /// included only because `capture_directories[0]` unconditionally
+    /// receives the small patched demo files (`primer.dem`/`chain_NN.dem`)
+    /// regardless of whether the AOT allocator routed any block there. Lets
+    /// the pre-launch check apply `MIN_DEMO_ONLY_HEADROOM_BYTES` instead of
+    /// the much larger `MIN_DRIVE_HEADROOM_BYTES` to this entry. See issue #8.
+    pub demo_only: bool,
+}
+
 // ── Capture mode ──────────────────────────────────────────────────────────────
 
 /// How a batch's frames get off the screen and onto disk.
