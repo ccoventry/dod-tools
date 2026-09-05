@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<!--
+  Minimal harness for info_tooltip.js — see tests/e2e/README.md for the
+  general shape. info_tooltip.js has no Tauri dependency (it only touches the
+  DOM), so like themed-confirm.html this needs no IPC mocks: just an
+  .info-icon element carrying the data-tooltip-text attribute the way
+  apply_strings.js leaves it for real app markup (see apply_strings.js and
+  #164), positioned near an edge to exercise the viewport-clamping logic.
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>info_tooltip.js test harness</title>
+  <style>
+    body { margin: 0; padding: 40px; font-family: sans-serif; }
+    .info-icon { display: inline-block; cursor: help; }
+    .info-tooltip { position: fixed; z-index: 10000; display: none; padding: 5px 9px; }
+    .info-tooltip.visible { display: block; }
+    #top-left-icon { position: fixed; top: 4px; left: 4px; }
+    #top-right-icon { position: fixed; top: 4px; right: 4px; }
+  </style>
+</head>
+<body>
+  <span id="basic-icon" class="info-icon" data-tooltip-text="Runs before the demo loads.">i</span>
+  <span id="no-text-icon" class="info-icon">i</span>
+  <span id="top-left-icon" class="info-icon" data-tooltip-text="Clamped to the left edge.">i</span>
+  <span id="top-right-icon" class="info-icon" data-tooltip-text="Clamped to the right edge, and flipped below since it's clipped at the top.">i</span>
+
+  <script type="module">
+    import { initInfoTooltips } from '/src/info_tooltip.js';
+
+    initInfoTooltips();
+    window.__harnessReady = true;
+  </script>
+</body>
+</html>

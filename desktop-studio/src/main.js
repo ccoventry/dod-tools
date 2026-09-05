@@ -19,9 +19,8 @@ import { renderMasterList, initMasterPane } from './master_pane.js';
 import { initMapWarnings, refreshMapWarnings, resetMapWarnings } from './map_warnings.js';
 import { initRollFloors } from './roll_floors.js';
 
-import { renderDetailView, initDetailPane } from './detail_pane.js';
-import { initCaptureUI, getCommandsState, hydrateCommandsState, refreshLaunchGuard, refreshInitCommandWarnings } from './capture_pane.js';
-import { setObsConnected } from './obs_status.js';
+import { renderDetailView, initDetailPane, updateStreakVisuals } from './detail_pane.js';
+import { initCaptureUI, getCommandsState, hydrateCommandsState, refreshLaunchGuard, refreshInitCommandWarnings, runObsConnectionTest, renderTimingDiagram } from './capture_pane.js';
 import { initRenderUI, checkRenderRecoveryOnStartup } from './render_pane.js';
 import { initAuditorPane } from './auditor_pane.js';
 import { initThemedConfirm, themedConfirm } from './themed_confirm.js';
@@ -34,6 +33,7 @@ import { getCheckedDemoPaths, clearCheckedPaths, setCheckedDemoPaths, getVisible
 import { initErrorReporter } from './error_reporter.js';
 import { STRINGS } from './strings.js';
 import { applyStaticStrings } from './apply_strings.js';
+import { initInfoTooltips } from './info_tooltip.js';
 import { initOsNotifications, updateNotificationSettings } from './os_notifications.js';
 import { initUpdater, checkForUpdatesNow } from './updater_pane.js';
 import { initAppMenu } from './app_menu.js';
@@ -83,121 +83,6 @@ async function refreshPathWarnings() {
     row.warning.textContent = message;
     row.warning.style.display = message ? '' : 'none';
   });
-}
-
-/**
- * Runs `obs_test_connection` and renders the result — the manual Test
- * Connection button's own logic, extracted so it can also be run
- * automatically (issue #147: "make preflight warnings proactive") when
- * switching into OBS mode or when OBS mode is already selected at startup,
- * not only on a manual click.
- *
- * `auto` skips the button disable/relabel churn (there was no click to
- * originate it) but still populates the same status panel — quiet the same
- * way `obs_check_orphan` is quiet at startup: "OBS is not running yet" is
- * the ordinary case here, not something to interrupt the user over.
- */
-async function runObsConnectionTest({ auto = false } = {}) {
-  const btn = document.querySelector('#obs-test-btn');
-  const status = document.querySelector('#obs-status');
-  if (!status) return;
-  const label = btn ? btn.textContent : '';
-  if (!auto && btn) { btn.disabled = true; btn.textContent = STRINGS.CAPTURE_CONFIG.OBS_TESTING; }
-  status.style.display = '';
-  status.textContent = STRINGS.CAPTURE_CONFIG.OBS_TESTING;
-  try {
-    const report = await invoke('obs_test_connection', {
-      host: document.querySelector('#config-obs-host')?.value?.trim() || '127.0.0.1',
-      port: parseInt(document.querySelector('#config-obs-port')?.value, 10) || 4455,
-      password: document.querySelector('#config-obs-password')?.value || '',
-      gameWidth: parseInt(document.querySelector('#config-res-width')?.value, 10) || 1280,
-      gameHeight: parseInt(document.querySelector('#config-res-height')?.value, 10) || 720,
-    });
-    renderObsReport(report);
-  } catch (e) {
-    // Every invoke needs this: without it a Rust-side failure is swallowed
-    // and the button simply appears to do nothing.
-    status.textContent = STRINGS.CAPTURE_CONFIG.obsTestFailed(e);
-    setObsConnected(false);
-  } finally {
-    if (!auto && btn) { btn.disabled = false; btn.textContent = label || STRINGS.CAPTURE_CONFIG.OBS_TEST_BUTTON; }
-    // Whatever this check found, Start Capture Batch's gate (issue #147)
-    // needs to reflect it immediately, not wait for some unrelated field to
-    // trigger the next refreshLaunchGuard().
-    refreshLaunchGuard();
-  }
-}
-
-/** Highlights whichever side of the capture-mode toggle is currently in force. */
-/**
- * Renders an `obs_test_connection` result into the status row and scene list.
- *
- * Warnings are shown rather than swallowed: the canvas mismatch in particular
- * costs most of the picture's detail and has no visible symptom, so it would
- * otherwise be found only by comparing a finished clip against expectations.
- */
-function renderObsReport(report) {
-  const status = document.querySelector('#obs-status');
-  if (!status) return;
-  status.style.display = '';
-
-  setObsConnected(!!report?.connected);
-
-  if (!report?.connected) {
-    status.textContent = report?.error || STRINGS.CAPTURE_CONFIG.OBS_UNREACHABLE;
-    return;
-  }
-
-  const lines = [
-    STRINGS.CAPTURE_CONFIG.obsConnectedSummary(report.obs_version, report.websocket_version),
-    STRINGS.CAPTURE_CONFIG.obsCanvasSummary(report.canvas, report.output, report.fps),
-    STRINGS.CAPTURE_CONFIG.obsRecordingToSummary(report.record_directory),
-  ];
-  if (report.missing_requests?.length) {
-    lines.push(STRINGS.CAPTURE_CONFIG.obsMissingRequests(report.missing_requests));
-  }
-  if (report.recording) lines.push(STRINGS.CAPTURE_CONFIG.OBS_ALREADY_RECORDING);
-  if (report.streaming) lines.push(STRINGS.CAPTURE_CONFIG.OBS_ALREADY_STREAMING);
-  for (const w of report.warnings || []) lines.push(w);
-  status.textContent = lines.join('\n');
-
-  // Replace the list with what OBS actually has, keeping the current choice if
-  // it survived. Scene names are scoped to a collection, so a name saved under
-  // a different one legitimately disappears here.
-  const sel = document.querySelector('#config-obs-scene');
-  if (sel && Array.isArray(report.scenes)) {
-    const wanted = sel.value;
-    sel.innerHTML = '';
-    const none = document.createElement('option');
-    none.value = '';
-    none.textContent = STRINGS.CAPTURE_CONFIG.OBS_SCENE_CURRENT;
-    sel.appendChild(none);
-    for (const name of report.scenes) {
-      const opt = document.createElement('option');
-      opt.value = name;
-      opt.textContent = name;
-      sel.appendChild(opt);
-    }
-    sel.value = report.scenes.includes(wanted) ? wanted : '';
-  }
-
-  // Same treatment as the scene list above.
-  const profileSel = document.querySelector('#config-obs-profile');
-  if (profileSel && Array.isArray(report.profiles)) {
-    const wanted = profileSel.value;
-    profileSel.innerHTML = '';
-    const none = document.createElement('option');
-    none.value = '';
-    none.textContent = STRINGS.CAPTURE_CONFIG.OBS_PROFILE_CURRENT;
-    profileSel.appendChild(none);
-    for (const name of report.profiles) {
-      const opt = document.createElement('option');
-      opt.value = name;
-      opt.textContent = name;
-      profileSel.appendChild(opt);
-    }
-    profileSel.value = report.profiles.includes(wanted) ? wanted : '';
-  }
 }
 
 /** The selected capture mode id, defaulting to the path that always works. */
@@ -285,6 +170,12 @@ function applyCaptureModeUI() {
   // connection to OBS capture that does not exist yet.
   const codecGroup = document.querySelector('#capture-codec-group');
   if (codecGroup) codecGroup.style.display = video ? '' : 'none';
+
+  // Capture FPS is non-real-time for the other two modes but meaningless for
+  // OBS, which has its own separate OBS Capture FPS field below — showing
+  // both invites setting the wrong one.
+  const captureFpsGroup = document.querySelector('#capture-fps-group');
+  if (captureFpsGroup) captureFpsGroup.style.display = obs ? 'none' : '';
 
   // The OBS block follows the same rule: hidden rather than disabled,
   // because showing a dead connection form in frame-sequence mode would
@@ -396,6 +287,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   // [data-str-aria-label] element's text/attribute from STRINGS before any
   // other DOM-dependent init runs below.
   applyStaticStrings();
+  initInfoTooltips();
 
   // Not awaited: the permission prompt (first run only) shouldn't block the
   // rest of startup, and every call site in os_notifications.js already
@@ -526,6 +418,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     const hlPath = document.querySelector('#hl-path-input')?.value?.trim() || "";
     const ffmpegPath = document.querySelector('#ffmpeg-override-path-input')?.value?.trim() || null;
     const captureFps = parseInt(document.querySelector('#config-capture-fps')?.value, 10) || 300;
+    const obsCaptureFps = parseInt(document.querySelector('#config-obs-capture-fps')?.value, 10) || 120;
     const preRoll = parseFloat(document.querySelector('#config-pre-roll')?.value) || 2.0;
     const postRoll = parseFloat(document.querySelector('#config-post-roll')?.value) || 0.6;
 
@@ -543,8 +436,6 @@ window.addEventListener("DOMContentLoaded", async () => {
     const obsHost = document.querySelector('#config-obs-host')?.value?.trim() || '127.0.0.1';
     const obsPort = parseInt(document.querySelector('#config-obs-port')?.value, 10) || 4455;
     const obsPassword = document.querySelector('#config-obs-password')?.value || '';
-    const obsScene = document.querySelector('#config-obs-scene')?.value || '';
-    const obsProfile = document.querySelector('#config-obs-profile')?.value || '';
     const obsExePath = document.querySelector('#config-obs-exe-path')?.value?.trim() || '';
     const addCondebug = document.querySelector('#config-add-condebug')?.checked || false;
 
@@ -588,6 +479,7 @@ window.addEventListener("DOMContentLoaded", async () => {
       analyzer_explorer_width: analyzerExplorerWidth,
       language: "en",
       capture_fps: captureFps,
+      obs_capture_fps: obsCaptureFps,
       pre_roll_seconds: preRoll,
       post_roll_seconds: postRoll,
       resolution_width: resWidth,
@@ -600,8 +492,6 @@ window.addEventListener("DOMContentLoaded", async () => {
       obs_host: obsHost,
       obs_port: obsPort,
       obs_password: obsPassword,
-      obs_scene: obsScene,
-      obs_profile: obsProfile,
       obs_exe_path: obsExePath,
       add_condebug: addCondebug,
       auto_clear_logs: autoClearLogs,
@@ -648,10 +538,6 @@ window.addEventListener("DOMContentLoaded", async () => {
       if (settings.hlae_path) {
         const inputEl = document.querySelector('#hlae-path-input');
         if (inputEl) inputEl.value = settings.hlae_path;
-        // Not awaited: it is a status line, and blocking startup on a
-        // filesystem check of somebody else's install directory would trade a
-        // real cost for a cosmetic one.
-        refreshHlaeFfmpegStatus();
       }
       if (settings.hl_path) {
         const inputEl = document.querySelector('#hl-path-input');
@@ -665,9 +551,28 @@ window.addEventListener("DOMContentLoaded", async () => {
         const inputEl = document.querySelector('#ffmpeg-override-path-input');
         if (inputEl) inputEl.value = settings.ffmpeg_path;
       }
+      if (settings.hlae_path) {
+        // Issue #101: this reads both #hlae-path-input and
+        // #ffmpeg-override-path-input, so it has to run after *both* are
+        // populated above, not right after hlae_path alone — calling it
+        // there read the override field before its own value had landed,
+        // silently fell back to the bare "ffmpeg" PATH lookup, and produced
+        // a false "there is no file at \"ffmpeg\"" warning that then never
+        // got re-checked, since setting .value programmatically fires no
+        // 'change' event to trigger the listener further down this file.
+        //
+        // Not awaited: it is a status line, and blocking startup on a
+        // filesystem check of somebody else's install directory would trade a
+        // real cost for a cosmetic one.
+        refreshHlaeFfmpegStatus();
+      }
       if (settings.capture_fps) {
         const inputEl = document.querySelector('#config-capture-fps');
         if (inputEl) inputEl.value = settings.capture_fps;
+      }
+      if (settings.obs_capture_fps) {
+        const inputEl = document.querySelector('#config-obs-capture-fps');
+        if (inputEl) inputEl.value = settings.obs_capture_fps;
       }
       if (settings.pre_roll_seconds) {
         const inputEl = document.querySelector('#config-pre-roll');
@@ -707,44 +612,15 @@ window.addEventListener("DOMContentLoaded", async () => {
       if (obsPortEl) obsPortEl.value = settings.obs_port || 4455;
       const obsPasswordEl = document.querySelector('#config-obs-password');
       if (obsPasswordEl) obsPasswordEl.value = settings.obs_password || '';
-      const obsSceneEl = document.querySelector('#config-obs-scene');
-      if (obsSceneEl && settings.obs_scene) {
-        // The saved scene may not exist in the active collection — scene names
-        // are scoped to one — so it is added as an option rather than assumed
-        // present. Test Connection replaces the list with what OBS actually has.
-        if (!Array.from(obsSceneEl.options).some((o) => o.value === settings.obs_scene)) {
-          const opt = document.createElement('option');
-          opt.value = settings.obs_scene;
-          opt.textContent = settings.obs_scene;
-          obsSceneEl.appendChild(opt);
-        }
-        obsSceneEl.value = settings.obs_scene;
-      }
-      const obsProfileEl = document.querySelector('#config-obs-profile');
-      if (obsProfileEl && settings.obs_profile) {
-        // Same reasoning as obs_scene above: the saved profile may not exist
-        // in this install, so it is added as an option rather than assumed
-        // present. Test Connection replaces the list with what OBS actually has.
-        if (!Array.from(obsProfileEl.options).some((o) => o.value === settings.obs_profile)) {
-          const opt = document.createElement('option');
-          opt.value = settings.obs_profile;
-          opt.textContent = settings.obs_profile;
-          obsProfileEl.appendChild(opt);
-        }
-        obsProfileEl.value = settings.obs_profile;
-      }
       const obsExePathEl = document.querySelector('#config-obs-exe-path');
       if (obsExePathEl) obsExePathEl.value = settings.obs_exe_path || '';
       applyCaptureModeUI();
-      // Issue #147: proactive preflight — the existing warnings (canvas
-      // mismatch, already recording, missing requests) only ever surfaced on
-      // a manual Test Connection click. If OBS mode is already the persisted
-      // choice, check now rather than waiting for the user to press the
-      // button themselves; quiet on failure (OBS not running yet is the
-      // ordinary case at startup), same as the orphan-recovery check.
-      if (currentCaptureMode() === 'obs') {
-        runObsConnectionTest({ auto: true });
-      }
+      // Deliberately NOT checked here at startup — OBS is the user's own
+      // program and, like HLAE, is not expected to already be running just
+      // because dod-tools opened. The connectivity check runs when actively
+      // switching into OBS mode below, and again as Start Capture Batch's
+      // own pre-flight (capture_pane.js) — both are moments the user is
+      // actually about to use it, unlike app launch.
       const addCondebugEl = document.querySelector('#config-add-condebug');
       if (addCondebugEl) addCondebugEl.checked = !!settings.add_condebug;
       const autoClearLogsEl = document.querySelector('#config-auto-clear-logs');
@@ -783,6 +659,9 @@ window.addEventListener("DOMContentLoaded", async () => {
         const inputEl = document.querySelector('#config-initial-delay');
         if (inputEl) inputEl.value = settings.initial_delay;
       }
+      // All five timing fields are set by this point — reflect the loaded
+      // values in the Timings tab's visual timeline (#150).
+      renderTimingDiagram();
       if (settings.fast_forward_speed) {
         const inputEl = document.querySelector('#config-fast-forward-speed');
         if (inputEl) inputEl.value = settings.fast_forward_speed;
@@ -951,6 +830,13 @@ window.addEventListener("DOMContentLoaded", async () => {
             console.log(`[take-index] Loaded from ${selected}: ${Object.keys(takeIndex).length} take(s)`, takeIndex);
             if (data.demos) {
               currentScannedDemos = data.demos;
+              // timeline_string is a derived field, saved as a convenience
+              // snapshot rather than the source of truth — recompute it from
+              // each streak's raw kills on every load so a display-only fix
+              // (e.g. a weapon-name-resolution bug) shows correctly for
+              // sessions saved before the fix, instead of replaying whatever
+              // text got baked in at save time.
+              currentScannedDemos.forEach(demo => (demo.streaks || []).forEach(updateStreakVisuals));
               selectedDemoIdx = currentScannedDemos.length > 0 ? 0 : null;
               renderMasterList(currentScannedDemos, selectedDemoIdx, selectDemoAndRenderDetail);
               if (currentScannedDemos.length > 0) {
@@ -1045,12 +931,11 @@ window.addEventListener("DOMContentLoaded", async () => {
       applyCaptureModeUI();
       const legacy = document.querySelector('#config-ffmpeg-capture');
       if (legacy) legacy.dispatchEvent(new Event('change', { bubbles: true }));
-      // Issue #147: switching into OBS mode is exactly the moment the
-      // existing preflight warnings become relevant — check immediately
-      // instead of waiting for a manual Test Connection click.
-      if (currentCaptureMode() === 'obs') {
-        runObsConnectionTest({ auto: true });
-      }
+      // Deliberately no auto-check here: OBS is not expected to already be
+      // open just because the user switched into OBS mode, and warning about
+      // that on every switch was pure noise. Test Connection covers the
+      // manual case; Start Capture Batch runs the real pre-flight (and
+      // launches/retries OBS itself) right before it matters.
     });
   applyCaptureModeUI();
 
@@ -1266,6 +1151,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     if (!pathsToScan || pathsToScan.length === 0) return;
 
     const scanStatusEl = document.querySelector('#scan-status');
+    const scanSpinnerEl = document.querySelector('#scan-spinner');
     const addFilesBtn = document.querySelector('#add-files-btn');
     const addFolderBtn = document.querySelector('#add-folder-btn');
     const cancelScanBtnInner = document.querySelector('#cancel-scan-btn');
@@ -1273,11 +1159,12 @@ window.addEventListener("DOMContentLoaded", async () => {
     if (addFilesBtn) addFilesBtn.disabled = true;
     if (addFolderBtn) addFolderBtn.disabled = true;
     if (cancelScanBtnInner) cancelScanBtnInner.disabled = false;
+    if (scanSpinnerEl) scanSpinnerEl.style.display = 'inline-block';
     if (scanStatusEl) scanStatusEl.textContent = STRINGS.MAIN.SCANNING_STATUS;
     showToast(STRINGS.MAIN.SCANNING_TOAST, 'info');
 
     const masterTableBody = document.querySelector('#master-demo-table-body');
-    if (masterTableBody) masterTableBody.innerHTML = `<tr style="text-align:center"><td colspan="7">${STRINGS.MAIN.SCANNING_PLEASE_WAIT_ROW}</td></tr>`;
+    if (masterTableBody) masterTableBody.innerHTML = `<tr style="text-align:center"><td colspan="8">${STRINGS.MAIN.SCANNING_PLEASE_WAIT_ROW}</td></tr>`;
 
     try {
       const newlyScanned = await scanDirectory(pathsToScan);
@@ -1331,6 +1218,7 @@ window.addEventListener("DOMContentLoaded", async () => {
       if (addFilesBtn) addFilesBtn.disabled = false;
       if (addFolderBtn) addFolderBtn.disabled = false;
       if (cancelScanBtnInner) cancelScanBtnInner.disabled = true;
+      if (scanSpinnerEl) scanSpinnerEl.style.display = 'none';
     }
   }
 

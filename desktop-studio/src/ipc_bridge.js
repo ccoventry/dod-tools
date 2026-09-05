@@ -156,6 +156,17 @@ export async function analyzeDemoFull(demoPath) {
     });
 }
 
+/** Every Weapon variant's resolved display name, keyed by its raw JSON tag —
+ *  same names native/src/patch/scanner.rs bakes into a kill streak's
+ *  timeline text. Best-effort, same as isDebugBuild(): a fetch failure just
+ *  means the analyzer pane's own name-derivation fallback stays in use. */
+export async function getWeaponDisplayNames() {
+  return invoke("get_weapon_display_names").catch((err) => {
+    console.error("IPC Execution Error (get_weapon_display_names):", err);
+    return {};
+  });
+}
+
 export async function startCaptureBatch(payload) {
   return invoke("start_capture_batch", { payload: payload })
     .catch((err) => {
@@ -164,9 +175,10 @@ export async function startCaptureBatch(payload) {
     });
 }
 
-/** Patches the given demo's selected highlights into a single `<stem>_preview.dem`
- *  (BOOKMARK/director events at each highlight) and immediately launches it in
- *  HLAE via `+viewdemo`. */
+/** Patches the given demo's highlights into a single `<stem>_preview.dem`
+ *  (BOOKMARK/director events at each highlight, regardless of selection or
+ *  Min Kills — reuses an existing preview instead of regenerating one) and
+ *  immediately launches it in HLAE via `+viewdemo`. */
 export async function launchDemoPreview(hlaePath, gamePath, streaks) {
   return invoke("launch_demo_preview", { hlaePath, gamePath, streaks })
     .catch((err) => {
@@ -232,9 +244,10 @@ export async function killEngineProcesses() {
     });
 }
 
-/** Patches every demo with selected highlights into its own `<stem>_preview.dem`
- *  (grouped server-side by source demo) without launching HLAE. Resolves to the
- *  number of preview demos generated. */
+/** Patches every demo's highlights into its own `<stem>_preview.dem` (grouped
+ *  server-side by source demo) without launching HLAE, skipping any demo that
+ *  already has one. Resolves to the number of preview demos freshly generated
+ *  this call. */
 export async function generateAllPreviews(hlaePath, gamePath, streaks) {
   return invoke("generate_all_previews", { hlaePath, gamePath, streaks })
     .catch((err) => {
@@ -336,6 +349,36 @@ export async function resetRenderJob(jobId) {
     });
 }
 
+/** Requeues every Cancelled/Finished/Error job in one shot — resumes the
+ *  scheduler immediately if nothing else is currently Rendering, same as a
+ *  single Reset does. */
+export async function resetAllRenderJobs() {
+  return invoke("reset_all_render_jobs")
+    .catch((err) => {
+      console.error("IPC Execution Error (reset_all_render_jobs):", err);
+      throw err;
+    });
+}
+
+/** Deletes one render job's row outright — no Reset back from this, unlike
+ *  Cancel. Refused server-side for a Rendering job. */
+export async function removeRenderJob(jobId) {
+  return invoke("remove_render_job", { jobId })
+    .catch((err) => {
+      console.error("IPC Execution Error (remove_render_job):", err);
+      throw err;
+    });
+}
+
+/** Clears every row except whatever is actively Rendering. */
+export async function removeNonRenderingRenderJobs() {
+  return invoke("remove_non_rendering_render_jobs")
+    .catch((err) => {
+      console.error("IPC Execution Error (remove_non_rendering_render_jobs):", err);
+      throw err;
+    });
+}
+
 export async function setRenderJobCodec(jobId, codec) {
   return invoke("set_render_job_codec", { jobId, codec })
     .catch((err) => {
@@ -348,6 +391,18 @@ export async function getExportPoolFreeGb(directories) {
   return invoke("get_export_pool_free_gb", { directories })
     .catch((err) => {
       console.error("IPC Execution Error (get_export_pool_free_gb):", err);
+      return 0;
+    });
+}
+
+/** Summed required-bytes estimate across every job still ahead of the export
+ *  pool (Queued + Rendering, not Finished/Error/Cancelled). A loose upper
+ *  bound, not a tight prediction — codec compression isn't known ahead of
+ *  time (issue #119). */
+export async function getRenderRequiredEstimateGb() {
+  return invoke("get_render_required_estimate_gb")
+    .catch((err) => {
+      console.error("IPC Execution Error (get_render_required_estimate_gb):", err);
       return 0;
     });
 }

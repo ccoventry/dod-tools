@@ -48,7 +48,7 @@ pub struct FetchOutcome {
 /// exact URL before anything reaches the network.
 pub fn map_url(mirror: &str, map_name: &str) -> Result<String, String> {
     if !is_safe_map_name(map_name) {
-        return Err(format!("`{}` is not a usable map name", map_name));
+        return Err(crate::messages::not_a_usable_map_name(map_name));
     }
     let base = mirror.trim_end_matches('/');
     if !base.starts_with("https://") {
@@ -56,7 +56,7 @@ pub fn map_url(mirror: &str, map_name: &str) -> Result<String, String> {
         // from. Fetching it over a channel anyone can rewrite in flight is not
         // a trade worth offering, even with the checksum check behind it —
         // demos that state no checksum would have nothing behind it at all.
-        return Err("map mirrors must be https".to_string());
+        return Err(crate::messages::MAP_MIRRORS_MUST_BE_HTTPS.to_string());
     }
     Ok(format!("{}/maps/{}.bsp", base, map_name))
 }
@@ -92,23 +92,20 @@ pub fn fetch_map(
     }
 
     std::fs::create_dir_all(maps_dir)
-        .map_err(|e| format!("{}: {}", maps_dir.display(), e))?;
+        .map_err(|e| crate::messages::labeled(maps_dir.display(), e))?;
 
     let body = download(&url)?;
 
     // What arrived, not what was asked for. A mirror can serve an error page
     // with a 200, and an error page is not a map.
     let checksum = bsp::map_checksum(&body)
-        .map_err(|e| format!("what {} served is not a readable BSP: {}", url, e))?;
+        .map_err(|e| crate::messages::served_unreadable_bsp(&url, e))?;
     bsp::Bsp::parse(&body)
-        .map_err(|e| format!("what {} served does not parse as a map: {}", url, e))?;
+        .map_err(|e| crate::messages::served_unparseable_map(&url, e))?;
 
     if let Some(want) = expected {
         if checksum != want {
-            return Err(format!(
-                "{} served build {:08x}, but the demo needs {:08x} — not installing it",
-                url, checksum, want
-            ));
+            return Err(crate::messages::served_wrong_build(&url, checksum, want));
         }
     }
 
@@ -117,12 +114,12 @@ pub fn fetch_map(
     let scratch = maps_dir.join(format!("{}{}", map_name, SCRATCH_SUFFIX));
     {
         let mut file = std::fs::File::create(&scratch)
-            .map_err(|e| format!("{}: {}", scratch.display(), e))?;
+            .map_err(|e| crate::messages::labeled(scratch.display(), e))?;
         file.write_all(&body)
             .and_then(|_| file.sync_all())
             .map_err(|e| {
                 let _ = std::fs::remove_file(&scratch);
-                format!("{}: {}", scratch.display(), e)
+                crate::messages::labeled(scratch.display(), e)
             })?;
     }
 
@@ -132,14 +129,14 @@ pub fn fetch_map(
         let aside = maps_dir.join(format!("{}.{:08x}.bsp.bak", map_name, previous));
         std::fs::rename(&target, &aside).map_err(|e| {
             let _ = std::fs::remove_file(&scratch);
-            format!("could not move the existing {} aside: {}", target.display(), e)
+            crate::messages::could_not_move_existing_aside(target.display(), e)
         })?;
         replaced = Some(aside);
     }
 
     std::fs::rename(&scratch, &target).map_err(|e| {
         let _ = std::fs::remove_file(&scratch);
-        format!("{}: {}", target.display(), e)
+        crate::messages::labeled(target.display(), e)
     })?;
 
     Ok(FetchOutcome {
@@ -155,11 +152,11 @@ pub fn fetch_map(
 fn download(url: &str) -> Result<Vec<u8>, String> {
     let mut response = ureq::get(url)
         .call()
-        .map_err(|e| format!("{}: {}", url, e))?;
+        .map_err(|e| crate::messages::labeled(url, e))?;
 
     let status = response.status();
     if !status.is_success() {
-        return Err(format!("{} returned {}", url, status));
+        return Err(crate::messages::url_returned_status(url, status));
     }
 
     response
@@ -167,7 +164,7 @@ fn download(url: &str) -> Result<Vec<u8>, String> {
         .with_config()
         .limit(MAX_MAP_BYTES)
         .read_to_vec()
-        .map_err(|e| format!("{}: {}", url, e))
+        .map_err(|e| crate::messages::labeled(url, e))
 }
 
 #[cfg(test)]

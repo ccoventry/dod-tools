@@ -119,25 +119,27 @@ export function isRangeModified(streak) {
 
 /**
  * True if this highlight carries anything the user did on purpose — real
- * pipeline-earned status (Captured/Rendered), a note, or a narrowed kill
- * range. This is deliberately a wide net (per user, 2026-08-19): any one of
- * the three is enough to protect the row from Clear Untracked in Workspace
- * mode.
+ * pipeline-earned status (Pending/Captured/Rendered), a note, or a narrowed
+ * kill range. This is deliberately a wide net (per user, 2026-08-19): any
+ * one of the three is enough to protect the row from Clear Untracked in
+ * Workspace mode.
  *
- * `Pending` deliberately does NOT count (revised 2026-08-19, was originally
- * "status !== None"). `streak.status` starts as `undefined`, and the status
- * dropdown displays undefined as "Pending" purely for convenience
- * (`streak.status || 'Pending'` in detail_pane.js) without that ever
- * actually writing to the field — so counting an explicit "Pending" as
- * tracked meant re-selecting the exact same-looking value the row already
- * displayed could silently flip a row from untracked to tracked, while
- * every other untouched row kept showing "Pending" too, just without a
- * badge. Confusing and not worth it: only Captured/Rendered reflect real
- * progress a Clear should actually protect.
+ * `Pending` used to deliberately NOT count (revised 2026-08-19, was
+ * originally "status !== None"): back then `streak.status` started as
+ * `undefined` and the status dropdown *displayed* undefined as "Pending"
+ * purely for convenience, without ever writing to the field — so an
+ * explicit "Pending" selection looked identical to an untouched row, and
+ * counting it as tracked could silently flip a row's protection with no
+ * visible change. That premise is gone now that an unset status displays
+ * (and counts, master_pane.js's countByStatus) as "None" instead —
+ * "Pending" only ever appears once the user deliberately sets it, e.g. to
+ * flag a highlight for a later capture pass without selecting it yet — so
+ * it is exactly the kind of on-purpose signal this predicate exists to
+ * protect, and the 2026-08-19 restriction no longer applies.
  */
 export function isHighlightTracked(streak) {
   if (!streak) return false;
-  if (streak.status === 'Captured' || streak.status === 'Rendered') return true;
+  if (streak.status === 'Pending' || streak.status === 'Captured' || streak.status === 'Rendered') return true;
   if (streak.notes && streak.notes.trim()) return true;
   return isRangeModified(streak);
 }

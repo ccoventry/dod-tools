@@ -21,7 +21,16 @@ export function applyStaticStrings(root = document) {
   });
   root.querySelectorAll('[data-str-title]').forEach((el) => {
     const value = resolveKey(el.dataset.strTitle);
-    if (value !== undefined) el.title = value;
+    if (value === undefined) return;
+    // .info-icon renders its own hover/focus tooltip (info_tooltip.js) instead
+    // of the native `title` attribute — see #164. Everything else keeps the
+    // native tooltip as before.
+    if (el.classList.contains('info-icon')) {
+      el.dataset.tooltipText = value;
+      el.setAttribute('aria-label', value);
+    } else {
+      el.title = value;
+    }
   });
   root.querySelectorAll('[data-str-placeholder]').forEach((el) => {
     const value = resolveKey(el.dataset.strPlaceholder);

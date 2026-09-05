@@ -64,6 +64,7 @@ export const STRINGS = {
     SELECT_ALL_CB_TITLE: 'Select/deselect all visible demos',
     TABLE_HEADER_DEMO_FILE: 'Demo File',
     TABLE_HEADER_HIGHLIGHTS: 'Highlights',
+    TABLE_HEADER_SELECTED: 'Selected',
     TABLE_HEADER_PENDING: 'Pending',
     TABLE_HEADER_CAPTURED: 'Captured',
     TABLE_HEADER_RENDERED: 'Rendered',
@@ -78,7 +79,7 @@ export const STRINGS = {
     trackedBadgeTooltip: (reasons) => `Tracked — has ${reasons.join(', ')}. Protected from Clear Untracked in Workspace mode.`,
     rowDeleteLog: (name, trackedNote) => `[queue] Row delete: removed "${name}"${trackedNote}`,
     TRACKED_NOTE_SUFFIX: ' (had tracked work; user confirmed)',
-    REASON_STATUS: 'a Captured/Rendered status',
+    REASON_STATUS: 'a Pending/Captured/Rendered status',
     REASON_NOTE: 'a note',
     REASON_RANGE: 'an edited kill range',
     EMPTY_DASH: '—',
@@ -94,13 +95,12 @@ export const STRINGS = {
     DEFAULT_TITLE: 'Highlight Details',
     detailTitle: (name) => `Highlight Details: ${name}`,
     LAUNCH_PREVIEW_BUTTON: 'Launch Preview',
-    LAUNCH_PREVIEW_TITLE: 'Patches this demo and immediately launches it in HLAE via viewdemo.',
+    LAUNCH_PREVIEW_TITLE: 'Patches this demo (or reuses an existing preview) and launches it in HLAE via viewdemo.',
     LAUNCHING: 'Launching…',
     VIEW_TELEMETRY_BUTTON: 'View Match Telemetry',
-    SELECT_ALL_BUTTON: 'Select All',
-    DESELECT_ALL_BUTTON: 'Deselect All',
+    SELECT_ALL_CB_TITLE: 'Select/deselect all visible highlights',
     GENERATE_ALL_PREVIEWS_BUTTON: 'Generate All Previews',
-    GENERATE_ALL_PREVIEWS_TITLE: 'Generates _preview.dem files with BOOKMARK events for all selected highlights across all demos.',
+    GENERATE_ALL_PREVIEWS_TITLE: 'Generates _preview.dem files with a BOOKMARK event for every highlight across all demos, skipping any demo that already has one.',
     GENERATING: 'Generating…',
     LAUNCH_STANDALONE_BUTTON: 'Launch Game (HLAE)',
     LAUNCH_STANDALONE_TITLE: 'Boots HLAE against hl.exe directly with no demo loaded.',
@@ -122,14 +122,20 @@ export const STRINGS = {
     KR_RESET_TITLE: 'Reset to full range',
     fallbackKillCount: (count) => `${count} kills`,
     STATUS_OPTIONS: ['None', 'Pending', 'Captured', 'Rendered'],
-    STATUS_PENDING_DEFAULT: 'Pending',
+    // What an untouched highlight (streak.status still undefined) displays
+    // and counts as. 'Pending' is now a deliberate, user-set flag ("capture
+    // this one later") rather than the implicit default every unset row
+    // used to show — see isHighlightTracked's doc comment (take_index.js).
+    STATUS_UNSET_DEFAULT: 'None',
     mergedTakeBadge: (takeName) => `merged → ${takeName}`,
     mergedBadgeTitle: (mergedCount) => `Merged with ${mergedCount - 1} other highlight(s) into one take — they were recorded together and share this take folder.`,
     tickLabel: (tick) => `Tick ${tick}`,
     secondsSuffix: (n) => `${n}s`,
     HLAE_PATH_REQUIRED: 'Configure the HLAE and Half-Life executable paths in Batch Capture Config before previewing.',
     PREVIEW_LAUNCHING_TOAST: 'Preview launching in HLAE...',
-    generatedPreviews: (count) => `Generated ${count} preview demo(s). Load them manually via HLAE.`,
+    generatedPreviews: (count) => count === 0
+      ? 'Every demo already had a preview — nothing new to generate.'
+      : `Generated ${count} preview demo(s). Load them manually via HLAE.`,
     copiedViewCommand: (cmd) => `Copied "${cmd}" to clipboard.`,
     COPY_VIEW_COMMAND_FAILED: 'Failed to copy the view command to clipboard.',
     LAUNCHING_HLAE_TOAST: 'Launching HLAE...',
@@ -211,29 +217,30 @@ export const STRINGS = {
     OBS_PASSWORD_PLACEHOLDER: 'From Tools → WebSocket Server Settings',
     OBS_PASSWORD_TITLE:
         'The obs-websocket password, if OBS has authentication enabled. Use the Copy button in OBS rather than retyping it.',
-    OBS_SCENE_LABEL: 'Scene:',
-    OBS_SCENE_TITLE:
-        'Scene to switch to for the batch, and switch back from afterwards. Leave on "Use current scene" to change nothing. The scene must contain a capture source pointed at hl.exe and an audio source.',
-    OBS_SCENE_CURRENT: 'Use current scene',
-    OBS_PROFILE_LABEL: 'Profile:',
-    OBS_PROFILE_TITLE:
-        'Profile to switch to for the batch, and switch back from afterwards. Leave on "Use current profile" to change nothing. A profile bundles OBS\'s own Video/Output/Audio settings, so switching one can change canvas resolution and FPS along with everything else.',
-    OBS_PROFILE_CURRENT: 'Use current profile',
     OBS_TEST_BUTTON: 'Test Connection',
     OBS_TESTING: 'Connecting…',
+    OBS_LAUNCHING_AND_CONNECTING: 'Launching OBS and waiting for it to be ready…',
     OBS_UNREACHABLE: 'Could not reach OBS.',
     obsConnectedSummary: (obsVersion, websocketVersion) =>
         `Connected — OBS ${obsVersion} (obs-websocket ${websocketVersion})`,
+    // Read-only — dod-tools always targets its own fixed profile/scene, there
+    // is nothing here for the user to change.
+    obsUsingSummary: (profile, scene) => `Using OBS profile "${profile}", scene "${scene}"`,
     obsCanvasSummary: (canvas, output, fps) => `Canvas ${canvas}, output ${output} @ ${Math.round(fps)} fps`,
     obsRecordingToSummary: (directory) => `Recording to ${directory}`,
     obsMissingRequests: (requests) => `This OBS is missing: ${requests.join(', ')} — capture cannot run.`,
     OBS_ALREADY_RECORDING: 'OBS is already recording — stop it before starting a batch.',
     OBS_ALREADY_STREAMING: 'OBS is streaming — dod-tools will not drive its recorder.',
     obsTestFailed: (err) => `OBS test failed: ${err}`,
+    OBS_CAPTURE_FPS_LABEL: 'OBS Capture FPS:',
+    OBS_CAPTURE_FPS_TITLE:
+        "OBS's own live recording rate and the game's fps_max — separate from Capture FPS above, which is non-real-time for the other two modes. Set above what your machine can sustain and OBS drops frames instead of falling behind, making the clip choppy or unusable. Test a short capture first and watch for dropped-frame warnings before committing to a value.",
+    OBS_CAPTURE_FPS_WARNING:
+        'Too high for your machine and OBS drops frames — test a short capture first.',
     OBS_ENABLE_HINT:
-        'OBS Studio 28+ has obs-websocket built in. Enable it under Tools → WebSocket Server Settings — the checkbox at the top of that dialog is the switch, not the Connect Info panel.',
-    OBS_FPS_HINT:
-        "Capture frame rate above what you're seeing is an OBS setting, not something dod-tools controls — set it under Settings → Output → Recording (or Settings → Video → Common FPS Values), not here.",
+        'OBS 28+: enable this under Tools → WebSocket Server Settings (the checkbox, not the Connect Info panel).',
+    OBS_PROVISION_HINT:
+        'dod-tools manages its own OBS profile/scene ([DoD-Tools]) — your own setup is never touched.',
     // ── Orphaned recording left by a previous run ───────────────────────────
     OBS_ORPHAN_TITLE: 'OBS is still recording',
     obsOrphanPrompt: (directory) =>
@@ -309,19 +316,39 @@ export const STRINGS = {
     SAVE_LOCAL_PATCHED_LABEL: 'Save Local Patched Copy',
     ADD_CONDEBUG_LABEL: 'Add Condebug',
     PRE_ROLL_LABEL: 'Pre-roll (s):',
+    PRE_ROLL_HINT: 'Time between fast-forward stopping and capture starting.',
     POST_ROLL_LABEL: 'Post-roll (s):',
+    POST_ROLL_HINT: 'Time between capture stopping and fast-forward resuming.',
     START_LEAD_LABEL: 'Start Lead (s):',
+    START_LEAD_HINT: 'Time between capture starting and the first kill.',
     STOP_TRAIL_LABEL: 'Stop Trail (s):',
+    STOP_TRAIL_HINT: 'Time between the last kill and capture stopping.',
     INITIAL_DELAY_LABEL: 'Initial Delay (s):',
+    INITIAL_DELAY_HINT: 'Time between the demo loading and fast-forward starting.',
+    // Timing diagram (#150) — a visual timeline under the fields above,
+    // showing how they relate to each other and to the recording window.
+    timingDiagramInitialDelayNote: (v) => `This timeline starts after Initial Delay (${v}s) has already passed — a once-per-demo wait, not part of the per-clip cycle below.`,
+    TIMING_DIAGRAM_COL_TIME: 'Relative Time',
+    TIMING_DIAGRAM_COL_EVENT: 'Event',
+    // Signed offset from the first kill (0.0s) — matches the pre-Tauri egui
+    // build's "+{n} sec" / "{n} sec" formatting.
+    timingDiagramTime: (v) => (v >= 0 ? `+${v.toFixed(1)}s` : `${v.toFixed(1)}s`),
+    timingDiagramPreRollEvent: (v) => `Pre-roll ends (speed back to normal) — Pre-roll is ${v}s`,
+    timingDiagramRecordStartEvent: (v) => `Recording starts — Start Lead is ${v}s`,
+    TIMING_DIAGRAM_FIRST_KILL_EVENT: 'First kill (anchor)',
+    TIMING_DIAGRAM_LAST_KILL_EVENT: 'Last kill (anchor — illustrative gap, not a real streak length)',
+    timingDiagramRecordStopEvent: (v) => `Recording stops — Stop Trail is ${v}s`,
+    timingDiagramPostRollEvent: (v) => `Post-roll ends, fast-forward resumes — Post-roll is ${v}s`,
     FF_SPEED_LABEL: 'FF Speed (x):',
     FF_SPEED_TITLE: 'Locked, matching dev — not currently user-editable.',
+    FF_SPEED_HINT: 'How fast playback races toward each clip between kills, as a multiple of real time. Locked at 0.05x, matching dev — not currently user-editable.',
     CAPTURE_FPS_LABEL: 'Capture FPS:',
     // Worth stating outright. This used to sit under Timing Options, and the
     // adjacency invited exactly the confusion that cost real time: the demo's
     // own tickrate is a different number entirely, and conflating the two is
     // how a "3 second" margin turned out to be 0.6.
     CAPTURE_FPS_TITLE:
-      'Frames per second written to the recorded video. Nothing to do with the demo\'s own tickrate, which is a property of how the demo was recorded and is not adjustable here.',
+      'Frames per second written to the recorded video. Nothing to do with the demo\'s own tickrate, which is a property of how the demo was recorded and is not adjustable here. Not used in OBS mode — see OBS Capture FPS in the OBS Connection section below.',
     OUTPUT_DIR_PLACEHOLDER: 'Capture output directory path...',
     ADD_DIRECTORY_BUTTON: 'Add Directory',
     DESTINATIONS_HELP_TEXT: 'Captures are written here, and Render Studio scans these same locations for takes to render.',
@@ -456,14 +483,22 @@ export const STRINGS = {
     TABLE_HEADER_STATUS: 'Status',
     TABLE_HEADER_SPEED: 'Speed',
     TABLE_HEADER_PROGRESS: 'Progress',
+    TABLE_HEADER_FILE_SIZE: 'File Size',
+    TABLE_HEADER_FILE_SIZE_TITLE: "The real encoded size, once finished — not shown ahead of time, since it can't be predicted accurately (see Required (Over-estimated) in the footer).",
+    fileSizeGb: (gb) => `${gb} GB`,
+    fileSizeMb: (mb) => `${mb} MB`,
+    FILE_SIZE_UNKNOWN: '—',
     TABLE_HEADER_ACTIONS: 'Actions',
     TABLE_EMPTY: 'No render jobs queued. Scan a folder, then click Start Render Batch.',
     START_RENDER_BUTTON: 'Start Render Batch',
     CANCEL_ALL_BUTTON: 'Cancel All',
+    RESET_ALL_BUTTON: 'Reset All',
+    REMOVE_ALL_BUTTON: 'Remove All (Not Rendering)',
     STATUS_WAITING: 'Status: Waiting...',
 
     CANCEL_JOB_TITLE: 'Cancel this job',
     RESET_JOB_TITLE: 'Reset to Queued',
+    REMOVE_JOB_TITLE: 'Remove this row — cannot be undone',
     SKIP_TOGGLE_LABEL: 'Skip',
     SKIP_TOGGLE_TITLE: 'Leave this OBS take exactly as recorded — no re-encode, just routed into the export pool under the pipeline naming.',
     setJobCodecFailed: (err) => `Could not change this job's render setting: ${err}`,
@@ -479,6 +514,12 @@ export const STRINGS = {
     errorLogTitleForJob: (name) => `FFmpeg Error Log — ${name}`,
     exportPoolFreeFooter: (gb) => `Export Pool Free: ${gb} GB`,
     RENDER_POOL_FREE_DEFAULT: 'Export Pool Free: 0.0 GB',
+    // "Over-estimated" matters here in a way it doesn't for Capture's
+    // Required figure — this is a deliberately loose upper bound (raw-frame
+    // math), not a tight prediction. See get_render_required_estimate_gb.
+    requiredEstimatedFooter: (gb) => `Required (Over-estimated): ${gb} GB`,
+    REQUIRED_ESTIMATED_FOOTER_TITLE: "A loose upper bound, not a tight prediction — most codecs compress well below this, and it can't be known ahead of time how much. Covers every job that hasn't finished yet (Queued + Rendering).",
+    REQUIRED_ESTIMATED_DEFAULT: 'Required (Over-estimated): 0.00 GB',
     recoveredJobsToast: (completed, pending) => `Recovered ${completed} completed, ${pending} pending render job(s).`,
     recoverFailed: (err) => `Failed to recover render batch: ${err}`,
     renderingStatus: (done, total) => `Status: Rendering (${done}/${total} done)`,

@@ -206,6 +206,19 @@ pub fn final_init_commands(config: &PatcherConfig) -> Vec<String> {
         if config.separate_hud { "1" } else { "0" }
     ));
 
+    // OBS mode is real time: HLAE issues no `mirv_movie_start` at all, so
+    // `mirv_movie_fps` above is inert on this path — nothing reads it. What
+    // OBS actually records is however fast the engine renders, so that rate
+    // has to be pinned to the same `obs_capture_fps` OBS's own canvas is set
+    // to (obs::provision::ensure_dod_tools_setup), or the two drift against
+    // each other. `fps_override 1` first: GoldSrc's default `fps_max`
+    // ceiling (~100) is below what obs_capture_fps is commonly set to, and
+    // `fps_max` alone is silently clamped under that ceiling without it.
+    if config.capture_mode == crate::patch::CaptureMode::Obs {
+        out.push("fps_override 1".to_string());
+        out.push(format!("fps_max {}", config.obs_capture_fps));
+    }
+
     // The decal flush needs the ring set once, at demo load, and never again.
     // r_decals bounds how far the rotating index may travel before it wraps; it
     // does not evict anything, so lowering it once decals have accumulated
@@ -1380,6 +1393,42 @@ pub fn spawn_patch_batch(
 // One output demo per source demo, saved as "<stem>_preview.dem" next to the
 // original (or inside `output_dir` if configured).
 
+/// Makes a demo stem safe as a `playdemo`/`viewdemo` target.
+///
+/// `launch_demo_preview` passes the output stem straight into HLAE's
+/// `-cmdLine`, which becomes hl.exe's own startup command line — GoldSrc
+/// tokenizes that on whitespace and treats any `+`/`-` prefixed token as the
+/// start of a new launch parm, so an embedded hyphen (common in
+/// match-recorded demo names, e.g. "team1-vs-team2") silently truncates the
+/// `+viewdemo` target at the first one instead of failing loudly. Confirmed
+/// live: a source stem of "wsod25-po_r3_sf-..." loaded as bare "wsod25".
+/// Per docs/goldsrc_dod_quirks.md, playdemo/viewdemo targets must also stay
+/// under ~40 characters, which this stem was already over before appending
+/// "_preview" — both constraints are enforced here, once, at the point the
+/// output filename is chosen, so neither preview entry point (this one, or
+/// `generate_all_previews`'s later manual load) can hit it again.
+fn playdemo_safe_stem(raw: &str) -> String {
+    // Reserve room for the "_preview" suffix appended below, and stay a few
+    // characters under the documented ~40 char limit rather than right at it.
+    const SUFFIX_LEN: usize = "_preview".len();
+    const BUDGET: usize = 36;
+    const BASE_BUDGET: usize = BUDGET - SUFFIX_LEN;
+
+    let sanitized: String = raw
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '_' })
+        .collect();
+    if sanitized.len() <= BASE_BUDGET {
+        return sanitized;
+    }
+    // Too long even after sanitizing — truncate, but append a hash of the
+    // *original* stem so two long names sharing a prefix don't collide onto
+    // the same output file.
+    let hash_suffix = format!("_{:08x}", crate::utils::demo_hasher::fnv1a_hash(raw.as_bytes()) as u32);
+    let keep = BASE_BUDGET.saturating_sub(hash_suffix.len());
+    format!("{}{}", &sanitized[..keep], hash_suffix)
+}
+
 pub fn build_preview_patch_jobs(
     raw_streaks: Vec<CaptureStreak>,
     output_dir: Option<&std::path::Path>,
@@ -1419,7 +1468,8 @@ pub fn build_preview_patch_jobs(
             .file_stem()
             .unwrap_or_default()
             .to_string_lossy();
-        let preview_name = format!("{}_preview.dem", stem);
+        let safe_stem = playdemo_safe_stem(&stem);
+        let preview_name = format!("{}_preview.dem", safe_stem);
         let output_demo = if let Some(dir) = output_dir {
             dir.join(&preview_name)
         } else {
@@ -1557,6 +1607,39 @@ pub fn build_director_stufftext(command: &str) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn playdemo_safe_stem_leaves_short_alphanumeric_names_alone() {
+        assert_eq!(playdemo_safe_stem("demo1"), "demo1");
+    }
+
+    #[test]
+    fn playdemo_safe_stem_replaces_hyphens_that_truncate_the_goldsrc_cmdline() {
+        // Confirmed live: GoldSrc's startup command-line tokenizer treats an
+        // embedded "-" as the start of a new launch parm, so this exact stem
+        // loaded as bare "wsod25" via +viewdemo instead of the real demo.
+        let stem = playdemo_safe_stem("wsod25-po_r3_sf-warchyld_ih_m2_thunder_h1");
+        assert!(!stem.contains('-'), "sanitized stem must not contain a hyphen: {stem}");
+        assert!(stem.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'));
+    }
+
+    #[test]
+    fn playdemo_safe_stem_stays_under_the_documented_length_limit() {
+        // docs/goldsrc_dod_quirks.md: playdemo/viewdemo targets must stay
+        // under ~40 characters. This name alone is 41 before "_preview".
+        let stem = playdemo_safe_stem("wsod25-po_r3_sf-warchyld_ih_m2_thunder_h1");
+        assert!(
+            stem.len() + "_preview".len() < 40,
+            "stem + _preview suffix must stay under the limit: {stem}"
+        );
+    }
+
+    #[test]
+    fn playdemo_safe_stem_disambiguates_names_sharing_a_long_prefix() {
+        let a = playdemo_safe_stem("a_very_long_shared_prefix_that_overflows_team1");
+        let b = playdemo_safe_stem("a_very_long_shared_prefix_that_overflows_team2");
+        assert_ne!(a, b, "two different overflowing names must not collide: {a} vs {b}");
+    }
 
     #[test]
     fn test_build_batch_queue_merging() {
@@ -1769,6 +1852,38 @@ mod tests {
         config.game_path = root.join("hl.exe").to_string_lossy().to_string();
         config.primary_media_dir = Some(root);
         config
+    }
+
+    #[test]
+    fn obs_mode_pins_fps_override_and_fps_max_to_obs_capture_fps() {
+        let mut config = PatcherConfig::default();
+        config.capture_mode = crate::patch::CaptureMode::Obs;
+        config.capture_fps = 300; // must not leak into fps_max — see below
+        config.obs_capture_fps = 120;
+        let commands = final_init_commands(&config);
+        assert!(
+            commands.iter().any(|c| c == "fps_override 1"),
+            "expected fps_override 1, got: {commands:?}"
+        );
+        assert!(
+            commands.iter().any(|c| c == "fps_max 120"),
+            "expected fps_max 120 (from obs_capture_fps, not capture_fps), got: {commands:?}"
+        );
+    }
+
+    #[test]
+    fn frame_sequence_and_direct_to_video_never_touch_fps_max() {
+        for mode in [crate::patch::CaptureMode::FrameSequence, crate::patch::CaptureMode::DirectToVideo] {
+            let mut config = PatcherConfig::default();
+            config.capture_mode = mode;
+            config.capture_fps = 120;
+            config.obs_capture_fps = 120;
+            let commands = final_init_commands(&config);
+            assert!(
+                !commands.iter().any(|c| c.starts_with("fps_override") || c.starts_with("fps_max")),
+                "{mode:?} should not touch fps_override/fps_max, got: {commands:?}"
+            );
+        }
     }
 
     #[test]

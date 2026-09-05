@@ -34,12 +34,7 @@ pub struct MapCheckRow {
 /// Where maps live for a configured `hl.exe`, or an error a person can act on.
 fn maps_dir(game_path: &str) -> Result<PathBuf, String> {
     let exe = Path::new(game_path);
-    map_check::maps_dir_for_exe(exe).ok_or_else(|| {
-        format!(
-            "no map folder beside `{}` — maps are expected at `<hl.exe folder>/dod/maps`",
-            game_path
-        )
-    })
+    map_check::maps_dir_for_exe(exe).ok_or_else(|| crate::messages::no_map_folder_beside_exe(game_path))
 }
 
 /// Check a list of demos against the map library.
@@ -115,7 +110,7 @@ pub async fn check_demo_maps(
         rows
     })
     .await
-    .map_err(|e| format!("map check failed: {}", e))
+    .map_err(crate::messages::map_check_failed)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -444,7 +439,7 @@ pub async fn scan_game_configs(
         }
     })
     .await
-    .map_err(|e| format!("config scan failed: {}", e))
+    .map_err(crate::messages::config_scan_failed)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -571,7 +566,7 @@ pub async fn download_map(
         })
     })
     .await
-    .map_err(|e| format!("map download failed: {}", e))?
+    .map_err(crate::messages::map_download_failed)?
 }
 
 #[cfg(test)]

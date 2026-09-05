@@ -3,6 +3,8 @@ use std::sync::RwLock;
 
 static ACTIVE_LANGUAGE: RwLock<&'static str> = RwLock::new("english");
 static LOCALIZATIONS: RwLock<Option<HashMap<String, String>>> = RwLock::new(None);
+#[cfg(not(target_arch = "wasm32"))]
+static EXTRA_SEARCH_PATHS: RwLock<Vec<std::path::PathBuf>> = RwLock::new(Vec::new());
 
 #[cfg(target_arch = "wasm32")]
 include!(concat!(env!("OUT_DIR"), "/embedded_localizations.rs"));
@@ -31,6 +33,19 @@ pub fn set_active_language(lang: &'static str) {
 /// using either style resolves identically.
 fn normalize_key(key: &str) -> String {
     key.trim().trim_start_matches('#').to_lowercase()
+}
+
+/// Registers an additional `localizations/` folder for `load_pass` to scan,
+/// on top of its built-in cwd- and walk-up-from-exe-relative guesses. Needed
+/// for a packaged Tauri build: `translate_key`'s normal search only finds the
+/// repo-root `localizations/` folder when the running binary lives inside the
+/// source tree (dev/debug builds), so the installed app registers its bundled
+/// resource directory here at startup instead. Clears the cache so a later
+/// `translate_key` call reloads.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn add_localization_search_path(dir: std::path::PathBuf) {
+    EXTRA_SEARCH_PATHS.write().unwrap().push(dir);
+    *LOCALIZATIONS.write().unwrap() = None;
 }
 
 pub fn translate_key(key: &str) -> Option<String> {
@@ -207,6 +222,7 @@ fn load_pass(map: &mut HashMap<String, String>, filter_lang: &str, amxx_code: &s
         std::path::PathBuf::from("localizations"),
         std::path::PathBuf::from("../localizations"),
     ];
+    paths.extend(EXTRA_SEARCH_PATHS.read().unwrap().iter().cloned());
 
     if let Ok(exe_path) = std::env::current_exe() {
         // A single `.parent()` hop only finds a sibling `localizations/`

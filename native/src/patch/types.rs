@@ -327,21 +327,6 @@ pub struct ObsConfig {
     pub port: u16,
     /// Empty when OBS has authentication switched off.
     pub password: String,
-    /// Scene to switch to for the batch, and restore afterwards. Empty means
-    /// "use whatever is already active and change nothing".
-    pub scene: String,
-    /// The scene collection `scene` belongs to, recorded because scene names
-    /// are scoped to a collection — a remembered name alone can silently
-    /// resolve to something unrelated after the user switches collections.
-    pub scene_collection: String,
-    /// Profile to switch to for the batch, and restore afterwards. Empty
-    /// means "use whatever is already active and change nothing" — same
-    /// convention as `scene`. Unlike scene, OBS profiles bundle Video
-    /// settings (canvas/output resolution, FPS), so switching one can change
-    /// exactly what `ObsClient::preflight` validates — `ObsSession::start`
-    /// switches this *before* calling `preflight`, not after (see that
-    /// function's comment).
-    pub profile: String,
 }
 
 impl Default for ObsConfig {
@@ -350,9 +335,6 @@ impl Default for ObsConfig {
             host: "127.0.0.1".to_string(),
             port: 4455,
             password: String::new(),
-            scene: String::new(),
-            scene_collection: String::new(),
-            profile: String::new(),
         }
     }
 }
@@ -363,15 +345,15 @@ impl ObsConfig {
     }
 
     /// Safe to log. The password is reduced to whether one is set at all,
-    /// which is the only part of it worth knowing from a log line.
+    /// which is the only part of it worth knowing from a log line. No scene/
+    /// profile to report any more — `obs::provision` always targets its own
+    /// fixed, named profile/scene rather than a configurable one.
     pub fn redacted(&self) -> String {
         format!(
-            "ws://{}:{} (password: {}, scene: {}, profile: {})",
+            "ws://{}:{} (password: {})",
             self.host,
             self.port,
             if self.password.is_empty() { "none" } else { "set" },
-            if self.scene.is_empty() { "<current>" } else { &self.scene },
-            if self.profile.is_empty() { "<current>" } else { &self.profile }
         )
     }
 }
@@ -383,6 +365,16 @@ pub struct PatcherConfig {
     pub pre_roll_ticks: i32,
     pub post_roll_ticks: i32,
     pub capture_fps: i32,
+    /// OBS mode's own capture rate — separate from `capture_fps` because the
+    /// two modes have different constraints entirely. `capture_fps` (via
+    /// `mirv_movie_fps`) is non-real-time for frame-sequence/direct-to-video:
+    /// each frame just takes however long it takes to render, so 300 costs
+    /// nothing there. OBS mode is real time — this drives both OBS's own
+    /// `SetVideoSettings` FPS and the game's `fps_max` (see
+    /// `final_init_commands`), and has to stay inside whatever the encoder
+    /// can actually sustain at the configured resolution or frames get
+    /// dropped (confirmed live: 300fps @ 2560x1440 lost 98.5% of frames).
+    pub obs_capture_fps: i32,
     pub exit_on_finish: bool,
     pub init_commands: Vec<String>,
     pub custom_commands: Vec<CustomCommand>,
@@ -540,6 +532,7 @@ impl Default for PatcherConfig {
             pre_roll_ticks: 200,
             post_roll_ticks: 60,
             capture_fps: 300,
+            obs_capture_fps: 120,
             exit_on_finish: true,
             init_commands: Vec::new(),
             custom_commands: Vec::new(),

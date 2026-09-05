@@ -26,6 +26,11 @@ pub struct AppSettings {
     pub analyzer_explorer_width: i32,
     pub language: String,
     pub capture_fps: i32,
+    /// OBS mode's own capture rate — see `PatcherConfig::obs_capture_fps`'s
+    /// doc comment for why this is a separate field rather than sharing
+    /// `capture_fps` with frame-sequence/direct-to-video.
+    #[serde(default = "default_obs_capture_fps")]
+    pub obs_capture_fps: i32,
     pub pre_roll_seconds: f32,
     pub post_roll_seconds: f32,
     #[serde(default = "default_resolution_width")]
@@ -73,22 +78,6 @@ pub struct AppSettings {
     /// switched off. Never logged — see `ObsConfig::redacted`.
     #[serde(default)]
     pub obs_password: String,
-    /// Scene to switch to for a batch, and restore afterwards. Empty means
-    /// "use whatever is active and change nothing".
-    #[serde(default)]
-    pub obs_scene: String,
-    /// The collection `obs_scene` belongs to. Scene names are scoped to a
-    /// collection, so a remembered name alone can resolve to something
-    /// unrelated after the user switches.
-    #[serde(default)]
-    pub obs_scene_collection: String,
-    /// Profile to switch to for a batch, and restore afterwards. Empty means
-    /// "use whatever is active and change nothing" — same convention as
-    /// `obs_scene`. Unlike scene, a profile switch can change OBS's own
-    /// canvas/output resolution, so `ObsSession::start` switches it before
-    /// preflight validates those, not after.
-    #[serde(default)]
-    pub obs_profile: String,
     /// Path to `obs64.exe`/`obs.exe`, for the "Launch OBS" button. Spawn-and-
     /// forget, same as `launch_standalone_game` — OBS is the user's own
     /// software, not ours to manage, so nothing here tracks its lifecycle.
@@ -158,6 +147,7 @@ pub struct AppSettings {
 }
 
 fn default_resolution_width() -> i32 { 1280 }
+fn default_obs_capture_fps() -> i32 { 120 }
 fn default_resolution_height() -> i32 { 720 }
 fn default_add_condebug() -> bool { true }
 fn default_initial_delay() -> f32 { 3.0 }
@@ -197,6 +187,7 @@ impl Default for AppSettings {
             analyzer_explorer_width: default_analyzer_explorer_width(),
             language: "en".to_string(),
             capture_fps: 300,
+            obs_capture_fps: default_obs_capture_fps(),
             pre_roll_seconds: 2.0,
             post_roll_seconds: 0.6,
             resolution_width: default_resolution_width(),
@@ -209,9 +200,6 @@ impl Default for AppSettings {
             obs_host: default_obs_host(),
             obs_port: default_obs_port(),
             obs_password: String::new(),
-            obs_scene: String::new(),
-            obs_scene_collection: String::new(),
-            obs_profile: String::new(),
             obs_exe_path: String::new(),
             add_condebug: default_add_condebug(),
             auto_clear_logs: false,
@@ -281,9 +269,9 @@ impl AppSettings {
             let _ = fs::create_dir_all(parent);
         }
         let json = serde_json::to_string_pretty(self)
-            .map_err(|e| format!("Failed to serialize settings: {}", e))?;
+            .map_err(crate::messages::failed_to_serialize_settings)?;
         fs::write(&path, json)
-            .map_err(|e| format!("Failed to write settings file {:?}: {}", path, e))?;
+            .map_err(|e| crate::messages::failed_to_write_settings_file(&path, e))?;
         Ok(())
     }
 }

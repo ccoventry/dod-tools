@@ -5,8 +5,12 @@ import {
   cancelRenderBatch,
   cancelRenderJob,
   resetRenderJob,
+  resetAllRenderJobs,
+  removeRenderJob,
+  removeNonRenderingRenderJobs,
   setRenderJobCodec,
   getExportPoolFreeGb,
+  getRenderRequiredEstimateGb,
   checkRenderAutosave,
   discardRenderAutosave,
   recoverRenderBatch,
@@ -18,6 +22,11 @@ import { STRINGS } from './strings.js';
 import { notify } from './os_notifications.js';
 
 let jobs = []; // RenderJobView[] — latest snapshot from 'render_jobs_snapshot'
+// id:status pairs from the last snapshot Export Pool Free/Required
+// (Estimated) were refreshed against — lets the snapshot listener tell "a
+// job was added/removed/changed status" (worth a refresh) apart from "only
+// progress% ticked" (not worth one), without a blind polling interval.
+let lastJobsFingerprint = null;
 
 function esc(s) {
   return String(s ?? '')
@@ -85,6 +94,13 @@ function actionsCellHtml(j) {
   } else if (j.status === 'Cancelled' || j.status === 'Finished' || j.status === 'Error') {
     html += `<button class="render-job-reset-btn" data-job-id="${esc(j.id)}" title="${STRINGS.RENDER.RESET_JOB_TITLE}">🔄</button>`;
   }
+  // Coexists with either button above — a Queued job can be removed directly
+  // without cancelling it first, same as a Cancelled/Finished/Error one. Only
+  // withheld while actually Rendering, where removing the row out from under
+  // a live ffmpeg process has no defined outcome.
+  if (j.status !== 'Rendering') {
+    html += `<button class="render-job-remove-btn" data-job-id="${esc(j.id)}" title="${STRINGS.RENDER.REMOVE_JOB_TITLE}">🗑</button>`;
+  }
   if (j.error_log) {
     html += `<button class="render-job-view-log-btn" data-job-id="${esc(j.id)}" title="${STRINGS.RENDER.VIEW_LOG_TITLE}">${STRINGS.RENDER.VIEW_LOG_BUTTON}</button>`;
   }
@@ -101,6 +117,9 @@ function wireActionsCell(cell) {
   });
   cell.querySelectorAll('.render-job-reset-btn').forEach((btn) => {
     btn.addEventListener('click', () => resetRenderJob(btn.dataset.jobId).catch(() => {}));
+  });
+  cell.querySelectorAll('.render-job-remove-btn').forEach((btn) => {
+    btn.addEventListener('click', () => removeRenderJob(btn.dataset.jobId).catch(() => {}));
   });
   cell.querySelectorAll('.render-job-reveal-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -157,6 +176,16 @@ function wireSettingsCell(cell) {
   });
 }
 
+/** The real encoded size once a job is Finished — a dash otherwise. Never an
+ *  estimate: see TABLE_HEADER_FILE_SIZE_TITLE for why. */
+function formatFileSize(bytes) {
+  if (bytes == null) return STRINGS.RENDER.FILE_SIZE_UNKNOWN;
+  const gb = bytes / (1024 * 1024 * 1024);
+  return gb >= 1
+    ? STRINGS.RENDER.fileSizeGb(gb.toFixed(2))
+    : STRINGS.RENDER.fileSizeMb((bytes / (1024 * 1024)).toFixed(0));
+}
+
 /** Builds one job's `<tr>` fresh — only ever called once per job id. */
 function createJobRow(j) {
   const row = document.createElement('tr');
@@ -170,6 +199,7 @@ function createJobRow(j) {
     <td class="rj-status"></td>
     <td class="rj-speed"></td>
     <td><div class="progress-bar-container" style="margin-top:0;"><div class="progress-bar-fill rj-progress-fill" style="width:0%;"></div></div></td>
+    <td class="rj-file-size"></td>
     <td class="rj-actions"></td>`;
   updateJobRow(row, j);
   return row;
@@ -199,6 +229,7 @@ function updateJobRow(row, j) {
   statusCell.style.color = statusColor(j.status);
   row.querySelector('.rj-speed').textContent = j.speed;
   row.querySelector('.rj-progress-fill').style.width = `${j.progress}%`;
+  row.querySelector('.rj-file-size').textContent = formatFileSize(j.output_size_bytes);
 
   // Remembers the last codec this job actually rendered under (i.e. never
   // "source_copy" itself) so unchecking Skip later can restore exactly that,
@@ -230,7 +261,7 @@ function renderJobsTable() {
   if (!tbody) return;
 
   if (jobs.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="9" class="table-empty">${STRINGS.RENDER.TABLE_EMPTY}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="10" class="table-empty">${STRINGS.RENDER.TABLE_EMPTY}</td></tr>`;
     return;
   }
 
@@ -277,11 +308,22 @@ async function refreshExportPoolFree(getExportDirs) {
   if (dirs.length === 0) {
     if (freeEl) freeEl.textContent = STRINGS.RENDER.EXPORT_POOL_FREE_DEFAULT;
     if (footerFreeEl) footerFreeEl.textContent = STRINGS.RENDER.RENDER_POOL_FREE_DEFAULT;
-    return;
+  } else {
+    const gb = await getExportPoolFreeGb(dirs);
+    if (freeEl) freeEl.textContent = STRINGS.RENDER.exportPoolFreeGb(gb.toFixed(1));
+    if (footerFreeEl) footerFreeEl.textContent = STRINGS.RENDER.exportPoolFreeFooter(gb.toFixed(1));
   }
-  const gb = await getExportPoolFreeGb(dirs);
-  if (freeEl) freeEl.textContent = STRINGS.RENDER.exportPoolFreeGb(gb.toFixed(1));
-  if (footerFreeEl) footerFreeEl.textContent = STRINGS.RENDER.exportPoolFreeFooter(gb.toFixed(1));
+
+  // Issue #119: mirrors Capture's Free+Required footer pair. Independent of
+  // getExportDirs — sums every Queued/Rendering job's own estimate
+  // regardless of how many export directories are configured, so this isn't
+  // gated on dirs.length the way the free-space half above is.
+  const footerRequiredEl = document.querySelector('#render-footer-required-space');
+  if (footerRequiredEl) {
+    const requiredGb = (await getRenderRequiredEstimateGb()) ?? 0;
+    footerRequiredEl.textContent = STRINGS.RENDER.requiredEstimatedFooter(requiredGb.toFixed(2));
+    footerRequiredEl.title = STRINGS.RENDER.REQUIRED_ESTIMATED_FOOTER_TITLE;
+  }
 }
 
 // ── Startup crash-recovery prompt ────────────────────────────────────────────
@@ -326,6 +368,8 @@ export function initRenderUI(getCaptureLocations, getExportDirs, onSettingsChang
   const scanRenderBtn = document.querySelector('#scan-render-btn');
   const startRenderBtn = document.querySelector('#start-render-btn');
   const cancelRenderBtn = document.querySelector('#cancel-render-btn');
+  const resetAllRenderBtn = document.querySelector('#reset-all-render-btn');
+  const removeAllRenderBtn = document.querySelector('#remove-all-render-btn');
   const renderStatusEl = document.querySelector('#render-status');
 
   const getTakeIndex = takeTracking?.getTakeIndex || null;
@@ -403,12 +447,32 @@ export function initRenderUI(getCaptureLocations, getExportDirs, onSettingsChang
     if (scanRenderBtn) scanRenderBtn.disabled = activeOrQueued > 0;
     if (startRenderBtn) startRenderBtn.disabled = !(queuedCount > 0 && renderingCount === 0);
     if (cancelRenderBtn) cancelRenderBtn.disabled = activeOrQueued === 0;
+    // Mirror each bulk button's per-row equivalent: Reset All wants at least
+    // one Cancelled/Finished/Error row, Remove All wants at least one row
+    // that isn't actively Rendering.
+    const resettableCount = jobs.filter((j) => j.status === 'Cancelled' || j.status === 'Finished' || j.status === 'Error').length;
+    if (resetAllRenderBtn) resetAllRenderBtn.disabled = resettableCount === 0;
+    if (removeAllRenderBtn) removeAllRenderBtn.disabled = jobs.length - renderingCount === 0;
+
+    // Export Pool Free / Required (Estimated) only change when a job is
+    // added, removed, or crosses a status boundary (started, finished,
+    // cancelled, reset) — not on every progress-percentage tick a snapshot
+    // can carry. Comparing id:status fingerprints skips the refresh (and its
+    // two IPC round-trips) on the ticks that can't have moved either figure.
+    const fingerprint = jobs.map((j) => `${j.id}:${j.status}`).join('|');
+    if (fingerprint !== lastJobsFingerprint) {
+      lastJobsFingerprint = fingerprint;
+      refreshExportPoolFree(getExportDirs);
+    }
   });
 
   listen('render_batch_finished', () => {
     if (scanRenderBtn) scanRenderBtn.disabled = false;
     if (startRenderBtn) startRenderBtn.disabled = true;
     if (cancelRenderBtn) cancelRenderBtn.disabled = true;
+    const resettableCount = jobs.filter((j) => j.status === 'Cancelled' || j.status === 'Finished' || j.status === 'Error').length;
+    if (resetAllRenderBtn) resetAllRenderBtn.disabled = resettableCount === 0;
+    if (removeAllRenderBtn) removeAllRenderBtn.disabled = jobs.length === 0;
     // Counted, not `some()`. The old check asked "was anything cancelled?"
     // before "did anything finish?", so one cancelled job in a batch of any
     // size reported the whole batch as cancelled — including the common case
@@ -525,6 +589,26 @@ export function initRenderUI(getCaptureLocations, getExportDirs, onSettingsChang
     });
   }
 
+  if (resetAllRenderBtn) {
+    resetAllRenderBtn.addEventListener('click', () => {
+      resetAllRenderBtn.disabled = true;
+      resetAllRenderJobs().catch((err) => {
+        console.error('IPC Execution Error (resetAllRenderJobs):', err);
+        resetAllRenderBtn.disabled = false;
+      });
+    });
+  }
+
+  if (removeAllRenderBtn) {
+    removeAllRenderBtn.addEventListener('click', () => {
+      removeAllRenderBtn.disabled = true;
+      removeNonRenderingRenderJobs().catch((err) => {
+        console.error('IPC Execution Error (removeNonRenderingRenderJobs):', err);
+        removeAllRenderBtn.disabled = false;
+      });
+    });
+  }
+
   // Codec/FPS/max-concurrent aren't read until Start Render Batch is
   // clicked, but they're still persisted settings — nothing previously
   // wired their edits to a save.
@@ -554,8 +638,9 @@ export function initRenderUI(getCaptureLocations, getExportDirs, onSettingsChang
   if (codecEl) codecEl.addEventListener('change', checkNvencConcurrencyWarning);
   if (maxConcurrentEl) maxConcurrentEl.addEventListener('change', checkNvencConcurrencyWarning);
 
+  // Paints once at startup (before any snapshot has arrived, so before
+  // anything could have changed) — the `render_jobs_snapshot` listener above
+  // takes over from here, refreshing on every add/remove/status change
+  // instead of blindly polling.
   refreshExportPoolFree(getExportDirs);
-  // Re-check free space periodically while the pane is open — cheap
-  // filesystem calls, avoids the readout going stale during a long batch.
-  setInterval(() => refreshExportPoolFree(getExportDirs), 15000);
 }
