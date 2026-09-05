@@ -466,17 +466,20 @@
             <div id="tab-custom-commands" class="config-tab-content" style="display: none;">
               <div class="input-row">
                 <strong data-str="CAPTURE_CONFIG.INIT_COMMANDS_LABEL">Initial Commands (run once at demo load):</strong>
+                <span class="info-icon" data-str-title="CAPTURE_CONFIG.INIT_COMMANDS_INFO_TITLE" title=""><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span>
               </div>
               <!-- Populated by cfg_warnings.js when the game's own config files
                    set a cvar the pipeline reads. Advisory only — nothing in this
                    app ever edits a config file. -->
-              <div id="cfg-warning-banner" hidden></div>
+              <div id="init-commands-warning-banner" hidden></div>
               <div id="init-commands-list" class="list-editor-list"></div>
               <button id="add-init-command-btn" data-str="CAPTURE_CONFIG.ADD_INIT_COMMAND_BUTTON">+ Add Initial Command</button>
+              <button id="import-cfg-btn" data-str="CAPTURE_CONFIG.IMPORT_CFG_BUTTON">Import Config...</button>
 
               <div class="input-row" style="margin-top: 16px;">
                 <strong data-str="CAPTURE_CONFIG.CUSTOM_COMMANDS_LABEL">Scheduled Commands (run relative to each highlight):</strong>
               </div>
+              <div id="scheduled-commands-warning-banner" hidden></div>
               <div id="custom-commands-list" class="list-editor-list"></div>
               <button id="add-custom-command-btn" data-str="CAPTURE_CONFIG.ADD_CUSTOM_COMMAND_BUTTON">+ Add Scheduled Command</button>
             </div>

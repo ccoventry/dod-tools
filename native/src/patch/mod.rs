@@ -99,7 +99,7 @@ pub use highlevel::patch_demo_highlights;
 pub use decal_strip::{
     capture_fov, clean_demo_decals, on_screen_half_angle, prepare_flushed_source,
     DEFAULT_LEAD_SECONDS,
-    proven_world_coordinates, ring_limit, ring_limit_from_init, ring_set_by_game_config,
+    proven_world_coordinates, ring_limit, ring_limit_from_init, ring_limit_from_game_config,
     strip_decals_outside_windows,
     CleanedSource, DecalCleanOptions, DecalCleanStats, FlushSource, VisibilityBasis,
     DECALS_PER_POSITION, MAX_OVERLAP_DECALS,
