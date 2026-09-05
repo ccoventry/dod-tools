@@ -14,6 +14,16 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+/// How many `PatchJob`s may run through `StreamPatcher::patch` at once. Each
+/// job is self-contained (own source/output paths, only shared reads of the
+/// patcher config and cancel token -- see issue #114), so this is a plain
+/// CPU/IO-bound worker pool, not one balanced across output drives: the
+/// patched demo file itself always lands on `capture_directories[0]`
+/// regardless of which drive a job's `CaptureBlock`s later route their
+/// recorded video to (see issue #8), so per-drive concurrency would give no
+/// real parallelism here.
+const PATCH_CONCURRENCY: usize = 4;
+
 use native::patch::{PatcherConfig, CaptureStreak, CaptureBlock, PatchJob, StreamPatcher, build_batch_queue, build_preview_patch_jobs, CustomCommand, CommandRelation};
 use native::capture_engine::{spawn_capture_engine, CaptureJob, EngineEvent};
 use native::log_markdown;
@@ -831,45 +841,114 @@ pub async fn start_capture_batch_impl(
         let _ = app_handle_clone.emit("capture_patching_started", serde_json::json!({
             "total": total_patch_jobs,
         }));
-        for (idx, job) in patch_jobs.iter().enumerate() {
-            if cancel_token_arc.load(std::sync::atomic::Ordering::Relaxed) {
-                let mut running = is_running_arc.lock().unwrap_or_else(|p| p.into_inner());
-                *running = false;
-                let _ = app_handle_clone.emit("capture_status", serde_json::json!({
-                    "running": false,
-                    "status": "Cancelled"
-                }));
-                return;
-            }
-            let _ = app_handle_clone.emit("capture_status", serde_json::json!({
-                "running": true,
-                "index": idx as u32,
-                "total": total_patch_jobs,
-                "status": format!("Patching {} / {}", idx + 1, total_patch_jobs)
-            }));
-            if let Err(e) = StreamPatcher::new(&job.source_demo, &job.output_demo)
-                .patch(job, &patcher_config, &cancel_token_arc)
-            {
-                if e.kind() == std::io::ErrorKind::Interrupted {
-                    let _ = std::fs::remove_file(&job.output_demo);
-                    let mut running = is_running_arc.lock().unwrap_or_else(|p| p.into_inner());
-                    *running = false;
+        // Completed-count progress rather than positional index -- jobs
+        // finish out of order once patched concurrently, so "which index is
+        // running" no longer means anything.
+        let next_index = std::sync::atomic::AtomicUsize::new(0);
+        let completed_count = std::sync::atomic::AtomicU32::new(0);
+        // Concurrency is otherwise invisible to the UI: a "completed / total"
+        // counter alone looks identical whether jobs ran one at a time or
+        // several at once, especially since individual patch jobs are often
+        // fast enough that a small batch never visibly lingers either way.
+        let in_flight = std::sync::atomic::AtomicU32::new(0);
+        // Only a real patch error populates this -- lets the aggregation
+        // below tell "a peer job's failure forced cancel_token_arc true"
+        // apart from a genuine user Cancel, which never sets it.
+        let first_error: Mutex<Option<(String, std::io::Error)>> = Mutex::new(None);
+
+        std::thread::scope(|scope| {
+            let worker_count = PATCH_CONCURRENCY.min(patch_jobs.len()).max(1);
+            for _ in 0..worker_count {
+                let app_handle_clone = app_handle_clone.clone();
+                let next_index = &next_index;
+                let completed_count = &completed_count;
+                let in_flight = &in_flight;
+                let first_error = &first_error;
+                let patch_jobs = &patch_jobs;
+                let patcher_config = &patcher_config;
+                let cancel_token_arc = &cancel_token_arc;
+                scope.spawn(move || loop {
+                    if cancel_token_arc.load(std::sync::atomic::Ordering::Relaxed) {
+                        break;
+                    }
+                    let idx = next_index.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    if idx >= patch_jobs.len() {
+                        break;
+                    }
+                    let job = &patch_jobs[idx];
+                    let started = in_flight.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                    let done_so_far = completed_count.load(std::sync::atomic::Ordering::Relaxed);
                     let _ = app_handle_clone.emit("capture_status", serde_json::json!({
-                        "running": false,
-                        "status": "Cancelled"
+                        "running": true,
+                        "index": done_so_far,
+                        "total": total_patch_jobs,
+                        "in_progress": started,
+                        "status": format!("Patching {} / {} ({} in progress)", done_so_far, total_patch_jobs, started)
                     }));
-                    return;
-                }
-                log::error!("Failed to patch {}: {}", job.source_demo, e);
-                let mut running = is_running_arc.lock().unwrap_or_else(|p| p.into_inner());
-                *running = false;
-                let _ = app_handle_clone.emit("capture_status", serde_json::json!({
-                    "running": false,
-                    "error": true,
-                    "status": format!("Failed to patch {}: {}", job.source_demo, e)
-                }));
-                return;
+                    let result = StreamPatcher::new(&job.source_demo, &job.output_demo)
+                        .patch(job, patcher_config, cancel_token_arc);
+                    let still_running = in_flight.fetch_sub(1, std::sync::atomic::Ordering::Relaxed) - 1;
+                    match result {
+                        Ok(()) => {
+                            let done = completed_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                            let _ = app_handle_clone.emit("capture_status", serde_json::json!({
+                                "running": true,
+                                "index": done,
+                                "total": total_patch_jobs,
+                                "in_progress": still_running,
+                                "status": format!("Patching {} / {} ({} in progress)", done, total_patch_jobs, still_running)
+                            }));
+                        }
+                        Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {
+                            // Either a real user Cancel, or fallout from a
+                            // peer job's failure just below -- either way
+                            // this job's own output is incomplete.
+                            let _ = std::fs::remove_file(&job.output_demo);
+                            break;
+                        }
+                        Err(e) => {
+                            {
+                                let mut slot = first_error.lock().unwrap_or_else(|p| p.into_inner());
+                                if slot.is_none() {
+                                    *slot = Some((job.source_demo.clone(), e));
+                                }
+                            }
+                            // Stop everything else as fast as the existing
+                            // interrupt mechanism allows -- a batch is
+                            // already all-or-nothing (nothing opens the game
+                            // until every job has patched clean), so letting
+                            // peers run to completion after this would only
+                            // waste CPU on jobs the batch is aborting anyway.
+                            cancel_token_arc.store(true, std::sync::atomic::Ordering::Relaxed);
+                            break;
+                        }
+                    }
+                });
             }
+        });
+
+        let was_cancelled = cancel_token_arc.load(std::sync::atomic::Ordering::Relaxed);
+        let failure = first_error.lock().unwrap_or_else(|p| p.into_inner()).take();
+
+        if let Some((source_demo, e)) = failure {
+            log::error!("Failed to patch {}: {}", source_demo, e);
+            let mut running = is_running_arc.lock().unwrap_or_else(|p| p.into_inner());
+            *running = false;
+            let _ = app_handle_clone.emit("capture_status", serde_json::json!({
+                "running": false,
+                "error": true,
+                "status": format!("Failed to patch {}: {}", source_demo, e)
+            }));
+            return;
+        }
+        if was_cancelled {
+            let mut running = is_running_arc.lock().unwrap_or_else(|p| p.into_inner());
+            *running = false;
+            let _ = app_handle_clone.emit("capture_status", serde_json::json!({
+                "running": false,
+                "status": "Cancelled"
+            }));
+            return;
         }
 
         let _ = app_handle_clone.emit("capture_patching_finished", serde_json::json!({
