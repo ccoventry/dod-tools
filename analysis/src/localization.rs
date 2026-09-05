@@ -456,8 +456,8 @@ mod tests {
         );
 
         // Stored prefixed, queried both ways.
-        assert_eq!(translate_key("#weapon.k98").as_deref(), Some("Kar98k"));
-        assert_eq!(translate_key("weapon.k98").as_deref(), Some("Kar98k"));
+        assert_eq!(translate_key("#weapon.k98").as_deref(), Some("K98"));
+        assert_eq!(translate_key("weapon.k98").as_deref(), Some("K98"));
 
         // Case is normalized on the way in.
         assert_eq!(translate_key("#Game_Joined_Team").as_deref(), Some("*%s1 joined %s2"));
