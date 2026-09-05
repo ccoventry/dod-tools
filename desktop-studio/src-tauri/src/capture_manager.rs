@@ -650,8 +650,10 @@ fn emit_take_verification(app: &tauri::AppHandle, manifest_slot: &Arc<Mutex<Opti
 // ── Public command handler ─────────────────────────────────────────────────────
 
 /// `Some(message)` when `init_commands` or any `custom_commands` entry names
-/// a `native::patch::cfg_scan::BANNED_COMMANDS` cvar — the first one found,
-/// checking Initial Commands before Scheduled. `None` means clean.
+/// a `native::patch::cfg_scan::BANNED_COMMANDS` cvar (refused everywhere), or
+/// `custom_commands` names a `SCHEDULED_BANNED_COMMANDS` one (fine in Initial
+/// Commands, refused only here) — the first one found, checking the
+/// everywhere-banned tier before the scheduled-only tier. `None` means clean.
 ///
 /// Pure so it can be tested without a `tauri::AppHandle`; `start_capture_batch_impl`
 /// is the only caller.
@@ -660,11 +662,23 @@ fn first_banned_command_error(
     custom_commands: &[CustomCommandPayload],
 ) -> Option<String> {
     let custom_texts: Vec<String> = custom_commands.iter().map(|c| c.command.clone()).collect();
+
     let mut banned = native::patch::cfg_scan::banned_commands(init_commands);
     banned.extend(native::patch::cfg_scan::banned_commands(&custom_texts));
-    banned.first().map(|(cvar, command)| {
-        format!(
+    if let Some((cvar, command)) = banned.first() {
+        return Some(format!(
             "\"{command}\" is not allowed in Initial or Scheduled Commands — {cvar} is controlled entirely by the app."
+        ));
+    }
+
+    // Fine in Initial Commands — that's how the decal flush is meant to be
+    // configured — but the flush sizes itself against these once, before the
+    // demo plays, so a Scheduled Command changing one mid-demo would silently
+    // break that sizing rather than merely surprise.
+    let scheduled_banned = native::patch::cfg_scan::scheduled_banned_commands(&custom_texts);
+    scheduled_banned.first().map(|(cvar, command)| {
+        format!(
+            "\"{command}\" is not allowed in Scheduled Commands — {cvar} must not change mid-demo; set it in Initial Commands instead."
         )
     })
 }
@@ -1914,7 +1928,27 @@ mod tests {
 
     #[test]
     fn a_banned_command_in_init_commands_is_refused() {
+        let err = first_banned_command_error(&["mirv_recordmovie_start".to_string()], &[]);
+        assert!(err.is_some(), "must be refused");
+        assert!(err.unwrap().contains("mirv_recordmovie_start"));
+    }
+
+    #[test]
+    fn mirv_movie_filename_is_no_longer_refused_in_init_commands() {
+        // Re-tiered 2026-09-05: inert in Initial Commands (see
+        // cfg_scan::NOOP_IN_INIT_COMMANDS), only dangerous once scheduled.
         let err = first_banned_command_error(&["mirv_movie_filename foo".to_string()], &[]);
+        assert!(err.is_none(), "{:?}", err);
+    }
+
+    #[test]
+    fn mirv_movie_filename_is_still_refused_when_scheduled() {
+        let scheduled = vec![CustomCommandPayload {
+            command: "mirv_movie_filename foo".to_string(),
+            relation: "Before".to_string(),
+            offset_seconds: 1.0,
+        }];
+        let err = first_banned_command_error(&[], &scheduled);
         assert!(err.is_some(), "must be refused");
         assert!(err.unwrap().contains("mirv_movie_filename"));
     }
@@ -1938,6 +1972,29 @@ mod tests {
             &[],
         );
         assert!(err.is_none(), "{:?}", err);
+    }
+
+    #[test]
+    fn a_scheduled_only_banned_command_is_fine_in_init_commands() {
+        // r_decals/mirv_fov/gl_widescreenfov are exactly how the decal flush
+        // is meant to be configured when set once at demo load.
+        let err = first_banned_command_error(
+            &["r_decals 512".to_string(), "mirv_fov 105".to_string(), "gl_widescreenfov 1".to_string()],
+            &[],
+        );
+        assert!(err.is_none(), "{:?}", err);
+    }
+
+    #[test]
+    fn a_scheduled_only_banned_command_is_refused_when_scheduled() {
+        let scheduled = vec![CustomCommandPayload {
+            command: "mirv_fov 105".to_string(),
+            relation: "Before".to_string(),
+            offset_seconds: 1.0,
+        }];
+        let err = first_banned_command_error(&[], &scheduled);
+        assert!(err.is_some(), "must be refused");
+        assert!(err.unwrap().contains("mirv_fov"));
     }
 
     #[test]

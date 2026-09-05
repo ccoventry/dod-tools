@@ -905,10 +905,26 @@ export const STRINGS = {
     BANNED_TITLE: 'These commands are not allowed:',
     BANNED_ADVICE:
       'Too dangerous to run at all — remove them. Start Capture Batch stays disabled while any are present.',
-    bannedRow: (command) => `${command} — not allowed`,
-    HAZARD_TITLE: 'These Scheduled Commands will break the decal flush:',
+    // Why each is banned, and where to go instead when there's a real setting
+    // for it.
+    BANNED_REASONS: {
+      mirv_movie_ffmpeg: 'set Capture Mode to Video in the Output Format tab instead',
+      host_framerate: 'fast-forwarding is handled by the app; this will break the automation',
+      mirv_recordmovie_start: 'the app schedules this itself; a manual one will break the automation',
+      mirv_recordmovie_stop: 'the app schedules this itself; a manual one will break the automation',
+      mirv_movie_filename: 'set the save location in the Destinations tab instead',
+      // Fine as Initial Commands — that's how the decal flush is meant to be
+      // configured — but banned_scheduled only ever reports these three when
+      // they show up as Scheduled Commands instead, so the reason is always
+      // about the mid-demo change, never about the cvar itself being wrong.
+      r_decals: "can't change mid-demo — set it in Initial Commands instead",
+      mirv_fov: "can't change mid-demo — set it in Initial Commands instead",
+      gl_widescreenfov: "can't change mid-demo — set it in Initial Commands instead",
+    },
+    bannedRowDetailed: (command, reason) => (reason ? `${command} — not allowed: ${reason}` : `${command} — not allowed`),
+    HAZARD_TITLE: 'These Scheduled Commands are redundant with a Configuration setting:',
     HAZARD_ADVICE:
-      'r_decals, mirv_fov and gl_widescreenfov all need to stay the same for the whole demo — clearing old decals between clips depends on none of them changing. Set them once in Initial Commands instead.',
+      "mirv_movie_fps and mirv_movie_separate_hud are already pinned every capture from Output Format's own Capture FPS / Separate HUD settings — a scheduled one here just fights the value the pipeline sets on its own. Not dangerous, just pointless.",
     CUSTOM_TITLE: 'These Scheduled Commands override earlier values:',
     CUSTOM_ADVICE:
       'Scheduled commands run during playback, so they come after your configs and after the Initial Commands — they are the last word on whatever they set, and the only place a value changes partway through a capture.',
@@ -923,6 +939,22 @@ export const STRINGS = {
     DECAL_DEFAULT_ADVICE:
       "The engine will use its default, 256, for the decal ring. That's a safe value on most maps — state r_decals in Initial Commands if you want a different one.",
     decalDefaultRow: (ring) => `r_decals — defaulting to ${ring}`,
+    DECAL_NOOP_TITLE: 'Flush Decals Between Clips has nothing to clear:',
+    DECAL_NOOP_ADVICE:
+      "r_decals is 0, so the flush's sweep finds an empty ring every clip — real work for no effect. State a nonzero r_decals in Initial Commands, or turn off Flush Decals Between Clips in the Pipeline tab.",
+    DECAL_NOOP_ROW: 'r_decals 0 — clears nothing',
+    NOOP_TITLE: 'These commands have no effect:',
+    NOOP_ADVICE:
+      'The pipeline (or the engine itself) always overrides or drops these before they could ever apply — not wrong, just wasted keystrokes.',
+    NOOP_REASONS: {
+      mirv_movie_filename: 'the pipeline sets this itself before every clip is captured',
+      exec: 'GoldSrc drops this when injected into a demo',
+      quit: 'GoldSrc drops this when injected into a demo',
+    },
+    noopRow: (command, reason, source) => {
+      const isPlainSource = source === 'Initial Commands' || source === 'Scheduled Commands';
+      return isPlainSource ? `${command} — ${reason}` : `${command} — ${reason} (${source})`;
+    },
   },
 
   // Pre-roll and post-roll are load-bearing: playback returns to real time one

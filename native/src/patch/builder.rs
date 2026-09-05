@@ -225,28 +225,26 @@ pub fn final_init_commands(config: &PatcherConfig) -> Vec<String> {
     // strands every one sitting above the new limit.
     //
     // The sweep is sized to that same number, so there is only one number here
-    // and `r_decals` is where the engine reads it. When init_commands states it,
-    // that is the value the sweep uses and the line is already the pin —
-    // appending a second one could only overrule what was asked for, silently.
-    // When nothing states it, the engine would otherwise use whatever the user's
-    // config left behind, so it gets pinned to the configured default.
+    // and `r_decals` is where the engine reads it, at the same precedence
+    // `ring_limit` itself resolves (see that function): Initial Commands, then
+    // an executed config, then the app's own default. When either of the first
+    // two states it, that line is already the pin — appending a second one
+    // here would either silently overrule what Initial Commands asked for, or
+    // be a no-op duplicate of what the config already set. Only the true
+    // "nothing anywhere states it" case needs one appended, to replace the
+    // engine's own uncontrolled standing value with a known one.
     //
     // Not at the maximum, though. r_decals is clamped to MAX_RENDER_DECALS, so a
     // sweep that size turns a full revolution whatever the cvar happens to be —
     // any smaller ring simply gets swept several times over. Pinning then buys
     // nothing and costs the precondition the rest of this design works around:
     // that nothing else may touch r_decals.
-    //
-    // Unless a config already touches it. "Whatever the cvar happens to be" is
-    // true for every value but zero, and `r_decals 0` in a movie.cfg is real —
-    // the sweep would be sized to the maximum, report a full revolution, and
-    // inject into a ring the engine keeps nothing in. So the pin is spent after
-    // all when a config assigns the cvar, which is also the only case where the
-    // precondition was already broken.
-    if config.decal_flush && crate::patch::ring_limit_from_init(&config.init_commands).is_none() {
-        let ring = crate::patch::ring_limit(config);
-        let below_ceiling = ring < crate::patch::MAX_RENDER_DECALS;
-        if ring > 0 && (below_ceiling || crate::patch::ring_set_by_game_config(config)) {
+    if config.decal_flush
+        && crate::patch::ring_limit_from_init(&config.init_commands).is_none()
+        && crate::patch::ring_limit_from_game_config(config).is_none()
+    {
+        let ring = config.decal_ring_limit.min(crate::patch::MAX_RENDER_DECALS);
+        if ring > 0 && ring < crate::patch::MAX_RENDER_DECALS {
             out.push(format!("r_decals {}", ring));
         }
     }
@@ -2298,12 +2296,15 @@ mod tests {
     }
 
     #[test]
-    fn test_a_maximum_ring_still_pins_when_a_game_config_sets_the_cvar() {
-        // "A full revolution whatever the cvar is" holds for every value but
-        // zero. A movie.cfg setting `r_decals 0` is real — it is in the working
-        // install — and without a pin the sweep would be sized to the maximum,
-        // report a full revolution, and inject into a ring the engine keeps
-        // nothing in. Silent, and invisible in every statistic the flush logs.
+    fn test_a_game_config_setting_the_cvar_to_zero_is_now_left_alone() {
+        // Regression: this used to assert the opposite — that a config's
+        // `r_decals 0` got silently overridden with a pin (to MAX_RENDER_DECALS
+        // in this exact case), on the reasoning that adopting it would leave a
+        // ring the engine keeps nothing in. That override is gone: r_decals now
+        // follows the same config precedence mirv_fov always has, and a
+        // resulting 0 is caught and reported as its own fact
+        // (`decal_flush_is_noop` / `prepare_flushed_source`'s own zero-check)
+        // rather than silently patched away.
         let mut config = mock_config_with_game_cfg("zero", "r_decals 0\nfps_max 999\n");
         config.decal_ring_limit = crate::patch::MAX_RENDER_DECALS;
 
@@ -2314,10 +2315,33 @@ mod tests {
         ).unwrap();
 
         assert!(
-            jobs[1].init_commands.iter().any(|c| c == "r_decals 4096"),
-            "a config that sets the cvar has to be answered: {:?}",
+            !jobs[1].init_commands.iter().any(|c| c.starts_with("r_decals")),
+            "the config's own 0 already stands, nothing left to pin: {:?}",
             jobs[1].init_commands
         );
+        assert_eq!(crate::patch::ring_limit(&config), 0, "and ring_limit agrees");
+    }
+
+    #[test]
+    fn test_a_nonzero_game_config_value_is_adopted_without_a_pin() {
+        // The config's own line already achieves what a pin would — appending
+        // a second, identical-in-effect command would be pure noise.
+        let config = mock_config_with_game_cfg("nonzero", "r_decals 512\n");
+        // decal_ring_limit stays at its default (256): if the config's value
+        // were being ignored in favor of it, the pin would read 256, not 512.
+
+        let (jobs, _) = build_batch_queue(
+            vec![streak_with_kills(1000, 1200, &[1000, 1200])],
+            &config,
+            &std::collections::HashMap::new(),
+        ).unwrap();
+
+        assert!(
+            !jobs[1].init_commands.iter().any(|c| c.starts_with("r_decals")),
+            "the config's own line is already the pin, nothing to append: {:?}",
+            jobs[1].init_commands
+        );
+        assert_eq!(crate::patch::ring_limit(&config), 512);
     }
 
     #[test]

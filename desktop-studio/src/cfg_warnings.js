@@ -27,6 +27,9 @@ const EMPTY = {
   bannedInit: [],
   bannedScheduled: [],
   decalDefaultRing: null,
+  decalFlushIsNoop: false,
+  noopInit: [],
+  noopScheduled: [],
 };
 
 let report = EMPTY;
@@ -69,6 +72,12 @@ export async function refreshCfgWarnings(
 /** The value half of `cvar value`, for rows that name the cvar separately. */
 function valueOf(command) {
   return String(command).trim().split(/\s+/)[1] ?? '';
+}
+
+/** The cvar half of `cvar value` — `b.command` is the full typed line
+ *  (arguments and all), but BANNED_REASONS is keyed by the bare cvar. */
+function cvarOf(command) {
+  return String(command).trim().split(/\s+/)[0] ?? '';
 }
 
 function section(title, advice, rows, accent) {
@@ -131,7 +140,16 @@ function render() {
   const bannedInit = report?.bannedInit ?? [];
   const bannedScheduled = report?.bannedScheduled ?? [];
   const decalDefaultRing = report?.decalDefaultRing ?? null;
-  const hazards = custom.filter((c) => c.kind === 'hazard');
+  const decalFlushIsNoop = report?.decalFlushIsNoop ?? false;
+  const noopInit = report?.noopInit ?? [];
+  const noopScheduled = report?.noopScheduled ?? [];
+  // Banned commands are already flagged, more specifically, in the banned
+  // section above — MID_DEMO_HAZARDS is a superset of BANNED_COMMANDS on the
+  // Rust side, so without this a banned command would otherwise also show up
+  // here as a mere "breaks the decal flush" hazard, understating a command
+  // that's actually going to block Start Capture Batch outright.
+  const bannedScheduledCvars = new Set(bannedScheduled.map((b) => cvarOf(b.command)));
+  const hazards = custom.filter((c) => c.kind === 'hazard' && !bannedScheduledCvars.has(cvarOf(c.command)));
   const customOverrides = custom.filter((c) => c.kind !== 'hazard');
 
   // ── Initial Commands ─────────────────────────────────────────────────────
@@ -142,7 +160,7 @@ function render() {
   // below it is merely advisory.
   if (bannedInit.length > 0) {
     const rows = bannedInit
-      .map((b) => `<li><code>${STRINGS.CFG.bannedRow(b.command)}</code></li>`)
+      .map((b) => `<li><code>${STRINGS.CFG.bannedRowDetailed(b.command, STRINGS.CFG.BANNED_REASONS[cvarOf(b.command)])}</code></li>`)
       .join('');
     initParts.push(section(STRINGS.CFG.BANNED_TITLE, STRINGS.CFG.BANNED_ADVICE, rows, '#f44336'));
   }
@@ -184,11 +202,26 @@ function render() {
       .join('');
     initParts.push(section(STRINGS.CFG.OVERRIDE_TITLE, STRINGS.CFG.OVERRIDE_ADVICE, rows, '#ff8a5c'));
   }
+  // Real, active problem — not a neutral FYI like decalDefaultRing below —
+  // so it gets a warning accent even though there is only ever one row.
+  if (decalFlushIsNoop) {
+    const rows = `<li><code>${STRINGS.CFG.DECAL_NOOP_ROW}</code></li>`;
+    initParts.push(section(STRINGS.CFG.DECAL_NOOP_TITLE, STRINGS.CFG.DECAL_NOOP_ADVICE, rows, '#f44336'));
+  }
   // Last, and no accent: nothing is wrong with taking the default, so this
   // is an FYI rather than something to fix, unlike everything above it.
   if (decalDefaultRing != null) {
     const rows = `<li><code>${STRINGS.CFG.decalDefaultRow(decalDefaultRing)}</code></li>`;
     initParts.push(section(STRINGS.CFG.DECAL_DEFAULT_TITLE, STRINGS.CFG.DECAL_DEFAULT_ADVICE, rows));
+  }
+  // Weakest signal of all — not wrong, not silently changing behavior, just
+  // wasted keystrokes — so it goes last and gets no accent, same as the
+  // default-ring FYI above.
+  if (noopInit.length > 0) {
+    const rows = noopInit
+      .map((n) => `<li><code>${STRINGS.CFG.noopRow(n.command, STRINGS.CFG.NOOP_REASONS[n.cvar], n.source)}</code></li>`)
+      .join('');
+    initParts.push(section(STRINGS.CFG.NOOP_TITLE, STRINGS.CFG.NOOP_ADVICE, rows));
   }
   renderInto('#init-commands-warning-banner', joinSections(initParts));
 
@@ -197,7 +230,7 @@ function render() {
   // First of all — this one blocks Start Capture Batch.
   if (bannedScheduled.length > 0) {
     const rows = bannedScheduled
-      .map((b) => `<li><code>${STRINGS.CFG.bannedRow(b.command)}</code></li>`)
+      .map((b) => `<li><code>${STRINGS.CFG.bannedRowDetailed(b.command, STRINGS.CFG.BANNED_REASONS[cvarOf(b.command)])}</code></li>`)
       .join('');
     schedParts.push(section(STRINGS.CFG.BANNED_TITLE, STRINGS.CFG.BANNED_ADVICE, rows, '#f44336'));
   }
@@ -225,6 +258,12 @@ function render() {
       })
       .join('');
     schedParts.push(section(STRINGS.CFG.CUSTOM_TITLE, STRINGS.CFG.CUSTOM_ADVICE, rows, '#ff8a5c'));
+  }
+  if (noopScheduled.length > 0) {
+    const rows = noopScheduled
+      .map((n) => `<li><code>${STRINGS.CFG.noopRow(n.command, STRINGS.CFG.NOOP_REASONS[n.cvar], n.source)}</code></li>`)
+      .join('');
+    schedParts.push(section(STRINGS.CFG.NOOP_TITLE, STRINGS.CFG.NOOP_ADVICE, rows));
   }
   renderInto('#scheduled-commands-warning-banner', joinSections(schedParts));
 }

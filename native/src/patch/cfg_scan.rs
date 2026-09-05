@@ -224,12 +224,10 @@ pub const MID_DEMO_HAZARDS: &[&str] = &[
 /// pipeline also always pins but which correspond to a real setting
 /// (Output Format → Capture FPS / Separate HUD) — typing those is redundant,
 /// not dangerous, so they stay shadowed-with-a-warning rather than refused.
-/// User-confirmed tier list, 2026-09-02.
+/// Also distinct from `mirv_movie_filename`, which used to be here too — see
+/// `SCHEDULED_BANNED_COMMANDS` for why it moved. User-confirmed tier list,
+/// 2026-09-02 (`mirv_movie_filename` re-tiered 2026-09-05).
 ///
-/// - `mirv_movie_filename` — what the `<demo>_route_N` aliases set to route
-///   each block's frames to the right take folder. A user's own value here
-///   would silently misroute frames with nothing to notice the manifest and
-///   the disk have diverged.
 /// - `mirv_recordmovie_start` / `mirv_recordmovie_stop` — the pipeline's own
 ///   `sys_record_start`/`sys_record_stop` scheduling relies on being the only
 ///   thing calling these, at exactly the block's own record bounds.
@@ -241,7 +239,6 @@ pub const MID_DEMO_HAZARDS: &[&str] = &[
 ///   `docs/goldsrc_dod_quirks.md`'s High-Precision Frame Pacing entry) and
 ///   rejected: "It's dangerous and nobody uses that."
 pub const BANNED_COMMANDS: &[&str] = &[
-    "mirv_movie_filename",
     "mirv_recordmovie_start",
     "mirv_recordmovie_stop",
     "mirv_movie_ffmpeg",
@@ -272,6 +269,84 @@ pub fn mid_demo_hazards(commands: &[String]) -> Vec<(String, String)> {
 /// or Scheduled alike. Refused outright, not merely shadowed or flagged.
 pub fn banned_commands(commands: &[String]) -> Vec<(String, String)> {
     commands_matching(BANNED_COMMANDS, commands)
+}
+
+/// Cvars that are fine — expected, even — in Initial Commands, but must be
+/// refused outright rather than merely flagged as a `MID_DEMO_HAZARDS`
+/// warning when they show up in Scheduled Commands instead.
+///
+/// `r_decals`, `mirv_fov` and `gl_widescreenfov` all feed the decal flush's
+/// one-time sizing pre-pass: `r_decals` bounds the decal ring, `mirv_fov`
+/// sizes the on-screen sweep test against `decal_strip::capture_fov_resolved`'s
+/// single read of it before the demo plays, and `gl_widescreenfov` widens the
+/// effective FOV the same way without the flush even knowing the cvar exists.
+/// A Scheduled Command changing any of them mid-demo does not retroactively
+/// resize anything — the flush already decided what counts as on screen for
+/// the entire clip — so a warning banner isn't enough here the way it is for
+/// the rest of `MID_DEMO_HAZARDS`: the capture would complete and look
+/// plausible while quietly being wrong. User-requested escalation from hazard
+/// to refused, 2026-09-05.
+///
+/// `mirv_movie_filename` is a different shape of exception, moved here from
+/// `BANNED_COMMANDS` the same day: in Initial Commands (or a config) it is
+/// not merely safe, it is inert — `build_batch_queue` schedules a fresh
+/// `<demo>_route_N` alias (which sets it) at the same tick as every block's
+/// own `sys_record_start`, for every block including the first, so a value
+/// stated at demo load never survives to any actual recording (see
+/// `NOOP_IN_INIT_COMMANDS`, which reports exactly that). Scheduled instead,
+/// it fires mid-clip — between one block's route alias and the next — and
+/// genuinely misroutes that block's frames, which is the danger it was
+/// originally banned everywhere for.
+pub const SCHEDULED_BANNED_COMMANDS: &[&str] =
+    &["r_decals", "mirv_fov", "gl_widescreenfov", "mirv_movie_filename"];
+
+/// Commands GoldSrc itself silently drops whenever they arrive via a demo's
+/// own message stream — Initial Commands (STUFFTEXT, injected right after
+/// `DemoStart`) and Scheduled Commands (injected `ConsoleCommand` frames)
+/// alike, since the engine's filter does not care when in the stream a
+/// command arrives. Confirmed the hard way, twice: `dod-tools` originally
+/// planned to `exec` a per-demo generated config to set `mirv_movie_filename`
+/// (dodging the quoting/escaping an alias would need) and to inject `quit` at
+/// batch end to close the game automatically — neither ever did anything.
+/// See `docs/hlae_protocols.md`'s "Sandbox Escape" entry, which documents the
+/// actual workaround this pipeline ships instead of `quit` (a
+/// `mirv_movie_filename` exit-trigger folder, polled for by the orchestrator).
+///
+/// Does NOT apply to a command inside a game config the engine execs
+/// normally at boot (`config.cfg`, `movie.cfg`, ...) — that is a completely
+/// different code path from the demo's own message stream, and an `exec`
+/// inside one of those is exactly how config chaining works.
+pub const NOOP_EVERYWHERE_COMMANDS: &[&str] = &["exec", "quit"];
+
+/// Commands that do nothing specifically in Initial Commands (or a config
+/// the engine executes) — not because the engine drops them, but because the
+/// pipeline itself always overwrites the value before anything downstream
+/// could read it. Scheduling one instead is a different, genuinely dangerous
+/// story — see `SCHEDULED_BANNED_COMMANDS`.
+pub const NOOP_IN_INIT_COMMANDS: &[&str] = &["mirv_movie_filename"];
+
+/// `NOOP_IN_INIT_COMMANDS` and `NOOP_EVERYWHERE_COMMANDS` combined, checked
+/// against Initial Commands.
+pub fn noop_commands_in_init(commands: &[String]) -> Vec<(String, String)> {
+    let mut hits = commands_matching(NOOP_IN_INIT_COMMANDS, commands);
+    hits.extend(commands_matching(NOOP_EVERYWHERE_COMMANDS, commands));
+    hits
+}
+
+/// The Scheduled Commands half of the same check — `NOOP_EVERYWHERE_COMMANDS`
+/// only. `NOOP_IN_INIT_COMMANDS` entries are dangerous rather than inert once
+/// scheduled (see `SCHEDULED_BANNED_COMMANDS`), so they are refused there,
+/// not reported here.
+pub fn noop_commands_in_scheduled(commands: &[String]) -> Vec<(String, String)> {
+    commands_matching(NOOP_EVERYWHERE_COMMANDS, commands)
+}
+
+/// Commands from `SCHEDULED_BANNED_COMMANDS` present in `commands`. Only
+/// meaningful against Scheduled Commands — these three are exactly how the
+/// decal flush is meant to be configured when used as Initial Commands, so
+/// callers must not run this against `init_commands`.
+pub fn scheduled_banned_commands(commands: &[String]) -> Vec<(String, String)> {
+    commands_matching(SCHEDULED_BANNED_COMMANDS, commands)
 }
 
 /// What a list of commands leaves a cvar set to, last one winning.
@@ -764,9 +839,10 @@ mod tests {
         // has been found where typing one is anything but a misunderstanding
         // — banned outright, unlike mirv_movie_fps/mirv_movie_separate_hud
         // (redundant with a real setting, so shadowed-with-a-warning instead)
-        // or r_decals/mirv_fov (the user's own stated value wins).
+        // or r_decals/mirv_fov (the user's own stated value wins). Does NOT
+        // include mirv_movie_filename any more — see
+        // `scheduled_banned_commands_flags_the_decal_flush_cvars_and_mirv_movie_filename`.
         let hits = banned_commands(&[
-            "mirv_movie_filename foo".to_string(),
             "mirv_recordmovie_start".to_string(),
             "mirv_recordmovie_stop".to_string(),
             "mirv_movie_ffmpeg all enabled 1".to_string(),
@@ -777,13 +853,71 @@ mod tests {
         assert_eq!(
             flagged,
             vec![
-                "mirv_movie_filename",
                 "mirv_recordmovie_start",
                 "mirv_recordmovie_stop",
                 "mirv_movie_ffmpeg",
                 "host_framerate",
             ]
         );
+    }
+
+    #[test]
+    fn banned_commands_no_longer_catches_mirv_movie_filename() {
+        let hits = banned_commands(&["mirv_movie_filename foo".to_string()]);
+        assert!(hits.is_empty(), "{:?}", hits);
+    }
+
+    #[test]
+    fn scheduled_banned_commands_flags_the_decal_flush_cvars_and_mirv_movie_filename() {
+        let hits = scheduled_banned_commands(&[
+            "sensitivity 3".to_string(),
+            "r_decals 512".to_string(),
+            "mirv_fov 105".to_string(),
+            "gl_widescreenfov 1".to_string(),
+            "mirv_movie_filename foo".to_string(),
+        ]);
+
+        let flagged: Vec<&str> = hits.iter().map(|(cvar, _)| cvar.as_str()).collect();
+        assert_eq!(flagged, vec!["r_decals", "mirv_fov", "gl_widescreenfov", "mirv_movie_filename"]);
+    }
+
+    #[test]
+    fn scheduled_banned_commands_ignores_everything_else() {
+        let hits = scheduled_banned_commands(&[
+            "mirv_movie_fps 500".to_string(),
+            "host_framerate 0.05".to_string(),
+            "exec somefile.cfg".to_string(),
+            "quit".to_string(),
+        ]);
+
+        assert!(hits.is_empty(), "{:?}", hits);
+    }
+
+    #[test]
+    fn noop_commands_in_init_covers_mirv_movie_filename_and_engine_dropped_commands() {
+        let hits = noop_commands_in_init(&[
+            "sensitivity 3".to_string(),
+            "mirv_movie_filename foo".to_string(),
+            "exec somefile.cfg".to_string(),
+            "quit".to_string(),
+        ]);
+
+        let flagged: Vec<&str> = hits.iter().map(|(cvar, _)| cvar.as_str()).collect();
+        assert_eq!(flagged, vec!["mirv_movie_filename", "exec", "quit"]);
+    }
+
+    #[test]
+    fn noop_commands_in_scheduled_covers_only_the_engine_dropped_commands() {
+        // mirv_movie_filename is dangerous, not merely inert, once scheduled
+        // — refused via scheduled_banned_commands, not reported here.
+        let hits = noop_commands_in_scheduled(&[
+            "mirv_movie_filename foo".to_string(),
+            "exec somefile.cfg".to_string(),
+            "quit".to_string(),
+        ]);
+
+        let flagged: Vec<&str> = hits.iter().map(|(cvar, _)| cvar.as_str()).collect();
+        assert_eq!(flagged, vec!["exec", "quit"]);
     }
 
     #[test]

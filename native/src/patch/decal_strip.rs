@@ -2129,9 +2129,13 @@ fn game_dir_for(config: &PatcherConfig) -> Option<std::path::PathBuf> {
 /// seven degrees too narrow, calling in-shot positions hidden.
 ///
 /// So the order is init commands, then an executed config, then the configured
-/// default. Deliberately NOT symmetric with `r_decals`, which is left alone:
-/// the same `movie.cfg` sets `r_decals 0`, and adopting that would stand the
-/// flush down over a value the pipeline's own pin overrides anyway.
+/// default. `ring_limit` (r_decals) now follows exactly this same order —
+/// it used to be the one deliberate exception, on the reasoning that adopting
+/// a `movie.cfg`'s `r_decals 0` would silently stand the flush down. That
+/// objection is gone now that a resolved 0 with Flush Decals on is its own
+/// loud, reported fact (`decal_flush_is_noop` in the desktop-studio report)
+/// rather than something this function would have hidden by disagreeing with
+/// the config. User-requested symmetry, 2026-09-05.
 ///
 /// Reads config files. Never writes one.
 pub fn capture_fov_resolved(config: &PatcherConfig) -> f32 {
@@ -2235,32 +2239,32 @@ pub fn ring_limit_from_init(init_commands: &[String]) -> Option<u32> {
 ///
 /// This is one number, and `r_decals` is where the engine reads it. A separate
 /// setting could only ever agree with the cvar or silently disagree with it, so
-/// an `init_commands` entry is the authority when there is one and the
-/// configured default fills in when there is not. Same rule as `capture_fov`.
+/// an `init_commands` entry is the authority when there is one, an executed
+/// config is next, and the configured default fills in when neither states it.
+/// Same precedence as `capture_fov_resolved` — genuinely the same rule now,
+/// not merely similar (see that function's doc comment for the history of why
+/// `r_decals` used to be the one exception).
 pub fn ring_limit(config: &PatcherConfig) -> u32 {
     ring_limit_from_init(&config.init_commands)
+        .or_else(|| ring_limit_from_game_config(config))
         .unwrap_or_else(|| config.decal_ring_limit.min(crate::patch::MAX_RENDER_DECALS))
 }
 
-/// Whether a config the engine actually executes assigns `r_decals` itself.
-///
-/// Decides whether the pin is still worth spending at `MAX_RENDER_DECALS`.
-/// Normally it is not — the cvar is clamped to that ceiling, so a sweep sized
-/// there turns a full revolution whatever the engine's standing value is, and
-/// any smaller ring simply gets swept several times over. That holds for every
-/// value except zero, and a config setting `r_decals 0` is exactly the case
-/// the user's own install presents. Without a pin the sweep would be sized to
-/// the maximum, report a full revolution, and inject into a ring the engine
-/// keeps nothing in.
+/// `r_decals` as an executed config states it, if one does and the value
+/// actually parses — same shape as `ring_limit_from_init`, just for the other
+/// place a value can come from. Clamped the same way, for the same reason.
 ///
 /// Read-only, like everything touching the user's configs — this decides what
-/// the pipeline states in its own init commands, never what the config says.
+/// the pipeline treats as the standing value, never what the config says.
 /// See [`crate::patch::cfg_scan`].
-pub fn ring_set_by_game_config(config: &PatcherConfig) -> bool {
-    let Some(dir) = game_dir_for(config) else {
-        return false;
-    };
-    cfg_scan::scan_cached(&dir).effective("r_decals").is_some()
+pub fn ring_limit_from_game_config(config: &PatcherConfig) -> Option<u32> {
+    let dir = game_dir_for(config)?;
+    let setting = cfg_scan::scan_cached(&dir).effective("r_decals")?.clone();
+    setting
+        .value
+        .parse::<u32>()
+        .ok()
+        .map(|v| v.min(crate::patch::MAX_RENDER_DECALS))
 }
 
 /// Clean options for the batch pipeline, as distinct from the `strip_decals`
@@ -2903,21 +2907,45 @@ mod tests {
     }
 
     #[test]
-    fn a_config_that_switches_decals_off_does_not_stand_the_flush_down() {
-        // The same movie.cfg that carries the FOV also carries `r_decals 0`.
-        // Adopting that the way the FOV is adopted would disable the flush over
-        // a value the pipeline's own pin runs after and overrides.
+    fn a_config_that_switches_decals_off_is_now_adopted_like_fov_is() {
+        // Regression: this used to assert the opposite — that a config's
+        // `r_decals 0` was ignored in favor of the app's own default, on the
+        // reasoning that adopting it would silently stand the flush down.
+        // Now that stand-down is its own loud, reported fact
+        // (decal_flush_is_noop) rather than something to hide by disagreeing
+        // with the config, so r_decals follows mirv_fov's precedence exactly:
+        // init commands, then an executed config, then the app's default.
         let exe = fake_game("decals_off", "exec movie.cfg\n", Some("r_decals \"0\"\n"));
         let config = PatcherConfig {
             game_path: exe.to_string_lossy().to_string(),
             ..PatcherConfig::default()
         };
 
-        assert_eq!(
-            ring_limit(&config),
-            PatcherConfig::default().decal_ring_limit,
-            "r_decals is read from init commands and the app's own setting, never from a config"
-        );
+        assert_eq!(ring_limit(&config), 0, "the config's own value now wins, same as mirv_fov's would");
+    }
+
+    #[test]
+    fn a_nonzero_r_decals_the_game_config_sets_is_adopted() {
+        let exe = fake_game("decals_from_config", "exec movie.cfg\n", Some("r_decals \"512\"\n"));
+        let config = PatcherConfig {
+            game_path: exe.to_string_lossy().to_string(),
+            decal_ring_limit: 128,
+            ..PatcherConfig::default()
+        };
+
+        assert_eq!(ring_limit(&config), 512, "the config's value, not the app's own default");
+    }
+
+    #[test]
+    fn an_init_command_still_outranks_a_game_config_for_r_decals() {
+        let exe = fake_game("decals_init_outranks", "exec movie.cfg\n", Some("r_decals \"0\"\n"));
+        let config = PatcherConfig {
+            game_path: exe.to_string_lossy().to_string(),
+            init_commands: vec!["r_decals 512".to_string()],
+            ..PatcherConfig::default()
+        };
+
+        assert_eq!(ring_limit(&config), 512, "stated in Initial Commands, so it wins outright");
     }
 
     #[test]
