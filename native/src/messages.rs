@@ -96,3 +96,92 @@ pub fn could_not_move_after_retries(
         recorded, target, retry_secs, last_err
     )
 }
+
+/// Pins every function above against the exact `format!`/literal it replaced
+/// at its original call site (text copied verbatim from the pre-PR source,
+/// not re-derived), so this refactor can't have silently changed any
+/// user-visible wording.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn map_fetch_messages_match_their_original_inline_text() {
+        assert_eq!(
+            not_a_usable_map_name("bad name"),
+            format!("`{}` is not a usable map name", "bad name")
+        );
+        assert_eq!(MAP_MIRRORS_MUST_BE_HTTPS, "map mirrors must be https");
+        assert_eq!(
+            labeled("some/path", "boom"),
+            format!("{}: {}", "some/path", "boom")
+        );
+        assert_eq!(
+            served_unreadable_bsp("http://x", "bad bsp"),
+            format!("what {} served is not a readable BSP: {}", "http://x", "bad bsp")
+        );
+        assert_eq!(
+            served_unparseable_map("http://x", "bad map"),
+            format!("what {} served does not parse as a map: {}", "http://x", "bad map")
+        );
+        assert_eq!(
+            served_wrong_build("http://x", 0x1234, 0x5678),
+            format!(
+                "{} served build {:08x}, but the demo needs {:08x} — not installing it",
+                "http://x", 0x1234u32, 0x5678u32
+            )
+        );
+        assert_eq!(
+            could_not_move_existing_aside("old.bsp", "in use"),
+            format!("could not move the existing {} aside: {}", "old.bsp", "in use")
+        );
+        assert_eq!(
+            url_returned_status("http://x", 404),
+            format!("{} returned {}", "http://x", 404)
+        );
+    }
+
+    #[test]
+    fn hlae_ffmpeg_messages_match_their_original_inline_text() {
+        assert_eq!(not_a_file("ffmpeg.exe"), format!("{} is not a file", "ffmpeg.exe"));
+        assert_eq!(
+            could_not_run("ffmpeg.exe", "access denied"),
+            format!("could not run {}: {}", "ffmpeg.exe", "access denied")
+        );
+        assert_eq!(
+            did_not_respond_to_version_flag("ffmpeg.exe"),
+            format!("{} did not respond to -version", "ffmpeg.exe")
+        );
+        assert_eq!(
+            did_not_identify_as_ffmpeg("ffmpeg.exe"),
+            format!("{} did not identify itself as FFmpeg", "ffmpeg.exe")
+        );
+        assert_eq!(
+            reports_itself_as("ffmpeg.exe", "handbrake version 1.0"),
+            format!(
+                "{} is not FFmpeg — it reports itself as \"{}\"",
+                "ffmpeg.exe", "handbrake version 1.0"
+            )
+        );
+    }
+
+    #[test]
+    fn obs_session_messages_match_their_original_inline_text() {
+        assert_eq!(NOT_CONNECTED_TO_OBS, "not connected to OBS");
+        assert_eq!(
+            obs_reported_file_missing("clip.mp4"),
+            format!("OBS reported {} but no file is there", "clip.mp4")
+        );
+        let recorded = "clip.mp4";
+        let target = "video.mp4";
+        let retry_secs = 5.0_f64;
+        let last = "sharing violation";
+        assert_eq!(
+            could_not_move_after_retries(recorded, target, retry_secs, last),
+            format!(
+                "could not move {} to {} after {:.1}s of retries: {last}",
+                recorded, target, retry_secs
+            )
+        );
+    }
+}
