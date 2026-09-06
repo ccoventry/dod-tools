@@ -1150,13 +1150,13 @@ function renderScoreboardTab(container) {
     banner = `<div class="analyzer-warning-banner">${esc(msg)}</div>`;
   }
 
-  const groupBlock = (label, color, players, tot, key) => {
+  const groupBlock = (label, color, players, score, tot, key) => {
     if (players.length === 0 && (key === 'spec' || key === 'unassigned')) return '';
     const rows = players.map((p) => renderScoreboardRow(p, color)).join('');
     return `
       <tr class="scoreboard-group-header" style="color:${color};">
         <td colspan="2">${esc(STRINGS.ANALYZER.groupLabelWithCount(label, players.length))}</td>
-        <td style="text-align:right;">${tot[0]}</td>
+        <td style="text-align:right;">${score}</td>
         <td style="text-align:right;">${tot[1]}</td>
         <td style="text-align:right;">${tot[2]}</td>
       </tr>
@@ -1171,10 +1171,10 @@ function renderScoreboardTab(container) {
       <table class="analyzer-table">
         <thead><tr><th>${STRINGS.ANALYZER.COL_NAME}</th><th>${STRINGS.ANALYZER.COL_CLASS}</th><th style="text-align:right;">${STRINGS.ANALYZER.COL_SCORE}</th><th style="text-align:right;">${STRINGS.ANALYZER.COL_KILLS}</th><th style="text-align:right;">${STRINGS.ANALYZER.COL_DEATHS}</th></tr></thead>
         <tbody>
-          ${groupBlock(alliesLabel, alliesColor, groups.allies, totals.allies, 'allies')}
-          ${groupBlock(STRINGS.ANALYZER.AXIS_LABEL, teamColor('Axis'), groups.axis, totals.axis, 'axis')}
-          ${groupBlock(STRINGS.ANALYZER.SPECTATORS_LABEL, teamColor('Spectators'), groups.spec, totals.spec, 'spec')}
-          ${groupBlock(STRINGS.ANALYZER.UNASSIGNED_LABEL, teamColor('Unassigned'), groups.unassigned, totals.unassigned, 'unassigned')}
+          ${groupBlock(alliesLabel, alliesColor, groups.allies, alliesScore, totals.allies, 'allies')}
+          ${groupBlock(STRINGS.ANALYZER.AXIS_LABEL, teamColor('Axis'), groups.axis, axisScore, totals.axis, 'axis')}
+          ${groupBlock(STRINGS.ANALYZER.SPECTATORS_LABEL, teamColor('Spectators'), groups.spec, totals.spec[0], totals.spec, 'spec')}
+          ${groupBlock(STRINGS.ANALYZER.UNASSIGNED_LABEL, teamColor('Unassigned'), groups.unassigned, totals.unassigned[0], totals.unassigned, 'unassigned')}
         </tbody>
       </table>
     </div>`;
@@ -1547,7 +1547,7 @@ function drawTimelineChart(canvas, seriesA, seriesB, colorA, colorB, labelA, lab
   ctx.fillStyle = '#121212';
   ctx.fillRect(0, 0, width, height);
 
-  const allPoints = [...seriesA, ...seriesB];
+  let allPoints = [...seriesA, ...seriesB];
   if (allPoints.length === 0) {
     ctx.fillStyle = '#666';
     ctx.font = '12px sans-serif';
@@ -1555,6 +1555,18 @@ function drawTimelineChart(canvas, seriesA, seriesB, colorA, colorB, labelA, lab
     ctx.fillText(STRINGS.ANALYZER.NO_TEAM_SCORE_EVENTS, width / 2, height / 2);
     return [];
   }
+
+  // Rebase so the earliest plotted point reads as 0:00. For a clan match this
+  // is already the moment the real match went live -- clan-match detection
+  // clears team_scores (and kill streaks, rounds, etc.) at that point, so
+  // nothing from warmup ever reaches this data. Without the rebase, that
+  // point's own absolute demo-clock offset (which can be many minutes in)
+  // left most of the chart blank instead of using the space for real data.
+  const rebaseBy = Math.min(...allPoints.map((p) => p[0]));
+  seriesA = seriesA.map(([x, y]) => [x - rebaseBy, y]);
+  seriesB = seriesB.map(([x, y]) => [x - rebaseBy, y]);
+  allPoints = [...seriesA, ...seriesB];
+
   const padding = 36;
   const maxX = Math.max(...allPoints.map((p) => p[0]), 1);
   const maxY = Math.max(...allPoints.map((p) => p[1]), 1);
