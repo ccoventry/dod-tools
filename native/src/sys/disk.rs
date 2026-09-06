@@ -9,15 +9,6 @@ pub fn calculate_raw_sequence_bytes(w: i32, h: i32, fps: i32, duration_secs: f32
 /// literals that could silently drift apart.
 pub const MIN_DRIVE_HEADROOM_BYTES: u64 = 15 * 1024 * 1024 * 1024;
 
-/// Minimum free space required on a drive that only ever receives small
-/// patched demo files (`primer.dem`/`chain_NN.dem`, or the same files copied
-/// into `hl.exe`'s own `dod/`/`demos/` folders) rather than a full recording
-/// block. `capture_directories[0]` unconditionally receives these regardless
-/// of whether the AOT allocator routes any recording block there — see
-/// issue #8 — so it shouldn't have to clear the same 15 GiB bar as a drive
-/// that's actually about to receive gigabytes of captured frames.
-pub const MIN_DEMO_ONLY_HEADROOM_BYTES: u64 = 2 * 1024 * 1024 * 1024;
-
 // Disk query results are cached for TTL_MS milliseconds to avoid
 // issuing blocking kernel disk-enumeration syscalls on every frame.
 const TTL_MS: u128 = 2_000;

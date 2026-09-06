@@ -356,7 +356,7 @@ pub fn spawn_capture_engine(
                 save_local_patched_copy: config.save_local_patched_copy,
             };
 
-            for job in jobs {
+            for job in &jobs {
                 if cancel_token.load(Ordering::Relaxed) {
                     let _ = tx.send(EngineEvent::Cancelled);
                     return;
@@ -470,13 +470,8 @@ pub fn spawn_capture_engine(
             }
 
             for entry in &drive_headroom {
-                let required_bytes = if entry.demo_only {
-                    crate::sys::disk::MIN_DEMO_ONLY_HEADROOM_BYTES
-                } else {
-                    crate::sys::disk::MIN_DRIVE_HEADROOM_BYTES
-                };
-                if entry.free_bytes < required_bytes {
-                    let required_gb = required_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
+                if entry.free_bytes < crate::sys::disk::MIN_DRIVE_HEADROOM_BYTES {
+                    let required_gb = crate::sys::disk::MIN_DRIVE_HEADROOM_BYTES as f64 / (1024.0 * 1024.0 * 1024.0);
                     log_crash_abort!(tx, format!(
                         "Capture aborted: {:?} has less than {:.1} GB free space.",
                         entry.path, required_gb
@@ -486,15 +481,25 @@ pub fn spawn_capture_engine(
             }
 
             // hl.exe's own install drive is never in `drive_headroom` (that
-            // list is only Capture Output drives), yet every patched demo
-            // gets copied into `hl_exe_parent.join("dod")` above (and
-            // optionally `<exe_dir>/demos` when Save Local Patched Copy is
-            // on) before this point — small writes, same demo-only category
-            // as `MIN_DEMO_ONLY_HEADROOM_BYTES` covers for capture_directories[0].
+            // list is only for drives an actual recording block routed to —
+            // patched demo files land directly in `hl_exe_parent`'s own
+            // `dod/` folder now, not on any capture_directories entry, since
+            // that's the only place GoldSrc's `playdemo` can find them; see
+            // issue #8). Every patched file already exists on disk by this
+            // point — real sizes, not an estimate. Doubled when Save Local
+            // Patched Copy duplicates each file into `<exe_dir>/demos` too.
             // See issue #11.
+            let total_patched_bytes: u64 = jobs.iter()
+                .map(|j| std::fs::metadata(&j.patched_demo_path).map(|m| m.len()).unwrap_or(0))
+                .sum();
+            let hl_exe_required_bytes = if config.save_local_patched_copy {
+                total_patched_bytes.saturating_mul(2)
+            } else {
+                total_patched_bytes
+            };
             let hl_exe_drive_free = crate::sys::disk::get_available_bytes(hl_exe_parent);
-            if hl_exe_drive_free < crate::sys::disk::MIN_DEMO_ONLY_HEADROOM_BYTES {
-                let required_gb = crate::sys::disk::MIN_DEMO_ONLY_HEADROOM_BYTES as f64 / (1024.0 * 1024.0 * 1024.0);
+            if hl_exe_drive_free < hl_exe_required_bytes {
+                let required_gb = hl_exe_required_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
                 log_crash_abort!(tx, format!(
                     "Capture aborted: {:?} (hl.exe's own drive) has less than {:.1} GB free space.",
                     hl_exe_parent, required_gb
