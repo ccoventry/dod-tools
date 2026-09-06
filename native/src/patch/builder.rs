@@ -453,7 +453,7 @@ fn allocate_blocks_first_fit_decreasing(
 
 // ── Batch queue builder ───────────────────────────────────────────────────────
 
-pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig, global_arrays: &std::collections::HashMap<std::path::PathBuf, std::sync::Arc<Vec<f32>>>) -> Result<(Vec<PatchJob>, Vec<(std::path::PathBuf, u64)>), std::io::Error> {
+pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig, global_arrays: &std::collections::HashMap<std::path::PathBuf, std::sync::Arc<Vec<f32>>>) -> Result<(Vec<PatchJob>, Vec<crate::patch::types::DriveHeadroom>), std::io::Error> {
     // tickrate is extracted dynamically from streaks per-demo.
     // Each streak is carried alongside its index in `raw_streaks` so the blocks
     // built below can point back at the exact highlights the caller dispatched,
@@ -655,12 +655,15 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
         let separate_hud_str = if config.separate_hud { "1" } else { "0" };
         primer_init.push(format!("mirv_movie_separate_hud {}", separate_hud_str));
 
-        // Primer always lands on drive 0 (the highest-priority pool directory).
-        let primer_out = if let Some(out_dir) = config.capture_directories.first() {
-            out_dir.join("primer.dem")
-        } else {
-            std::path::PathBuf::from("primer.dem")
-        };
+        // Every patched demo lands directly in the game's own dod/ folder --
+        // that's the only place GoldSrc's `playdemo` can find it. This used
+        // to resolve to capture_directories[0] instead, with capture_engine.rs
+        // copying it into dod/ as a second step -- pure redundant I/O, since
+        // that copy loop already ran everything upfront before hl.exe even
+        // launched, so dod/'s drive needed the full batch footprint either
+        // way. capture_directories is only ever about where recorded video
+        // blocks land now, not these small demo files. See issue #8.
+        let primer_out = dod_dir.join("primer.dem");
 
         // Delay playdemo chain_01 to tick 500 (~5 seconds) to allow the engine to fully finish the 
         // 2-second GoldSrc server handshake without buffer overflows before jumping to the first real chain.
@@ -683,14 +686,11 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
     }
 
     // 2. Chained Jobs
-    // Drive 0 always receives the primer + each job's output demo file
-    // (see the "always use primary/first drive" resolution below), regardless
-    // of whether any capture block gets routed there — so it must always be
-    // headroom-checked even on a batch where every block lands elsewhere.
+    // Every patched demo file now lands directly in dod/ (see the primer's
+    // own resolution above), not on any capture_directories entry -- so
+    // utilized_drives only ever needs to track drives that actually receive
+    // a real recording block. See issue #8.
     let mut utilized_drives = std::collections::HashSet::new();
-    if !config.capture_directories.is_empty() {
-        utilized_drives.insert(0);
-    }
     for (job_idx, ((source_demo, target_player), mut streak_refs)) in sorted_groups.into_iter().enumerate() {
         // Sort by start_tick in ascending order
         streak_refs.sort_by_key(|(_, s)| s.start_tick);
@@ -719,8 +719,8 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
         let demo_name = format!("chain_{:02}", job_idx + 1);
         let next_demo_name = format!("chain_{:02}", job_idx + 2);
         let output_name = format!("{}.dem", demo_name);
-        let path = std::path::Path::new(&source_demo);
-        let mut output_demo = path.with_file_name(&output_name);
+        // Lands directly in dod/ -- see the primer's own resolution above for why.
+        let output_demo = dod_dir.join(&output_name);
 
         // ── AOT failover routing (Per-Block) ───────────────────────────────────
         
@@ -880,16 +880,6 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
             });
         }
         blocks.sort_by_key(|b| b.block_index);
-
-        // Resolve physical output path for the demo file itself (always use primary/first drive).
-        if let Some(out_dir) = config.capture_directories.first() {
-            let absolute_drive = std::path::absolute(out_dir)?;
-            let target_dir = absolute_drive.join(&config.session_id);
-            if !target_dir.exists() {
-                let _ = std::fs::create_dir_all(&target_dir);
-            }
-            output_demo = target_dir.join(&output_name);
-        }
 
         if job_idx < total_jobs - 1 {
             helper_cfg_content.push_str(&format!("alias {}_next \"playdemo {}\"\n", demo_name, next_demo_name));
@@ -1219,9 +1209,12 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
     // handed back so the pre-launch abort in `capture_engine.rs` re-validates
     // the exact numbers this allocation pass already computed instead of
     // recomputing a third, narrower (primary-drive-only) answer.
-    let drive_headroom: Vec<(std::path::PathBuf, u64)> = utilized_drives
+    let drive_headroom: Vec<crate::patch::types::DriveHeadroom> = utilized_drives
         .into_iter()
-        .filter_map(|idx| config.capture_directories.get(idx).map(|p| (p.clone(), drive_free[idx])))
+        .filter_map(|idx| config.capture_directories.get(idx).map(|p| crate::patch::types::DriveHeadroom {
+            path: p.clone(),
+            free_bytes: drive_free[idx],
+        }))
         .collect();
 
     Ok((jobs, drive_headroom))
@@ -1709,13 +1702,16 @@ mod tests {
         let (jobs, _) = build_batch_queue(raw_streaks, &config, &std::collections::HashMap::new()).unwrap();
         assert_eq!(jobs.len(), 2);
 
+        // Every patched demo lands directly in dod/ now -- see issue #8.
+        let expected_dod_dir = std::path::Path::new(&config.game_path).parent().unwrap().join("dod");
+
         let primer = &jobs[0];
-        assert_eq!(primer.output_demo, std::path::PathBuf::from("primer.dem"));
+        assert_eq!(primer.output_demo, expected_dod_dir.join("primer.dem"));
         assert_eq!(primer.streaks.len(), 0);
 
         let job = &jobs[1];
         assert_eq!(job.source_demo, "demo1.dem");
-        assert_eq!(job.output_demo, std::path::PathBuf::from("chain_01.dem"));
+        assert_eq!(job.output_demo, expected_dod_dir.join("chain_01.dem"));
         assert_eq!(job.streaks.len(), 2);
         assert_eq!(job.streaks[0].start_tick, 1000);
         assert_eq!(job.streaks[0].end_tick, 1500); // Merged 1000-1200 and 1300-1500
@@ -1752,15 +1748,14 @@ mod tests {
     }
 
     #[test]
-    fn test_drive_headroom_always_includes_primary_drive_even_with_no_blocks_routed() {
-        // Zero streaks -> zero jobs -> the block-allocation loop that builds
-        // `utilized_drives` never runs at all. capture_engine.rs's pre-launch
-        // check still needs drive 0's headroom in this case (the primer +
-        // every job's demo file always land there regardless of block
-        // routing — see the "always use primary/first drive" resolution
-        // above), so it must come back even though no block ever touched it.
+    fn test_drive_headroom_omits_drive_0_when_no_block_is_routed_there() {
+        // Patched demo files land directly in dod/ now (see issue #8), not
+        // on any capture_directories entry, so drive 0 no longer needs a
+        // special unconditional include -- it should be omitted from
+        // drive_headroom exactly like any other drive that received no
+        // real recording block.
         let mut config = mock_config();
-        let temp_drive = std::env::temp_dir().join("dod_test_headroom_drive0");
+        let temp_drive = std::env::temp_dir().join("dod_test_headroom_drive0_no_block");
         std::fs::create_dir_all(&temp_drive).expect("failed to create dummy capture drive");
         config.capture_directories = vec![temp_drive.clone()];
 
@@ -1768,13 +1763,59 @@ mod tests {
             build_batch_queue(Vec::new(), &config, &std::collections::HashMap::new()).unwrap();
 
         assert!(jobs.is_empty(), "no streaks should produce no jobs");
-        assert_eq!(drive_headroom.len(), 1, "drive 0 must be reported even though no block was ever routed to it");
-        assert_eq!(drive_headroom[0].0, temp_drive);
         assert!(
-            drive_headroom[0].1 > 0 && drive_headroom[0].1 < u64::MAX,
-            "expected a real free-byte count for an existing directory, got {}",
-            drive_headroom[0].1
+            drive_headroom.is_empty(),
+            "no block was ever routed to drive 0, so it shouldn't be reported at all, got {:?}",
+            drive_headroom
         );
+    }
+
+    #[test]
+    fn test_drive_headroom_includes_drive_0_when_a_block_actually_lands_there() {
+        let mut config = mock_config();
+        let temp_drive = std::env::temp_dir().join("dod_test_headroom_drive0_with_block");
+        std::fs::create_dir_all(&temp_drive).expect("failed to create dummy capture drive");
+        config.capture_directories = vec![temp_drive.clone()];
+        let raw_streaks = vec![streak_with_kills(1000, 1200, &[1000, 1200])];
+
+        let (_jobs, drive_headroom) =
+            build_batch_queue(raw_streaks, &config, &std::collections::HashMap::new()).unwrap();
+
+        assert_eq!(drive_headroom.len(), 1, "the one real block routes to drive 0, so it should be reported");
+        assert_eq!(drive_headroom[0].path, temp_drive);
+        assert!(
+            drive_headroom[0].free_bytes > 0 && drive_headroom[0].free_bytes < u64::MAX,
+            "expected a real free-byte count for an existing directory, got {}",
+            drive_headroom[0].free_bytes
+        );
+    }
+
+    #[test]
+    fn test_patched_demos_land_directly_in_dod_not_on_a_capture_directory() {
+        // See issue #8: capture_directories is only about where recorded
+        // video blocks land now, never these small demo files -- both the
+        // primer and every chained job's output_demo must resolve under
+        // the game's own dod/ folder (derived from game_path), regardless
+        // of what capture_directories is configured to.
+        let mut config = mock_config();
+        config.capture_directories = vec![std::env::temp_dir().join("dod_test_unused_capture_dir")];
+        let raw_streaks = vec![streak_with_kills(1000, 1200, &[1000, 1200])];
+
+        let (jobs, _drive_headroom) =
+            build_batch_queue(raw_streaks, &config, &std::collections::HashMap::new()).unwrap();
+
+        let expected_dod_dir = std::path::Path::new(&config.game_path)
+            .parent()
+            .unwrap()
+            .join("dod");
+        for job in &jobs {
+            assert_eq!(
+                job.output_demo.parent(),
+                Some(expected_dod_dir.as_path()),
+                "expected {:?} to land in dod/, not a capture_directories entry",
+                job.output_demo
+            );
+        }
     }
 
     #[test]

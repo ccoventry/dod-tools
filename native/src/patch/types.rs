@@ -243,6 +243,15 @@ pub struct PatchJob {
     pub blocks: Vec<CaptureBlock>,
 }
 
+/// One drive `build_batch_queue`'s AOT allocation touched, and the headroom
+/// figure `capture_engine`'s pre-launch check must re-validate before
+/// spawning `hl.exe`.
+#[derive(Debug, Clone)]
+pub struct DriveHeadroom {
+    pub path: std::path::PathBuf,
+    pub free_bytes: u64,
+}
+
 // ── Capture mode ──────────────────────────────────────────────────────────────
 
 /// How a batch's frames get off the screen and onto disk.
