@@ -1511,6 +1511,14 @@ function weaponBreakdownTable(arr) {
 
 // ── 5. Timeline ───────────────────────────────────────────────────────────────
 
+// Team score is 0-0 until the first TeamScore broadcast, which in a clan
+// match can be well after recording starts (warmup has no scoring events).
+// Without this, the line only appears at that first point instead of
+// visibly starting flat at the left edge.
+function withZeroStart(series) {
+  return series.length && series[0][0] > 0 ? [[0, 0], ...series] : series;
+}
+
 function renderTimelineTab(container) {
   const st = report.state;
   const alliesLabel = teamLabel('Allies', st.allies_are_british);
@@ -1529,8 +1537,8 @@ function renderTimelineTab(container) {
     </div>`;
 
   const timeline = (st.team_scores && st.team_scores.timeline) || [];
-  const alliesSeries = timeline.filter(([, t]) => t === 'Allies' || t === 'British').map(([time, , score]) => [durSecs(time.viewdemo_offset), score]);
-  const axisSeries = timeline.filter(([, t]) => t === 'Axis').map(([time, , score]) => [durSecs(time.viewdemo_offset), score]);
+  const alliesSeries = withZeroStart(timeline.filter(([, t]) => t === 'Allies' || t === 'British').map(([time, , score]) => [durSecs(time.viewdemo_offset), score]));
+  const axisSeries = withZeroStart(timeline.filter(([, t]) => t === 'Axis').map(([time, , score]) => [durSecs(time.viewdemo_offset), score]));
 
   const canvas = container.querySelector('#analyzer-timeline-canvas');
   const points = drawTimelineChart(canvas, alliesSeries, axisSeries, alliesColor, axisColor, alliesLabel, STRINGS.ANALYZER.AXIS_LABEL);
