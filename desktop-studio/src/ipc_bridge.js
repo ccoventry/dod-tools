@@ -564,7 +564,7 @@ export async function scanDemoFolders(root) {
     });
 }
 
-/** Checks `channel` ("stable" or "dev") for a newer release. Resolves to
+/** Checks `channel` ("stable" or "experimental") for a newer release. Resolves to
  *  `{ version, current_version, notes, pub_date }` or `null` when already
  *  up to date. See issue #133. */
 export async function checkForUpdate(channel) {
@@ -591,8 +591,8 @@ export async function downloadAndInstallUpdate() {
 
 /** Reads the actual compiled-in app version (Cargo.toml's `version`, stamped
  *  by the release workflows) — never hardcoded, so it always matches what
- *  was really built, whether that's a stable release, a dev build, or a
- *  local `npm run tauri dev` session. Best-effort: a version label isn't
+ *  was really built, whether that's a stable release, an experimental build,
+ *  or a local `npm run tauri dev` session. Best-effort: a version label isn't
  *  worth interrupting the user over. */
 export async function getAppVersion() {
   return getVersion().catch((err) => {

@@ -139,7 +139,7 @@ pub struct AppSettings {
     #[serde(default = "default_notify_updates")]
     pub notify_updates: bool,
     /// Which release channel `check_for_update` polls: `"stable"` (built from
-    /// `main`) or `"dev"` (built from `dev`, on-demand). See issue #133.
+    /// `main`) or `"experimental"` (built from `dev`, on-demand). See issue #133.
     #[serde(default = "default_update_channel")]
     pub update_channel: String,
     #[serde(default = "default_auto_check_updates")]

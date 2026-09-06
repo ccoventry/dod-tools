@@ -19,14 +19,15 @@ export const STRINGS = {
   NAV: {
     APP_TITLE: 'DoD Tools Studio',
     // OS window title (taskbar/Alt-Tab) — set by updater_pane.js once the
-    // running build's version is known. baseVersion excludes the dev
-    // channel's `-<run number>` suffix — the title just needs "what kind of
-    // build is this", not which exact run. buildKind: 'local' (npm run
-    // tauri dev), 'debug' (tauri build --debug — a real bundle, just not a
-    // release-profile one), 'dev' (release_dev.yml), or anything else for a
-    // real stable build (no parenthetical).
+    // running build's version is known. baseVersion excludes the
+    // experimental channel's `-<run number>` suffix — the title just needs
+    // "what kind of build is this", not which exact run. buildKind: 'local'
+    // (npm run tauri dev), 'debug' (tauri build --debug — a real bundle,
+    // just not a release-profile one), 'experimental'
+    // (release_experimental.yml), or anything else for a real stable build
+    // (no parenthetical).
     appWindowTitle: (baseVersion, buildKind) => {
-      const tags = { local: 'local build', debug: 'debug build', dev: 'dev build' };
+      const tags = { local: 'local build', debug: 'debug build', experimental: 'experimental build' };
       const tag = tags[buildKind];
       return `DoD Tools Studio — v${baseVersion}${tag ? ` (${tag})` : ''}`;
     },
@@ -1104,7 +1105,7 @@ export const STRINGS = {
     currentVersionLabel: (v) => `Current version: v${v}`,
     CHANNEL_LABEL: 'Update Channel:',
     CHANNEL_STABLE: 'Stable (from main)',
-    CHANNEL_DEV: 'Dev (from dev, on-demand builds)',
+    CHANNEL_EXPERIMENTAL: 'Experimental (from dev, on-demand builds)',
     AUTO_CHECK_LABEL: 'Automatically Check on Startup',
     NOTIFY_LABEL: 'OS Notification on Found',
     NOTIFY_TITLE: 'Fires an OS toast when a background or manual check finds a newer version.',
