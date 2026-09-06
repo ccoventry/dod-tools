@@ -1183,6 +1183,9 @@ function renderScoreboardTab(container) {
     tr.addEventListener('click', () => {
       const id = tr.dataset.playerId;
       highlightedPlayerId = highlightedPlayerId === id ? null : id;
+      // Keep the Player Details dropdown in sync so selection works both
+      // ways (dropdown -> scoreboard already did via renderPlayerDetailsTab).
+      if (highlightedPlayerId) selectedPlayerId = highlightedPlayerId;
       renderScoreboardTab(container);
     });
   });
