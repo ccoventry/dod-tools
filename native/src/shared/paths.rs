@@ -7,6 +7,18 @@ pub fn get_appdata_dir() -> PathBuf {
     path
 }
 
+/// True for exactly the filenames `build_batch_queue` gives patched chain
+/// demos (`chain_01.dem`, `chain_9999.dem`, ...). A plain `starts_with("chain_")`
+/// would also match a source demo that happens to share the prefix, e.g. a
+/// player named "chain" with a demo called `chain_harrington_round1.dem` --
+/// requiring the rest of the name to be all digits rules that out.
+pub fn is_chain_demo_filename(filename: &str) -> bool {
+    filename
+        .strip_prefix("chain_")
+        .and_then(|rest| rest.strip_suffix(".dem"))
+        .is_some_and(|digits| !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
+}
+
 /// Stable identity for one capture take, shared by the capture and render
 /// pipelines so they can correlate without either knowing about the other.
 ///
@@ -127,6 +139,23 @@ mod tests {
         remove_console_log(&root);
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn is_chain_demo_filename_matches_real_output_names() {
+        assert!(is_chain_demo_filename("chain_01.dem"));
+        assert!(is_chain_demo_filename("chain_9999.dem"));
+    }
+
+    /// A source demo that happens to share the "chain_" prefix must never be
+    /// mistaken for a patched output file and deleted.
+    #[test]
+    fn is_chain_demo_filename_rejects_lookalike_source_demos() {
+        assert!(!is_chain_demo_filename("chain_harrington_round1.dem"));
+        assert!(!is_chain_demo_filename("chain_.dem"));
+        assert!(!is_chain_demo_filename("chain_01.dem.bak"));
+        assert!(!is_chain_demo_filename("prefix_chain_01.dem"));
+        assert!(!is_chain_demo_filename("chain_01.cfg"));
     }
 
     /// Nothing but that one file may be touched — the game folder holds the

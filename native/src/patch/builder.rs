@@ -1293,7 +1293,7 @@ impl Drop for WorkspaceGuard {
                 if let Ok(entries) = std::fs::read_dir(&dod_dir) {
                     for entry in entries.flatten() {
                         let filename = entry.file_name().to_string_lossy().to_string();
-                        if filename.starts_with("chain_") && filename.ends_with(".dem") {
+                        if crate::shared::paths::is_chain_demo_filename(&filename) {
                             let _ = std::fs::remove_file(entry.path());
                         }
                     }
