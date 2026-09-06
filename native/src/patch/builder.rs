@@ -1286,7 +1286,7 @@ impl Drop for WorkspaceGuard {
                 if let Ok(entries) = std::fs::read_dir(&dod_dir) {
                     for entry in entries.flatten() {
                         let filename = entry.file_name().to_string_lossy().to_string();
-                        if filename.starts_with("dodtools_chain_") && filename.ends_with(".dem") {
+                        if crate::shared::paths::is_chain_demo_filename(&filename) {
                             let _ = std::fs::remove_file(entry.path());
                         }
                     }
@@ -1837,6 +1837,41 @@ mod tests {
             "no configured capture directories means nothing to report headroom for, got {:?}",
             drive_headroom
         );
+    }
+
+    #[test]
+    fn workspace_guard_drop_actually_removes_chain_demos_when_auto_clear_is_on() {
+        // Verifies the fix for issue #12: the cleanup filter matched
+        // "dodtools_chain_*.dem", but build_batch_queue names output demos
+        // "chain_NN.dem" (no prefix) -- see `demo_name` above -- so the
+        // filter never matched and these files were never cleaned up
+        // regardless of the auto_clear_temp_demos setting.
+        let exit_trigger = std::env::temp_dir().join("dod_test_workspace_guard_exit_trigger");
+        let dod_dir = exit_trigger.parent().unwrap().join("dod");
+        std::fs::create_dir_all(&dod_dir).unwrap();
+        std::fs::create_dir_all(&exit_trigger).unwrap();
+        let chain_demo = dod_dir.join("chain_01.dem");
+        std::fs::write(&chain_demo, b"fake demo bytes").unwrap();
+
+        {
+            let _guard = WorkspaceGuard {
+                session_junction: std::env::temp_dir().join("dod_test_workspace_guard_session_junction_nonexistent"),
+                exit_trigger: exit_trigger.clone(),
+                pool_junctions: Vec::new(),
+                route_junctions: Vec::new(),
+                auto_clear_logs: false,
+                auto_clear_temp_demos: true,
+                auto_clear_previews: false,
+                save_local_patched_copy: false,
+            };
+        }
+
+        assert!(
+            !chain_demo.exists(),
+            "chain_01.dem should have been removed by WorkspaceGuard::drop with auto_clear_temp_demos on"
+        );
+
+        let _ = std::fs::remove_dir_all(&dod_dir);
     }
 
     fn streak_with_kills(start_tick: i32, end_tick: i32, kill_frames: &[i32]) -> CaptureStreak {
