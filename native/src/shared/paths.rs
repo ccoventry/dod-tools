@@ -8,10 +8,12 @@ pub fn get_appdata_dir() -> PathBuf {
 }
 
 /// True for exactly the filenames `build_batch_queue` gives patched chain
-/// demos (`chain_01.dem`, `chain_9999.dem`, ...). A plain `starts_with("chain_")`
-/// would also match a source demo that happens to share the prefix, e.g. a
-/// player named "chain" with a demo called `chain_harrington_round1.dem` --
-/// requiring the rest of the name to be all digits rules that out.
+/// demos (`chain_01.dem`, `chain_9999.dem`, ...). No cap on digit count --
+/// a batch of over a hundred thousand demos is implausible, but nothing here
+/// assumes an upper bound either. A plain `starts_with("chain_")` would also
+/// match a source demo that happens to share the prefix, e.g. a player named
+/// "chain" with a demo called `chain_harrington_round1.dem` -- requiring the
+/// rest of the name to be all digits rules that out.
 pub fn is_chain_demo_filename(filename: &str) -> bool {
     filename
         .strip_prefix("chain_")
@@ -145,6 +147,13 @@ mod tests {
     fn is_chain_demo_filename_matches_real_output_names() {
         assert!(is_chain_demo_filename("chain_01.dem"));
         assert!(is_chain_demo_filename("chain_9999.dem"));
+    }
+
+    /// No digit-count cap: a batch large enough to need `chain_100500.dem`
+    /// must still be cleaned up correctly, not silently left behind.
+    #[test]
+    fn is_chain_demo_filename_has_no_upper_bound_on_digit_count() {
+        assert!(is_chain_demo_filename("chain_100500.dem"));
     }
 
     /// A source demo that happens to share the "chain_" prefix must never be
