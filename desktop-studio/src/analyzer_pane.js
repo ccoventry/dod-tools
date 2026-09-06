@@ -7,7 +7,7 @@
 
 import { open } from '@tauri-apps/plugin-dialog';
 import { listen } from '@tauri-apps/api/event';
-import { analyzeDemoFull, browseDirectory, defaultBrowseDir, countDemoFiles, scanDemoFolders } from './ipc_bridge.js';
+import { analyzeDemoFull, browseDirectory, defaultBrowseDir, countDemoFiles, scanDemoFolders, getWeaponDisplayNames } from './ipc_bridge.js';
 import { STRINGS } from './strings.js';
 
 function setAnalyzerFileIndicator(text) {
@@ -140,10 +140,23 @@ function formatGameTime(totalSecs) {
   return `${m}:${String(s).padStart(2, '0')}:${String(cc).padStart(2, '0')}`;
 }
 
-// Simplified stand-in for the egui app's two-tier localization lookup: space
-// out the Rust enum variant name (e.g. "ScopedK98" -> "Scoped K98").
+// Populated once from get_weapon_display_names (see loadWeaponDisplayNames,
+// kicked off by initAnalyzerPane) — the same names
+// native/src/patch/scanner.rs bakes into a kill streak's timeline text, so
+// this pane can no longer show a different name for the same weapon (#34).
+let weaponDisplayNames = null;
+
+function loadWeaponDisplayNames() {
+  getWeaponDisplayNames().then((names) => { weaponDisplayNames = names; });
+}
+
+// Falls back to a regex-derived approximation (e.g. "ScopedK98" -> "Scoped
+// K98") only until the backend map above has loaded, or for a variant the
+// loc files don't cover — never leaves the cell blank.
 function weaponName(w) {
   if (!w) return STRINGS.ANALYZER.WEAPON_UNKNOWN;
+  const resolved = weaponDisplayNames && weaponDisplayNames[w];
+  if (resolved) return resolved;
   return String(w).replace(/([a-z0-9])([A-Z])/g, '$1 $2');
 }
 
@@ -924,6 +937,7 @@ export function initAnalyzerPane({
   if (getAnalyzerExplorerWidthCb) getAnalyzerExplorerWidth = getAnalyzerExplorerWidthCb;
   if (setAnalyzerExplorerWidthCb) setAnalyzerExplorerWidth = setAnalyzerExplorerWidthCb;
 
+  loadWeaponDisplayNames();
   initExplorerResize();
 
   const browseBtn = document.querySelector('#analyzer-browse-btn');
@@ -1273,7 +1287,7 @@ function renderPlayerDetailsBody(tabContainer, p) {
       <div class="analyzer-stat-card"><div class="stat-title">${STRINGS.ANALYZER.AVG_LIFESPAN_TITLE}</div><div class="stat-value">${STRINGS.ANALYZER.secondsSuffix(avgLife.toFixed(1))}</div><div class="stat-badge text-muted">${STRINGS.ANALYZER.minMaxBadge(minLife.toFixed(0), maxLife.toFixed(0))}</div></div>
     </div>
 
-    <div class="analyzer-two-col">
+    <div class="analyzer-stacked-sections">
       <div>
         <h4 class="analyzer-section-title">${STRINGS.ANALYZER.WEAPON_BREAKDOWN_TITLE}</h4>
         <div class="table-wrapper" style="max-height:320px;">

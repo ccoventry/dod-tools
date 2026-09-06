@@ -1,14 +1,18 @@
-import { startCaptureBatch, cancelCaptureBatch, validatePaths, calculateExportPoolSpace, diagnoseCaptureOutputPaths, scanOrphanedPreviews, deleteOrphanedPreviews, checkEngineProcesses, launchStandaloneGame } from './ipc_bridge.js';
+import { startCaptureBatch, cancelCaptureBatch, validatePaths, calculateExportPoolSpace, diagnoseCaptureOutputPaths, scanOrphanedPreviews, deleteOrphanedPreviews, checkEngineProcesses, launchStandaloneGame, launchObs, readCfgCommands } from './ipc_bridge.js';
+import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { open } from '@tauri-apps/plugin-dialog';
 import { themedConfirm } from './themed_confirm.js';
 import { showToast } from './toast.js';
 import { requestProcessGuardedLaunch } from './detail_pane.js';
 import { createListEditor } from './list_editor.js';
-import { refreshCfgWarnings } from './cfg_warnings.js';
+import { refreshCfgWarnings, bannedCommandCount } from './cfg_warnings.js';
+import { isObsConnected, obsConnectionChecked, setObsConnected } from './obs_status.js';
 import { refreshRollFloors } from './roll_floors.js';
 import { streakUid, recordTake } from './take_index.js';
 import { STRINGS } from './strings.js';
 import { notify, isNotificationEnabled } from './os_notifications.js';
+import { isLocalOrDebugBuild } from './updater_pane.js';
 
 let unlistenCaptureStatus = null;
 let unlistenDemoLoading = null;
@@ -35,8 +39,7 @@ let currentOnSettingsChange = null;
 let currentOnStatusChange = null;
 // Returns the live project-level take index object (take_key -> uid[]) owned
 // by main.js, so recording into it here persists into the same object that
-// gets serialized on Save Session. Null in Quick-Clip-only contexts where
-// main.js hasn't wired one up yet.
+// gets serialized on Save Session. Null until main.js wires one up.
 let currentGetTakeIndex = null;
 // Fired once per batch when capture_status reports it's no longer running
 // (finished, cancelled, or errored) — main.js's updateExportPoolIndicator,
@@ -74,6 +77,48 @@ const FIELDS_THAT_BECOME_COMMANDS = [
   '#config-decal-flush',
 ];
 
+// Illustrative gap between the two kill anchors in the timing diagram below
+// — a real streak's length varies per capture; this is just enough to make
+// Start Lead/Stop Trail visually distinct from Pre-roll/Post-roll.
+const TIMING_DIAGRAM_ILLUSTRATIVE_STREAK_SECONDS = 8.0;
+
+/**
+ * Rebuilds the Timings tab's execution-timeline table (#150) — revives the
+ * pre-Tauri egui build's "Mock Execution Timeline" (native/src/bin/gui/views/
+ * capture/panels.rs, dropped in the egui purge): a sorted list of events at
+ * their time relative to the first kill (0.0s), not a to-scale bar. Called
+ * once at init and on every `input` event from the five timing fields.
+ */
+export function renderTimingDiagram() {
+  const preRoll = parseFloat(document.querySelector('#config-pre-roll')?.value) || 0;
+  const postRoll = parseFloat(document.querySelector('#config-post-roll')?.value) || 0;
+  const startLead = parseFloat(document.querySelector('#config-record-start-lead')?.value) || 0;
+  const stopTrail = parseFloat(document.querySelector('#config-record-stop-trail')?.value) || 0;
+  const initialDelay = parseFloat(document.querySelector('#config-initial-delay')?.value) || 0;
+  const streak = TIMING_DIAGRAM_ILLUSTRATIVE_STREAK_SECONDS;
+
+  const note = document.querySelector('#timing-diagram-initial-delay-note');
+  if (note) note.textContent = STRINGS.CAPTURE_CONFIG.timingDiagramInitialDelayNote(initialDelay);
+
+  const C = STRINGS.CAPTURE_CONFIG;
+  const events = [
+    { time: -(startLead + preRoll), label: C.timingDiagramPreRollEvent(preRoll), anchor: false },
+    { time: -startLead, label: C.timingDiagramRecordStartEvent(startLead), anchor: false },
+    { time: 0, label: C.TIMING_DIAGRAM_FIRST_KILL_EVENT, anchor: true },
+    { time: streak, label: C.TIMING_DIAGRAM_LAST_KILL_EVENT, anchor: true },
+    { time: streak + stopTrail, label: C.timingDiagramRecordStopEvent(stopTrail), anchor: false },
+    { time: streak + stopTrail + postRoll, label: C.timingDiagramPostRollEvent(postRoll), anchor: false },
+  ].sort((a, b) => a.time - b.time);
+
+  const tbody = document.querySelector('#timing-diagram-events');
+  if (!tbody) return;
+  tbody.innerHTML = events.map((e) => `
+    <tr${e.anchor ? ' class="timing-diagram-anchor"' : ''}>
+      <td class="timing-diagram-time">${C.timingDiagramTime(e.time)}</td>
+      <td>${e.label}</td>
+    </tr>`).join('');
+}
+
 /**
  * Re-check the game's config files against the commands a capture would apply.
  *
@@ -87,9 +132,9 @@ const FIELDS_THAT_BECOME_COMMANDS = [
  * the hl.exe path changes, by the command editors on every edit, and by the
  * settings below that the pipeline turns into commands of its own.
  */
-export function refreshInitCommandWarnings() {
+export async function refreshInitCommandWarnings() {
   const gamePath = document.querySelector('#hl-path-input')?.value?.trim() || '';
-  refreshCfgWarnings(
+  await refreshCfgWarnings(
     gamePath,
     initCommands.map((c) => c.trim()).filter((c) => c.length > 0),
     // Relation and offset travel with the command: they decide which one the
@@ -108,6 +153,10 @@ export function refreshInitCommandWarnings() {
       decalFlush: document.querySelector('#config-decal-flush')?.checked ?? true,
     }
   );
+  // A banned command appearing or disappearing has to reach Start Capture
+  // Batch immediately, not wait for some unrelated field to trigger the next
+  // refreshLaunchGuard() — this scan is the only thing that would ever know.
+  refreshLaunchGuard();
 }
 
 /** Generates a `session_YYYYMMDD_HHMMSS` id so each batch routes into its own
@@ -211,6 +260,143 @@ function describeProblemPaths(problems) {
 }
 
 /**
+ * Runs `obs_test_connection` and renders the result — the manual Test
+ * Connection button's own logic, extracted so it can also be run
+ * automatically when actively switching into OBS mode (main.js), and as
+ * Start Capture Batch's own pre-flight below. Deliberately NOT run at app
+ * startup even when OBS mode is already the persisted choice — OBS is the
+ * user's own program, not expected to already be running just because
+ * dod-tools opened, same as HLAE.
+ *
+ * `auto` skips the button disable/relabel churn (there was no click to
+ * originate it) but still populates the same status panel — quiet the same
+ * way `obs_check_orphan` is quiet at startup: "OBS is not running yet" is
+ * the ordinary case here, not something to interrupt the user over.
+ *
+ * Lives here rather than main.js (where the OBS Connection UI is otherwise
+ * wired up) specifically so Start Capture Batch's click handler below can
+ * call it directly — main.js already imports from this module, so importing
+ * this back the other way would be circular.
+ */
+export async function runObsConnectionTest({ auto = false } = {}) {
+  const btn = document.querySelector('#obs-test-btn');
+  const status = document.querySelector('#obs-status');
+  if (!status) return;
+  const label = btn ? btn.textContent : '';
+  if (!auto && btn) { btn.disabled = true; btn.textContent = STRINGS.CAPTURE_CONFIG.OBS_TESTING; }
+  status.style.display = '';
+  status.textContent = STRINGS.CAPTURE_CONFIG.OBS_TESTING;
+  try {
+    const report = await invoke('obs_test_connection', {
+      host: document.querySelector('#config-obs-host')?.value?.trim() || '127.0.0.1',
+      port: parseInt(document.querySelector('#config-obs-port')?.value, 10) || 4455,
+      password: document.querySelector('#config-obs-password')?.value || '',
+      gameWidth: parseInt(document.querySelector('#config-res-width')?.value, 10) || 1280,
+      gameHeight: parseInt(document.querySelector('#config-res-height')?.value, 10) || 720,
+      obsCaptureFps: parseInt(document.querySelector('#config-obs-capture-fps')?.value, 10) || 120,
+    });
+    renderObsReport(report);
+  } catch (e) {
+    // Every invoke needs this: without it a Rust-side failure is swallowed
+    // and the button simply appears to do nothing.
+    status.textContent = STRINGS.CAPTURE_CONFIG.obsTestFailed(e);
+    setObsConnected(false);
+  } finally {
+    if (!auto && btn) { btn.disabled = false; btn.textContent = label || STRINGS.CAPTURE_CONFIG.OBS_TEST_BUTTON; }
+    // Whatever this check found, Start Capture Batch's gate (issue #147)
+    // needs to reflect it immediately, not wait for some unrelated field to
+    // trigger the next refreshLaunchGuard().
+    refreshLaunchGuard();
+  }
+}
+
+/**
+ * Renders an `obs_test_connection` result into the status row.
+ *
+ * Warnings are shown rather than swallowed: the canvas mismatch in particular
+ * costs most of the picture's detail and has no visible symptom, so it would
+ * otherwise be found only by comparing a finished clip against expectations.
+ * Should be rare now that `obs_test_connection` provisions dod-tools' own
+ * profile/scene itself rather than validating whatever the user picked, but
+ * still worth surfacing if OBS itself refuses one of those settings.
+ */
+function renderObsReport(report) {
+  const status = document.querySelector('#obs-status');
+  if (!status) return;
+  status.style.display = '';
+
+  setObsConnected(!!report?.connected);
+
+  if (!report?.connected) {
+    status.textContent = report?.error || STRINGS.CAPTURE_CONFIG.OBS_UNREACHABLE;
+    return;
+  }
+
+  const lines = [
+    STRINGS.CAPTURE_CONFIG.obsConnectedSummary(report.obs_version, report.websocket_version),
+    // Read-only — dod-tools always targets its own fixed profile/scene now,
+    // there is nothing here for the user to pick.
+    STRINGS.CAPTURE_CONFIG.obsUsingSummary(report.current_profile, report.current_scene),
+    STRINGS.CAPTURE_CONFIG.obsCanvasSummary(report.canvas, report.output, report.fps),
+    STRINGS.CAPTURE_CONFIG.obsRecordingToSummary(report.record_directory),
+  ];
+  if (report.missing_requests?.length) {
+    lines.push(STRINGS.CAPTURE_CONFIG.obsMissingRequests(report.missing_requests));
+  }
+  if (report.recording) lines.push(STRINGS.CAPTURE_CONFIG.OBS_ALREADY_RECORDING);
+  if (report.streaming) lines.push(STRINGS.CAPTURE_CONFIG.OBS_ALREADY_STREAMING);
+  for (const w of report.warnings || []) lines.push(w);
+  status.textContent = lines.join('\n');
+}
+
+// obs-websocket does not start accepting connections the instant OBS's
+// process starts — OBS has its own window/plugin init to get through first
+// — so a single immediate retry after launching would still usually find it
+// unreachable. Polls instead of guessing a single fixed wait, since actual
+// startup time depends entirely on the machine and how many plugins/scenes
+// OBS has to load; not a measured constant like this codebase's other
+// timing figures, just a reasonable ceiling.
+const OBS_LAUNCH_RETRY_ATTEMPTS = 10;
+const OBS_LAUNCH_RETRY_DELAY_MS = 2000;
+
+/**
+ * Launches OBS (via the configured "OBS Path") and retries the connection —
+ * which also provisions dod-tools' own profile/scene, same as any other
+ * check — while it starts up. Used by Start Capture Batch's pre-flight below
+ * so OBS doesn't have to already be open (much like HLAE doesn't) — the
+ * batch can bring it up itself. Returns whether OBS ended up reachable.
+ *
+ * No-ops (returns false immediately) if no OBS path is configured — nothing
+ * to launch, and the caller's existing "not connected" error already covers
+ * that case correctly.
+ */
+async function launchObsAndRetry() {
+  const obsExePath = document.querySelector('#config-obs-exe-path')?.value?.trim();
+  if (!obsExePath) return false;
+
+  const status = document.querySelector('#obs-status');
+  if (status) {
+    status.style.display = '';
+    status.textContent = STRINGS.CAPTURE_CONFIG.OBS_LAUNCHING_AND_CONNECTING;
+  }
+
+  try {
+    await launchObs();
+  } catch (err) {
+    // Already toasted by ipc_bridge.js (missing/invalid path, etc.) — nothing
+    // was launched, so there is nothing to wait for.
+    return false;
+  }
+
+  for (let attempt = 0; attempt < OBS_LAUNCH_RETRY_ATTEMPTS; attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, OBS_LAUNCH_RETRY_DELAY_MS));
+    await runObsConnectionTest({ auto: true });
+    if (isObsConnected()) return true;
+  }
+  return false;
+}
+
+/**
  * Recomputes required-vs-available disk space and hard-locks the Launch
  * button (rather than just toasting at click time) whenever the capture
  * pool can't cover it — including the zero-drive case, which previously
@@ -301,16 +487,42 @@ export async function refreshLaunchGuard(state) {
   // Pool is usable overall (at least one real drive with room) but not every
   // configured entry is — worth a heads-up, not worth blocking the batch.
   const hasPartialProblems = !noDrivesConfigured && !noUsableSpace && !insufficientSpace && problemPaths.length > 0;
-  const blocked = noHighlightsSelected || noDrivesConfigured || noUsableSpace || insufficientSpace;
+  // Issue #147: surface OBS-not-reachable up front rather than failing deep
+  // inside the capture engine. Reflects obs_status.js's own most recent check
+  // (main.js runs it on switching into OBS mode; this module's own
+  // runObsConnectionTest also runs fresh as Start Capture Batch's own
+  // pre-flight, below) rather than re-querying OBS here. Warning-only, not
+  // blocking: the click handler launches OBS and retries the connection
+  // itself when it finds this state, so disabling the button here would
+  // deny that recovery path a first click ever reaching it — OBS is not
+  // expected to already be open just because dod-tools switched into OBS
+  // mode or even opened at all.
+  const obsMode = document.querySelector('#config-capture-mode')?.value === 'obs';
+  const obsNotReady = obsMode && obsConnectionChecked() && !isObsConnected();
+  // Reflects cfg_warnings.js's own most recent scan rather than fetching its
+  // own — a banned command (cfg_scan::BANNED_COMMANDS) is a correctness bug
+  // waiting to happen, not a resource problem, so it takes priority over
+  // every check below it, OBS included.
+  const bannedCount = bannedCommandCount();
+  const bannedCommandsPresent = bannedCount > 0;
+  const blocked = bannedCommandsPresent || noHighlightsSelected || noDrivesConfigured || noUsableSpace || insufficientSpace;
 
   if (!capturingInFlight) {
     startBtn.disabled = blocked;
   }
 
   if (warningEl) {
-    // First, and in the calm colour: an empty selection is the ordinary state
-    // of a freshly scanned workspace, not a misconfiguration to shout about.
-    if (noHighlightsSelected) {
+    // First of all, ahead of even the calm cases below: a banned command is
+    // an active correctness bug, not an incomplete-but-normal state.
+    if (bannedCommandsPresent) {
+      warningEl.style.color = '#f44336';
+      warningEl.textContent = STRINGS.CAPTURE.bannedCommandsWarning(bannedCount);
+      warningEl.style.display = 'block';
+    } else if (obsNotReady) {
+      warningEl.style.color = '#f44336';
+      warningEl.textContent = STRINGS.CAPTURE.OBS_NOT_CONNECTED_WARNING;
+      warningEl.style.display = 'block';
+    } else if (noHighlightsSelected) {
       warningEl.style.color = '#64b5f6';
       warningEl.textContent = STRINGS.CAPTURE.NO_HIGHLIGHTS_SELECTED_WARNING;
       warningEl.style.display = 'block';
@@ -477,9 +689,17 @@ function renderClearPreviewsResults() {
 // via `requestProcessGuardedLaunch` instead of duplicating that modal's
 // click listeners here.
 
-function initStandaloneLaunchButton() {
+async function initStandaloneLaunchButton() {
   const btn = document.querySelector('#btn-launch-standalone-game');
   if (!btn) return;
+
+  // Only useful for iterating on the pipeline itself — most users never need
+  // to open HLAE+DoD with no demo loaded, so this stays hidden outside a
+  // local/debug build.
+  if (!(await isLocalOrDebugBuild())) {
+    btn.style.display = 'none';
+    return;
+  }
 
   async function performLaunch() {
     btn.disabled = true;
@@ -511,6 +731,42 @@ function initStandaloneLaunchButton() {
     }
 
     await performLaunch();
+  });
+}
+
+// ── Import Config ─────────────────────────────────────────────────────────
+//
+// Lets a manually exec'd movie config's lines land in Initial Commands
+// directly — STUFFTEXT there reliably wins over anything a config.cfg or
+// movie.cfg sets, which is what makes this the alternative to relying on an
+// autoexec'd movie config the pipeline never sees (see the info tooltip on
+// the Initial Commands label).
+
+function initImportCfgButton() {
+  const btn = document.querySelector('#import-cfg-btn');
+  if (!btn) return;
+
+  btn.addEventListener('click', async () => {
+    const picked = await open({
+      title: STRINGS.MAIN.SELECT_MOVIE_CFG_TITLE,
+      multiple: false,
+      filters: [{ name: STRINGS.MAIN.CONFIG_FILTER_NAME, extensions: ['cfg'] }],
+    });
+    if (!picked || Array.isArray(picked)) return;
+
+    try {
+      const lines = await readCfgCommands(picked);
+      if (lines.length === 0) {
+        showToast(STRINGS.CAPTURE_CONFIG.IMPORTED_CFG_EMPTY_TOAST, 'info');
+        return;
+      }
+      lines.forEach((line) => initCommandsEditor.addItem(line));
+      notifySettingsChange();
+      refreshInitCommandWarnings();
+      showToast(STRINGS.CAPTURE_CONFIG.importedCfgToast(lines.length), 'success');
+    } catch (err) {
+      // Already toasted by ipc_bridge.js.
+    }
   });
 }
 
@@ -639,6 +895,7 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
 
   initClearPreviewsModal();
   initStandaloneLaunchButton();
+  initImportCfgButton();
 
   // The pipeline turns some settings into init commands, so the warnings go
   // stale when one changes.
@@ -680,10 +937,17 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
   // connection fields and the capture-mode selector — all three read at
   // capture/save time but never saved on their own change, so edits looked
   // like they took but silently reverted on the next launch/refresh.
-  ['#config-initial-delay', '#config-obs-host', '#config-obs-port', '#config-obs-password'].forEach(selector => {
+  ['#config-initial-delay', '#config-obs-host', '#config-obs-port', '#config-obs-password', '#config-obs-exe-path', '#config-obs-capture-fps'].forEach(selector => {
     const el = document.querySelector(selector);
     if (el) el.addEventListener('input', () => notifySettingsChange());
   });
+  // Keeps the Timings tab's visual timeline (#150) in step with whichever
+  // of these five fields was just edited.
+  ['#config-pre-roll', '#config-post-roll', '#config-record-start-lead',
+   '#config-record-stop-trail', '#config-initial-delay'].forEach(selector => {
+    document.querySelector(selector)?.addEventListener('input', renderTimingDiagram);
+  });
+  renderTimingDiagram();
   // Checkboxes read by persistAppSettings/buildCapturePayload but with no
   // change listener of their own — same missing-wiring bug as the Timing
   // Options fields above, just on Path Routing / Capture Output checkboxes.
@@ -693,7 +957,7 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
    '#config-notify-captures-done', '#config-notify-renders-done', '#config-notify-error',
    // A <select> fires `change`, not `input` — it belongs here rather than in
    // the list above, which is wired for text/number/checkbox inputs.
-   '#config-capture-codec', '#config-capture-mode', '#config-obs-scene'].forEach(selector => {
+   '#config-capture-codec', '#config-capture-mode'].forEach(selector => {
     const el = document.querySelector(selector);
     if (el) el.addEventListener('change', () => notifySettingsChange());
   });
@@ -916,6 +1180,7 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
     lastDispatch = { sessionId, streaks: selectedStreaks, demoPaths: selectedDemoPaths };
 
     const captureFpsVal = parseInt(document.querySelector("#config-capture-fps")?.value, 10) || 300;
+    const obsCaptureFpsVal = parseInt(document.querySelector("#config-obs-capture-fps")?.value, 10) || 120;
     const preRollVal = parseFloat(document.querySelector("#config-pre-roll")?.value) || 2.0;
     const postRollVal = parseFloat(document.querySelector("#config-post-roll")?.value) || 0.6;
     const recordStartLeadVal = parseFloat(document.querySelector("#config-record-start-lead")?.value) || 0.0;
@@ -943,7 +1208,6 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
     const obsHostVal = document.querySelector("#config-obs-host")?.value?.trim() || "127.0.0.1";
     const obsPortVal = parseInt(document.querySelector("#config-obs-port")?.value, 10) || 4455;
     const obsPasswordVal = document.querySelector("#config-obs-password")?.value || "";
-    const obsSceneVal = document.querySelector("#config-obs-scene")?.value || "";
     const saveLocalPatchedCopyVal = document.querySelector("#config-save-local-patched")?.checked || false;
     const addCondebugVal = document.querySelector("#config-add-condebug")?.checked || false;
 
@@ -995,7 +1259,6 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
       obs_host: obsHostVal,
       obs_port: obsPortVal,
       obs_password: obsPasswordVal,
-      obs_scene: obsSceneVal,
       save_local_patched_copy: saveLocalPatchedCopyVal,
       add_condebug: addCondebugVal,
       streaks: selectedStreaks,
@@ -1003,6 +1266,7 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
       post_roll_seconds: postRollVal,
       capture_directories: outputDrivePool,
       capture_fps: captureFpsVal,
+      obs_capture_fps: obsCaptureFpsVal,
       drives: state.targetDrives || [],
       record_start_lead: recordStartLeadVal,
       record_stop_trail: recordStopTrailVal,
@@ -1020,6 +1284,22 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
   if (startBtn) {
     startBtn.addEventListener('click', async () => {
       const state = getState ? getState() : { scanPaths: [], targetDrives: [], currentScannedDemos: [] };
+
+      // OBS mode: verify live, right before committing to a batch, rather
+      // than trusting whatever a check found minutes (or a whole session)
+      // ago — OBS may not have even been open the last time anything
+      // checked. This is the actual connectivity check now; see
+      // runObsConnectionTest's own doc comment for why it isn't run
+      // proactively at app startup instead. If it's not reachable, launch
+      // it (much like HLAE doesn't need to already be open either) and wait
+      // for it to come up before giving up.
+      if (document.querySelector('#config-capture-mode')?.value === 'obs') {
+        await runObsConnectionTest();
+        if (!isObsConnected() && !(await launchObsAndRetry())) {
+          showToast(STRINGS.CAPTURE.OBS_NOT_CONNECTED_WARNING, 'error');
+          return;
+        }
+      }
 
       // Hard safety gate — recomputed fresh on every click regardless of the
       // button's current disabled state, so a stale/unrefreshed guard can

@@ -12,14 +12,15 @@ import {
   openActivityLog,
   checkHlaeFfmpeg,
   linkHlaeFfmpeg,
-  diagnoseExecutablePaths
+  diagnoseExecutablePaths,
+  launchObs
 } from './ipc_bridge.js';
 import { renderMasterList, initMasterPane } from './master_pane.js';
 import { initMapWarnings, refreshMapWarnings, resetMapWarnings } from './map_warnings.js';
 import { initRollFloors } from './roll_floors.js';
 
-import { renderDetailView, initDetailPane } from './detail_pane.js';
-import { initCaptureUI, getCommandsState, hydrateCommandsState, refreshLaunchGuard, refreshInitCommandWarnings } from './capture_pane.js';
+import { renderDetailView, initDetailPane, updateStreakVisuals } from './detail_pane.js';
+import { initCaptureUI, getCommandsState, hydrateCommandsState, refreshLaunchGuard, refreshInitCommandWarnings, runObsConnectionTest, renderTimingDiagram } from './capture_pane.js';
 import { initRenderUI, checkRenderRecoveryOnStartup } from './render_pane.js';
 import { initAuditorPane } from './auditor_pane.js';
 import { initThemedConfirm, themedConfirm } from './themed_confirm.js';
@@ -32,8 +33,10 @@ import { getCheckedDemoPaths, clearCheckedPaths, setCheckedDemoPaths, getVisible
 import { initErrorReporter } from './error_reporter.js';
 import { STRINGS } from './strings.js';
 import { applyStaticStrings } from './apply_strings.js';
+import { initInfoTooltips } from './info_tooltip.js';
 import { initOsNotifications, updateNotificationSettings } from './os_notifications.js';
 import { initUpdater, checkForUpdatesNow } from './updater_pane.js';
+import { initAppMenu } from './app_menu.js';
 
 // Registered at module load, before DOMContentLoaded — so it's catching
 // from the earliest possible moment, not just once the app's own init
@@ -80,58 +83,6 @@ async function refreshPathWarnings() {
     row.warning.textContent = message;
     row.warning.style.display = message ? '' : 'none';
   });
-}
-
-/** Highlights whichever side of the capture-mode toggle is currently in force. */
-/**
- * Renders an `obs_test_connection` result into the status row and scene list.
- *
- * Warnings are shown rather than swallowed: the canvas mismatch in particular
- * costs most of the picture's detail and has no visible symptom, so it would
- * otherwise be found only by comparing a finished clip against expectations.
- */
-function renderObsReport(report) {
-  const status = document.querySelector('#obs-status');
-  if (!status) return;
-  status.style.display = '';
-
-  if (!report?.connected) {
-    status.textContent = report?.error || STRINGS.CAPTURE_CONFIG.OBS_UNREACHABLE;
-    return;
-  }
-
-  const lines = [
-    STRINGS.CAPTURE_CONFIG.obsConnectedSummary(report.obs_version, report.websocket_version),
-    STRINGS.CAPTURE_CONFIG.obsCanvasSummary(report.canvas, report.output, report.fps),
-    STRINGS.CAPTURE_CONFIG.obsRecordingToSummary(report.record_directory),
-  ];
-  if (report.missing_requests?.length) {
-    lines.push(STRINGS.CAPTURE_CONFIG.obsMissingRequests(report.missing_requests));
-  }
-  if (report.recording) lines.push(STRINGS.CAPTURE_CONFIG.OBS_ALREADY_RECORDING);
-  if (report.streaming) lines.push(STRINGS.CAPTURE_CONFIG.OBS_ALREADY_STREAMING);
-  for (const w of report.warnings || []) lines.push(w);
-  status.textContent = lines.join('\n');
-
-  // Replace the list with what OBS actually has, keeping the current choice if
-  // it survived. Scene names are scoped to a collection, so a name saved under
-  // a different one legitimately disappears here.
-  const sel = document.querySelector('#config-obs-scene');
-  if (sel && Array.isArray(report.scenes)) {
-    const wanted = sel.value;
-    sel.innerHTML = '';
-    const none = document.createElement('option');
-    none.value = '';
-    none.textContent = STRINGS.CAPTURE_CONFIG.OBS_SCENE_CURRENT;
-    sel.appendChild(none);
-    for (const name of report.scenes) {
-      const opt = document.createElement('option');
-      opt.value = name;
-      opt.textContent = name;
-      sel.appendChild(opt);
-    }
-    sel.value = report.scenes.includes(wanted) ? wanted : '';
-  }
 }
 
 /** The selected capture mode id, defaulting to the path that always works. */
@@ -219,6 +170,12 @@ function applyCaptureModeUI() {
   // connection to OBS capture that does not exist yet.
   const codecGroup = document.querySelector('#capture-codec-group');
   if (codecGroup) codecGroup.style.display = video ? '' : 'none';
+
+  // Capture FPS is non-real-time for the other two modes but meaningless for
+  // OBS, which has its own separate OBS Capture FPS field below — showing
+  // both invites setting the wrong one.
+  const captureFpsGroup = document.querySelector('#capture-fps-group');
+  if (captureFpsGroup) captureFpsGroup.style.display = obs ? 'none' : '';
 
   // The OBS block follows the same rule: hidden rather than disabled,
   // because showing a dead connection form in frame-sequence mode would
@@ -330,6 +287,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   // [data-str-aria-label] element's text/attribute from STRINGS before any
   // other DOM-dependent init runs below.
   applyStaticStrings();
+  initInfoTooltips();
 
   // Not awaited: the permission prompt (first run only) shouldn't block the
   // rest of startup, and every call site in os_notifications.js already
@@ -366,43 +324,6 @@ window.addEventListener("DOMContentLoaded", async () => {
   // changes" prompt on window close. Cleared by saveProjectSession() and
   // Load Session; set by markProjectDirty() at every mutation site.
   let hasUnsavedChanges = false;
-  // Connected-workspace mode (Phase 4): "quick-clip" (nothing persists,
-  // blunt clearing, re-scan replaces demos wholesale) or "workspace"
-  // (project file + take index persist, clearing protects tracked demos,
-  // re-scan merges by uid). Defaults to Quick-Clip on a fresh install —
-  // Load Session or "Save as Workspace..." are what switch it to Workspace.
-  let studioMode = 'quick-clip';
-
-  const STUDIO_MODE_CAPTIONS = {
-    'quick-clip': STRINGS.NAV.QUICK_CLIP_CAPTION,
-    'workspace': STRINGS.NAV.WORKSPACE_CAPTION,
-  };
-
-  function applyStudioModeUI() {
-    const switchInput = document.querySelector('#studio-mode-switch-input');
-    if (switchInput) switchInput.checked = studioMode === 'workspace';
-    document.querySelectorAll('.studio-mode-label').forEach(label => {
-      label.classList.toggle('active', label.dataset.mode === studioMode);
-    });
-    const captionEl = document.querySelector('#studio-mode-caption');
-    if (captionEl) captionEl.textContent = STUDIO_MODE_CAPTIONS[studioMode] || '';
-    const saveBtnEl = document.querySelector('#save-project-btn');
-    if (saveBtnEl) {
-      saveBtnEl.textContent = studioMode === 'quick-clip' ? STRINGS.NAV.SAVE_AS_WORKSPACE_BUTTON : STRINGS.NAV.SAVE_SESSION_BUTTON;
-      saveBtnEl.title = studioMode === 'quick-clip'
-        ? STRINGS.NAV.SAVE_AS_WORKSPACE_TITLE
-        : STRINGS.NAV.SAVE_SESSION_TITLE;
-    }
-  }
-
-  function setStudioMode(mode) {
-    if (mode !== 'quick-clip' && mode !== 'workspace') return;
-    if (studioMode === mode) return;
-    studioMode = mode;
-    applyStudioModeUI();
-    persistAppSettings();
-  }
-
   /** Every highlight's durable uid across every currently-scanned demo — the
    *  "still exists" set pruneTakeIndex() checks the take index against on save. */
   function collectAllUids() {
@@ -497,6 +418,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     const hlPath = document.querySelector('#hl-path-input')?.value?.trim() || "";
     const ffmpegPath = document.querySelector('#ffmpeg-override-path-input')?.value?.trim() || null;
     const captureFps = parseInt(document.querySelector('#config-capture-fps')?.value, 10) || 300;
+    const obsCaptureFps = parseInt(document.querySelector('#config-obs-capture-fps')?.value, 10) || 120;
     const preRoll = parseFloat(document.querySelector('#config-pre-roll')?.value) || 2.0;
     const postRoll = parseFloat(document.querySelector('#config-post-roll')?.value) || 0.6;
 
@@ -514,7 +436,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     const obsHost = document.querySelector('#config-obs-host')?.value?.trim() || '127.0.0.1';
     const obsPort = parseInt(document.querySelector('#config-obs-port')?.value, 10) || 4455;
     const obsPassword = document.querySelector('#config-obs-password')?.value || '';
-    const obsScene = document.querySelector('#config-obs-scene')?.value || '';
+    const obsExePath = document.querySelector('#config-obs-exe-path')?.value?.trim() || '';
     const addCondebug = document.querySelector('#config-add-condebug')?.checked || false;
 
     const autoClearLogs = document.querySelector('#config-auto-clear-logs')?.checked || false;
@@ -557,6 +479,7 @@ window.addEventListener("DOMContentLoaded", async () => {
       analyzer_explorer_width: analyzerExplorerWidth,
       language: "en",
       capture_fps: captureFps,
+      obs_capture_fps: obsCaptureFps,
       pre_roll_seconds: preRoll,
       post_roll_seconds: postRoll,
       resolution_width: resWidth,
@@ -569,7 +492,7 @@ window.addEventListener("DOMContentLoaded", async () => {
       obs_host: obsHost,
       obs_port: obsPort,
       obs_password: obsPassword,
-      obs_scene: obsScene,
+      obs_exe_path: obsExePath,
       add_condebug: addCondebug,
       auto_clear_logs: autoClearLogs,
       auto_clear_previews: autoClearPreviews,
@@ -594,8 +517,7 @@ window.addEventListener("DOMContentLoaded", async () => {
       render_codec: renderCodec,
       render_fps: renderFps,
       render_max_concurrent: renderMaxConcurrent,
-      render_export_dirs: renderExportDirs,
-      studio_mode: studioMode
+      render_export_dirs: renderExportDirs
     };
     // Reflects a just-flipped toggle immediately, rather than waiting on the
     // save round-trip below to come back through a settings reload.
@@ -616,10 +538,6 @@ window.addEventListener("DOMContentLoaded", async () => {
       if (settings.hlae_path) {
         const inputEl = document.querySelector('#hlae-path-input');
         if (inputEl) inputEl.value = settings.hlae_path;
-        // Not awaited: it is a status line, and blocking startup on a
-        // filesystem check of somebody else's install directory would trade a
-        // real cost for a cosmetic one.
-        refreshHlaeFfmpegStatus();
       }
       if (settings.hl_path) {
         const inputEl = document.querySelector('#hl-path-input');
@@ -633,9 +551,28 @@ window.addEventListener("DOMContentLoaded", async () => {
         const inputEl = document.querySelector('#ffmpeg-override-path-input');
         if (inputEl) inputEl.value = settings.ffmpeg_path;
       }
+      if (settings.hlae_path) {
+        // Issue #101: this reads both #hlae-path-input and
+        // #ffmpeg-override-path-input, so it has to run after *both* are
+        // populated above, not right after hlae_path alone — calling it
+        // there read the override field before its own value had landed,
+        // silently fell back to the bare "ffmpeg" PATH lookup, and produced
+        // a false "there is no file at \"ffmpeg\"" warning that then never
+        // got re-checked, since setting .value programmatically fires no
+        // 'change' event to trigger the listener further down this file.
+        //
+        // Not awaited: it is a status line, and blocking startup on a
+        // filesystem check of somebody else's install directory would trade a
+        // real cost for a cosmetic one.
+        refreshHlaeFfmpegStatus();
+      }
       if (settings.capture_fps) {
         const inputEl = document.querySelector('#config-capture-fps');
         if (inputEl) inputEl.value = settings.capture_fps;
+      }
+      if (settings.obs_capture_fps) {
+        const inputEl = document.querySelector('#config-obs-capture-fps');
+        if (inputEl) inputEl.value = settings.obs_capture_fps;
       }
       if (settings.pre_roll_seconds) {
         const inputEl = document.querySelector('#config-pre-roll');
@@ -675,20 +612,15 @@ window.addEventListener("DOMContentLoaded", async () => {
       if (obsPortEl) obsPortEl.value = settings.obs_port || 4455;
       const obsPasswordEl = document.querySelector('#config-obs-password');
       if (obsPasswordEl) obsPasswordEl.value = settings.obs_password || '';
-      const obsSceneEl = document.querySelector('#config-obs-scene');
-      if (obsSceneEl && settings.obs_scene) {
-        // The saved scene may not exist in the active collection — scene names
-        // are scoped to one — so it is added as an option rather than assumed
-        // present. Test Connection replaces the list with what OBS actually has.
-        if (!Array.from(obsSceneEl.options).some((o) => o.value === settings.obs_scene)) {
-          const opt = document.createElement('option');
-          opt.value = settings.obs_scene;
-          opt.textContent = settings.obs_scene;
-          obsSceneEl.appendChild(opt);
-        }
-        obsSceneEl.value = settings.obs_scene;
-      }
+      const obsExePathEl = document.querySelector('#config-obs-exe-path');
+      if (obsExePathEl) obsExePathEl.value = settings.obs_exe_path || '';
       applyCaptureModeUI();
+      // Deliberately NOT checked here at startup — OBS is the user's own
+      // program and, like HLAE, is not expected to already be running just
+      // because dod-tools opened. The connectivity check runs when actively
+      // switching into OBS mode below, and again as Start Capture Batch's
+      // own pre-flight (capture_pane.js) — both are moments the user is
+      // actually about to use it, unlike app launch.
       const addCondebugEl = document.querySelector('#config-add-condebug');
       if (addCondebugEl) addCondebugEl.checked = !!settings.add_condebug;
       const autoClearLogsEl = document.querySelector('#config-auto-clear-logs');
@@ -727,6 +659,9 @@ window.addEventListener("DOMContentLoaded", async () => {
         const inputEl = document.querySelector('#config-initial-delay');
         if (inputEl) inputEl.value = settings.initial_delay;
       }
+      // All five timing fields are set by this point — reflect the loaded
+      // values in the Timings tab's visual timeline (#150).
+      renderTimingDiagram();
       if (settings.fast_forward_speed) {
         const inputEl = document.querySelector('#config-fast-forward-speed');
         if (inputEl) inputEl.value = settings.fast_forward_speed;
@@ -768,9 +703,6 @@ window.addEventListener("DOMContentLoaded", async () => {
       // Both halves of the question are now in the DOM: the game path, and the
       // commands that will run against whatever its configs set.
       refreshInitCommandWarnings();
-      if (settings.studio_mode === 'workspace' || settings.studio_mode === 'quick-clip') {
-        studioMode = settings.studio_mode;
-      }
     }
   } catch (err) {
     console.error("Error loading startup settings:", err);
@@ -779,19 +711,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   // only the startup auto-check itself is conditional on settings being
   // present. Not awaited: a background check shouldn't block startup.
   initUpdater(settings, persistAppSettings);
-  applyStudioModeUI();
-
-  const studioModeSwitchInput = document.querySelector('#studio-mode-switch-input');
-  if (studioModeSwitchInput) {
-    studioModeSwitchInput.addEventListener('change', (e) => {
-      setStudioMode(e.target.checked ? 'workspace' : 'quick-clip');
-    });
-  }
-  // Clicking either label also flips the switch — matches how most
-  // dual-label toggle switches behave, not just the slider itself.
-  document.querySelectorAll('.studio-mode-label').forEach(label => {
-    label.addEventListener('click', () => setStudioMode(label.dataset.mode));
-  });
+  initAppMenu();
 
   // Save Project Session — also called from the Clear All modal's "Save
   // Session First" action, so it lives here as a plain function rather than
@@ -831,9 +751,8 @@ window.addEventListener("DOMContentLoaded", async () => {
         // Pruned against what's actually still scanned so the index
         // doesn't accumulate uids for demos removed from the project.
         takeIndex: pruneTakeIndex(takeIndex, collectAllUids()),
-        // Informational — Load Session always forces Workspace mode
-        // regardless of this value, since loading a persistent file is
-        // itself the thing that makes a window a Workspace.
+        // Kept for older-file/older-version compatibility — nothing on the
+        // reading side branches on it any more (Quick-Clip mode is gone).
         mode: 'workspace'
       }, null, 2);
       await invoke('save_project_session', { path: filePath, contents: projectData });
@@ -841,9 +760,6 @@ window.addEventListener("DOMContentLoaded", async () => {
       hasUnsavedChanges = false;
       updateSessionFileIndicator();
       showToast(STRINGS.MAIN.projectSavedToast(filePath), 'success');
-      // Saving a project file is what makes a window a Workspace — a save
-      // from Quick-Clip mode is exactly the "Save as Workspace..." action.
-      setStudioMode('workspace');
       return true;
     } catch (err) {
       console.error("Save project error:", err);
@@ -889,10 +805,10 @@ window.addEventListener("DOMContentLoaded", async () => {
             currentSessionPath = selected;
             hasUnsavedChanges = false;
             updateSessionFileIndicator();
-            // Loading a persistent project file is what makes a window a
-            // Workspace, regardless of what `data.mode` says (a hand-edited
-            // or older file might omit it or say otherwise).
-            setStudioMode('workspace');
+            // Load Session is reachable from any tab (#122) — jump to Studio
+            // so the loaded project is actually visible, same cross-tab-jump
+            // pattern as detail_pane.js's "View Match Telemetry" button.
+            switchNavTab('workspace');
             clearCheckedPaths();
             if (data.hlaePath) {
               const hlaeInput = document.querySelector('#hlae-path-input');
@@ -914,6 +830,13 @@ window.addEventListener("DOMContentLoaded", async () => {
             console.log(`[take-index] Loaded from ${selected}: ${Object.keys(takeIndex).length} take(s)`, takeIndex);
             if (data.demos) {
               currentScannedDemos = data.demos;
+              // timeline_string is a derived field, saved as a convenience
+              // snapshot rather than the source of truth — recompute it from
+              // each streak's raw kills on every load so a display-only fix
+              // (e.g. a weapon-name-resolution bug) shows correctly for
+              // sessions saved before the fix, instead of replaying whatever
+              // text got baked in at save time.
+              currentScannedDemos.forEach(demo => (demo.streaks || []).forEach(updateStreakVisuals));
               selectedDemoIdx = currentScannedDemos.length > 0 ? 0 : null;
               renderMasterList(currentScannedDemos, selectedDemoIdx, selectDemoAndRenderDetail);
               if (currentScannedDemos.length > 0) {
@@ -930,6 +853,27 @@ window.addEventListener("DOMContentLoaded", async () => {
       }
     });
   }
+
+  // New Session (#122/#149) — resets to the same blank state the app starts
+  // in: no session file, no demos, no take index. Reuses replaceScannedDemos
+  // (defined below, hoisted) for the demo-queue reset — same as Clear All —
+  // then overrides the dirty flag it sets, since a brand new untitled
+  // session has nothing to prompt about saving.
+  async function newSession() {
+    if (hasUnsavedChanges && hasSavableProject()) {
+      const outcome = await requestUnsavedChangesConfirmation();
+      if (!outcome) return; // Cancel — abort, keep current state
+    }
+    replaceScannedDemos([]);
+    currentSessionPath = null;
+    takeIndex = {};
+    hasUnsavedChanges = false;
+    updateSessionFileIndicator();
+    switchNavTab('workspace');
+    showToast(STRINGS.MAIN.NEW_SESSION_TOAST, 'success');
+  }
+
+  document.querySelector('#new-session-btn')?.addEventListener('click', () => newSession());
 
   // Executable & Path Browse Dialog Pickers
   const hlaeBrowseBtn = document.querySelector('#hlae-browse-btn');
@@ -987,34 +931,53 @@ window.addEventListener("DOMContentLoaded", async () => {
       applyCaptureModeUI();
       const legacy = document.querySelector('#config-ffmpeg-capture');
       if (legacy) legacy.dispatchEvent(new Event('change', { bubbles: true }));
+      // Deliberately no auto-check here: OBS is not expected to already be
+      // open just because the user switched into OBS mode, and warning about
+      // that on every switch was pure noise. Test Connection covers the
+      // manual case; Start Capture Batch runs the real pre-flight (and
+      // launches/retries OBS itself) right before it matters.
     });
   applyCaptureModeUI();
 
-  document.querySelector('#obs-test-btn')?.addEventListener('click', async () => {
-    const btn = document.querySelector('#obs-test-btn');
-    const status = document.querySelector('#obs-status');
-    if (!status) return;
-    const label = btn ? btn.textContent : '';
-    if (btn) { btn.disabled = true; btn.textContent = STRINGS.CAPTURE_CONFIG.OBS_TESTING; }
-    status.style.display = '';
-    status.textContent = STRINGS.CAPTURE_CONFIG.OBS_TESTING;
-    try {
-      const report = await invoke('obs_test_connection', {
-        host: document.querySelector('#config-obs-host')?.value?.trim() || '127.0.0.1',
-        port: parseInt(document.querySelector('#config-obs-port')?.value, 10) || 4455,
-        password: document.querySelector('#config-obs-password')?.value || '',
-        gameWidth: parseInt(document.querySelector('#config-res-width')?.value, 10) || 1280,
-        gameHeight: parseInt(document.querySelector('#config-res-height')?.value, 10) || 720,
-      });
-      renderObsReport(report);
-    } catch (e) {
-      // Every invoke needs this: without it a Rust-side failure is swallowed
-      // and the button simply appears to do nothing.
-      status.textContent = STRINGS.CAPTURE_CONFIG.obsTestFailed(e);
-    } finally {
-      if (btn) { btn.disabled = false; btn.textContent = label || STRINGS.CAPTURE_CONFIG.OBS_TEST_BUTTON; }
-    }
-  });
+  document.querySelector('#obs-test-btn')?.addEventListener('click', () => runObsConnectionTest());
+
+  const obsBrowseBtn = document.querySelector('#obs-browse-btn');
+  if (obsBrowseBtn) {
+    obsBrowseBtn.addEventListener('click', async () => {
+      try {
+        const selected = await open({
+          multiple: false,
+          filters: [{ name: STRINGS.MAIN.EXECUTABLE_FILTER_NAME, extensions: ['exe'] }],
+          title: STRINGS.MAIN.SELECT_OBS_EXE_TITLE
+        });
+        if (selected) {
+          const path = Array.isArray(selected) ? selected[0] : selected;
+          const inputEl = document.querySelector('#config-obs-exe-path');
+          if (inputEl) inputEl.value = path;
+          await persistAppSettings();
+        }
+      } catch (err) {
+        console.error("Error selecting OBS executable:", err);
+      }
+    });
+  }
+
+  const obsLaunchBtn = document.querySelector('#obs-launch-btn');
+  if (obsLaunchBtn) {
+    obsLaunchBtn.addEventListener('click', async () => {
+      const label = obsLaunchBtn.textContent;
+      obsLaunchBtn.disabled = true;
+      obsLaunchBtn.textContent = STRINGS.CAPTURE_CONFIG.OBS_LAUNCHING;
+      try {
+        await launchObs();
+      } catch (err) {
+        showToast(STRINGS.CAPTURE_CONFIG.obsLaunchFailed(err), 'error');
+      } finally {
+        obsLaunchBtn.disabled = false;
+        obsLaunchBtn.textContent = label;
+      }
+    });
+  }
 
   const hlaeFfmpegLinkBtn = document.querySelector('#hlae-ffmpeg-link-btn');
   if (hlaeFfmpegLinkBtn) {
@@ -1188,6 +1151,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     if (!pathsToScan || pathsToScan.length === 0) return;
 
     const scanStatusEl = document.querySelector('#scan-status');
+    const scanSpinnerEl = document.querySelector('#scan-spinner');
     const addFilesBtn = document.querySelector('#add-files-btn');
     const addFolderBtn = document.querySelector('#add-folder-btn');
     const cancelScanBtnInner = document.querySelector('#cancel-scan-btn');
@@ -1195,11 +1159,12 @@ window.addEventListener("DOMContentLoaded", async () => {
     if (addFilesBtn) addFilesBtn.disabled = true;
     if (addFolderBtn) addFolderBtn.disabled = true;
     if (cancelScanBtnInner) cancelScanBtnInner.disabled = false;
+    if (scanSpinnerEl) scanSpinnerEl.style.display = 'inline-block';
     if (scanStatusEl) scanStatusEl.textContent = STRINGS.MAIN.SCANNING_STATUS;
     showToast(STRINGS.MAIN.SCANNING_TOAST, 'info');
 
     const masterTableBody = document.querySelector('#master-demo-table-body');
-    if (masterTableBody) masterTableBody.innerHTML = `<tr style="text-align:center"><td colspan="7">${STRINGS.MAIN.SCANNING_PLEASE_WAIT_ROW}</td></tr>`;
+    if (masterTableBody) masterTableBody.innerHTML = `<tr style="text-align:center"><td colspan="8">${STRINGS.MAIN.SCANNING_PLEASE_WAIT_ROW}</td></tr>`;
 
     try {
       const newlyScanned = await scanDirectory(pathsToScan);
@@ -1212,15 +1177,11 @@ window.addEventListener("DOMContentLoaded", async () => {
       newlyScanned.forEach((demo) => {
         const existingIdx = indexByPath.get(demo.path);
         if (existingIdx !== undefined) {
-          // Workspace mode: a re-scan produces brand new streak objects, so
-          // replacing outright would wipe every status, selection, note and
-          // Kill Range edit on this demo — carry that user-owned state
-          // across by highlight uid. Quick-Clip mode intentionally keeps the
-          // old blunt behavior (nothing is meant to survive a re-scan there
-          // anyway) — simpler and matches "nothing persists" for that mode.
-          currentScannedDemos[existingIdx] = studioMode === 'workspace'
-            ? preserveHighlightState(currentScannedDemos[existingIdx], demo)
-            : demo;
+          // A re-scan produces brand new streak objects, so replacing
+          // outright would wipe every status, selection, note and Kill
+          // Range edit on this demo — carry that user-owned state across by
+          // highlight uid instead.
+          currentScannedDemos[existingIdx] = preserveHighlightState(currentScannedDemos[existingIdx], demo);
         } else {
           indexByPath.set(demo.path, currentScannedDemos.length);
           currentScannedDemos.push(demo);
@@ -1257,6 +1218,7 @@ window.addEventListener("DOMContentLoaded", async () => {
       if (addFilesBtn) addFilesBtn.disabled = false;
       if (addFolderBtn) addFolderBtn.disabled = false;
       if (cancelScanBtnInner) cancelScanBtnInner.disabled = true;
+      if (scanSpinnerEl) scanSpinnerEl.style.display = 'none';
     }
   }
 
@@ -1537,12 +1499,10 @@ window.addEventListener("DOMContentLoaded", async () => {
       : '';
   }
 
-  // Clear Untracked — removes only demos with no tracked work (isDemoTracked),
-  // same in both modes. Its own name already means "never touches tracked
-  // demos," so unlike Clear All there's nothing mode-dependent to decide
-  // here — Quick-Clip doesn't need a separate blunt-wipe branch. Scoped to
-  // the currently search-filtered demos, matching the select-all checkbox —
-  // a demo hidden by the search box is left untouched no matter its status.
+  // Clear Untracked — removes only demos with no tracked work (isDemoTracked).
+  // Scoped to the currently search-filtered demos, matching the select-all
+  // checkbox — a demo hidden by the search box is left untouched no matter
+  // its status.
   const clearUntrackedBtn = document.querySelector('#clear-untracked-btn');
   if (clearUntrackedBtn) {
     clearUntrackedBtn.addEventListener('click', () => {
@@ -1714,13 +1674,10 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   // Clear All — escalates to the shared modal (enumerating what would be
   // lost, offering to save first) whenever something tracked is actually at
-  // risk, same threshold as Clear Selected/row delete — in *either* mode.
-  // Quick-Clip only ever meant "nothing persists to disk automatically," not
-  // "no warning before losing work you set five seconds ago," so this no
-  // longer branches on studioMode at all. Also scoped to the search filter,
-  // same as the other two Clear actions — "All" means "all visible," with
-  // an explicit callout whenever that's fewer than the full queue, so it
-  // never silently does less than its name implies.
+  // risk, same threshold as Clear Selected/row delete. Also scoped to the
+  // search filter, same as the other two Clear actions — "All" means "all
+  // visible," with an explicit callout whenever that's fewer than the full
+  // queue, so it never silently does less than its name implies.
   const clearAllBtn = document.querySelector('#clear-all-btn');
   if (clearAllBtn) {
     clearAllBtn.addEventListener('click', async () => {
@@ -1845,7 +1802,6 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   // Context-Aware Shortcut Dispatcher
   window.addEventListener('keydown', (e) => {
-    const activeTab = document.querySelector('.nav-tab-btn.active')?.dataset.nav;
     const isCtrlO = (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'o';
     const isCtrlS = (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's';
     const isCtrlN = (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'n';
@@ -1862,15 +1818,13 @@ window.addEventListener("DOMContentLoaded", async () => {
       e.preventDefault();
     }
 
-    if (activeTab === 'workspace') {
-      // Ctrl+O always opens a project session file (Ctrl+S always saves one,
-      // unconditionally, below) — it previously depended on which Capture
-      // Studio sub-tab was active and opened the Add Demo Files picker
-      // instead when on Highlights, which doesn't match Ctrl+O's meaning
-      // in every other app.
-      if (isCtrlO) document.querySelector('#load-project-btn')?.click();
-      if (isCtrlS) document.querySelector('#save-project-btn')?.click();
-    }
+    // New/Save/Load Session work from any tab (#122) — previously gated to
+    // `activeTab === 'workspace'` because the buttons themselves only
+    // existed in the Studio nav-actions area; now that they live in the
+    // always-visible File menu, the shortcuts aren't tab-scoped either.
+    if (isCtrlN) document.querySelector('#new-session-btn')?.click();
+    if (isCtrlO) document.querySelector('#load-project-btn')?.click();
+    if (isCtrlS) document.querySelector('#save-project-btn')?.click();
   });
 
   // WebView2's native right-click menu (Reload/Inspect/browser Cut-Copy-

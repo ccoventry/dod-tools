@@ -7,6 +7,7 @@ mod player;
 mod round;
 mod scoreboard;
 mod time;
+mod weapon_names;
 
 use crate::{
     chat::use_chat_updates,
@@ -32,6 +33,9 @@ pub use crate::{
     player::{Connection, Player, PlayerGlobalId, SteamId},
     round::Round,
 };
+#[cfg(not(target_arch = "wasm32"))]
+pub use crate::localization::add_localization_search_path;
+pub use crate::weapon_names::{all_weapon_display_names, weapon_display_name};
 pub use dod::{Team, Weapon};
 
 #[derive(Debug)]
@@ -259,6 +263,11 @@ fn is_relevant_message(name_bytes: &[u8]) -> bool {
             | b"ReloadDone"
             | b"ResetHUD"
             | b"Health"
+            | b"CapMsg"
+            | b"InitObj"
+            | b"SetObj"
+            | b"StartProg"
+            | b"CancelProg"
     )
 }
 
@@ -1033,6 +1042,24 @@ pub fn extract_match_fingerprint(bytes: &[u8]) -> Result<DemoFingerprint, String
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn is_relevant_message_admits_objective_messages() {
+        for name in [
+            &b"CapMsg"[..],
+            b"InitObj",
+            b"SetObj",
+            b"StartProg",
+            b"CancelProg",
+        ] {
+            assert!(is_relevant_message(name), "{:?} should be relevant", name);
+        }
+    }
+
+    #[test]
+    fn is_relevant_message_rejects_unlisted_names() {
+        assert!(!is_relevant_message(b"NotARealMessage"));
+    }
 
     #[test]
     #[ignore]

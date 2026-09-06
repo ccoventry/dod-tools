@@ -26,6 +26,11 @@ pub struct AppSettings {
     pub analyzer_explorer_width: i32,
     pub language: String,
     pub capture_fps: i32,
+    /// OBS mode's own capture rate — see `PatcherConfig::obs_capture_fps`'s
+    /// doc comment for why this is a separate field rather than sharing
+    /// `capture_fps` with frame-sequence/direct-to-video.
+    #[serde(default = "default_obs_capture_fps")]
+    pub obs_capture_fps: i32,
     pub pre_roll_seconds: f32,
     pub post_roll_seconds: f32,
     #[serde(default = "default_resolution_width")]
@@ -73,15 +78,11 @@ pub struct AppSettings {
     /// switched off. Never logged — see `ObsConfig::redacted`.
     #[serde(default)]
     pub obs_password: String,
-    /// Scene to switch to for a batch, and restore afterwards. Empty means
-    /// "use whatever is active and change nothing".
+    /// Path to `obs64.exe`/`obs.exe`, for the "Launch OBS" button. Spawn-and-
+    /// forget, same as `launch_standalone_game` — OBS is the user's own
+    /// software, not ours to manage, so nothing here tracks its lifecycle.
     #[serde(default)]
-    pub obs_scene: String,
-    /// The collection `obs_scene` belongs to. Scene names are scoped to a
-    /// collection, so a remembered name alone can resolve to something
-    /// unrelated after the user switches.
-    #[serde(default)]
-    pub obs_scene_collection: String,
+    pub obs_exe_path: String,
     #[serde(default = "default_add_condebug")]
     pub add_condebug: bool,
     #[serde(default)]
@@ -121,11 +122,6 @@ pub struct AppSettings {
     /// JIT multi-drive export pool for Render Studio.
     #[serde(default)]
     pub render_export_dirs: Vec<String>,
-    /// Connected-workspace mode: "quick-clip" (nothing persists, blunt
-    /// clearing) or "workspace" (project file + take index persist, clearing
-    /// protects tracked demos). See docs/engineering_backlog.md Phase 4.
-    #[serde(default = "default_studio_mode")]
-    pub studio_mode: String,
     /// OS toast notification toggles (issue #98) — each stage independently
     /// switchable, not one global mute.
     #[serde(default = "default_notify_patching")]
@@ -151,6 +147,7 @@ pub struct AppSettings {
 }
 
 fn default_resolution_width() -> i32 { 1280 }
+fn default_obs_capture_fps() -> i32 { 120 }
 fn default_resolution_height() -> i32 { 720 }
 fn default_add_condebug() -> bool { true }
 fn default_initial_delay() -> f32 { 3.0 }
@@ -168,7 +165,6 @@ fn default_capture_mode() -> String {
 }
 fn default_obs_host() -> String { "127.0.0.1".to_string() }
 fn default_obs_port() -> u16 { 4455 }
-fn default_studio_mode() -> String { "quick-clip".to_string() }
 fn default_notify_patching() -> bool { true }
 fn default_notify_demo_loading() -> bool { true }
 fn default_notify_between_clips() -> bool { true }
@@ -191,6 +187,7 @@ impl Default for AppSettings {
             analyzer_explorer_width: default_analyzer_explorer_width(),
             language: "en".to_string(),
             capture_fps: 300,
+            obs_capture_fps: default_obs_capture_fps(),
             pre_roll_seconds: 2.0,
             post_roll_seconds: 0.6,
             resolution_width: default_resolution_width(),
@@ -203,8 +200,7 @@ impl Default for AppSettings {
             obs_host: default_obs_host(),
             obs_port: default_obs_port(),
             obs_password: String::new(),
-            obs_scene: String::new(),
-            obs_scene_collection: String::new(),
+            obs_exe_path: String::new(),
             add_condebug: default_add_condebug(),
             auto_clear_logs: false,
             auto_clear_previews: false,
@@ -232,7 +228,6 @@ impl Default for AppSettings {
             render_fps: default_render_fps(),
             render_max_concurrent: default_render_max_concurrent(),
             render_export_dirs: Vec::new(),
-            studio_mode: default_studio_mode(),
             notify_patching: default_notify_patching(),
             notify_demo_loading: default_notify_demo_loading(),
             notify_between_clips: default_notify_between_clips(),
@@ -274,9 +269,9 @@ impl AppSettings {
             let _ = fs::create_dir_all(parent);
         }
         let json = serde_json::to_string_pretty(self)
-            .map_err(|e| format!("Failed to serialize settings: {}", e))?;
+            .map_err(crate::messages::failed_to_serialize_settings)?;
         fs::write(&path, json)
-            .map_err(|e| format!("Failed to write settings file {:?}: {}", path, e))?;
+            .map_err(|e| crate::messages::failed_to_write_settings_file(&path, e))?;
         Ok(())
     }
 }
@@ -325,9 +320,6 @@ mod tests {
 
         assert_eq!(settings.hlae_path, "C:/hlae/hlae.exe");
         assert_eq!(settings.capture_fps, 300);
-        // Pre-Phase-4 settings.json files have no studio_mode key at all —
-        // must default to Quick-Clip rather than fail deserialization.
-        assert_eq!(settings.studio_mode, "quick-clip");
     }
 
     #[test]
@@ -341,6 +333,5 @@ mod tests {
         assert_eq!(restored.capture_fps, original.capture_fps);
         assert_eq!(restored.fast_forward_speed, original.fast_forward_speed);
         assert_eq!(restored.render_codec, original.render_codec);
-        assert_eq!(restored.studio_mode, original.studio_mode);
     }
 }

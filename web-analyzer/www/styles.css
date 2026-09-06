@@ -424,9 +424,13 @@ select {
   margin-top: 2px;
 }
 
-.analyzer-two-col {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
+/* Was a 2-column grid (Weapon Breakdown next to Kill Streaks) — squeezed
+   Kill Streaks into half-width on anything narrower than an ultrawide
+   monitor (#148). Stacked full-width instead; Kill Streaks especially
+   needed the room. */
+.analyzer-stacked-sections {
+  display: flex;
+  flex-direction: column;
   gap: 16px;
 }
 

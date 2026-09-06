@@ -14,6 +14,16 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+/// How many `PatchJob`s may run through `StreamPatcher::patch` at once. Each
+/// job is self-contained (own source/output paths, only shared reads of the
+/// patcher config and cancel token -- see issue #114), so this is a plain
+/// CPU/IO-bound worker pool, not one balanced across output drives: the
+/// patched demo file itself always lands on `capture_directories[0]`
+/// regardless of which drive a job's `CaptureBlock`s later route their
+/// recorded video to (see issue #8), so per-drive concurrency would give no
+/// real parallelism here.
+const PATCH_CONCURRENCY: usize = 4;
+
 use native::patch::{PatcherConfig, CaptureStreak, CaptureBlock, PatchJob, StreamPatcher, build_batch_queue, build_preview_patch_jobs, CustomCommand, CommandRelation};
 use native::capture_engine::{spawn_capture_engine, CaptureJob, EngineEvent};
 use native::log_markdown;
@@ -56,10 +66,6 @@ pub struct CapturePayload {
     #[serde(default)]
     pub obs_password: String,
     #[serde(default)]
-    pub obs_scene: String,
-    #[serde(default)]
-    pub obs_scene_collection: String,
-    #[serde(default)]
     pub save_local_patched_copy: bool,
     #[serde(default = "default_add_condebug")]
     pub add_condebug: bool,
@@ -72,6 +78,9 @@ pub struct CapturePayload {
     /// Directories used for dynamic drive failover and capture routing.
     pub capture_directories: Vec<String>,
     pub capture_fps: i32,
+    /// OBS mode's own capture rate — see `PatcherConfig::obs_capture_fps`.
+    #[serde(default = "default_obs_capture_fps_payload")]
+    pub obs_capture_fps: i32,
     /// Output drives for AOT capacity simulation and media routing.
     pub drives: Vec<String>,
     #[serde(default)]
@@ -113,6 +122,7 @@ pub struct CapturePayload {
 fn default_initial_delay() -> f32 { 3.0 }
 fn default_fast_forward_speed() -> f32 { 0.05 }
 fn default_resolution_width() -> i32 { 1280 }
+fn default_obs_capture_fps_payload() -> i32 { 120 }
 fn default_resolution_height() -> i32 { 720 }
 fn default_add_condebug() -> bool { true }
 
@@ -225,6 +235,7 @@ fn config_from_payload(payload: &CapturePayload) -> PatcherConfig {
     cfg.post_roll_seconds = payload.post_roll_seconds;
     cfg.capture_directories = payload.capture_directories.iter().map(std::path::PathBuf::from).collect();
     cfg.capture_fps = payload.capture_fps;
+    cfg.obs_capture_fps = payload.obs_capture_fps;
     cfg.record_start_lead = payload.record_start_lead;
     cfg.record_stop_trail = payload.record_stop_trail;
     cfg.initial_delay = payload.initial_delay;
@@ -242,8 +253,6 @@ fn config_from_payload(payload: &CapturePayload) -> PatcherConfig {
         host: if payload.obs_host.is_empty() { "127.0.0.1".to_string() } else { payload.obs_host.clone() },
         port: if payload.obs_port == 0 { 4455 } else { payload.obs_port },
         password: payload.obs_password.clone(),
-        scene: payload.obs_scene.clone(),
-        scene_collection: payload.obs_scene_collection.clone(),
     };
     cfg.save_local_patched_copy = payload.save_local_patched_copy;
     cfg.add_condebug = payload.add_condebug;
@@ -301,8 +310,8 @@ pub struct ObsConnectionReport {
     pub output: String,
     pub fps: f64,
     pub current_scene: String,
+    pub current_profile: String,
     pub scene_collection: String,
-    pub scenes: Vec<String>,
     pub warnings: Vec<String>,
 }
 
@@ -321,23 +330,28 @@ impl ObsConnectionReport {
             output: String::new(),
             fps: 0.0,
             current_scene: String::new(),
+            current_profile: String::new(),
             scene_collection: String::new(),
-            scenes: Vec::new(),
             warnings: Vec::new(),
         }
     }
 }
 
-/// Tests the OBS connection and reports everything the settings panel shows.
+/// Tests the OBS connection, provisions (and switches into) dod-tools' own
+/// profile and scene, and reports everything the settings panel shows.
 ///
-/// Read-only. Nothing about the user's OBS is changed by asking — no scene
-/// switch, no settings write — so this is safe to call whenever the panel is
-/// opened.
+/// **Not read-only**, unlike its old contract — this is the "validated" hook
+/// point `obs::provision::ensure_dod_tools_setup` runs from (see that
+/// module's docs): creates/repairs the dod-tools profile, scene and sources
+/// if needed, and switches into them. Refuses first if OBS is already
+/// recording or streaming under whatever the user's own profile is, so this
+/// never mutates live state out from under something unrelated. Called on
+/// every proactive check (mode switch, startup, manual Test Connection
+/// click) as well as before a real batch — see main.js's
+/// `runObsConnectionTest`.
 ///
-/// `game_width`/`game_height` are passed in so the report can flag the canvas
-/// mismatch that silently costs the most quality: a canvas larger than the game
-/// means the capture is scaled up onto it and the whole canvas scaled back
-/// down, discarding most of the pixels before the encoder sees them.
+/// `game_width`/`game_height`/`obs_capture_fps` are what the profile's video
+/// settings get set to.
 #[tauri::command]
 pub async fn obs_test_connection(
     host: String,
@@ -345,18 +359,48 @@ pub async fn obs_test_connection(
     password: String,
     game_width: i32,
     game_height: i32,
+    obs_capture_fps: i32,
 ) -> Result<ObsConnectionReport, String> {
-    let url = format!("ws://{}:{}", if host.is_empty() { "127.0.0.1".into() } else { host }, if port == 0 { 4455 } else { port });
+    let resolved_host = if host.is_empty() { "127.0.0.1".to_string() } else { host };
+    let resolved_port = if port == 0 { 4455 } else { port };
+    let url = format!("ws://{resolved_host}:{resolved_port}");
     tokio::task::spawn_blocking(move || {
         let mut client = match native::obs::ObsClient::connect(&url, &password) {
             Ok(c) => c,
+            // A bare socket error ("actively refused it (os error 10061)") makes
+            // the user guess whether that means OBS is closed or just
+            // unreachable. `is_transport` narrows it to "never got past the
+            // socket/handshake" (as opposed to OBS answering and refusing), and
+            // for that case whether the process is even running is a fact we
+            // can just check instead of leaving it to the raw OS text.
+            Err(e) if e.is_transport() => {
+                let msg = if is_obs_process_running() {
+                    format!(
+                        "OBS is running, but dod-tools can't reach it at {resolved_host}:{resolved_port}. Check Tools -> WebSocket Server Settings is enabled and the port matches."
+                    )
+                } else {
+                    "OBS isn't running. Launch it (or use Launch OBS above), then try again.".to_string()
+                };
+                return ObsConnectionReport::failed(msg);
+            }
             Err(e) => return ObsConnectionReport::failed(e),
         };
+        if let Err(e) = client.refuse_if_busy() {
+            return ObsConnectionReport::failed(e);
+        }
+        if let Err(e) = native::obs::provision::ensure_dod_tools_setup(
+            &mut client,
+            game_width,
+            game_height,
+            obs_capture_fps,
+            1,
+        ) {
+            return ObsConnectionReport::failed(e);
+        }
         let preflight = match client.preflight(game_width, game_height) {
             Ok(p) => p,
             Err(e) => return ObsConnectionReport::failed(e),
         };
-        let scenes = client.scene_names().unwrap_or_default();
         ObsConnectionReport {
             connected: true,
             error: None,
@@ -370,13 +414,13 @@ pub async fn obs_test_connection(
             output: format!("{}x{}", preflight.output_width, preflight.output_height),
             fps: preflight.fps,
             current_scene: preflight.current_scene,
+            current_profile: preflight.current_profile,
             scene_collection: preflight.scene_collection,
-            scenes,
             warnings: preflight.warnings,
         }
     })
     .await
-    .map_err(|e| format!("OBS connection test failed to run: {e}"))
+    .map_err(crate::messages::obs_connection_test_failed)
 }
 
 /// What a start-up orphan check found.
@@ -422,7 +466,7 @@ pub async fn obs_check_orphan(
         },
     })
     .await
-    .map_err(|e| format!("OBS orphan check failed to run: {e}"))
+    .map_err(crate::messages::obs_orphan_check_failed)
 }
 
 /// Stops an orphaned recording and folds its file into the take folder.
@@ -443,7 +487,7 @@ pub async fn obs_recover_orphan(
         Err(e) => Err(e.to_string()),
     })
     .await
-    .map_err(|e| format!("OBS orphan recovery failed to run: {e}"))?
+    .map_err(crate::messages::obs_orphan_recovery_failed)?
 }
 
 /// Settings-shaped values from the frontend, with the same defaults the
@@ -615,12 +659,56 @@ fn emit_take_verification(app: &tauri::AppHandle, manifest_slot: &Arc<Mutex<Opti
 
 // ── Public command handler ─────────────────────────────────────────────────────
 
+/// `Some(message)` when `init_commands` or any `custom_commands` entry names
+/// a `native::patch::cfg_scan::BANNED_COMMANDS` cvar (refused everywhere), or
+/// `custom_commands` names a `SCHEDULED_BANNED_COMMANDS` one (fine in Initial
+/// Commands, refused only here) — the first one found, checking the
+/// everywhere-banned tier before the scheduled-only tier. `None` means clean.
+///
+/// Pure so it can be tested without a `tauri::AppHandle`; `start_capture_batch_impl`
+/// is the only caller.
+fn first_banned_command_error(
+    init_commands: &[String],
+    custom_commands: &[CustomCommandPayload],
+) -> Option<String> {
+    let custom_texts: Vec<String> = custom_commands.iter().map(|c| c.command.clone()).collect();
+
+    let mut banned = native::patch::cfg_scan::banned_commands(init_commands);
+    banned.extend(native::patch::cfg_scan::banned_commands(&custom_texts));
+    if let Some((cvar, command)) = banned.first() {
+        return Some(format!(
+            "\"{command}\" is not allowed in Initial or Scheduled Commands — {cvar} is controlled entirely by the app."
+        ));
+    }
+
+    // Fine in Initial Commands — that's how the decal flush is meant to be
+    // configured — but the flush sizes itself against these once, before the
+    // demo plays, so a Scheduled Command changing one mid-demo would silently
+    // break that sizing rather than merely surprise.
+    let scheduled_banned = native::patch::cfg_scan::scheduled_banned_commands(&custom_texts);
+    scheduled_banned.first().map(|(cvar, command)| {
+        format!(
+            "\"{command}\" is not allowed in Scheduled Commands — {cvar} must not change mid-demo; set it in Initial Commands instead."
+        )
+    })
+}
+
 /// Async entry point called by the Tauri `start_capture_batch` command.
 pub async fn start_capture_batch_impl(
     app_handle: tauri::AppHandle,
     manager: &CaptureManager,
     payload: CapturePayload,
 ) -> Result<(), String> {
+    // ── Guard: banned commands (native::patch::cfg_scan::BANNED_COMMANDS) ─────
+    // The frontend already disables Start Capture Batch while one is present
+    // (capture_pane.js's refreshLaunchGuard) — this is the same "the frontend
+    // check is only as good as the frontend" reasoning as the separate-HUD
+    // guard below: whatever reaches this command directly must be refused
+    // independently, not trusted because some UI state claimed it was clean.
+    if let Some(err) = first_banned_command_error(&payload.init_commands, &payload.custom_commands) {
+        return Err(err);
+    }
+
     // ── Guard: separate HUD cannot be captured through mirv_movie_ffmpeg ──────
     // HLAE writes blank frames to the HUD stream on the FFmpeg path — measured
     // both ways against one demo, see docs/direct_to_video_capture.md. Capture
@@ -637,7 +725,7 @@ pub async fn start_capture_batch_impl(
             .lock()
             .unwrap_or_else(|p| p.into_inner());
         if *running {
-            return Err("Capture batch already in progress".to_string());
+            return Err(crate::messages::CAPTURE_BATCH_ALREADY_RUNNING.to_string());
         }
         *running = true;
     }
@@ -673,9 +761,9 @@ pub async fn start_capture_batch_impl(
         let _ = app_handle.emit("capture_status", serde_json::json!({
             "running": false,
             "error": true,
-            "status": "No streaks in payload"
+            "status": crate::messages::NO_STREAKS_IN_PAYLOAD
         }));
-        return Err("No streaks in payload".to_string());
+        return Err(crate::messages::NO_STREAKS_IN_PAYLOAD.to_string());
     }
 
     // ── Clone Arcs into the worker closure ────────────────────────────────────
@@ -753,45 +841,114 @@ pub async fn start_capture_batch_impl(
         let _ = app_handle_clone.emit("capture_patching_started", serde_json::json!({
             "total": total_patch_jobs,
         }));
-        for (idx, job) in patch_jobs.iter().enumerate() {
-            if cancel_token_arc.load(std::sync::atomic::Ordering::Relaxed) {
-                let mut running = is_running_arc.lock().unwrap_or_else(|p| p.into_inner());
-                *running = false;
-                let _ = app_handle_clone.emit("capture_status", serde_json::json!({
-                    "running": false,
-                    "status": "Cancelled"
-                }));
-                return;
-            }
-            let _ = app_handle_clone.emit("capture_status", serde_json::json!({
-                "running": true,
-                "index": idx as u32,
-                "total": total_patch_jobs,
-                "status": format!("Patching {} / {}", idx + 1, total_patch_jobs)
-            }));
-            if let Err(e) = StreamPatcher::new(&job.source_demo, &job.output_demo)
-                .patch(job, &patcher_config, &cancel_token_arc)
-            {
-                if e.kind() == std::io::ErrorKind::Interrupted {
-                    let _ = std::fs::remove_file(&job.output_demo);
-                    let mut running = is_running_arc.lock().unwrap_or_else(|p| p.into_inner());
-                    *running = false;
+        // Completed-count progress rather than positional index -- jobs
+        // finish out of order once patched concurrently, so "which index is
+        // running" no longer means anything.
+        let next_index = std::sync::atomic::AtomicUsize::new(0);
+        let completed_count = std::sync::atomic::AtomicU32::new(0);
+        // Concurrency is otherwise invisible to the UI: a "completed / total"
+        // counter alone looks identical whether jobs ran one at a time or
+        // several at once, especially since individual patch jobs are often
+        // fast enough that a small batch never visibly lingers either way.
+        let in_flight = std::sync::atomic::AtomicU32::new(0);
+        // Only a real patch error populates this -- lets the aggregation
+        // below tell "a peer job's failure forced cancel_token_arc true"
+        // apart from a genuine user Cancel, which never sets it.
+        let first_error: Mutex<Option<(String, std::io::Error)>> = Mutex::new(None);
+
+        std::thread::scope(|scope| {
+            let worker_count = PATCH_CONCURRENCY.min(patch_jobs.len()).max(1);
+            for _ in 0..worker_count {
+                let app_handle_clone = app_handle_clone.clone();
+                let next_index = &next_index;
+                let completed_count = &completed_count;
+                let in_flight = &in_flight;
+                let first_error = &first_error;
+                let patch_jobs = &patch_jobs;
+                let patcher_config = &patcher_config;
+                let cancel_token_arc = &cancel_token_arc;
+                scope.spawn(move || loop {
+                    if cancel_token_arc.load(std::sync::atomic::Ordering::Relaxed) {
+                        break;
+                    }
+                    let idx = next_index.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    if idx >= patch_jobs.len() {
+                        break;
+                    }
+                    let job = &patch_jobs[idx];
+                    let started = in_flight.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                    let done_so_far = completed_count.load(std::sync::atomic::Ordering::Relaxed);
                     let _ = app_handle_clone.emit("capture_status", serde_json::json!({
-                        "running": false,
-                        "status": "Cancelled"
+                        "running": true,
+                        "index": done_so_far,
+                        "total": total_patch_jobs,
+                        "in_progress": started,
+                        "status": format!("Patching {} / {} ({} in progress)", done_so_far, total_patch_jobs, started)
                     }));
-                    return;
-                }
-                log::error!("Failed to patch {}: {}", job.source_demo, e);
-                let mut running = is_running_arc.lock().unwrap_or_else(|p| p.into_inner());
-                *running = false;
-                let _ = app_handle_clone.emit("capture_status", serde_json::json!({
-                    "running": false,
-                    "error": true,
-                    "status": format!("Failed to patch {}: {}", job.source_demo, e)
-                }));
-                return;
+                    let result = StreamPatcher::new(&job.source_demo, &job.output_demo)
+                        .patch(job, patcher_config, cancel_token_arc);
+                    let still_running = in_flight.fetch_sub(1, std::sync::atomic::Ordering::Relaxed) - 1;
+                    match result {
+                        Ok(()) => {
+                            let done = completed_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                            let _ = app_handle_clone.emit("capture_status", serde_json::json!({
+                                "running": true,
+                                "index": done,
+                                "total": total_patch_jobs,
+                                "in_progress": still_running,
+                                "status": format!("Patching {} / {} ({} in progress)", done, total_patch_jobs, still_running)
+                            }));
+                        }
+                        Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {
+                            // Either a real user Cancel, or fallout from a
+                            // peer job's failure just below -- either way
+                            // this job's own output is incomplete.
+                            let _ = std::fs::remove_file(&job.output_demo);
+                            break;
+                        }
+                        Err(e) => {
+                            {
+                                let mut slot = first_error.lock().unwrap_or_else(|p| p.into_inner());
+                                if slot.is_none() {
+                                    *slot = Some((job.source_demo.clone(), e));
+                                }
+                            }
+                            // Stop everything else as fast as the existing
+                            // interrupt mechanism allows -- a batch is
+                            // already all-or-nothing (nothing opens the game
+                            // until every job has patched clean), so letting
+                            // peers run to completion after this would only
+                            // waste CPU on jobs the batch is aborting anyway.
+                            cancel_token_arc.store(true, std::sync::atomic::Ordering::Relaxed);
+                            break;
+                        }
+                    }
+                });
             }
+        });
+
+        let was_cancelled = cancel_token_arc.load(std::sync::atomic::Ordering::Relaxed);
+        let failure = first_error.lock().unwrap_or_else(|p| p.into_inner()).take();
+
+        if let Some((source_demo, e)) = failure {
+            log::error!("Failed to patch {}: {}", source_demo, e);
+            let mut running = is_running_arc.lock().unwrap_or_else(|p| p.into_inner());
+            *running = false;
+            let _ = app_handle_clone.emit("capture_status", serde_json::json!({
+                "running": false,
+                "error": true,
+                "status": format!("Failed to patch {}: {}", source_demo, e)
+            }));
+            return;
+        }
+        if was_cancelled {
+            let mut running = is_running_arc.lock().unwrap_or_else(|p| p.into_inner());
+            *running = false;
+            let _ = app_handle_clone.emit("capture_status", serde_json::json!({
+                "running": false,
+                "status": "Cancelled"
+            }));
+            return;
         }
 
         let _ = app_handle_clone.emit("capture_patching_finished", serde_json::json!({
@@ -991,7 +1148,7 @@ pub async fn scan_directory_impl(
 
     let is_scanning_end = Arc::clone(&is_scanning);
 
-    let result = tokio::task::spawn_blocking(move || {
+    let result = crate::messages::flatten_spawn_blocking(tokio::task::spawn_blocking(move || {
         use native::patch::scan_demo_for_highlights_with_analysis;
         use tauri::Emitter;
 
@@ -1132,9 +1289,8 @@ pub async fn scan_directory_impl(
         );
 
         Ok(results)
-    })
-    .await
-    .map_err(|e| format!("Task failed: {}", e))?;
+    }))
+    .await;
 
     is_scanning_end.store(false, std::sync::atomic::Ordering::SeqCst);
     result
@@ -1185,23 +1341,23 @@ fn write_hidden_sidecar(path: &Path) -> std::io::Result<()> {
 /// `build_hlae_process` reads (hlae_path/game_path/resolution/separate_hud).
 fn resolve_preview_env(hlae_path: &str, game_path: &str) -> Result<(PatcherConfig, PathBuf), String> {
     if hlae_path.trim().is_empty() || game_path.trim().is_empty() {
-        return Err("Configure the HLAE and Half-Life executable paths before previewing.".to_string());
+        return Err(crate::messages::configure_paths_before("previewing"));
     }
     let hlae_p = Path::new(hlae_path);
     let hl_p = Path::new(game_path);
     if !hlae_p.is_file() {
-        return Err("HLAE executable not found at the configured path.".to_string());
+        return Err(crate::messages::HLAE_NOT_FOUND_AT_CONFIGURED_PATH.to_string());
     }
     if !hl_p.is_file() {
-        return Err("Half-Life executable not found at the configured path.".to_string());
+        return Err(crate::messages::HL_NOT_FOUND_AT_CONFIGURED_PATH.to_string());
     }
 
     let dod_dir = hl_p
         .parent()
         .map(|p| p.join("dod"))
-        .ok_or_else(|| "Could not resolve the 'dod' directory next to hl.exe".to_string())?;
+        .ok_or_else(|| crate::messages::COULD_NOT_RESOLVE_DOD_DIRECTORY.to_string())?;
     std::fs::create_dir_all(&dod_dir)
-        .map_err(|e| format!("Failed to create dod directory: {}", e))?;
+        .map_err(crate::messages::failed_to_create_dod_directory)?;
 
     let patcher_config = PatcherConfig {
         hlae_path: hlae_path.to_string(),
@@ -1211,37 +1367,52 @@ fn resolve_preview_env(hlae_path: &str, game_path: &str) -> Result<(PatcherConfi
     Ok((patcher_config, dod_dir))
 }
 
-/// Builds and patches one bookmark-preview `PatchJob` per source demo present
-/// in `streaks`, writing the hidden `.dodtools_preview` sidecar for each.
+/// Builds one bookmark-preview `PatchJob` per source demo present in
+/// `streaks` and patches it — unless a previous run already left a valid
+/// `<stem>_preview.dem` + `.dodtools_preview` sidecar in place, in which case
+/// that existing file is reused as-is rather than regenerated. Returns the
+/// full job list (every source demo, patched or reused — callers need the
+/// resolved output path either way) alongside how many were freshly patched
+/// this call, for a caller that wants to report "N generated" accurately.
 fn patch_bookmark_previews(
     streaks: Vec<SerializedStreak>,
     dod_dir: &Path,
     patcher_config: &PatcherConfig,
-) -> Result<Vec<PatchJob>, String> {
+) -> Result<(Vec<PatchJob>, usize), String> {
     if streaks.is_empty() {
-        return Err("No highlights selected to preview.".to_string());
+        return Err(crate::messages::NO_HIGHLIGHTS_TO_PREVIEW.to_string());
     }
     let capture_streaks: Vec<CaptureStreak> = streaks.into_iter().map(CaptureStreak::from).collect();
     let jobs = build_preview_patch_jobs(capture_streaks, Some(dod_dir));
     if jobs.is_empty() {
-        return Err("Failed to build any preview patch jobs.".to_string());
+        return Err(crate::messages::FAILED_TO_BUILD_PREVIEW_JOBS.to_string());
     }
 
     let cancel_token = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mut generated = 0usize;
     for job in &jobs {
+        let sidecar_path = job.output_demo.with_extension("dodtools_preview");
+        if job.output_demo.is_file() && sidecar_path.is_file() {
+            // Already previewed in an earlier session — the bookmark set is
+            // derived purely from this demo's own highlights, which don't
+            // change between scans, so there's nothing to regenerate.
+            continue;
+        }
+
         StreamPatcher::new(&job.source_demo, &job.output_demo)
             .patch(job, patcher_config, &cancel_token)
-            .map_err(|e| format!("Failed to patch preview demo for {}: {}", job.source_demo, e))?;
+            .map_err(|e| crate::messages::failed_to_patch_preview_demo(&job.source_demo, e))?;
 
-        let sidecar_path = job.output_demo.with_extension("dodtools_preview");
         write_hidden_sidecar(&sidecar_path)
-            .map_err(|e| format!("Failed to write preview sidecar: {}", e))?;
+            .map_err(crate::messages::failed_to_write_preview_sidecar)?;
+        generated += 1;
     }
-    Ok(jobs)
+    Ok((jobs, generated))
 }
 
-/// Patches the given demo's selected highlights into a single bookmarked
-/// `<stem>_preview.dem` and immediately launches HLAE against it via
+/// Patches the given demo's highlights into a single bookmarked
+/// `<stem>_preview.dem` — reusing one already on disk from an earlier run
+/// instead of regenerating it — and immediately launches HLAE against it via
 /// `+viewdemo <stem>_preview`.
 #[tauri::command]
 pub async fn launch_demo_preview(
@@ -1249,40 +1420,100 @@ pub async fn launch_demo_preview(
     game_path: String,
     streaks: Vec<SerializedStreak>,
 ) -> Result<(), String> {
-    tokio::task::spawn_blocking(move || {
+    crate::messages::flatten_spawn_blocking(tokio::task::spawn_blocking(move || {
         let (patcher_config, dod_dir) = resolve_preview_env(&hlae_path, &game_path)?;
-        let jobs = patch_bookmark_previews(streaks, &dod_dir, &patcher_config)?;
-        let job = jobs.first().ok_or_else(|| "Failed to build the preview patch job".to_string())?;
+        let (jobs, _generated) = patch_bookmark_previews(streaks, &dod_dir, &patcher_config)?;
+        let job = jobs.first().ok_or_else(|| crate::messages::FAILED_TO_BUILD_PREVIEW_PATCH_JOB.to_string())?;
 
         let preview_stem = job
             .output_demo
             .file_stem()
             .and_then(|s| s.to_str())
-            .ok_or_else(|| "Could not resolve the preview demo's file stem".to_string())?;
+            .ok_or_else(|| crate::messages::COULD_NOT_RESOLVE_PREVIEW_FILE_STEM.to_string())?;
 
         let mut cmd = patcher_config.build_hlae_process(&format!("+viewdemo {}", preview_stem));
         cmd.spawn()
-            .map_err(|e| format!("Failed to launch HLAE for preview: {}", e))?;
+            .map_err(crate::messages::failed_to_launch_hlae_for_preview)?;
 
         Ok(())
-    })
+    }))
     .await
-    .map_err(|e| format!("Task join error: {}", e))?
 }
 
 /// Patches every demo represented in `streaks` into its own bookmarked
-/// `<stem>_preview.dem` without launching HLAE. Resolves to the number of
-/// preview demos generated so the frontend can report a completion toast.
+/// `<stem>_preview.dem` without launching HLAE, skipping any demo that
+/// already has one from an earlier run. Resolves to the number *freshly
+/// generated* this call so the frontend can report an accurate completion
+/// toast rather than re-counting demos that didn't need any work.
 #[tauri::command]
 pub async fn generate_all_previews(
     hlae_path: String,
     game_path: String,
     streaks: Vec<SerializedStreak>,
 ) -> Result<usize, String> {
-    tokio::task::spawn_blocking(move || {
+    crate::messages::flatten_spawn_blocking(tokio::task::spawn_blocking(move || {
         let (patcher_config, dod_dir) = resolve_preview_env(&hlae_path, &game_path)?;
-        let jobs = patch_bookmark_previews(streaks, &dod_dir, &patcher_config)?;
-        Ok(jobs.len())
+        let (_jobs, generated) = patch_bookmark_previews(streaks, &dod_dir, &patcher_config)?;
+        Ok(generated)
+    }))
+    .await
+}
+
+// ── Initial Commands import ──────────────────────────────────────────────────
+//
+// A manually-`exec`'d movie config never gets a guaranteed exec point: a
+// command-line `+exec` fires *before* the user's own config.cfg/movie.cfg
+// chain, not after it, so config.cfg silently wins any cvar both set — see
+// docs/goldsrc_dod_quirks.md's Command Precedence entry. STUFFTEXT-injected
+// Initial Commands are the only mechanism confirmed to always win over
+// everything, config.cfg/movie.cfg included, so importing a movie config's
+// lines directly into Initial Commands is the reliable substitute.
+
+/// Collapses runs of spaces/tabs outside double-quoted spans into a single
+/// space, and trims the ends. A `.cfg` hand-aligned into columns —
+/// `r_decals               "0"` — reads fine in a text editor but carries all
+/// that padding into an Initial Command row, where it just looks broken.
+/// Whitespace *inside* quotes (a path with a space in it, say) is left alone:
+/// only alignment padding between tokens is collapsing, not a value's own
+/// content.
+fn collapse_whitespace_outside_quotes(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut in_quotes = false;
+    let mut last_was_space = false;
+    for c in line.chars() {
+        if c == '"' {
+            in_quotes = !in_quotes;
+            out.push(c);
+            last_was_space = false;
+        } else if !in_quotes && (c == ' ' || c == '\t') {
+            if !last_was_space {
+                out.push(' ');
+            }
+            last_was_space = true;
+        } else {
+            out.push(c);
+            last_was_space = false;
+        }
+    }
+    out.trim().to_string()
+}
+
+/// Reads a `.cfg` file the user picked through a native dialog (never a typed
+/// path — see CLAUDE.md's filesystem-picking rule) and returns its console
+/// commands: one per line, blank lines and full-line `//` comments dropped,
+/// alignment whitespace outside quotes collapsed. Read-only, same as
+/// `cfg_scan.rs` — this never writes the file it reads.
+#[tauri::command]
+pub async fn read_cfg_commands(path: String) -> Result<Vec<String>, String> {
+    tokio::task::spawn_blocking(move || {
+        let content = std::fs::read_to_string(&path)
+            .map_err(|e| format!("Failed to read {}: {}", path, e))?;
+        Ok(content
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty() && !line.starts_with("//"))
+            .map(collapse_whitespace_outside_quotes)
+            .collect())
     })
     .await
     .map_err(|e| format!("Task join error: {}", e))?
@@ -1296,28 +1527,13 @@ pub async fn generate_all_previews(
 // (not an IPC payload) since this is a standalone action triggered from the
 // global actions area rather than the per-demo detail pane.
 
-/// Builds the `+`-prefixed startup console command string from the user's
-/// configured init commands. Demo-time injection (STUFFTEXT frames patched
-/// into the .dem, see `build_preview_patch_jobs`) isn't available here since
-/// there's no demo — this is the standalone-launch equivalent, so any
-/// `playdemo`/`viewdemo` command is stripped defensively even though
-/// `init_commands` shouldn't carry one by convention.
-fn build_standalone_extra_args(init_commands: &[String]) -> String {
-    init_commands
-        .iter()
-        .map(|c| c.trim())
-        .filter(|c| !c.is_empty())
-        .filter(|c| {
-            let lower = c.to_lowercase();
-            !lower.starts_with("playdemo") && !lower.starts_with("viewdemo")
-        })
-        .map(|c| format!("+{}", c))
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
 /// Launches HLAE directly against `hl.exe` with no demo loaded, applying the
-/// persisted resolution/HUD/init-command configuration from `AppSettings`.
+/// persisted resolution/HUD configuration from `AppSettings`. Deliberately
+/// does not apply Initial Commands: this button is for quickly opening
+/// HLAE+DoD, not for reproducing a capture batch's config state, and Initial
+/// Commands lack the guaranteed-last-word property here that they have in a
+/// real batch (no demo to STUFFTEXT-inject into, so they would just be raw
+/// command-line args that config.cfg/movie.cfg can still override).
 #[tauri::command]
 pub async fn launch_standalone_game(app: tauri::AppHandle) -> Result<(), String> {
     let settings_state = app.state::<crate::settings_manager::SettingsManager>();
@@ -1329,15 +1545,15 @@ pub async fn launch_standalone_game(app: tauri::AppHandle) -> Result<(), String>
         guard.clone()
     };
 
-    tokio::task::spawn_blocking(move || {
+    crate::messages::flatten_spawn_blocking(tokio::task::spawn_blocking(move || {
         if settings.hlae_path.trim().is_empty() || settings.hl_path.trim().is_empty() {
-            return Err("Configure the HLAE and Half-Life executable paths before launching.".to_string());
+            return Err(crate::messages::configure_paths_before("launching"));
         }
         if !Path::new(&settings.hlae_path).is_file() {
-            return Err("HLAE executable not found at the configured path.".to_string());
+            return Err(crate::messages::HLAE_NOT_FOUND_AT_CONFIGURED_PATH.to_string());
         }
         if !Path::new(&settings.hl_path).is_file() {
-            return Err("Half-Life executable not found at the configured path.".to_string());
+            return Err(crate::messages::HL_NOT_FOUND_AT_CONFIGURED_PATH.to_string());
         }
 
         let patcher_config = PatcherConfig {
@@ -1351,16 +1567,51 @@ pub async fn launch_standalone_game(app: tauri::AppHandle) -> Result<(), String>
             ..PatcherConfig::default()
         };
 
-        let extra_args = build_standalone_extra_args(&settings.init_commands);
-
-        let mut cmd = patcher_config.build_hlae_process(&extra_args);
+        let mut cmd = patcher_config.build_hlae_process("");
         cmd.spawn()
-            .map_err(|e| format!("Failed to launch HLAE: {}", e))?;
+            .map_err(crate::messages::failed_to_launch_hlae)?;
 
         Ok(())
-    })
+    }))
     .await
-    .map_err(|e| format!("Task join error: {}", e))?
+}
+
+/// Launches OBS Studio from the configured `obs_exe_path`, spawn-and-forget —
+/// same shape as `launch_standalone_game`, minus the whole HLAE/hl.exe
+/// process-building step, since this just starts the user's own program.
+/// No lifecycle tracking: OBS is the user's software, not ours to manage,
+/// and this button exists only so the user doesn't have to alt-tab to a
+/// shortcut before configuring the connection above it.
+#[tauri::command]
+pub async fn launch_obs(app: tauri::AppHandle) -> Result<(), String> {
+    let settings_state = app.state::<crate::settings_manager::SettingsManager>();
+    let obs_exe_path = {
+        let guard = settings_state
+            .inner
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        guard.obs_exe_path.clone()
+    };
+
+    crate::messages::flatten_spawn_blocking(tokio::task::spawn_blocking(move || {
+        if obs_exe_path.trim().is_empty() {
+            return Err(crate::messages::CONFIGURE_OBS_PATH_BEFORE_LAUNCHING.to_string());
+        }
+        if !Path::new(&obs_exe_path).is_file() {
+            return Err(crate::messages::OBS_NOT_FOUND_AT_CONFIGURED_PATH.to_string());
+        }
+        let mut cmd = std::process::Command::new(&obs_exe_path);
+        // Without this OBS inherits dod-tools' own CWD instead of its own
+        // install directory, and fails to find its own relative-pathed data
+        // (locale/en-US.ini, etc.) — measured, not theoretical. Same fix
+        // `build_hlae_process` already applies for HLAE/hl.exe.
+        if let Some(parent) = Path::new(&obs_exe_path).parent() {
+            cmd.current_dir(parent);
+        }
+        cmd.spawn().map_err(crate::messages::failed_to_launch_obs)?;
+        Ok(())
+    }))
+    .await
 }
 
 // ── Running Process Guard ───────────────────────────────────────────────────────
@@ -1375,6 +1626,18 @@ pub async fn launch_standalone_game(app: tauri::AppHandle) -> Result<(), String>
 fn is_engine_process_name(name: &str) -> bool {
     let lower = name.to_lowercase();
     lower == "hl.exe" || lower == "hlae.exe"
+}
+
+/// True if an OBS Studio process is currently running, under any of its
+/// installed binary names. Used to turn a bare "could not connect" into a
+/// deterministic answer instead of asking the user to interpret a raw OS
+/// socket error themselves.
+fn is_obs_process_running() -> bool {
+    let sys = sysinfo::System::new_all();
+    sys.processes().values().any(|p| {
+        let lower = p.name().to_lowercase();
+        lower == "obs64.exe" || lower == "obs32.exe" || lower == "obs.exe"
+    })
 }
 
 /// True if any `hl.exe` or `hlae.exe` process is currently running.
@@ -1430,7 +1693,7 @@ fn resolve_dod_dir_for_sweep(game_dir: &str) -> Result<PathBuf, String> {
         return p
             .parent()
             .map(|parent| parent.join("dod"))
-            .ok_or_else(|| "Could not resolve the 'dod' directory next to hl.exe".to_string());
+            .ok_or_else(|| crate::messages::COULD_NOT_RESOLVE_DOD_DIRECTORY.to_string());
     }
     if p.is_dir() {
         let is_dod_dir = p
@@ -1442,21 +1705,21 @@ fn resolve_dod_dir_for_sweep(game_dir: &str) -> Result<PathBuf, String> {
         }
         return Ok(p.join("dod"));
     }
-    Err(format!("Game directory not found: {}", game_dir))
+    Err(crate::messages::game_directory_not_found(game_dir))
 }
 
 /// Sweeps `<hl>/dod` for orphaned bookmark-preview demos and reports them
 /// (with combined demo + sidecar size) for the audit modal.
 #[tauri::command]
 pub async fn scan_orphaned_previews(game_dir: String) -> Result<Vec<PreviewFileSummary>, String> {
-    tokio::task::spawn_blocking(move || {
+    crate::messages::flatten_spawn_blocking(tokio::task::spawn_blocking(move || {
         let dod_dir = resolve_dod_dir_for_sweep(&game_dir)?;
         if !dod_dir.is_dir() {
             return Ok(Vec::new());
         }
 
         let entries = std::fs::read_dir(&dod_dir)
-            .map_err(|e| format!("Failed to read dod directory: {}", e))?;
+            .map_err(crate::messages::failed_to_read_dod_directory)?;
 
         let mut results = Vec::new();
         for entry in entries.flatten() {
@@ -1497,9 +1760,8 @@ pub async fn scan_orphaned_previews(game_dir: String) -> Result<Vec<PreviewFileS
 
         results.sort_by(|a, b| a.file_name.cmp(&b.file_name));
         Ok(results)
-    })
+    }))
     .await
-    .map_err(|e| format!("Task join error: {}", e))?
 }
 
 /// Deletes the given orphaned preview demos and their `.dodtools_preview`
@@ -1509,7 +1771,7 @@ pub async fn scan_orphaned_previews(game_dir: String) -> Result<Vec<PreviewFileS
 /// missing sidecar does not fail the entry.
 #[tauri::command]
 pub async fn delete_orphaned_previews(file_paths: Vec<String>) -> Result<u32, String> {
-    tokio::task::spawn_blocking(move || {
+    crate::messages::flatten_spawn_blocking(tokio::task::spawn_blocking(move || {
         let mut deleted: u32 = 0;
         for demo_path in file_paths {
             let path = PathBuf::from(&demo_path);
@@ -1530,9 +1792,8 @@ pub async fn delete_orphaned_previews(file_paths: Vec<String>) -> Result<u32, St
             }
         }
         Ok(deleted)
-    })
+    }))
     .await
-    .map_err(|e| format!("Task join error: {}", e))?
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -1555,8 +1816,6 @@ mod tests {
             obs_host: String::new(),
             obs_port: 0,
             obs_password: String::new(),
-            obs_scene: String::new(),
-            obs_scene_collection: String::new(),
             save_local_patched_copy: false,
             add_condebug: true,
             streaks: Vec::new(),
@@ -1564,6 +1823,7 @@ mod tests {
             post_roll_seconds: 0.6,
             capture_directories: vec!["D:/capture".to_string()],
             capture_fps: 300,
+            obs_capture_fps: 120,
             drives: vec!["D:/capture".to_string(), "E:/capture".to_string()],
             record_start_lead: 0.0,
             record_stop_trail: 0.0,
@@ -1675,5 +1935,150 @@ mod tests {
         // An unrecognised relation string must fail safe to Before rather than
         // rejecting the whole batch payload (see CustomCommandPayload's doc comment).
         assert_eq!(cfg.custom_commands[1].relation, CommandRelation::Before);
+    }
+
+    fn write_temp_cfg(tag: &str, content: &str) -> String {
+        let path = std::env::temp_dir().join(format!("dod_cfgimport_{}_{}.cfg", tag, std::process::id()));
+        std::fs::write(&path, content).unwrap();
+        path.to_string_lossy().to_string()
+    }
+
+    fn read_cfg_commands_blocking(path: String) -> Result<Vec<String>, String> {
+        let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
+        rt.block_on(read_cfg_commands(path))
+    }
+
+    #[test]
+    fn test_read_cfg_commands_strips_blank_lines_and_full_line_comments() {
+        let path = write_temp_cfg(
+            "basic",
+            "// header comment\nmirv_fov 90\n\n  mirv_movie_fps 300  \n// trailing comment\nsensitivity 3\n",
+        );
+        let commands = read_cfg_commands_blocking(path.clone()).unwrap();
+        assert_eq!(commands, vec!["mirv_fov 90", "mirv_movie_fps 300", "sensitivity 3"]);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_read_cfg_commands_on_an_all_comment_file_is_empty() {
+        let path = write_temp_cfg("empty", "// just a header\n// nothing else\n");
+        let commands = read_cfg_commands_blocking(path.clone()).unwrap();
+        assert!(commands.is_empty());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_read_cfg_commands_missing_file_errs() {
+        let path = std::env::temp_dir()
+            .join(format!("dod_cfgimport_missing_{}.cfg", std::process::id()))
+            .to_string_lossy()
+            .to_string();
+        assert!(read_cfg_commands_blocking(path).is_err());
+    }
+
+    #[test]
+    fn test_read_cfg_commands_collapses_column_alignment_padding() {
+        // A hand-aligned .cfg — cvar and value padded into columns with extra
+        // spaces so they line up in a text editor.
+        let path = write_temp_cfg(
+            "aligned",
+            "r_decals               \"0\"\ncl_hud_objectives\t\t\"1\"\n",
+        );
+        let commands = read_cfg_commands_blocking(path.clone()).unwrap();
+        assert_eq!(commands, vec!["r_decals \"0\"", "cl_hud_objectives \"1\""]);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_read_cfg_commands_preserves_whitespace_inside_quotes() {
+        // A quoted value's own spaces (a path, say) are content, not
+        // alignment padding, and must survive verbatim.
+        let path = write_temp_cfg(
+            "quoted_spaces",
+            "mirv_movie_filename    \"F:\\DICE  WSOD25\\02 Audio Video\\clip\"\n",
+        );
+        let commands = read_cfg_commands_blocking(path.clone()).unwrap();
+        assert_eq!(
+            commands,
+            vec!["mirv_movie_filename \"F:\\DICE  WSOD25\\02 Audio Video\\clip\""]
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_banned_command_in_init_commands_is_refused() {
+        let err = first_banned_command_error(&["mirv_recordmovie_start".to_string()], &[]);
+        assert!(err.is_some(), "must be refused");
+        assert!(err.unwrap().contains("mirv_recordmovie_start"));
+    }
+
+    #[test]
+    fn mirv_movie_filename_is_no_longer_refused_in_init_commands() {
+        // Re-tiered 2026-09-05: inert in Initial Commands (see
+        // cfg_scan::NOOP_IN_INIT_COMMANDS), only dangerous once scheduled.
+        let err = first_banned_command_error(&["mirv_movie_filename foo".to_string()], &[]);
+        assert!(err.is_none(), "{:?}", err);
+    }
+
+    #[test]
+    fn mirv_movie_filename_is_still_refused_when_scheduled() {
+        let scheduled = vec![CustomCommandPayload {
+            command: "mirv_movie_filename foo".to_string(),
+            relation: "Before".to_string(),
+            offset_seconds: 1.0,
+        }];
+        let err = first_banned_command_error(&[], &scheduled);
+        assert!(err.is_some(), "must be refused");
+        assert!(err.unwrap().contains("mirv_movie_filename"));
+    }
+
+    #[test]
+    fn a_banned_command_in_scheduled_commands_is_refused() {
+        let scheduled = vec![CustomCommandPayload {
+            command: "host_framerate 0.05".to_string(),
+            relation: "Before".to_string(),
+            offset_seconds: 1.0,
+        }];
+        let err = first_banned_command_error(&[], &scheduled);
+        assert!(err.is_some(), "must be refused");
+        assert!(err.unwrap().contains("host_framerate"));
+    }
+
+    #[test]
+    fn tier_2_and_tier_3_commands_are_not_refused() {
+        let err = first_banned_command_error(
+            &["mirv_movie_fps 500".to_string(), "r_decals \"256\"".to_string(), "mirv_fov 90".to_string()],
+            &[],
+        );
+        assert!(err.is_none(), "{:?}", err);
+    }
+
+    #[test]
+    fn a_scheduled_only_banned_command_is_fine_in_init_commands() {
+        // r_decals/mirv_fov/gl_widescreenfov are exactly how the decal flush
+        // is meant to be configured when set once at demo load.
+        let err = first_banned_command_error(
+            &["r_decals 512".to_string(), "mirv_fov 105".to_string(), "gl_widescreenfov 1".to_string()],
+            &[],
+        );
+        assert!(err.is_none(), "{:?}", err);
+    }
+
+    #[test]
+    fn a_scheduled_only_banned_command_is_refused_when_scheduled() {
+        let scheduled = vec![CustomCommandPayload {
+            command: "mirv_fov 105".to_string(),
+            relation: "Before".to_string(),
+            offset_seconds: 1.0,
+        }];
+        let err = first_banned_command_error(&[], &scheduled);
+        assert!(err.is_some(), "must be refused");
+        assert!(err.unwrap().contains("mirv_fov"));
+    }
+
+    #[test]
+    fn clean_commands_are_not_refused() {
+        let err = first_banned_command_error(&["sensitivity 3".to_string()], &[]);
+        assert!(err.is_none());
     }
 }

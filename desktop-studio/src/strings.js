@@ -18,21 +18,31 @@ export const STRINGS = {
   // ── Top Navigation / Header ─────────────────────────────────────────────
   NAV: {
     APP_TITLE: 'DoD Tools Studio',
+    // OS window title (taskbar/Alt-Tab) — set by updater_pane.js once the
+    // running build's version is known. baseVersion excludes the dev
+    // channel's `-<run number>` suffix — the title just needs "what kind of
+    // build is this", not which exact run. buildKind: 'local' (npm run
+    // tauri dev), 'debug' (tauri build --debug — a real bundle, just not a
+    // release-profile one), 'dev' (release_dev.yml), or anything else for a
+    // real stable build (no parenthetical).
+    appWindowTitle: (baseVersion, buildKind) => {
+      const tags = { local: 'local build', debug: 'debug build', dev: 'dev build' };
+      const tag = tags[buildKind];
+      return `DoD Tools Studio — v${baseVersion}${tag ? ` (${tag})` : ''}`;
+    },
     STUDIO_TAB: 'Studio',
     DEMO_AUDITOR_TAB: 'Demo Auditor',
     DEMO_ANALYZER_TAB: 'Demo Analyzer',
-    QUICK_CLIP_LABEL: 'Quick-Clip',
-    QUICK_CLIP_CAPTION: "Quick-Clip: nothing is saved to disk automatically — for grabbing a one-off clip. A re-scan replaces demos wholesale instead of preserving your edits.",
-    MODE_SWITCH_TITLE: 'Toggle between Quick-Clip and Workspace mode',
-    WORKSPACE_LABEL: 'Workspace',
-    WORKSPACE_CAPTION: 'Workspace: saves a project file and preserves your progress across restarts and re-scans.',
     NO_SESSION_LOADED: 'No session loaded',
+    FILE_MENU: 'File',
+    NEW_SESSION_BUTTON: 'New Session',
+    NEW_SESSION_TITLE: 'Start a new, empty session',
+    HELP_MENU: 'Help',
+    ABOUT_MENU: 'About',
     SAVE_SESSION_BUTTON: 'Save Session',
     SAVE_SESSION_TITLE: 'Save Project Session',
     LOAD_SESSION_BUTTON: 'Load Session',
     LOAD_SESSION_TITLE: 'Load Project Session',
-    SAVE_AS_WORKSPACE_BUTTON: 'Save as Workspace…',
-    SAVE_AS_WORKSPACE_TITLE: 'Saves a project file and switches this window to Workspace mode.',
   },
 
   // ── Workspace Pane: Directory Scan & Master Demo Queue ──────────────────
@@ -46,7 +56,7 @@ export const STRINGS = {
     MASTER_QUEUE_TITLE: 'Master Demo Queue',
     SEARCH_PLACEHOLDER: 'Search filename or map...',
     CLEAR_UNTRACKED_BUTTON: 'Clear Untracked',
-    CLEAR_UNTRACKED_TITLE: 'Remove demos with no Captured/Rendered status, notes, or edited kill range. Tracked demos are kept, in either mode. Only affects demos matching the current search.',
+    CLEAR_UNTRACKED_TITLE: 'Remove demos with no Captured/Rendered status, notes, or edited kill range. Tracked demos are kept. Only affects demos matching the current search.',
     CLEAR_SELECTED_BUTTON: 'Clear Selected',
     CLEAR_SELECTED_TITLE_DEFAULT: 'Check one or more rows first.',
     CLEAR_ALL_BUTTON: 'Clear All',
@@ -54,6 +64,7 @@ export const STRINGS = {
     SELECT_ALL_CB_TITLE: 'Select/deselect all visible demos',
     TABLE_HEADER_DEMO_FILE: 'Demo File',
     TABLE_HEADER_HIGHLIGHTS: 'Highlights',
+    TABLE_HEADER_SELECTED: 'Selected',
     TABLE_HEADER_PENDING: 'Pending',
     TABLE_HEADER_CAPTURED: 'Captured',
     TABLE_HEADER_RENDERED: 'Rendered',
@@ -68,7 +79,7 @@ export const STRINGS = {
     trackedBadgeTooltip: (reasons) => `Tracked — has ${reasons.join(', ')}. Protected from Clear Untracked in Workspace mode.`,
     rowDeleteLog: (name, trackedNote) => `[queue] Row delete: removed "${name}"${trackedNote}`,
     TRACKED_NOTE_SUFFIX: ' (had tracked work; user confirmed)',
-    REASON_STATUS: 'a Captured/Rendered status',
+    REASON_STATUS: 'a Pending/Captured/Rendered status',
     REASON_NOTE: 'a note',
     REASON_RANGE: 'an edited kill range',
     EMPTY_DASH: '—',
@@ -84,13 +95,12 @@ export const STRINGS = {
     DEFAULT_TITLE: 'Highlight Details',
     detailTitle: (name) => `Highlight Details: ${name}`,
     LAUNCH_PREVIEW_BUTTON: 'Launch Preview',
-    LAUNCH_PREVIEW_TITLE: 'Patches this demo and immediately launches it in HLAE via viewdemo.',
+    LAUNCH_PREVIEW_TITLE: 'Patches this demo (or reuses an existing preview) and launches it in HLAE via viewdemo.',
     LAUNCHING: 'Launching…',
     VIEW_TELEMETRY_BUTTON: 'View Match Telemetry',
-    SELECT_ALL_BUTTON: 'Select All',
-    DESELECT_ALL_BUTTON: 'Deselect All',
+    SELECT_ALL_CB_TITLE: 'Select/deselect all visible highlights',
     GENERATE_ALL_PREVIEWS_BUTTON: 'Generate All Previews',
-    GENERATE_ALL_PREVIEWS_TITLE: 'Generates _preview.dem files with BOOKMARK events for all selected highlights across all demos.',
+    GENERATE_ALL_PREVIEWS_TITLE: 'Generates _preview.dem files with a BOOKMARK event for every highlight across all demos, skipping any demo that already has one.',
     GENERATING: 'Generating…',
     LAUNCH_STANDALONE_BUTTON: 'Launch Game (HLAE)',
     LAUNCH_STANDALONE_TITLE: 'Boots HLAE against hl.exe directly with no demo loaded.',
@@ -112,14 +122,20 @@ export const STRINGS = {
     KR_RESET_TITLE: 'Reset to full range',
     fallbackKillCount: (count) => `${count} kills`,
     STATUS_OPTIONS: ['None', 'Pending', 'Captured', 'Rendered'],
-    STATUS_PENDING_DEFAULT: 'Pending',
+    // What an untouched highlight (streak.status still undefined) displays
+    // and counts as. 'Pending' is now a deliberate, user-set flag ("capture
+    // this one later") rather than the implicit default every unset row
+    // used to show — see isHighlightTracked's doc comment (take_index.js).
+    STATUS_UNSET_DEFAULT: 'None',
     mergedTakeBadge: (takeName) => `merged → ${takeName}`,
     mergedBadgeTitle: (mergedCount) => `Merged with ${mergedCount - 1} other highlight(s) into one take — they were recorded together and share this take folder.`,
     tickLabel: (tick) => `Tick ${tick}`,
     secondsSuffix: (n) => `${n}s`,
     HLAE_PATH_REQUIRED: 'Configure the HLAE and Half-Life executable paths in Batch Capture Config before previewing.',
     PREVIEW_LAUNCHING_TOAST: 'Preview launching in HLAE...',
-    generatedPreviews: (count) => `Generated ${count} preview demo(s). Load them manually via HLAE.`,
+    generatedPreviews: (count) => count === 0
+      ? 'Every demo already had a preview — nothing new to generate.'
+      : `Generated ${count} preview demo(s). Load them manually via HLAE.`,
     copiedViewCommand: (cmd) => `Copied "${cmd}" to clipboard.`,
     COPY_VIEW_COMMAND_FAILED: 'Failed to copy the view command to clipboard.',
     LAUNCHING_HLAE_TOAST: 'Launching HLAE...',
@@ -190,29 +206,41 @@ export const STRINGS = {
         'Keep Day of Defeat focused — it stops fast-forwarding between clips when it loses focus, and the batch takes far longer.',
     // ── OBS connection ──────────────────────────────────────────────────────
     OBS_SECTION_TITLE: 'OBS Connection',
+    OBS_EXE_PATH_LABEL: 'OBS Path:',
+    OBS_EXE_PATH_PLACEHOLDER: 'Path to obs64.exe',
+    OBS_LAUNCH_BUTTON: 'Launch OBS',
+    OBS_LAUNCHING: 'Launching…',
+    obsLaunchFailed: (err) => `Could not launch OBS: ${err}`,
     OBS_HOST_LABEL: 'Host:',
     OBS_PORT_LABEL: 'Port:',
     OBS_PASSWORD_LABEL: 'Password:',
     OBS_PASSWORD_PLACEHOLDER: 'From Tools → WebSocket Server Settings',
     OBS_PASSWORD_TITLE:
         'The obs-websocket password, if OBS has authentication enabled. Use the Copy button in OBS rather than retyping it.',
-    OBS_SCENE_LABEL: 'Scene:',
-    OBS_SCENE_TITLE:
-        'Scene to switch to for the batch, and switch back from afterwards. Leave on "Use current scene" to change nothing. The scene must contain a capture source pointed at hl.exe and an audio source.',
-    OBS_SCENE_CURRENT: 'Use current scene',
     OBS_TEST_BUTTON: 'Test Connection',
     OBS_TESTING: 'Connecting…',
+    OBS_LAUNCHING_AND_CONNECTING: 'Launching OBS and waiting for it to be ready…',
     OBS_UNREACHABLE: 'Could not reach OBS.',
     obsConnectedSummary: (obsVersion, websocketVersion) =>
         `Connected — OBS ${obsVersion} (obs-websocket ${websocketVersion})`,
+    // Read-only — dod-tools always targets its own fixed profile/scene, there
+    // is nothing here for the user to change.
+    obsUsingSummary: (profile, scene) => `Using OBS profile "${profile}", scene "${scene}"`,
     obsCanvasSummary: (canvas, output, fps) => `Canvas ${canvas}, output ${output} @ ${Math.round(fps)} fps`,
     obsRecordingToSummary: (directory) => `Recording to ${directory}`,
     obsMissingRequests: (requests) => `This OBS is missing: ${requests.join(', ')} — capture cannot run.`,
     OBS_ALREADY_RECORDING: 'OBS is already recording — stop it before starting a batch.',
     OBS_ALREADY_STREAMING: 'OBS is streaming — dod-tools will not drive its recorder.',
     obsTestFailed: (err) => `OBS test failed: ${err}`,
+    OBS_CAPTURE_FPS_LABEL: 'OBS Capture FPS:',
+    OBS_CAPTURE_FPS_TITLE:
+        "OBS's own live recording rate and the game's fps_max — separate from Capture FPS above, which is non-real-time for the other two modes. Set above what your machine can sustain and OBS drops frames instead of falling behind, making the clip choppy or unusable. Test a short capture first and watch for dropped-frame warnings before committing to a value.",
+    OBS_CAPTURE_FPS_WARNING:
+        'Too high for your machine and OBS drops frames — test a short capture first.',
     OBS_ENABLE_HINT:
-        'OBS Studio 28+ has obs-websocket built in. Enable it under Tools → WebSocket Server Settings — the checkbox at the top of that dialog is the switch, not the Connect Info panel.',
+        'OBS 28+: enable this under Tools → WebSocket Server Settings (the checkbox, not the Connect Info panel).',
+    OBS_PROVISION_HINT:
+        'dod-tools manages its own OBS profile/scene ([DoD-Tools]) — your own setup is never touched.',
     // ── Orphaned recording left by a previous run ───────────────────────────
     OBS_ORPHAN_TITLE: 'OBS is still recording',
     obsOrphanPrompt: (directory) =>
@@ -288,19 +316,39 @@ export const STRINGS = {
     SAVE_LOCAL_PATCHED_LABEL: 'Save Local Patched Copy',
     ADD_CONDEBUG_LABEL: 'Add Condebug',
     PRE_ROLL_LABEL: 'Pre-roll (s):',
+    PRE_ROLL_HINT: 'Time between fast-forward stopping and capture starting.',
     POST_ROLL_LABEL: 'Post-roll (s):',
+    POST_ROLL_HINT: 'Time between capture stopping and fast-forward resuming.',
     START_LEAD_LABEL: 'Start Lead (s):',
+    START_LEAD_HINT: 'Time between capture starting and the first kill.',
     STOP_TRAIL_LABEL: 'Stop Trail (s):',
+    STOP_TRAIL_HINT: 'Time between the last kill and capture stopping.',
     INITIAL_DELAY_LABEL: 'Initial Delay (s):',
+    INITIAL_DELAY_HINT: 'Time between the demo loading and fast-forward starting.',
+    // Timing diagram (#150) — a visual timeline under the fields above,
+    // showing how they relate to each other and to the recording window.
+    timingDiagramInitialDelayNote: (v) => `This timeline starts after Initial Delay (${v}s) has already passed — a once-per-demo wait, not part of the per-clip cycle below.`,
+    TIMING_DIAGRAM_COL_TIME: 'Relative Time',
+    TIMING_DIAGRAM_COL_EVENT: 'Event',
+    // Signed offset from the first kill (0.0s) — matches the pre-Tauri egui
+    // build's "+{n} sec" / "{n} sec" formatting.
+    timingDiagramTime: (v) => (v >= 0 ? `+${v.toFixed(1)}s` : `${v.toFixed(1)}s`),
+    timingDiagramPreRollEvent: (v) => `Pre-roll ends (speed back to normal) — Pre-roll is ${v}s`,
+    timingDiagramRecordStartEvent: (v) => `Recording starts — Start Lead is ${v}s`,
+    TIMING_DIAGRAM_FIRST_KILL_EVENT: 'First kill (anchor)',
+    TIMING_DIAGRAM_LAST_KILL_EVENT: 'Last kill (anchor — illustrative gap, not a real streak length)',
+    timingDiagramRecordStopEvent: (v) => `Recording stops — Stop Trail is ${v}s`,
+    timingDiagramPostRollEvent: (v) => `Post-roll ends, fast-forward resumes — Post-roll is ${v}s`,
     FF_SPEED_LABEL: 'FF Speed (x):',
     FF_SPEED_TITLE: 'Locked, matching dev — not currently user-editable.',
+    FF_SPEED_HINT: 'How fast playback races toward each clip between kills, as a multiple of real time. Locked at 0.05x, matching dev — not currently user-editable.',
     CAPTURE_FPS_LABEL: 'Capture FPS:',
     // Worth stating outright. This used to sit under Timing Options, and the
     // adjacency invited exactly the confusion that cost real time: the demo's
     // own tickrate is a different number entirely, and conflating the two is
     // how a "3 second" margin turned out to be 0.6.
     CAPTURE_FPS_TITLE:
-      'Frames per second written to the recorded video. Nothing to do with the demo\'s own tickrate, which is a property of how the demo was recorded and is not adjustable here.',
+      'Frames per second written to the recorded video. Nothing to do with the demo\'s own tickrate, which is a property of how the demo was recorded and is not adjustable here. Not used in OBS mode — see OBS Capture FPS in the OBS Connection section below.',
     OUTPUT_DIR_PLACEHOLDER: 'Capture output directory path...',
     ADD_DIRECTORY_BUTTON: 'Add Directory',
     DESTINATIONS_HELP_TEXT: 'Captures are written here, and Render Studio scans these same locations for takes to render.',
@@ -321,7 +369,12 @@ export const STRINGS = {
     NOTIFY_ERROR_LABEL: 'Errors',
     NOTIFY_ERROR_TITLE: 'Fires immediately if a patch, capture, or render step fails.',
     INIT_COMMANDS_LABEL: 'Initial Commands (run once at demo load):',
+    INIT_COMMANDS_INFO_TITLE:
+      "If you already exec a movie config from your config.cfg or autoexec, you don't need to add anything here. If you exec one manually instead, use Import Config below to pull its lines in as Initial Commands.",
     ADD_INIT_COMMAND_BUTTON: '+ Add Initial Command',
+    IMPORT_CFG_BUTTON: 'Import Config...',
+    importedCfgToast: (n) => `Imported ${n} command(s) from the config.`,
+    IMPORTED_CFG_EMPTY_TOAST: 'That config had no commands to import.',
     // Both lists on this tab are custom commands; only one is scheduled, so
     // that is what the label says. Paired with INIT_COMMANDS_LABEL's "once at
     // demo load", the two read as the distinction they actually are.
@@ -349,6 +402,9 @@ export const STRINGS = {
     andNMore: (n) => `...and ${n} more`,
     NO_HIGHLIGHTS_SELECTED_WARNING: 'No highlights selected — pick at least one in the Highlights tab before starting a capture.',
     NO_DRIVES_CONFIGURED_WARNING: 'No Capture Output directories configured — add at least one with free space before starting a capture.',
+    OBS_NOT_CONNECTED_WARNING: 'Not connected to OBS — capture mode is OBS, but the last connection check failed. Fix the connection in Configuration → Output Format before starting a capture.',
+    OBS_CHECKING_WARNING: 'Checking the OBS connection…',
+    bannedCommandsWarning: (n) => `${n} command${n === 1 ? '' : 's'} in Initial or Scheduled Commands ${n === 1 ? 'is' : 'are'} not allowed — remove ${n === 1 ? 'it' : 'them'} in the Commands tab before starting a capture.`,
     // Measured 2026-08-28, see docs/direct_to_video_capture.md. Spelled out
     // because both halves report success and the broken output only shows up
     // after rendering — the user has no other way to find out.
@@ -427,14 +483,22 @@ export const STRINGS = {
     TABLE_HEADER_STATUS: 'Status',
     TABLE_HEADER_SPEED: 'Speed',
     TABLE_HEADER_PROGRESS: 'Progress',
+    TABLE_HEADER_FILE_SIZE: 'File Size',
+    TABLE_HEADER_FILE_SIZE_TITLE: "The real encoded size, once finished — not shown ahead of time, since it can't be predicted accurately (see Required (Over-estimated) in the footer).",
+    fileSizeGb: (gb) => `${gb} GB`,
+    fileSizeMb: (mb) => `${mb} MB`,
+    FILE_SIZE_UNKNOWN: '—',
     TABLE_HEADER_ACTIONS: 'Actions',
     TABLE_EMPTY: 'No render jobs queued. Scan a folder, then click Start Render Batch.',
     START_RENDER_BUTTON: 'Start Render Batch',
     CANCEL_ALL_BUTTON: 'Cancel All',
+    RESET_ALL_BUTTON: 'Reset All',
+    REMOVE_ALL_BUTTON: 'Remove All (Not Rendering)',
     STATUS_WAITING: 'Status: Waiting...',
 
     CANCEL_JOB_TITLE: 'Cancel this job',
     RESET_JOB_TITLE: 'Reset to Queued',
+    REMOVE_JOB_TITLE: 'Remove this row — cannot be undone',
     SKIP_TOGGLE_LABEL: 'Skip',
     SKIP_TOGGLE_TITLE: 'Leave this OBS take exactly as recorded — no re-encode, just routed into the export pool under the pipeline naming.',
     setJobCodecFailed: (err) => `Could not change this job's render setting: ${err}`,
@@ -450,6 +514,12 @@ export const STRINGS = {
     errorLogTitleForJob: (name) => `FFmpeg Error Log — ${name}`,
     exportPoolFreeFooter: (gb) => `Export Pool Free: ${gb} GB`,
     RENDER_POOL_FREE_DEFAULT: 'Export Pool Free: 0.0 GB',
+    // "Over-estimated" matters here in a way it doesn't for Capture's
+    // Required figure — this is a deliberately loose upper bound (raw-frame
+    // math), not a tight prediction. See get_render_required_estimate_gb.
+    requiredEstimatedFooter: (gb) => `Required (Over-estimated): ${gb} GB`,
+    REQUIRED_ESTIMATED_FOOTER_TITLE: "A loose upper bound, not a tight prediction — most codecs compress well below this, and it can't be known ahead of time how much. Covers every job that hasn't finished yet (Queued + Rendering).",
+    REQUIRED_ESTIMATED_DEFAULT: 'Required (Over-estimated): 0.00 GB',
     recoveredJobsToast: (completed, pending) => `Recovered ${completed} completed, ${pending} pending render job(s).`,
     recoverFailed: (err) => `Failed to recover render batch: ${err}`,
     renderingStatus: (done, total) => `Status: Rendering (${done}/${total} done)`,
@@ -815,7 +885,7 @@ export const STRINGS = {
     location: (file, line) => `set in ${file}, line ${line}`,
     OVERRIDE_TITLE: 'These Initial Commands will override your config files:',
     OVERRIDE_ADVICE:
-      'Init commands run after the game loads its configs, so these values win. That is usually the point — but the config line stops applying, and nothing else would tell you.',
+      'Initial Commands run after the game loads its configs, so these values win. That is usually the point — but the config line stops applying, and nothing else would tell you.',
     FROM_APP_NOTE: 'added by the app',
     SHADOWED_TITLE: 'These Initial Commands will not take effect:',
     SHADOWED_ADVICE:
@@ -827,14 +897,34 @@ export const STRINGS = {
     // Which setting owns a value the pipeline appends for itself, so the advice
     // can name the control rather than leaving the user to hunt for it.
     SETTING_FOR_CVAR: {
-      mirv_movie_fps: 'Timing Options → Capture FPS',
-      mirv_movie_separate_hud: 'Capture Config → Separate HUD',
-      r_decals: 'Capture Config → Flush Decals Between Clips',
+      mirv_movie_fps: 'Output Format → Capture FPS',
+      mirv_movie_separate_hud: 'Output Format → Separate HUD',
+      r_decals: 'Pipeline → Flush Decals Between Clips',
     },
     UNKNOWN_SETTING: 'its own setting',
-    HAZARD_TITLE: 'These Scheduled Commands will break the decal flush:',
+    BANNED_TITLE: 'These commands are not allowed:',
+    BANNED_ADVICE:
+      'Too dangerous to run at all — remove them. Start Capture Batch stays disabled while any are present.',
+    // Why each is banned, and where to go instead when there's a real setting
+    // for it.
+    BANNED_REASONS: {
+      mirv_movie_ffmpeg: 'set Capture Mode to Video in the Output Format tab instead',
+      host_framerate: 'fast-forwarding is handled by the app; this will break the automation',
+      mirv_recordmovie_start: 'the app schedules this itself; a manual one will break the automation',
+      mirv_recordmovie_stop: 'the app schedules this itself; a manual one will break the automation',
+      mirv_movie_filename: 'set the save location in the Destinations tab instead',
+      // Fine as Initial Commands — that's how the decal flush is meant to be
+      // configured — but banned_scheduled only ever reports these three when
+      // they show up as Scheduled Commands instead, so the reason is always
+      // about the mid-demo change, never about the cvar itself being wrong.
+      r_decals: "can't change mid-demo — set it in Initial Commands instead",
+      mirv_fov: "can't change mid-demo — set it in Initial Commands instead",
+      gl_widescreenfov: "can't change mid-demo — set it in Initial Commands instead",
+    },
+    bannedRowDetailed: (command, reason) => (reason ? `${command} — not allowed: ${reason}` : `${command} — not allowed`),
+    HAZARD_TITLE: 'These Scheduled Commands are redundant with a Configuration setting:',
     HAZARD_ADVICE:
-      'r_decals bounds how far the engine\'s decal ring may travel before it wraps — it evicts nothing. Setting it during playback strands every decal above the new limit for the rest of the demo, and the capture still completes looking plausible. Set the ring once, in Initial Commands, and leave it alone.',
+      "mirv_movie_fps and mirv_movie_separate_hud are already pinned every capture from Output Format's own Capture FPS / Separate HUD settings — a scheduled one here just fights the value the pipeline sets on its own. Not dangerous, just pointless.",
     CUSTOM_TITLE: 'These Scheduled Commands override earlier values:',
     CUSTOM_ADVICE:
       'Scheduled commands run during playback, so they come after your configs and after the Initial Commands — they are the last word on whatever they set, and the only place a value changes partway through a capture.',
@@ -845,6 +935,26 @@ export const STRINGS = {
       `${cvar} ${value} replaces ${previous} from ${source}`,
     override: (cvar, initValue, cfgValue, file, line) =>
       `${cvar} ${initValue} replaces ${cfgValue} from ${file}, line ${line}`,
+    DECAL_DEFAULT_TITLE: 'No r_decals value is set anywhere:',
+    DECAL_DEFAULT_ADVICE:
+      "The engine will use its default, 256, for the decal ring. That's a safe value on most maps — state r_decals in Initial Commands if you want a different one.",
+    decalDefaultRow: (ring) => `r_decals — defaulting to ${ring}`,
+    DECAL_NOOP_TITLE: 'Flush Decals Between Clips has nothing to clear:',
+    DECAL_NOOP_ADVICE:
+      "r_decals is 0, so the flush's sweep finds an empty ring every clip — real work for no effect. State a nonzero r_decals in Initial Commands, or turn off Flush Decals Between Clips in the Pipeline tab.",
+    DECAL_NOOP_ROW: 'r_decals 0 — clears nothing',
+    NOOP_TITLE: 'These commands have no effect:',
+    NOOP_ADVICE:
+      'The pipeline (or the engine itself) always overrides or drops these before they could ever apply — not wrong, just wasted keystrokes.',
+    NOOP_REASONS: {
+      mirv_movie_filename: 'the pipeline sets this itself before every clip is captured',
+      exec: 'GoldSrc drops this when injected into a demo',
+      quit: 'GoldSrc drops this when injected into a demo',
+    },
+    noopRow: (command, reason, source) => {
+      const isPlainSource = source === 'Initial Commands' || source === 'Scheduled Commands';
+      return isPlainSource ? `${command} — ${reason}` : `${command} — ${reason} (${source})`;
+    },
   },
 
   // Pre-roll and post-roll are load-bearing: playback returns to real time one
@@ -865,16 +975,20 @@ export const STRINGS = {
     SELECT_HLAE_EXE_TITLE: 'Select HLAE Executable (hlae.exe)',
     SELECT_HL_EXE_TITLE: 'Select Half-Life Executable (hl.exe)',
     SELECT_FFMPEG_EXE_TITLE: 'Select FFmpeg Executable (ffmpeg.exe)',
+    SELECT_OBS_EXE_TITLE: 'Select OBS Executable (obs64.exe)',
     SELECT_DEMO_FILES_TITLE: 'Select Demo Files (.dem)',
     SELECT_DEMO_FOLDER_TITLE: 'Select Demo Folder',
 
     JSON_PROJECT_FILTER_NAME: 'JSON Project File',
     EXECUTABLE_FILTER_NAME: 'Executable',
+    CONFIG_FILTER_NAME: 'Config File',
+    SELECT_MOVIE_CFG_TITLE: 'Select Movie Config',
     DEMO_FILES_FILTER_NAME: 'Demo Files',
 
     NOTHING_TO_SAVE: 'Nothing to save yet — add demo files or load a session first.',
     ALREADY_SAVED: 'Already saved — no changes since the last save.',
     projectSavedToast: (path) => `Project session saved successfully to ${path}`,
+    NEW_SESSION_TOAST: 'Started a new session.',
     SAVE_PROJECT_ERROR: 'Error saving project session.',
     loadedDemosToast: (count) => `Loaded ${count} demos from project file`,
     LOAD_PROJECT_ERROR: 'Error loading project session.',
@@ -942,6 +1056,7 @@ export const STRINGS = {
     validationError: (err) => `Validation error: ${err}`,
     analysisError: (err) => `Analysis error: ${err}`,
     previewFailed: (err) => `Preview failed: ${err}`,
+    cfgImportFailed: (err) => `Could not read that config: ${err}`,
     processCheckFailed: (err) => `Process check failed: ${err}`,
     launchFailed: (err) => `Launch failed: ${err}`,
     killEngineFailed: (err) => `Failed to close running engine processes: ${err}`,
@@ -974,15 +1089,13 @@ export const STRINGS = {
     CHECK_UPDATES_TITLE: 'Check for app updates',
     UPDATE_AVAILABLE_BUTTON: 'Update Available',
     UPDATE_AVAILABLE_TITLE: 'A new version is ready — click to install it.',
-    // baseVersion excludes the dev channel's `-<run number>` suffix — the
-    // footer just needs "what kind of build is this", not which exact run.
-    // buildKind: 'local' (npm run tauri dev), 'debug' (tauri build --debug —
-    // a real bundle, just not a release-profile one), 'dev'
-    // (release_dev.yml), or anything else for a real stable build (no tag).
-    appVersionLabel: (baseVersion, buildKind) => {
-      const tags = { local: ' | local build', debug: ' | debug build', dev: ' | dev build' };
-      return `v${baseVersion}${tags[buildKind] || ''}`;
-    },
+  },
+
+  // ── About modal (issue #122) ─────────────────────────────────────────────
+  ABOUT_MODAL: {
+    BLURB: 'A capture, patching, and analytics pipeline for Day of Defeat 1.3 demos — batch-records highlight clips through HLAE and parses matches for scoreboards, kills, chat, and rounds.',
+    CREDIT: 'Built by ccoventry',
+    GITHUB_LINK: 'github.com/ccoventry/dod-tools',
   },
 
   // ── Update check/install modal (issue #133) ──────────────────────────────

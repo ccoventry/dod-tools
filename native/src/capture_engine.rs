@@ -169,7 +169,7 @@ impl Drop for CaptureCleanupGuard {
                 if let Ok(entries) = std::fs::read_dir(&dod_dir) {
                     for entry in entries.flatten() {
                         let filename = entry.file_name().to_string_lossy().to_string();
-                        if filename.starts_with("dodtools_chain_") && filename.ends_with(".dem") {
+                        if crate::shared::paths::is_chain_demo_filename(&filename) {
                             let _ = std::fs::remove_file(entry.path());
                         }
                     }
@@ -212,7 +212,7 @@ pub fn spawn_capture_engine(
     // drive this batch touches (see `native/src/patch/builder.rs`) — the
     // pre-launch check below re-validates these same numbers instead of
     // re-querying disk space itself for just the primary export dir.
-    drive_headroom: Vec<(PathBuf, u64)>,
+    drive_headroom: Vec<crate::patch::DriveHeadroom>,
     // Each planned block's take folder, in the order the batch will record
     // them — the same flattened order the capture manifest uses.
     //
@@ -356,7 +356,7 @@ pub fn spawn_capture_engine(
                 save_local_patched_copy: config.save_local_patched_copy,
             };
 
-            for job in jobs {
+            for job in &jobs {
                 if cancel_token.load(Ordering::Relaxed) {
                     let _ = tx.send(EngineEvent::Cancelled);
                     return;
@@ -469,15 +469,42 @@ pub fn spawn_capture_engine(
                 return;
             }
 
-            for (drive_path, free_bytes) in &drive_headroom {
-                if *free_bytes < crate::sys::disk::MIN_DRIVE_HEADROOM_BYTES {
+            for entry in &drive_headroom {
+                if entry.free_bytes < crate::sys::disk::MIN_DRIVE_HEADROOM_BYTES {
                     let required_gb = crate::sys::disk::MIN_DRIVE_HEADROOM_BYTES as f64 / (1024.0 * 1024.0 * 1024.0);
                     log_crash_abort!(tx, format!(
                         "Capture aborted: {:?} has less than {:.1} GB free space.",
-                        drive_path, required_gb
+                        entry.path, required_gb
                     ));
                     return;
                 }
+            }
+
+            // hl.exe's own install drive is never in `drive_headroom` (that
+            // list is only for drives an actual recording block routed to —
+            // patched demo files land directly in `hl_exe_parent`'s own
+            // `dod/` folder now, not on any capture_directories entry, since
+            // that's the only place GoldSrc's `playdemo` can find them; see
+            // issue #8). Every patched file already exists on disk by this
+            // point — real sizes, not an estimate. Doubled when Save Local
+            // Patched Copy duplicates each file into `<exe_dir>/demos` too.
+            // See issue #11.
+            let total_patched_bytes: u64 = jobs.iter()
+                .map(|j| std::fs::metadata(&j.patched_demo_path).map(|m| m.len()).unwrap_or(0))
+                .sum();
+            let hl_exe_required_bytes = if config.save_local_patched_copy {
+                total_patched_bytes.saturating_mul(2)
+            } else {
+                total_patched_bytes
+            };
+            let hl_exe_drive_free = crate::sys::disk::get_available_bytes(hl_exe_parent);
+            if hl_exe_drive_free < hl_exe_required_bytes {
+                let required_gb = hl_exe_required_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
+                log_crash_abort!(tx, format!(
+                    "Capture aborted: {:?} (hl.exe's own drive) has less than {:.1} GB free space.",
+                    hl_exe_parent, required_gb
+                ));
+                return;
             }
 
             // ── OBS capture mode ──────────────────────────────────────────────
@@ -509,6 +536,7 @@ pub fn spawn_capture_engine(
                     obs_take_folders.clone(),
                     config.resolution_width,
                     config.resolution_height,
+                    config.obs_capture_fps,
                 ) {
                     Ok((session, preflight)) => {
                         log_markdown(&format!(
@@ -564,8 +592,12 @@ pub fn spawn_capture_engine(
             // appends it when its alpha box is ticked — but that dialog is the
             // path we do not use. Under `-customLoader` we build the game
             // command line ourselves, so nothing appends it and the hook never
-            // sees it. The `-forceAlpha true` passed to HLAE.exe below is a
-            // Launcher-mode switch and does not reach the hook from here.
+            // sees it. HLAE's own `-forceAlpha` is a Launcher-mode switch,
+            // read only by `-afxHookGoldSrc`/`-csgoLauncher` mode's own arg
+            // parsing — under `-customLoader`, HLAE's `ProcessArgsCustomLoader`
+            // (see advancedfx/advancedfx's `hlae/Program.cs`) doesn't
+            // recognise it at all, so passing it here would be a silent
+            // no-op. Not passed for that reason.
             //
             // `-afxForceAlpha8` TAKES A VALUE. From HLAE's own Launcher.cs, the
             // dialog builds it as:
@@ -596,6 +628,12 @@ pub fn spawn_capture_engine(
             } else {
                 ""
             };
+            // MUST be embedded here, not appended to `cmd` below: HLAE's own
+            // `-customLoader` argument parsing (`ProcessArgsCustomLoader` in
+            // advancedfx/advancedfx's `hlae/Program.cs`) reads exactly six
+            // flags and silently drops everything else on its own argv —
+            // only text folded into this string reaches `hl.exe`, via the
+            // single `-cmdLine` value `build_hlae_process` composes below.
             let extra_args = format!(
                 "{}{}+exec dodtools_helper.cfg +playdemo primer",
                 condebug_flag, alpha_flags
@@ -605,26 +643,6 @@ pub fn spawn_capture_engine(
             let _ = std::fs::remove_dir_all(&dummy_path);
 
             let mut cmd = config.build_hlae_process(&extra_args);
-
-            let width_str = config.resolution_width.to_string();
-            let height_str = config.resolution_height.to_string();
-            cmd.args([
-                "-w",
-                &width_str,
-                "-h",
-                &height_str,
-                "-forceAlpha",
-                "true",
-            ]);
-
-            if !config.movie_config.trim().is_empty() {
-                let mut cfg_name = config.movie_config.trim().to_string();
-                if cfg_name.ends_with(".cfg") {
-                    cfg_name.truncate(cfg_name.len() - 4);
-                }
-                cmd.arg("+exec");
-                cmd.arg(format!("{}.cfg", cfg_name));
-            }
 
             let cfg_path = dod_dir.join("dod_quit.cfg");
             std::fs::write(&cfg_path, "quit\n").ok();
@@ -664,6 +682,20 @@ pub fn spawn_capture_engine(
             // because the deadline had nothing to count from. Seen in a real
             // run: 398s with hl.exe alive and not one marker.
             let mut hl_first_seen: Option<std::time::Instant> = None;
+            // Set the instant the BATCH_COMPLETE marker is seen, in OBS mode
+            // only — a faster, side-effect-free alternative to waiting on
+            // `exit_trigger` there. `sys_capture_done_path`'s
+            // `mirv_recordmovie_start`/`_stop` (which is what actually writes
+            // `exit_trigger`) restarts the whole demo from the top as a side
+            // effect — harmless in frame-sequence mode (which is already
+            // mid-movie-recording throughout), but in OBS mode it replayed
+            // primer.dem *and* chain_01.dem from tick 0, twice, adding ~50s to
+            // a real batch before `exit_trigger` ever got written. The
+            // BATCH_COMPLETE marker already exists and already fires
+            // `ObsSession::on_marker`'s `end_block()` moments before this —
+            // taskkilling right after it means hl.exe is dead before it ever
+            // gets to process the command that would restart it. See #obs.
+            let mut obs_batch_complete_seen = false;
             let mut sys = {
                 use sysinfo::SystemExt;
                 sysinfo::System::new_all()
@@ -683,6 +715,9 @@ pub fn spawn_capture_engine(
                     last_marker_at = Some(now);
                     if let Some(session) = obs_session.as_mut() {
                         session.on_marker(&marker);
+                    }
+                    if obs_mode && marker.kind == crate::obs::MarkerKind::BatchComplete {
+                        obs_batch_complete_seen = true;
                     }
                     if marker.kind == crate::obs::MarkerKind::DemoStart {
                         if let Some((job_idx, total, clips)) = marker.demo_progress {
@@ -764,12 +799,24 @@ pub fn spawn_capture_engine(
                     std::process::Command::new("taskkill").args(&["/F", "/IM", "hl.exe"]).output().ok();
                     break;
                 }
-                if start_time.elapsed().as_secs() > 10 && (dummy_path.exists() || exit_trigger.exists()) {
+                if start_time.elapsed().as_secs() > 10
+                    && (dummy_path.exists() || exit_trigger.exists() || obs_batch_complete_seen)
+                {
+                    let via = if obs_batch_complete_seen && !exit_trigger.exists() {
+                        // The common OBS-mode case: caught it off the marker,
+                        // ahead of exit_trigger ever needing to be written.
+                        "BATCH_COMPLETE marker".to_string()
+                    } else {
+                        format!(
+                            "done marker: {}, exit trigger: {}",
+                            dummy_path.exists(),
+                            exit_trigger.exists()
+                        )
+                    };
                     log_markdown(&format!(
-                        "[HLAE] Exit trigger detected after {:.1}s (done marker: {}, exit trigger: {}) — taskkilling hl.exe",
+                        "[HLAE] Batch complete after {:.1}s (via {}) — taskkilling hl.exe",
                         start_time.elapsed().as_secs_f32(),
-                        dummy_path.exists(),
-                        exit_trigger.exists()
+                        via
                     ));
                     std::process::Command::new("taskkill").args(&["/F", "/IM", "hl.exe"]).output().ok();
                     break;

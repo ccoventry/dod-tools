@@ -4,13 +4,16 @@ mod settings_manager;
 mod audit_manager;
 mod dir_browser;
 mod map_manager;
+mod messages;
 mod updater_manager;
 
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
-use capture_manager::{CaptureManager, CapturePayload, launch_demo_preview, generate_all_previews, launch_standalone_game, check_engine_processes, kill_engine_processes, scan_orphaned_previews, delete_orphaned_previews};
+use capture_manager::{CaptureManager, CapturePayload, launch_demo_preview, generate_all_previews, launch_standalone_game, launch_obs, check_engine_processes, kill_engine_processes, scan_orphaned_previews, delete_orphaned_previews, read_cfg_commands};
 use render_manager::{
     RenderManager, queue_render_batch, start_queued_render, cancel_render_batch,
-    cancel_render_job, reset_render_job, set_render_job_codec, get_export_pool_free_gb,
+    cancel_render_job, reset_render_job, reset_all_render_jobs, remove_render_job,
+    remove_non_rendering_render_jobs, set_render_job_codec, get_export_pool_free_gb,
+    get_render_required_estimate_gb,
     check_render_autosave, discard_render_autosave, recover_render_batch,
 };
 use settings_manager::{AppSettings, SettingsManager};
@@ -37,12 +40,11 @@ impl Default for ScanManager {
 #[tauri::command]
 async fn get_settings(state: tauri::State<'_, SettingsManager>) -> Result<AppSettings, String> {
     let inner_arc = Arc::clone(&state.inner);
-    tokio::task::spawn_blocking(move || {
+    messages::flatten_spawn_blocking(tokio::task::spawn_blocking(move || {
         let guard = inner_arc.lock().unwrap_or_else(|p| p.into_inner());
         Ok(guard.clone())
-    })
+    }))
     .await
-    .map_err(|e| format!("Task join error: {}", e))?
 }
 
 #[tauri::command]
@@ -51,14 +53,13 @@ async fn save_settings(
     settings: AppSettings,
 ) -> Result<(), String> {
     let inner_arc = Arc::clone(&state.inner);
-    tokio::task::spawn_blocking(move || {
+    messages::flatten_spawn_blocking(tokio::task::spawn_blocking(move || {
         settings.save()?;
         let mut guard = inner_arc.lock().unwrap_or_else(|p| p.into_inner());
         *guard = settings;
         Ok(())
-    })
+    }))
     .await
-    .map_err(|e| format!("Task join error: {}", e))?
 }
 
 // ── Project Session IPC Commands ───────────────────────────────────────────────
@@ -70,20 +71,18 @@ async fn save_settings(
 
 #[tauri::command]
 async fn save_project_session(path: String, contents: String) -> Result<(), String> {
-    tokio::task::spawn_blocking(move || {
-        std::fs::write(&path, contents).map_err(|e| format!("Failed to write {}: {}", path, e))
-    })
+    messages::flatten_spawn_blocking(tokio::task::spawn_blocking(move || {
+        std::fs::write(&path, contents).map_err(|e| messages::failed_to_write_file(&path, e))
+    }))
     .await
-    .map_err(|e| format!("Task join error: {}", e))?
 }
 
 #[tauri::command]
 async fn load_project_session(path: String) -> Result<String, String> {
-    tokio::task::spawn_blocking(move || {
-        std::fs::read_to_string(&path).map_err(|e| format!("Failed to read {}: {}", path, e))
-    })
+    messages::flatten_spawn_blocking(tokio::task::spawn_blocking(move || {
+        std::fs::read_to_string(&path).map_err(|e| messages::failed_to_read_file(&path, e))
+    }))
     .await
-    .map_err(|e| format!("Task join error: {}", e))?
 }
 
 // ── Auditor IPC Commands ───────────────────────────────────────────────────────
@@ -276,10 +275,10 @@ async fn validate_paths(hlae_path: String, hl_path: String) -> Result<bool, Stri
     let hl_p = std::path::Path::new(&hl_path);
 
     if !hlae_p.exists() || !hlae_p.is_file() {
-        return Err("HLAE executable not found at specified path.".into());
+        return Err(messages::HLAE_EXECUTABLE_NOT_FOUND.into());
     }
     if !hl_p.exists() || !hl_p.is_file() {
-        return Err("Half-Life executable not found at specified path.".into());
+        return Err(messages::HL_EXECUTABLE_NOT_FOUND.into());
     }
     Ok(true)
 }
@@ -398,14 +397,8 @@ async fn link_hlae_ffmpeg(
 ) -> Result<serde_json::Value, String> {
     use native::shared::hlae_ffmpeg::{self, LinkError};
 
-    let ffmpeg = hlae_ffmpeg::resolve_absolute(&ffmpeg_path).ok_or_else(|| {
-        format!(
-            "Could not resolve an FFmpeg from \"{}\". Set Render Studio's FFmpeg path to a real \
-             ffmpeg.exe first — HLAE's ini needs an absolute path and cannot use a bare command \
-             name.",
-            ffmpeg_path
-        )
-    })?;
+    let ffmpeg = hlae_ffmpeg::resolve_absolute(&ffmpeg_path)
+        .ok_or_else(|| messages::ffmpeg_could_not_be_resolved(&ffmpeg_path))?;
 
     let hlae = std::path::Path::new(&hlae_path);
     let result = if elevated.unwrap_or(false) {
@@ -456,13 +449,13 @@ async fn analyze_demo_full(
     app_handle: tauri::AppHandle,
     demo_path: String,
 ) -> Result<AnalyzerReportPayload, String> {
-    tokio::task::spawn_blocking(move || {
+    messages::flatten_spawn_blocking(tokio::task::spawn_blocking(move || {
         use tauri::Emitter;
 
         let path = std::path::PathBuf::from(&demo_path);
 
         if !path.exists() || !path.is_file() {
-            return Err(format!("Demo file not found: {}", demo_path));
+            return Err(messages::demo_file_not_found(&demo_path));
         }
 
         // Throttled to ~30fps per CLAUDE.md's telemetry-throttling guardrail —
@@ -506,11 +499,20 @@ async fn analyze_demo_full(
                     state: analysis.state,
                 })
             }
-            Err(e) => Err(format!("Analyzer error: {}", e)),
+            Err(e) => Err(messages::analyzer_error(e)),
         }
-    })
+    }))
     .await
-    .map_err(|e| format!("Task join error: {}", e))?
+}
+
+/// Every `Weapon` variant's resolved display name, keyed by its raw JSON tag
+/// (e.g. `"ScopedK98"` -> "Scoped Kar98k") — the same names
+/// `native::patch::scanner` bakes into a kill streak's timeline text, so the
+/// frontend's weapon tables (analyzer_pane.js) can show identical text
+/// instead of independently re-deriving a name from the raw enum tag.
+#[tauri::command]
+fn get_weapon_display_names() -> std::collections::HashMap<String, String> {
+    analysis::all_weapon_display_names()
 }
 
 // ── App entry point ────────────────────────────────────────────────────────────
@@ -529,6 +531,19 @@ pub fn run() {
         .manage(SettingsManager::new())
         .manage(AuditManager::default())
         .manage(updater_manager::UpdaterState::default())
+        .setup(|app| {
+            // Dev/debug builds find the repo-root `localizations/` folder via
+            // analysis::translate_key's own walk-up-from-exe search, since the
+            // exe runs from inside the source tree. A packaged install runs from
+            // e.g. Program Files, nowhere near that folder — its `resources`
+            // directory (populated by tauri.conf.json's `bundle.resources`) is
+            // the only place weapon-name strings can come from there.
+            use tauri::Manager;
+            if let Ok(resource_dir) = app.path().resource_dir() {
+                analysis::add_localization_search_path(resource_dir.join("localizations"));
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             test_bridge,
             log_frontend_event,
@@ -538,13 +553,16 @@ pub fn run() {
             diagnose_executable_paths,
             link_hlae_ffmpeg,
             analyze_demo_full,
+            get_weapon_display_names,
             start_capture_batch,
             launch_demo_preview,
             generate_all_previews,
             capture_manager::obs_test_connection,
             capture_manager::obs_check_orphan,
             capture_manager::obs_recover_orphan,
+            launch_obs,
             launch_standalone_game,
+            read_cfg_commands,
             check_engine_processes,
             kill_engine_processes,
             scan_orphaned_previews,
@@ -562,8 +580,12 @@ pub fn run() {
             cancel_render_batch,
             cancel_render_job,
             reset_render_job,
+            reset_all_render_jobs,
+            remove_render_job,
+            remove_non_rendering_render_jobs,
             set_render_job_codec,
             get_export_pool_free_gb,
+            get_render_required_estimate_gb,
             check_render_autosave,
             discard_render_autosave,
             recover_render_batch,

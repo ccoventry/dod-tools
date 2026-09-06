@@ -103,20 +103,21 @@ function applyProcessModalCopy(forBatch) {
   if (copyBtn) copyBtn.style.display = forBatch ? 'none' : '';
 }
 
-/** Reflects current selection state onto the Launch Preview (per-demo) and
- *  Generate All Previews (global) buttons — disabled whenever there are zero
- *  selected highlights in their respective scope. */
+/** Reflects current demo-load state onto the Launch Preview (per-demo) and
+ *  Generate All Previews (global) buttons — disabled only when there is no
+ *  demo to act on at all. Neither button is gated on highlight selection
+ *  (see #128): clicking with nothing checked now reaches the backend and
+ *  surfaces its own "No highlights selected to preview." error as a toast,
+ *  rather than silently no-op'ing with zero feedback. */
 function updatePreviewButtonStates() {
   const launchBtn = document.querySelector('#btn-launch-preview');
   if (launchBtn) {
-    const hasLocalSelection = !!(currentDemo && currentDemo.streaks && currentDemo.streaks.some(s => s.selected));
-    launchBtn.disabled = !hasLocalSelection;
+    launchBtn.disabled = !currentDemo;
   }
   const generateAllBtn = document.querySelector('#btn-generate-all-previews');
   if (generateAllBtn) {
     const allDemos = currentGetAllDemos ? currentGetAllDemos() : [];
-    const hasGlobalSelection = (allDemos || []).some(d => (d.streaks || []).some(s => s.selected));
-    generateAllBtn.disabled = !hasGlobalSelection;
+    generateAllBtn.disabled = (allDemos || []).length === 0;
   }
   if (currentOnSelectionChange) currentOnSelectionChange();
 }
@@ -128,8 +129,13 @@ function updatePreviewButtonStates() {
  * called after any mutation of start_index/end_index so the display and the
  * eventual capture payload (which is built from these same fields) agree.
  */
-function updateStreakVisuals(streak) {
+export function updateStreakVisuals(streak) {
   if (!streak.kills || streak.kills.length === 0) return;
+
+  // A session saved before start_index/end_index existed (or a streak never
+  // touched by the range editor) may have either as undefined.
+  if (streak.end_index === undefined) streak.end_index = streak.kills.length - 1;
+  if (streak.start_index === undefined) streak.start_index = 0;
 
   const end = Math.min(streak.end_index, streak.kills.length - 1);
   const start = Math.min(streak.start_index, end);
@@ -157,45 +163,38 @@ function updateStreakVisuals(streak) {
   streak.timeline_string = parts.join(', ');
 }
 
+/** Selects every currently-visible (POV + Min Kills filtered) streak in
+ *  `currentDemo` — the header checkbox's checked state. Only the rows on
+ *  screen. `demo.streaks` holds every player's streaks, and the table shows
+ *  the recording player's at or above Min Kills — so selecting the raw list
+ *  checked highlights belonging to other players that were never rendered
+ *  and could not be unchecked. The batch groups by (demo, target player), so
+ *  each of those became its own chained demo: one 15-row table produced five
+ *  passes over the same file. */
+function selectAllVisibleStreaks() {
+  if (!currentDemo || !currentDemo.streaks) return;
+  currentDemo.streaks.forEach(s => {
+    if (isVisibleStreak(currentDemo, s)) s.selected = true;
+  });
+  renderDetailView(currentDemo, currentDemoIdx);
+}
+
+/** Deselects every streak in `currentDemo` — the header checkbox's
+ *  unchecked state. Deliberately NOT filtered, unlike selectAllVisibleStreaks.
+ *  This is the escape hatch: if anything ever selects a streak the table does
+ *  not show, this is what clears it. Erring wide costs nothing here; erring
+ *  narrow leaves a capture running that nobody asked for. */
+function deselectAllStreaks() {
+  if (!currentDemo || !currentDemo.streaks) return;
+  currentDemo.streaks.forEach(s => { s.selected = false; });
+  renderDetailView(currentDemo, currentDemoIdx);
+}
+
 // Initialize event listeners for detail pane buttons
 window.addEventListener("DOMContentLoaded", () => {
-  const btnSelectAll = document.querySelector('#btn-select-all');
-  const btnDeselectAll = document.querySelector('#btn-deselect-all');
   const inputMinKills = document.querySelector('#input-min-kills');
   const btnLaunchPreview = document.querySelector('#btn-launch-preview');
   const btnGenerateAllPreviews = document.querySelector('#btn-generate-all-previews');
-
-  if (btnSelectAll) {
-    btnSelectAll.addEventListener('click', () => {
-      if (!currentDemo || !currentDemo.streaks) return;
-      // Only the rows on screen. `demo.streaks` holds every player's streaks,
-      // and the table shows the recording player's at or above Min Kills — so
-      // selecting the raw list checked highlights belonging to other players
-      // that were never rendered and could not be unchecked. The batch groups
-      // by (demo, target player), so each of those became its own chained demo:
-      // one 15-row table produced five passes over the same file.
-      currentDemo.streaks.forEach(s => {
-        if (isVisibleStreak(currentDemo, s)) s.selected = true;
-      });
-      const checkboxes = document.querySelectorAll('#detail-streaks-container input[type="checkbox"]');
-      checkboxes.forEach(cb => { cb.checked = true; });
-      renderDetailView(currentDemo, currentDemoIdx);
-    });
-  }
-
-  if (btnDeselectAll) {
-    btnDeselectAll.addEventListener('click', () => {
-      if (!currentDemo || !currentDemo.streaks) return;
-      // Deliberately NOT filtered, unlike Select All. This is the escape hatch:
-      // if anything ever selects a streak the table does not show, this is what
-      // clears it. Erring wide costs nothing here; erring narrow leaves a
-      // capture running that nobody asked for.
-      currentDemo.streaks.forEach(s => { s.selected = false; });
-      const checkboxes = document.querySelectorAll('#detail-streaks-container input[type="checkbox"]');
-      checkboxes.forEach(cb => { cb.checked = false; });
-      renderDetailView(currentDemo, currentDemoIdx);
-    });
-  }
 
   if (inputMinKills) {
     inputMinKills.addEventListener('input', () => {
@@ -205,12 +204,12 @@ window.addEventListener("DOMContentLoaded", () => {
 
   /** Actually invokes launch_demo_preview — shared by the direct click path
    *  (no conflicting process) and the modal's Force Relaunch path. */
-  async function performLaunchPreview(hlaePath, hlPath, selected) {
+  async function performLaunchPreview(hlaePath, hlPath, highlights) {
     btnLaunchPreview.disabled = true;
     const originalLabel = btnLaunchPreview.textContent;
     btnLaunchPreview.textContent = STRINGS.HIGHLIGHTS.LAUNCHING;
     try {
-      await launchDemoPreview(hlaePath, hlPath, selected);
+      await launchDemoPreview(hlaePath, hlPath, highlights);
       showToast(STRINGS.HIGHLIGHTS.PREVIEW_LAUNCHING_TOAST, 'info');
     } catch (err) {
       // Already toasted by ipc_bridge.js.
@@ -229,8 +228,7 @@ window.addEventListener("DOMContentLoaded", () => {
         return;
       }
       if (!currentDemo || !currentDemo.streaks) return;
-      const selected = currentDemo.streaks.filter(s => s.selected);
-      if (selected.length === 0) return;
+      const highlights = allPreviewableStreaks(currentDemo);
 
       let engineAlreadyRunning = false;
       try {
@@ -241,11 +239,11 @@ window.addEventListener("DOMContentLoaded", () => {
       }
 
       if (engineAlreadyRunning) {
-        requestProcessGuardedLaunch(() => performLaunchPreview(hlaePath, hlPath, selected));
+        requestProcessGuardedLaunch(() => performLaunchPreview(hlaePath, hlPath, highlights));
         return;
       }
 
-      await performLaunchPreview(hlaePath, hlPath, selected);
+      await performLaunchPreview(hlaePath, hlPath, highlights);
     });
   }
 
@@ -304,14 +302,13 @@ window.addEventListener("DOMContentLoaded", () => {
         return;
       }
       const allDemos = currentGetAllDemos ? currentGetAllDemos() : [];
-      const allSelected = (allDemos || []).flatMap(d => (d.streaks || []).filter(s => s.selected));
-      if (allSelected.length === 0) return;
+      const allHighlights = (allDemos || []).flatMap(d => allPreviewableStreaks(d));
 
       btnGenerateAllPreviews.disabled = true;
       const originalLabel = btnGenerateAllPreviews.textContent;
       btnGenerateAllPreviews.textContent = STRINGS.HIGHLIGHTS.GENERATING;
       try {
-        const count = await generateAllPreviews(hlaePath, hlPath, allSelected);
+        const count = await generateAllPreviews(hlaePath, hlPath, allHighlights);
         showToast(STRINGS.HIGHLIGHTS.generatedPreviews(count), 'success');
       } catch (err) {
         // Already toasted by ipc_bridge.js.
@@ -350,6 +347,17 @@ export function isVisibleStreak(demo, streak, minKills) {
   }
   const threshold = minKills ?? parseInt(document.querySelector('#input-min-kills')?.value || "1", 10);
   return streak.kill_count >= threshold;
+}
+
+/** Every one of `demo`'s highlights for the recording player, regardless of
+ *  Min Kills or checkbox selection (minKills 0 bypasses that half of
+ *  isVisibleStreak's filter, keeping only the player filter). Previewing is
+ *  how you decide what's worth checking in the first place, not a view of
+ *  what's already checked — the bookmark-preview patch has nothing to do
+ *  with either filter (see #128). */
+function allPreviewableStreaks(demo) {
+  if (!demo || !demo.streaks) return [];
+  return demo.streaks.filter(s => isVisibleStreak(demo, s, 0));
 }
 
 export function renderDetailView(demo, selectedDemoIdx) {
@@ -406,7 +414,7 @@ export function renderDetailView(demo, selectedDemoIdx) {
     <thead>
       <tr>
         <th>${STRINGS.HIGHLIGHTS.COL_ROW_NUM}</th>
-        <th>${STRINGS.HIGHLIGHTS.COL_SEL}</th>
+        <th>${STRINGS.HIGHLIGHTS.COL_SEL} <input type="checkbox" id="detail-select-all-cb" title="${STRINGS.HIGHLIGHTS.SELECT_ALL_CB_TITLE}" /></th>
         <th>${STRINGS.HIGHLIGHTS.COL_KILL_RANGE}</th>
         <th>${STRINGS.HIGHLIGHTS.COL_KILLS}</th>
         <th>${STRINGS.HIGHLIGHTS.COL_TIME}</th>
@@ -470,7 +478,7 @@ export function renderDetailView(demo, selectedDemoIdx) {
       Rendered: '#2196f3',
       None: '#555',
     };
-    const statusLabel = streak.status || STRINGS.HIGHLIGHTS.STATUS_PENDING_DEFAULT;
+    const statusLabel = streak.status || STRINGS.HIGHLIGHTS.STATUS_UNSET_DEFAULT;
     const statusColor = statusColors[statusLabel] || '#888';
 
     const maxKillIdx = Math.max((streak.kills || []).length - 1, 0);
@@ -578,6 +586,21 @@ export function renderDetailView(demo, selectedDemoIdx) {
 
     tbody.appendChild(tr);
   });
+
+  // Header checkbox tri-state, reflecting only the same visible rows the
+  // table just rendered — mirrors master_pane.js's syncSelectAllCheckboxState
+  // for the Master Queue's own header checkbox.
+  const selectAllHeaderCb = table.querySelector('#detail-select-all-cb');
+  if (selectAllHeaderCb) {
+    const visibleStreaks = demo.streaks.filter(s => isVisibleStreak(demo, s, minKills));
+    const selectedVisible = visibleStreaks.filter(s => s.selected).length;
+    selectAllHeaderCb.checked = visibleStreaks.length > 0 && selectedVisible === visibleStreaks.length;
+    selectAllHeaderCb.indeterminate = selectedVisible > 0 && selectedVisible < visibleStreaks.length;
+    selectAllHeaderCb.addEventListener('change', (e) => {
+      if (e.target.checked) selectAllVisibleStreaks();
+      else deselectAllStreaks();
+    });
+  }
 
   tableWrapper.appendChild(table);
   container.appendChild(tableWrapper);

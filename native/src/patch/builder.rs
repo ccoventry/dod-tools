@@ -206,34 +206,45 @@ pub fn final_init_commands(config: &PatcherConfig) -> Vec<String> {
         if config.separate_hud { "1" } else { "0" }
     ));
 
+    // OBS mode is real time: HLAE issues no `mirv_movie_start` at all, so
+    // `mirv_movie_fps` above is inert on this path — nothing reads it. What
+    // OBS actually records is however fast the engine renders, so that rate
+    // has to be pinned to the same `obs_capture_fps` OBS's own canvas is set
+    // to (obs::provision::ensure_dod_tools_setup), or the two drift against
+    // each other. `fps_override 1` first: GoldSrc's default `fps_max`
+    // ceiling (~100) is below what obs_capture_fps is commonly set to, and
+    // `fps_max` alone is silently clamped under that ceiling without it.
+    if config.capture_mode == crate::patch::CaptureMode::Obs {
+        out.push("fps_override 1".to_string());
+        out.push(format!("fps_max {}", config.obs_capture_fps));
+    }
+
     // The decal flush needs the ring set once, at demo load, and never again.
     // r_decals bounds how far the rotating index may travel before it wraps; it
     // does not evict anything, so lowering it once decals have accumulated
     // strands every one sitting above the new limit.
     //
     // The sweep is sized to that same number, so there is only one number here
-    // and `r_decals` is where the engine reads it. When init_commands states it,
-    // that is the value the sweep uses and the line is already the pin —
-    // appending a second one could only overrule what was asked for, silently.
-    // When nothing states it, the engine would otherwise use whatever the user's
-    // config left behind, so it gets pinned to the configured default.
+    // and `r_decals` is where the engine reads it, at the same precedence
+    // `ring_limit` itself resolves (see that function): Initial Commands, then
+    // an executed config, then the app's own default. When either of the first
+    // two states it, that line is already the pin — appending a second one
+    // here would either silently overrule what Initial Commands asked for, or
+    // be a no-op duplicate of what the config already set. Only the true
+    // "nothing anywhere states it" case needs one appended, to replace the
+    // engine's own uncontrolled standing value with a known one.
     //
     // Not at the maximum, though. r_decals is clamped to MAX_RENDER_DECALS, so a
     // sweep that size turns a full revolution whatever the cvar happens to be —
     // any smaller ring simply gets swept several times over. Pinning then buys
     // nothing and costs the precondition the rest of this design works around:
     // that nothing else may touch r_decals.
-    //
-    // Unless a config already touches it. "Whatever the cvar happens to be" is
-    // true for every value but zero, and `r_decals 0` in a movie.cfg is real —
-    // the sweep would be sized to the maximum, report a full revolution, and
-    // inject into a ring the engine keeps nothing in. So the pin is spent after
-    // all when a config assigns the cvar, which is also the only case where the
-    // precondition was already broken.
-    if config.decal_flush && crate::patch::ring_limit_from_init(&config.init_commands).is_none() {
-        let ring = crate::patch::ring_limit(config);
-        let below_ceiling = ring < crate::patch::MAX_RENDER_DECALS;
-        if ring > 0 && (below_ceiling || crate::patch::ring_set_by_game_config(config)) {
+    if config.decal_flush
+        && crate::patch::ring_limit_from_init(&config.init_commands).is_none()
+        && crate::patch::ring_limit_from_game_config(config).is_none()
+    {
+        let ring = config.decal_ring_limit.min(crate::patch::MAX_RENDER_DECALS);
+        if ring > 0 && ring < crate::patch::MAX_RENDER_DECALS {
             out.push(format!("r_decals {}", ring));
         }
     }
@@ -442,7 +453,7 @@ fn allocate_blocks_first_fit_decreasing(
 
 // ── Batch queue builder ───────────────────────────────────────────────────────
 
-pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig, global_arrays: &std::collections::HashMap<std::path::PathBuf, std::sync::Arc<Vec<f32>>>) -> Result<(Vec<PatchJob>, Vec<(std::path::PathBuf, u64)>), std::io::Error> {
+pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig, global_arrays: &std::collections::HashMap<std::path::PathBuf, std::sync::Arc<Vec<f32>>>) -> Result<(Vec<PatchJob>, Vec<crate::patch::types::DriveHeadroom>), std::io::Error> {
     // tickrate is extracted dynamically from streaks per-demo.
     // Each streak is carried alongside its index in `raw_streaks` so the blocks
     // built below can point back at the exact highlights the caller dispatched,
@@ -548,7 +559,13 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
         crate::VERSION,
         date_time
     ));
-    
+    // Marks exactly where this file execs relative to the engine's own
+    // config.cfg/movie.cfg chain, which lands in qconsole.log too (with
+    // Add Condebug on) — cheap enough to leave in permanently rather than
+    // re-add it every time this ordering question comes up again. See
+    // docs/goldsrc_dod_quirks.md's Command Precedence entry.
+    helper_cfg_content.push_str("echo dodtools_helper.cfg exec'd here\n\n");
+
     helper_cfg_content.push_str("# Global aliases\n");
     helper_cfg_content.push_str("alias sys_autodir \"spec_autodirector 1\"\n");
     helper_cfg_content.push_str("alias sys_normal_speed \"sys_autodir; clear; host_framerate 0\"\n");
@@ -638,12 +655,15 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
         let separate_hud_str = if config.separate_hud { "1" } else { "0" };
         primer_init.push(format!("mirv_movie_separate_hud {}", separate_hud_str));
 
-        // Primer always lands on drive 0 (the highest-priority pool directory).
-        let primer_out = if let Some(out_dir) = config.capture_directories.first() {
-            out_dir.join("primer.dem")
-        } else {
-            std::path::PathBuf::from("primer.dem")
-        };
+        // Every patched demo lands directly in the game's own dod/ folder --
+        // that's the only place GoldSrc's `playdemo` can find it. This used
+        // to resolve to capture_directories[0] instead, with capture_engine.rs
+        // copying it into dod/ as a second step -- pure redundant I/O, since
+        // that copy loop already ran everything upfront before hl.exe even
+        // launched, so dod/'s drive needed the full batch footprint either
+        // way. capture_directories is only ever about where recorded video
+        // blocks land now, not these small demo files. See issue #8.
+        let primer_out = dod_dir.join("primer.dem");
 
         // Delay playdemo chain_01 to tick 500 (~5 seconds) to allow the engine to fully finish the 
         // 2-second GoldSrc server handshake without buffer overflows before jumping to the first real chain.
@@ -666,14 +686,11 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
     }
 
     // 2. Chained Jobs
-    // Drive 0 always receives the primer + each job's output demo file
-    // (see the "always use primary/first drive" resolution below), regardless
-    // of whether any capture block gets routed there — so it must always be
-    // headroom-checked even on a batch where every block lands elsewhere.
+    // Every patched demo file now lands directly in dod/ (see the primer's
+    // own resolution above), not on any capture_directories entry -- so
+    // utilized_drives only ever needs to track drives that actually receive
+    // a real recording block. See issue #8.
     let mut utilized_drives = std::collections::HashSet::new();
-    if !config.capture_directories.is_empty() {
-        utilized_drives.insert(0);
-    }
     for (job_idx, ((source_demo, target_player), mut streak_refs)) in sorted_groups.into_iter().enumerate() {
         // Sort by start_tick in ascending order
         streak_refs.sort_by_key(|(_, s)| s.start_tick);
@@ -702,8 +719,8 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
         let demo_name = format!("chain_{:02}", job_idx + 1);
         let next_demo_name = format!("chain_{:02}", job_idx + 2);
         let output_name = format!("{}.dem", demo_name);
-        let path = std::path::Path::new(&source_demo);
-        let mut output_demo = path.with_file_name(&output_name);
+        // Lands directly in dod/ -- see the primer's own resolution above for why.
+        let output_demo = dod_dir.join(&output_name);
 
         // ── AOT failover routing (Per-Block) ───────────────────────────────────
         
@@ -863,16 +880,6 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
             });
         }
         blocks.sort_by_key(|b| b.block_index);
-
-        // Resolve physical output path for the demo file itself (always use primary/first drive).
-        if let Some(out_dir) = config.capture_directories.first() {
-            let absolute_drive = std::path::absolute(out_dir)?;
-            let target_dir = absolute_drive.join(&config.session_id);
-            if !target_dir.exists() {
-                let _ = std::fs::create_dir_all(&target_dir);
-            }
-            output_demo = target_dir.join(&output_name);
-        }
 
         if job_idx < total_jobs - 1 {
             helper_cfg_content.push_str(&format!("alias {}_next \"playdemo {}\"\n", demo_name, next_demo_name));
@@ -1202,9 +1209,12 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
     // handed back so the pre-launch abort in `capture_engine.rs` re-validates
     // the exact numbers this allocation pass already computed instead of
     // recomputing a third, narrower (primary-drive-only) answer.
-    let drive_headroom: Vec<(std::path::PathBuf, u64)> = utilized_drives
+    let drive_headroom: Vec<crate::patch::types::DriveHeadroom> = utilized_drives
         .into_iter()
-        .filter_map(|idx| config.capture_directories.get(idx).map(|p| (p.clone(), drive_free[idx])))
+        .filter_map(|idx| config.capture_directories.get(idx).map(|p| crate::patch::types::DriveHeadroom {
+            path: p.clone(),
+            free_bytes: drive_free[idx],
+        }))
         .collect();
 
     Ok((jobs, drive_headroom))
@@ -1276,7 +1286,7 @@ impl Drop for WorkspaceGuard {
                 if let Ok(entries) = std::fs::read_dir(&dod_dir) {
                     for entry in entries.flatten() {
                         let filename = entry.file_name().to_string_lossy().to_string();
-                        if filename.starts_with("dodtools_chain_") && filename.ends_with(".dem") {
+                        if crate::shared::paths::is_chain_demo_filename(&filename) {
                             let _ = std::fs::remove_file(entry.path());
                         }
                     }
@@ -1374,6 +1384,42 @@ pub fn spawn_patch_batch(
 // One output demo per source demo, saved as "<stem>_preview.dem" next to the
 // original (or inside `output_dir` if configured).
 
+/// Makes a demo stem safe as a `playdemo`/`viewdemo` target.
+///
+/// `launch_demo_preview` passes the output stem straight into HLAE's
+/// `-cmdLine`, which becomes hl.exe's own startup command line — GoldSrc
+/// tokenizes that on whitespace and treats any `+`/`-` prefixed token as the
+/// start of a new launch parm, so an embedded hyphen (common in
+/// match-recorded demo names, e.g. "team1-vs-team2") silently truncates the
+/// `+viewdemo` target at the first one instead of failing loudly. Confirmed
+/// live: a source stem of "wsod25-po_r3_sf-..." loaded as bare "wsod25".
+/// Per docs/goldsrc_dod_quirks.md, playdemo/viewdemo targets must also stay
+/// under ~40 characters, which this stem was already over before appending
+/// "_preview" — both constraints are enforced here, once, at the point the
+/// output filename is chosen, so neither preview entry point (this one, or
+/// `generate_all_previews`'s later manual load) can hit it again.
+fn playdemo_safe_stem(raw: &str) -> String {
+    // Reserve room for the "_preview" suffix appended below, and stay a few
+    // characters under the documented ~40 char limit rather than right at it.
+    const SUFFIX_LEN: usize = "_preview".len();
+    const BUDGET: usize = 36;
+    const BASE_BUDGET: usize = BUDGET - SUFFIX_LEN;
+
+    let sanitized: String = raw
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '_' })
+        .collect();
+    if sanitized.len() <= BASE_BUDGET {
+        return sanitized;
+    }
+    // Too long even after sanitizing — truncate, but append a hash of the
+    // *original* stem so two long names sharing a prefix don't collide onto
+    // the same output file.
+    let hash_suffix = format!("_{:08x}", crate::utils::demo_hasher::fnv1a_hash(raw.as_bytes()) as u32);
+    let keep = BASE_BUDGET.saturating_sub(hash_suffix.len());
+    format!("{}{}", &sanitized[..keep], hash_suffix)
+}
+
 pub fn build_preview_patch_jobs(
     raw_streaks: Vec<CaptureStreak>,
     output_dir: Option<&std::path::Path>,
@@ -1413,7 +1459,8 @@ pub fn build_preview_patch_jobs(
             .file_stem()
             .unwrap_or_default()
             .to_string_lossy();
-        let preview_name = format!("{}_preview.dem", stem);
+        let safe_stem = playdemo_safe_stem(&stem);
+        let preview_name = format!("{}_preview.dem", safe_stem);
         let output_demo = if let Some(dir) = output_dir {
             dir.join(&preview_name)
         } else {
@@ -1553,6 +1600,39 @@ mod tests {
     use super::*;
 
     #[test]
+    fn playdemo_safe_stem_leaves_short_alphanumeric_names_alone() {
+        assert_eq!(playdemo_safe_stem("demo1"), "demo1");
+    }
+
+    #[test]
+    fn playdemo_safe_stem_replaces_hyphens_that_truncate_the_goldsrc_cmdline() {
+        // Confirmed live: GoldSrc's startup command-line tokenizer treats an
+        // embedded "-" as the start of a new launch parm, so this exact stem
+        // loaded as bare "wsod25" via +viewdemo instead of the real demo.
+        let stem = playdemo_safe_stem("wsod25-po_r3_sf-warchyld_ih_m2_thunder_h1");
+        assert!(!stem.contains('-'), "sanitized stem must not contain a hyphen: {stem}");
+        assert!(stem.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'));
+    }
+
+    #[test]
+    fn playdemo_safe_stem_stays_under_the_documented_length_limit() {
+        // docs/goldsrc_dod_quirks.md: playdemo/viewdemo targets must stay
+        // under ~40 characters. This name alone is 41 before "_preview".
+        let stem = playdemo_safe_stem("wsod25-po_r3_sf-warchyld_ih_m2_thunder_h1");
+        assert!(
+            stem.len() + "_preview".len() < 40,
+            "stem + _preview suffix must stay under the limit: {stem}"
+        );
+    }
+
+    #[test]
+    fn playdemo_safe_stem_disambiguates_names_sharing_a_long_prefix() {
+        let a = playdemo_safe_stem("a_very_long_shared_prefix_that_overflows_team1");
+        let b = playdemo_safe_stem("a_very_long_shared_prefix_that_overflows_team2");
+        assert_ne!(a, b, "two different overflowing names must not collide: {a} vs {b}");
+    }
+
+    #[test]
     fn test_build_batch_queue_merging() {
         let mut config = PatcherConfig::default(); // pre = 200, post = 60
         let temp_game_path = std::env::temp_dir().join("dod_test_mock");
@@ -1622,13 +1702,16 @@ mod tests {
         let (jobs, _) = build_batch_queue(raw_streaks, &config, &std::collections::HashMap::new()).unwrap();
         assert_eq!(jobs.len(), 2);
 
+        // Every patched demo lands directly in dod/ now -- see issue #8.
+        let expected_dod_dir = std::path::Path::new(&config.game_path).parent().unwrap().join("dod");
+
         let primer = &jobs[0];
-        assert_eq!(primer.output_demo, std::path::PathBuf::from("primer.dem"));
+        assert_eq!(primer.output_demo, expected_dod_dir.join("primer.dem"));
         assert_eq!(primer.streaks.len(), 0);
 
         let job = &jobs[1];
         assert_eq!(job.source_demo, "demo1.dem");
-        assert_eq!(job.output_demo, std::path::PathBuf::from("chain_01.dem"));
+        assert_eq!(job.output_demo, expected_dod_dir.join("chain_01.dem"));
         assert_eq!(job.streaks.len(), 2);
         assert_eq!(job.streaks[0].start_tick, 1000);
         assert_eq!(job.streaks[0].end_tick, 1500); // Merged 1000-1200 and 1300-1500
@@ -1665,15 +1748,14 @@ mod tests {
     }
 
     #[test]
-    fn test_drive_headroom_always_includes_primary_drive_even_with_no_blocks_routed() {
-        // Zero streaks -> zero jobs -> the block-allocation loop that builds
-        // `utilized_drives` never runs at all. capture_engine.rs's pre-launch
-        // check still needs drive 0's headroom in this case (the primer +
-        // every job's demo file always land there regardless of block
-        // routing — see the "always use primary/first drive" resolution
-        // above), so it must come back even though no block ever touched it.
+    fn test_drive_headroom_omits_drive_0_when_no_block_is_routed_there() {
+        // Patched demo files land directly in dod/ now (see issue #8), not
+        // on any capture_directories entry, so drive 0 no longer needs a
+        // special unconditional include -- it should be omitted from
+        // drive_headroom exactly like any other drive that received no
+        // real recording block.
         let mut config = mock_config();
-        let temp_drive = std::env::temp_dir().join("dod_test_headroom_drive0");
+        let temp_drive = std::env::temp_dir().join("dod_test_headroom_drive0_no_block");
         std::fs::create_dir_all(&temp_drive).expect("failed to create dummy capture drive");
         config.capture_directories = vec![temp_drive.clone()];
 
@@ -1681,13 +1763,59 @@ mod tests {
             build_batch_queue(Vec::new(), &config, &std::collections::HashMap::new()).unwrap();
 
         assert!(jobs.is_empty(), "no streaks should produce no jobs");
-        assert_eq!(drive_headroom.len(), 1, "drive 0 must be reported even though no block was ever routed to it");
-        assert_eq!(drive_headroom[0].0, temp_drive);
         assert!(
-            drive_headroom[0].1 > 0 && drive_headroom[0].1 < u64::MAX,
-            "expected a real free-byte count for an existing directory, got {}",
-            drive_headroom[0].1
+            drive_headroom.is_empty(),
+            "no block was ever routed to drive 0, so it shouldn't be reported at all, got {:?}",
+            drive_headroom
         );
+    }
+
+    #[test]
+    fn test_drive_headroom_includes_drive_0_when_a_block_actually_lands_there() {
+        let mut config = mock_config();
+        let temp_drive = std::env::temp_dir().join("dod_test_headroom_drive0_with_block");
+        std::fs::create_dir_all(&temp_drive).expect("failed to create dummy capture drive");
+        config.capture_directories = vec![temp_drive.clone()];
+        let raw_streaks = vec![streak_with_kills(1000, 1200, &[1000, 1200])];
+
+        let (_jobs, drive_headroom) =
+            build_batch_queue(raw_streaks, &config, &std::collections::HashMap::new()).unwrap();
+
+        assert_eq!(drive_headroom.len(), 1, "the one real block routes to drive 0, so it should be reported");
+        assert_eq!(drive_headroom[0].path, temp_drive);
+        assert!(
+            drive_headroom[0].free_bytes > 0 && drive_headroom[0].free_bytes < u64::MAX,
+            "expected a real free-byte count for an existing directory, got {}",
+            drive_headroom[0].free_bytes
+        );
+    }
+
+    #[test]
+    fn test_patched_demos_land_directly_in_dod_not_on_a_capture_directory() {
+        // See issue #8: capture_directories is only about where recorded
+        // video blocks land now, never these small demo files -- both the
+        // primer and every chained job's output_demo must resolve under
+        // the game's own dod/ folder (derived from game_path), regardless
+        // of what capture_directories is configured to.
+        let mut config = mock_config();
+        config.capture_directories = vec![std::env::temp_dir().join("dod_test_unused_capture_dir")];
+        let raw_streaks = vec![streak_with_kills(1000, 1200, &[1000, 1200])];
+
+        let (jobs, _drive_headroom) =
+            build_batch_queue(raw_streaks, &config, &std::collections::HashMap::new()).unwrap();
+
+        let expected_dod_dir = std::path::Path::new(&config.game_path)
+            .parent()
+            .unwrap()
+            .join("dod");
+        for job in &jobs {
+            assert_eq!(
+                job.output_demo.parent(),
+                Some(expected_dod_dir.as_path()),
+                "expected {:?} to land in dod/, not a capture_directories entry",
+                job.output_demo
+            );
+        }
     }
 
     #[test]
@@ -1709,6 +1837,41 @@ mod tests {
             "no configured capture directories means nothing to report headroom for, got {:?}",
             drive_headroom
         );
+    }
+
+    #[test]
+    fn workspace_guard_drop_actually_removes_chain_demos_when_auto_clear_is_on() {
+        // Verifies the fix for issue #12: the cleanup filter matched
+        // "dodtools_chain_*.dem", but build_batch_queue names output demos
+        // "chain_NN.dem" (no prefix) -- see `demo_name` above -- so the
+        // filter never matched and these files were never cleaned up
+        // regardless of the auto_clear_temp_demos setting.
+        let exit_trigger = std::env::temp_dir().join("dod_test_workspace_guard_exit_trigger");
+        let dod_dir = exit_trigger.parent().unwrap().join("dod");
+        std::fs::create_dir_all(&dod_dir).unwrap();
+        std::fs::create_dir_all(&exit_trigger).unwrap();
+        let chain_demo = dod_dir.join("chain_01.dem");
+        std::fs::write(&chain_demo, b"fake demo bytes").unwrap();
+
+        {
+            let _guard = WorkspaceGuard {
+                session_junction: std::env::temp_dir().join("dod_test_workspace_guard_session_junction_nonexistent"),
+                exit_trigger: exit_trigger.clone(),
+                pool_junctions: Vec::new(),
+                route_junctions: Vec::new(),
+                auto_clear_logs: false,
+                auto_clear_temp_demos: true,
+                auto_clear_previews: false,
+                save_local_patched_copy: false,
+            };
+        }
+
+        assert!(
+            !chain_demo.exists(),
+            "chain_01.dem should have been removed by WorkspaceGuard::drop with auto_clear_temp_demos on"
+        );
+
+        let _ = std::fs::remove_dir_all(&dod_dir);
     }
 
     fn streak_with_kills(start_tick: i32, end_tick: i32, kill_frames: &[i32]) -> CaptureStreak {
@@ -1763,6 +1926,38 @@ mod tests {
         config.game_path = root.join("hl.exe").to_string_lossy().to_string();
         config.primary_media_dir = Some(root);
         config
+    }
+
+    #[test]
+    fn obs_mode_pins_fps_override_and_fps_max_to_obs_capture_fps() {
+        let mut config = PatcherConfig::default();
+        config.capture_mode = crate::patch::CaptureMode::Obs;
+        config.capture_fps = 300; // must not leak into fps_max — see below
+        config.obs_capture_fps = 120;
+        let commands = final_init_commands(&config);
+        assert!(
+            commands.iter().any(|c| c == "fps_override 1"),
+            "expected fps_override 1, got: {commands:?}"
+        );
+        assert!(
+            commands.iter().any(|c| c == "fps_max 120"),
+            "expected fps_max 120 (from obs_capture_fps, not capture_fps), got: {commands:?}"
+        );
+    }
+
+    #[test]
+    fn frame_sequence_and_direct_to_video_never_touch_fps_max() {
+        for mode in [crate::patch::CaptureMode::FrameSequence, crate::patch::CaptureMode::DirectToVideo] {
+            let mut config = PatcherConfig::default();
+            config.capture_mode = mode;
+            config.capture_fps = 120;
+            config.obs_capture_fps = 120;
+            let commands = final_init_commands(&config);
+            assert!(
+                !commands.iter().any(|c| c.starts_with("fps_override") || c.starts_with("fps_max")),
+                "{mode:?} should not touch fps_override/fps_max, got: {commands:?}"
+            );
+        }
     }
 
     #[test]
@@ -2177,12 +2372,15 @@ mod tests {
     }
 
     #[test]
-    fn test_a_maximum_ring_still_pins_when_a_game_config_sets_the_cvar() {
-        // "A full revolution whatever the cvar is" holds for every value but
-        // zero. A movie.cfg setting `r_decals 0` is real — it is in the working
-        // install — and without a pin the sweep would be sized to the maximum,
-        // report a full revolution, and inject into a ring the engine keeps
-        // nothing in. Silent, and invisible in every statistic the flush logs.
+    fn test_a_game_config_setting_the_cvar_to_zero_is_now_left_alone() {
+        // Regression: this used to assert the opposite — that a config's
+        // `r_decals 0` got silently overridden with a pin (to MAX_RENDER_DECALS
+        // in this exact case), on the reasoning that adopting it would leave a
+        // ring the engine keeps nothing in. That override is gone: r_decals now
+        // follows the same config precedence mirv_fov always has, and a
+        // resulting 0 is caught and reported as its own fact
+        // (`decal_flush_is_noop` / `prepare_flushed_source`'s own zero-check)
+        // rather than silently patched away.
         let mut config = mock_config_with_game_cfg("zero", "r_decals 0\nfps_max 999\n");
         config.decal_ring_limit = crate::patch::MAX_RENDER_DECALS;
 
@@ -2193,10 +2391,33 @@ mod tests {
         ).unwrap();
 
         assert!(
-            jobs[1].init_commands.iter().any(|c| c == "r_decals 4096"),
-            "a config that sets the cvar has to be answered: {:?}",
+            !jobs[1].init_commands.iter().any(|c| c.starts_with("r_decals")),
+            "the config's own 0 already stands, nothing left to pin: {:?}",
             jobs[1].init_commands
         );
+        assert_eq!(crate::patch::ring_limit(&config), 0, "and ring_limit agrees");
+    }
+
+    #[test]
+    fn test_a_nonzero_game_config_value_is_adopted_without_a_pin() {
+        // The config's own line already achieves what a pin would — appending
+        // a second, identical-in-effect command would be pure noise.
+        let config = mock_config_with_game_cfg("nonzero", "r_decals 512\n");
+        // decal_ring_limit stays at its default (256): if the config's value
+        // were being ignored in favor of it, the pin would read 256, not 512.
+
+        let (jobs, _) = build_batch_queue(
+            vec![streak_with_kills(1000, 1200, &[1000, 1200])],
+            &config,
+            &std::collections::HashMap::new(),
+        ).unwrap();
+
+        assert!(
+            !jobs[1].init_commands.iter().any(|c| c.starts_with("r_decals")),
+            "the config's own line is already the pin, nothing to append: {:?}",
+            jobs[1].init_commands
+        );
+        assert_eq!(crate::patch::ring_limit(&config), 512);
     }
 
     #[test]
