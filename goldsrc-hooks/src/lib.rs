@@ -38,13 +38,35 @@ use windows_sys::Win32::Foundation::{BOOL, HINSTANCE, TRUE};
 use windows_sys::Win32::System::SystemServices::DLL_PROCESS_ATTACH;
 use windows_sys::Win32::System::Threading::{CreateThread, Sleep};
 
-fn env_flag_set(name: &str) -> bool {
-    std::env::var(name).map(|v| v == "1").unwrap_or(false)
+/// Reads a `GOLDSRC_HOOKS_*` flag, falling back to `default` when unset.
+///
+/// An explicit "0" always wins, so a fix that defaults on can still be turned
+/// off without a rebuild.
+fn env_flag(name: &str, default: bool) -> bool {
+    match std::env::var(name) {
+        Ok(value) => value.trim() == "1",
+        Err(_) => default,
+    }
 }
 
+/// TEMPORARY, for the current round of live testing: the animation fix starts
+/// on rather than off, because every session otherwise begins by forgetting to
+/// type `dodtools_hltv_animation_fix 1` and producing a log with nothing in
+/// it. Set `GOLDSRC_HOOKS_ANIM_FIX=0` to override.
+///
+/// **Restore this to `false` before the branch merges.** A capture pipeline
+/// should not silently alter viewmodel animations because a debugging default
+/// was left behind.
+const ANIM_FIX_DEFAULT: bool = true;
+
 unsafe extern "system" fn worker_thread(_lp_param: *mut std::ffi::c_void) -> u32 {
-    sound_fix::ENABLED.store(env_flag_set("GOLDSRC_HOOKS_FORCE_WEAPON_VOLUME"), Ordering::Relaxed);
-    anim_fix::ENABLED.store(env_flag_set("GOLDSRC_HOOKS_ANIM_FIX"), Ordering::Relaxed);
+    // The sound fix stays default-off: what it currently does (extending how
+    // far gunshots carry) is not the thing that turned out to be wanted, and
+    // having it on would colour an animation test for no reason. The firing
+    // animation does not depend on it -- anim_fix::on_weapon_fired is called
+    // from the EV_PlaySound hook regardless of this flag.
+    sound_fix::ENABLED.store(env_flag("GOLDSRC_HOOKS_FORCE_WEAPON_VOLUME", false), Ordering::Relaxed);
+    anim_fix::ENABLED.store(env_flag("GOLDSRC_HOOKS_ANIM_FIX", ANIM_FIX_DEFAULT), Ordering::Relaxed);
 
     unsafe { debug::new_session_separator() };
     unsafe { debug::report("goldsrc-hooks worker thread started") };
@@ -55,9 +77,10 @@ unsafe extern "system" fn worker_thread(_lp_param: *mut std::ffi::c_void) -> u32
     // obvious from the log rather than mistaken for a broken hook.
     unsafe {
         debug::report(&format!(
-            "goldsrc-hooks: starting state -- gunshots fix: {}, animation fix: {} (env vars set the default; dodtools_hltv_gunshots_fix / dodtools_hltv_animation_fix toggle live)",
+            "goldsrc-hooks: starting state -- gunshots fix: {}, animation fix: {}{} (env vars set the default; dodtools_hltv_gunshots_fix / dodtools_hltv_animation_fix toggle live)",
             if sound_fix::ENABLED.load(Ordering::Relaxed) { "ON" } else { "off" },
             if anim_fix::ENABLED.load(Ordering::Relaxed) { "ON" } else { "off" },
+            if ANIM_FIX_DEFAULT { "  [TEMPORARY testing default -- animation fix starts ON; restore before merge]" } else { "" },
         ))
     };
 
