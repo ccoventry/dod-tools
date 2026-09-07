@@ -264,10 +264,33 @@ demo's spectated player.
 crosshair 0            r_drawentities 1   vguicancel    voice_modenable 1
 ```
 
-Worth noting for `native::patch::cfg_scan`: **the client itself writes `crosshair 0`,
-`r_drawentities 1`, `cl_pitchup/down 89` and `cl_lw 1` at runtime**, so a user config
-setting any of those can be silently reverted by the game regardless of what the pipeline
-does.
+These are not incidental — they are an **enforcement routine inside `CHud::Redraw`, so it
+runs every rendered frame**, and two of the five cases end by quitting the game.
+
+Decompiled behaviour (`client.dll` `0x1936e20`, the real `HUD_Redraw` implementation):
+
+| cvar | condition | client's response |
+| --- | --- | --- |
+| `r_drawentities` | `!= 1` | force `r_drawentities 1`, print *"r_drawentities is not a valid command. Do not use it."*, then **`quit`** |
+| `cl_lw` | `!= 1` | force `cl_lw 1`, print *"cl_lw 0 is not a valid command. Do not use it."*, then **`quit`** |
+| `cl_pitchdown` | `!= 89` and `!= 0` | force `cl_pitchdown 89` (silent) |
+| `cl_pitchup` | `!= 89` and `!= 0` | force `cl_pitchup 89` (silent) |
+| `crosshair` | `!= 0` | force `crosshair 0` (silent — DoD draws its own crosshair) |
+
+The `quit` is assembled byte-by-byte on the stack (`'q','u','i','t','\n'`) rather than
+stored as a literal, which is why no `strings` dump of this binary reveals it.
+
+**This matters to the capture pipeline in two ways**, and neither `r_drawentities` nor
+`cl_lw` is currently in `cfg_scan`'s `BANNED_COMMANDS` or `MID_DEMO_HAZARDS`:
+
+1. A user config containing `r_drawentities 0` or `cl_lw 0` — both entirely plausible
+   (the first is a moviemaking instinct, the second a long-standing competitive config
+   line) — makes `hl.exe` exit as soon as the HUD draws. The batch just sees the process
+   vanish.
+2. Because the check is per-frame, the same is true of a *scheduled* injection mid-demo,
+   not only of startup config.
+
+Tracked as issue #205.
 
 ### User messages — `pfnHookUserMsg` (index 18), 71 registered
 
