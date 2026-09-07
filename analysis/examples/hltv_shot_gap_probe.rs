@@ -45,14 +45,25 @@ const MAX_BURST_GAP: f32 = 1.0;
 const AUTOMATIC_WEAPONS: &[&str] =
     &["bar", "mp44", "mp40", "thompson", "sten", "greasegun", "bren", "mg42", "mg34", "30cal"];
 
+/// Reads a delta field as a little-endian u32. Field names arrive padded, so
+/// they are trimmed before matching.
+fn delta_u32(delta: &dem::types::Delta, field: &str) -> Option<u32> {
+    delta
+        .iter()
+        .find(|(k, _)| k.trim_matches(|c: char| c == '\0' || c.is_whitespace()) == field)
+        .and_then(|(_, v)| (v.len() >= 4).then(|| u32::from_le_bytes([v[0], v[1], v[2], v[3]])))
+}
+
 fn main() {
     let path = std::env::args().nth(1).expect("usage: hltv_shot_gap_probe <demo>");
     let bytes = std::fs::read(&path).expect("read demo");
     let demo = open_demo_from_bytes(&bytes).expect("parse demo");
 
     let mut event_names: HashMap<u32, String> = HashMap::new();
-    // (event index, shooter) -> fire times
+    // (event index, shooter entindex) -> fire times
     let mut fires: HashMap<(u32, u32), Vec<f32>> = HashMap::new();
+    let mut unattributed = 0usize;
+    let mut attributed = 0usize;
 
     for entry in &demo.directory.entries {
         for frame in &entry.frames {
@@ -70,13 +81,29 @@ fn main() {
                     }
                     EngineMessage::SvcEvent(ev) => {
                         for e in &ev.events {
-                            let shooter = e.packet_index.as_ref().map(|p| p.to_u32()).unwrap_or(u32::MAX);
-                            fires.entry((e.event_index.to_u32(), shooter)).or_default().push(frame.time);
+                            // `packet_index` is not a shooter id -- it reports
+                            // 46 distinct values in a 6v6 half. The event's
+                            // own delta carries the real `entindex`.
+                            // entindex is a 10-bit field, so 0x3FF reads back
+                            // as -1 ("no entity") rather than 1023.
+                            let shooter = e
+                                .delta
+                                .as_ref()
+                                .and_then(|d| delta_u32(d, "entindex"))
+                                .filter(|v| *v > 0 && *v < 0x200);
+                            match shooter {
+                                Some(_) => attributed += 1,
+                                None => unattributed += 1,
+                            }
+                            // Fall back to one pooled stream per weapon when the
+                            // shooter is unknown -- HLTV demos carry no entindex
+                            // at all, so refusing to measure them would defeat
+                            // the point of the tool.
+                            let key = (e.event_index.to_u32(), shooter.unwrap_or(u32::MAX));
+                            fires.entry(key).or_default().push(frame.time);
                         }
                     }
-                    EngineMessage::SvcEventReliable(ev) => {
-                        fires.entry((ev.event_index.to_u32(), u32::MAX)).or_default().push(frame.time);
-                    }
+                    EngineMessage::SvcEventReliable(_) => {}
                     _ => {}
                 }
             }
@@ -106,7 +133,15 @@ fn main() {
         per_weapon.entry(short).or_default().push(times);
     }
 
-    println!("=== {path} ===\n");
+    println!("=== {path} ===");
+    println!(
+        "shooter attribution: {attributed} events carried an entindex, {unattributed} did not{}\n",
+        if attributed == 0 {
+            "  <-- NONE usable: gaps below pool every shooter of a weapon together, so they overstate loss"
+        } else {
+            ""
+        }
+    );
     println!(
         "{:<12} {:>7} {:>9} {:>8} {:>9} {:>9} {:>8}",
         "weapon", "shots", "shooters", "cyclic", "in burst", "dropped", "loss"
