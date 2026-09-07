@@ -87,6 +87,40 @@ fn find_deployable_weapon(viewmodel_name: &str) -> Option<&'static DeployableWea
     DEPLOYABLE_WEAPONS.iter().find(|w| viewmodel_name.contains(w.viewmodel_match))
 }
 
+/// `"models/v_98k.mdl"` -> `"98k"`, `"models/p_mg42bd.mdl"` -> `"mg42bd"`.
+fn model_stem(name: &str) -> &str {
+    let file = name.rsplit(['/', '\\']).next().unwrap_or(name);
+    let file = file.strip_suffix(".mdl").unwrap_or(file);
+    file.strip_prefix("v_").or_else(|| file.strip_prefix("p_")).unwrap_or(file)
+}
+
+/// Whether the viewmodel on screen is the weapon the spectated player is
+/// actually holding.
+///
+/// The viewmodel pointer alone cannot be trusted: live logging shows it
+/// alternating between two of a player's weapons (v_98k and v_luger) every few
+/// milliseconds, which fires a spurious "draw" on every flip. The spectated
+/// player's `curstate.weaponmodel` is replicated entity state and does not
+/// flap, so it is the authority on what is held; the viewmodel is only
+/// consulted for its sequence list once the two agree.
+///
+/// Matching is viewmodel-stem inside third-person name rather than the
+/// reverse, because the bipod weapons append a deploy suffix on the
+/// third-person side only (`v_mg42.mdl` vs `p_mg42bu.mdl` / `p_mg42bd.mdl`).
+fn viewmodel_matches_held_weapon(viewmodel_name: &str, spectated: &ClEntityS) -> Option<bool> {
+    let studio = engine::engine_studio()?;
+    let held = unsafe { (studio.get_model_by_index)(spectated.curstate.weaponmodel) };
+    if held.is_null() {
+        return None;
+    }
+    let held_name = unsafe { (*held).name_str() }.into_owned();
+    let stem = model_stem(viewmodel_name);
+    if stem.is_empty() {
+        return None;
+    }
+    Some(model_stem(&held_name).contains(stem))
+}
+
 static SEQUENCE_CACHE: Mutex<Option<HashMap<usize, Vec<String>>>> = Mutex::new(None);
 
 /// Returns every sequence label baked into `model`, cached by the model
@@ -285,6 +319,7 @@ const STAGE_NO_VIEWMODEL_MODEL: i32 = 4;
 const STAGE_NOT_A_DEPLOYABLE_WEAPON: i32 = 5;
 const STAGE_NO_SPECTATED_PLAYER: i32 = 6;
 const STAGE_RUNNING: i32 = 7;
+const STAGE_VIEWMODEL_MISMATCH: i32 = 8;
 
 fn stage_name(stage: i32) -> &'static str {
     match stage {
@@ -296,6 +331,7 @@ fn stage_name(stage: i32) -> &'static str {
         STAGE_NOT_A_DEPLOYABLE_WEAPON => "viewmodel is not one of the deployable weapons (MG42/MG34/BAR/Bren)",
         STAGE_NO_SPECTATED_PLAYER => "spectated entity is missing or is not a player",
         STAGE_RUNNING => "running -- all preconditions met",
+        STAGE_VIEWMODEL_MISMATCH => "viewmodel is not the weapon the spectated player is holding (ignored this frame)",
         _ => "unknown",
     }
 }
@@ -441,15 +477,29 @@ pub fn apply() {
     note_viewmodel(&viewmodel_name, deployable.is_some());
 
     let viewmodel_index = unsafe { (*viewmodel_entity).index };
-    let previous_entity = PREVIOUS_SPECTATED_ENTITY.swap(viewmodel_index, Ordering::Relaxed);
-    let switched_players = previous_entity != viewmodel_index;
-
     let spectated = unsafe { (engfuncs.get_entity_by_index)(viewmodel_index) };
     if spectated.is_null() || unsafe { (*spectated).player } == 0 {
         stage_with(STAGE_NO_SPECTATED_PLAYER, viewmodel_entity, viewmodel_model, viewmodel_index);
         return;
     }
     let spectated = unsafe { &*spectated };
+
+    // The viewmodel flaps between a player's weapons faster than they could
+    // possibly be switching. Acting on a frame where it disagrees with what
+    // the player actually holds is what made "draw" fire ~30 times a second,
+    // and it also meant the entity index published for the fire trigger was
+    // whichever weapon happened to be showing.
+    //
+    // This has to come before any of the previous-state trackers are touched,
+    // or the flap still registers as a change on the next agreeing frame.
+    if viewmodel_matches_held_weapon(&viewmodel_name, spectated) == Some(false) {
+        stage_with(STAGE_VIEWMODEL_MISMATCH, viewmodel_entity, viewmodel_model, viewmodel_index);
+        return;
+    }
+
+    let previous_entity = PREVIOUS_SPECTATED_ENTITY.swap(viewmodel_index, Ordering::Relaxed);
+    let switched_players = previous_entity != viewmodel_index;
+
     stage_with(STAGE_RUNNING, viewmodel_entity, viewmodel_model, viewmodel_index);
 
     let state = deployable.and_then(|weapon| get_spectated_deploy_state(weapon, spectated));
