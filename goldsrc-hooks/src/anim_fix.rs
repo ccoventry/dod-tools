@@ -19,7 +19,7 @@
 //! `p_mg42bd.mdl`), so this fix reads the spectated player's current weapon
 //! model name directly every frame instead of tracking fire events.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, Ordering};
 use std::sync::Mutex;
 
@@ -233,7 +233,34 @@ fn stage(stage: i32) {
 
 /// One-line summary for the `dodtools_hltv_animation_fix` status reply.
 pub fn status() -> String {
-    format!("state: {}", stage_name(STAGE.load(Ordering::Relaxed)))
+    let seen = SEEN_VIEWMODELS.lock().unwrap();
+    let count = seen.as_ref().map(|s| s.len()).unwrap_or(0);
+    format!(
+        "state: {} (distinct viewmodels seen: {count})",
+        stage_name(STAGE.load(Ordering::Relaxed))
+    )
+}
+
+/// Every distinct viewmodel this session, logged once each.
+///
+/// `apply()` keys entirely off the viewmodel's model name, so when it reports
+/// "not one of the deployable weapons" the only useful follow-up is *which*
+/// model it actually saw. Capped, and one line per distinct name rather than
+/// per frame.
+static SEEN_VIEWMODELS: Mutex<Option<HashSet<String>>> = Mutex::new(None);
+
+fn note_viewmodel(name: &str, deployable: bool) {
+    const LIMIT: usize = 24;
+    let mut guard = SEEN_VIEWMODELS.lock().unwrap();
+    let seen = guard.get_or_insert_with(HashSet::new);
+    if seen.len() < LIMIT && seen.insert(name.to_string()) {
+        unsafe {
+            crate::debug::report(&format!(
+                "anim_fix: viewmodel seen -- \"{name}\" (deployable weapon: {})",
+                if deployable { "yes" } else { "no" }
+            ))
+        };
+    }
 }
 
 /// Runs once per client frame (see `engine::set_per_frame_callback`).
@@ -262,8 +289,10 @@ pub fn apply() {
         return;
     }
     let viewmodel_name = unsafe { (*viewmodel_model).name_str() }.into_owned();
+    let deployable = find_deployable_weapon(&viewmodel_name);
+    note_viewmodel(&viewmodel_name, deployable.is_some());
 
-    let Some(weapon) = find_deployable_weapon(&viewmodel_name) else {
+    let Some(weapon) = deployable else {
         stage(STAGE_NOT_A_DEPLOYABLE_WEAPON);
         PREVIOUS_DEPLOY_STATE.store(-1, Ordering::Relaxed);
         return;
