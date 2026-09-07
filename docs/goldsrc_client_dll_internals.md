@@ -297,7 +297,80 @@ This is the authoritative set for the `dod` crate's parser, and it settles two t
 
 ---
 
-## 6. Reproducing this analysis
+## 6. Structure: the binary is not obfuscated
+
+Worth stating plainly, because it changes how expensive any future work here is. Despite
+being a "secured" build, `client.dll` is an ordinary release binary:
+
+- **Full MSVC RTTI is present** — 209 type descriptors, giving real C++ class names.
+- **2,996 printable strings**, including every sound path, sprite name, VGUI resource
+  file and localisation token.
+- No packing, no encrypted sections, no anti-debug, no import obfuscation.
+
+The `F` export is a calling-convention difference, not a protection measure. Everything in
+this document was recovered with ~200 lines of Python; a proper Ghidra pass would go
+considerably further.
+
+The RTTI names map the client's architecture directly. Selected non-VGUI classes:
+
+- **Weapons** (each with a matching `*AmmoClip`): `C30CAL`, `CBAR`, `CBREN`, `CBazooka`,
+  `CCOLT`, `CENFIELD`, `CFG42`, `CGarand`, `CGreaseGun`, `CM1Carbine`, `CMG34`, `CMG42`,
+  `CMP40`, `CMP44`, `CPIAT`, `CPistol`, `CPschreck`, `CSPRING`, `CSTEN`, `CScopedKar`,
+  `CThompson`, `CWEBLEY`; melee `CAmerKnife`, `CGerKnife`, `CSpade`, `CMeleeWeapon`;
+  thrown `CHandGrenade(Ex)`, `CStickGrenade(Ex)`, `CDoDGrenade(Ex)`; and the base classes
+  `CBipodWeapon` (the MG deploy behaviour `anim_fix` cares about) and `CRocketWeapon`.
+- **HUD:** `CHudAmmo`, `CHudBase`, `CHudDeathNotice`, `CHudDoDCommon`,
+  `CHudDoDCrossHair`, `CHudDoDMap`, `CMortarHud`, `CObjectiveIcons`, `CHudSpectator`.
+- **Spectator / viewport:** `CDoDSpectatorGUI`, `CSpectatorGUI`, `ISpectatorInterface`,
+  `DoDViewport`, `IDoDViewPort`, `TeamFortressViewport`, `CSpecHelpWindow`.
+- **Rendering:** `CStudioModelRenderer`, `CGameStudioModelRenderer` (the studio renderer
+  `anim_fix` works alongside), `CWeatherManager`, `CDoDRainDrop`, `CDoDSnowFlake`,
+  `CDoDRocketTrail`, `CDoDDirtExploDust`, `CParticleShooter`, `TriangleWallPuff`.
+
+Entity classnames are present in full: 76 `weapon_*` / `ammo_*` names in `client.dll`,
+and `dod/dlls/dod.dll` (the server library, same techniques apply) carries those plus the
+stock Half-Life leftovers (`weapon_crossbow`, `weapon_snark`, `weapon_tripmine`, …) that
+DoD never uses.
+
+### The unmapped weapon IDs — settled, and not worth chasing
+
+`dod::Weapon` leaves IDs 15, 16, 33, 34 and 41 unmapped, with source comments guessing at
+grenades. Two attempts to resolve them statically did **not** pan out, recorded so nobody
+repeats them:
+
+- The 42 `d_*` death-notice sprite names exist in `client.dll`, but there is **no array of
+  pointers to them** and only two are referenced from `.text` — the death-notice icon is
+  resolved by name at runtime, not through a static ID-indexed table.
+- In `dod.dll`, `weapon_garand` and friends appear only once each in `.text`, inside a
+  flat precache list — not next to an `ItemInfo` initialiser, so the HL SDK's
+  `p->iId` field-offset trick finds nothing.
+
+Rather than escalate to Ghidra, the question was answered empirically.
+`analysis/examples/weapon_id_probe.rs` tallies the raw `DeathMsg` weapon byte across a
+folder of demos and flags any ID the enum doesn't map. Across the full local library —
+**447 demos, 148,109 `DeathMsg` records** — only 24 distinct IDs occur, and **none of
+15, 16, 33, 34 or 41 appears even once**. The gaps are not a defect worth reverse
+engineering.
+
+The same run is a useful profile of what competitive DoD actually shoots with:
+
+| id | weapon | share | | id | weapon | share |
+| --- | --- | --- | --- | --- | --- | --- |
+| 10 | K98 | 21.6% | | 13 | Mk2Grenade | 7.0% |
+| 5 | Garand | 15.0% | | 14 | StickGrenade | 6.4% |
+| 11 | Bar | 15.0% | | 8 | Stg44 | 6.0% |
+| 6 | ScopedK98 | 8.2% | | 24 | K43 | 3.8% |
+| 9 | Springfield | 8.0% | | 12 | Mp40 | 3.0% |
+
+The remaining 14 IDs are all under 1.5% combined (`M1911`, `Luger`, `Thompson`, `Kabar`,
+`Spade`, `M1Carbine`, `K98Bayonet`, `ButtStock`, `Bazooka`, `Panzerschreck`,
+`M1A1Carbine`, `GermanKnife`, `Mg42`, plus 317 records at id 0 / `Unknown` — world and
+non-weapon deaths). Notably **`Mg42` appears 6 times and `Browning30Cal`, `Mg34`,
+`GreaseGun`, `Fg42`, `LeeEnfield`, `Sten`, `Bren`, `Webley`, `Piat` and `Mortar` never at
+all** — consistent with competitive class restrictions, and worth knowing before
+optimising analyzer paths for weapons that never fire in this corpus.
+
+## 7. Reproducing this analysis
 
 No IDA or Ghidra required; everything above came from `pefile` + `capstone`
 (`pip install capstone pefile`). The core of it:
