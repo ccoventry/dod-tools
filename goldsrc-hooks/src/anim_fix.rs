@@ -224,11 +224,42 @@ fn stage_name(stage: i32) -> &'static str {
     }
 }
 
-/// Records how far this frame got, logging only on a transition.
+/// The stage plus the viewmodel pointers behind it, as of the last frame that
+/// changed either. Logging keys off all three, so an alternation between two
+/// different viewmodels and one viewmodel flickering to null look different in
+/// the log instead of both reading as "stage changed".
+static LAST_TRACE: Mutex<Option<(i32, usize, usize)>> = Mutex::new(None);
+static TRACE_LINES: AtomicI32 = AtomicI32::new(0);
+/// The flicker being investigated is per-frame, so this has to be capped or a
+/// single session would write tens of thousands of lines.
+const MAX_TRACE_LINES: i32 = 80;
+
 fn stage(stage: i32) {
-    if STAGE.swap(stage, Ordering::Relaxed) != stage {
-        unsafe { crate::debug::report(&format!("anim_fix: {}", stage_name(stage))) };
+    stage_with(stage, std::ptr::null_mut::<u8>(), std::ptr::null_mut::<u8>());
+}
+
+/// Records how far this frame got, logging only when the stage or either
+/// pointer changes.
+fn stage_with<A, B>(stage: i32, entity: *mut A, model: *mut B) {
+    STAGE.store(stage, Ordering::Relaxed);
+
+    let key = (stage, entity as usize, model as usize);
+    let mut last = LAST_TRACE.lock().unwrap();
+    if *last == Some(key) {
+        return;
     }
+    *last = Some(key);
+    drop(last);
+
+    if TRACE_LINES.fetch_add(1, Ordering::Relaxed) >= MAX_TRACE_LINES {
+        return;
+    }
+    unsafe {
+        crate::debug::report(&format!(
+            "anim_fix: {} | viewmodel entity {entity:p}, model {model:p}",
+            stage_name(stage)
+        ))
+    };
 }
 
 /// One-line summary for the `dodtools_hltv_animation_fix` status reply.
@@ -280,12 +311,12 @@ pub fn apply() {
 
     let viewmodel_entity = unsafe { (engfuncs.get_view_model)() };
     if viewmodel_entity.is_null() {
-        stage(STAGE_NO_VIEWMODEL_ENTITY);
+        stage_with(STAGE_NO_VIEWMODEL_ENTITY, viewmodel_entity, std::ptr::null_mut::<u8>());
         return;
     }
     let viewmodel_model = unsafe { (*viewmodel_entity).model };
     if viewmodel_model.is_null() {
-        stage(STAGE_NO_VIEWMODEL_MODEL);
+        stage_with(STAGE_NO_VIEWMODEL_MODEL, viewmodel_entity, viewmodel_model);
         return;
     }
     let viewmodel_name = unsafe { (*viewmodel_model).name_str() }.into_owned();
@@ -293,7 +324,7 @@ pub fn apply() {
     note_viewmodel(&viewmodel_name, deployable.is_some());
 
     let Some(weapon) = deployable else {
-        stage(STAGE_NOT_A_DEPLOYABLE_WEAPON);
+        stage_with(STAGE_NOT_A_DEPLOYABLE_WEAPON, viewmodel_entity, viewmodel_model);
         PREVIOUS_DEPLOY_STATE.store(-1, Ordering::Relaxed);
         return;
     };
@@ -304,11 +335,11 @@ pub fn apply() {
 
     let spectated = unsafe { (engfuncs.get_entity_by_index)(viewmodel_index) };
     if spectated.is_null() || unsafe { (*spectated).player } == 0 {
-        stage(STAGE_NO_SPECTATED_PLAYER);
+        stage_with(STAGE_NO_SPECTATED_PLAYER, viewmodel_entity, viewmodel_model);
         return;
     }
     let spectated = unsafe { &*spectated };
-    stage(STAGE_RUNNING);
+    stage_with(STAGE_RUNNING, viewmodel_entity, viewmodel_model);
 
     let state = get_spectated_deploy_state(weapon, spectated);
     let previous_state = i32_to_deploy_state(PREVIOUS_DEPLOY_STATE.load(Ordering::Relaxed));
