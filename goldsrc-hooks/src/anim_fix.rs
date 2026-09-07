@@ -194,27 +194,77 @@ pub fn install() {
     engine::set_per_frame_callback(apply);
 }
 
+/// How far `apply()` got on the most recent frame. Reported only when it
+/// *changes*, never per frame -- this runs 60+ times a second, so a line per
+/// call would flood the log and slow a capture. Logged as a trace, it answers
+/// the only question a take that looks unchanged actually raises: which of the
+/// preconditions is the one not being met.
+static STAGE: AtomicI32 = AtomicI32::new(-1);
+
+const STAGE_DISABLED: i32 = 0;
+const STAGE_NO_ENGFUNCS: i32 = 1;
+const STAGE_NOT_SPECTATING: i32 = 2;
+const STAGE_NO_VIEWMODEL_ENTITY: i32 = 3;
+const STAGE_NO_VIEWMODEL_MODEL: i32 = 4;
+const STAGE_NOT_A_DEPLOYABLE_WEAPON: i32 = 5;
+const STAGE_NO_SPECTATED_PLAYER: i32 = 6;
+const STAGE_RUNNING: i32 = 7;
+
+fn stage_name(stage: i32) -> &'static str {
+    match stage {
+        STAGE_DISABLED => "disabled (dodtools_hltv_animation_fix is 0)",
+        STAGE_NO_ENGFUNCS => "waiting for engfuncs",
+        STAGE_NOT_SPECTATING => "not spectating (IsSpectateOnly() is false) -- the fix only acts in a spectated view",
+        STAGE_NO_VIEWMODEL_ENTITY => "no viewmodel entity",
+        STAGE_NO_VIEWMODEL_MODEL => "viewmodel entity has no model",
+        STAGE_NOT_A_DEPLOYABLE_WEAPON => "viewmodel is not one of the deployable weapons (MG42/MG34/BAR/Bren)",
+        STAGE_NO_SPECTATED_PLAYER => "spectated entity is missing or is not a player",
+        STAGE_RUNNING => "running -- all preconditions met",
+        _ => "unknown",
+    }
+}
+
+/// Records how far this frame got, logging only on a transition.
+fn stage(stage: i32) {
+    if STAGE.swap(stage, Ordering::Relaxed) != stage {
+        unsafe { crate::debug::report(&format!("anim_fix: {}", stage_name(stage))) };
+    }
+}
+
+/// One-line summary for the `dodtools_hltv_animation_fix` status reply.
+pub fn status() -> String {
+    format!("state: {}", stage_name(STAGE.load(Ordering::Relaxed)))
+}
+
 /// Runs once per client frame (see `engine::set_per_frame_callback`).
 pub fn apply() {
     if !ENABLED.load(Ordering::Relaxed) {
+        stage(STAGE_DISABLED);
         return;
     }
-    let Some(engfuncs) = engine::engfuncs() else { return };
+    let Some(engfuncs) = engine::engfuncs() else {
+        stage(STAGE_NO_ENGFUNCS);
+        return;
+    };
     if unsafe { (engfuncs.is_spectate_only)() } == 0 {
+        stage(STAGE_NOT_SPECTATING);
         return;
     }
 
     let viewmodel_entity = unsafe { (engfuncs.get_view_model)() };
     if viewmodel_entity.is_null() {
+        stage(STAGE_NO_VIEWMODEL_ENTITY);
         return;
     }
     let viewmodel_model = unsafe { (*viewmodel_entity).model };
     if viewmodel_model.is_null() {
+        stage(STAGE_NO_VIEWMODEL_MODEL);
         return;
     }
     let viewmodel_name = unsafe { (*viewmodel_model).name_str() }.into_owned();
 
     let Some(weapon) = find_deployable_weapon(&viewmodel_name) else {
+        stage(STAGE_NOT_A_DEPLOYABLE_WEAPON);
         PREVIOUS_DEPLOY_STATE.store(-1, Ordering::Relaxed);
         return;
     };
@@ -225,9 +275,11 @@ pub fn apply() {
 
     let spectated = unsafe { (engfuncs.get_entity_by_index)(viewmodel_index) };
     if spectated.is_null() || unsafe { (*spectated).player } == 0 {
+        stage(STAGE_NO_SPECTATED_PLAYER);
         return;
     }
     let spectated = unsafe { &*spectated };
+    stage(STAGE_RUNNING);
 
     let state = get_spectated_deploy_state(weapon, spectated);
     let previous_state = i32_to_deploy_state(PREVIOUS_DEPLOY_STATE.load(Ordering::Relaxed));

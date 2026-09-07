@@ -27,7 +27,7 @@ fn console_print(text: &str) {
 /// Reads argv(1) (if present) as "0"/"1" and stores it into `flag`, then
 /// prints the resulting state -- shared by both commands below since they
 /// only differ in which flag and name they report.
-fn handle_toggle(name: &str, flag: &AtomicBool) {
+fn handle_toggle(name: &str, flag: &AtomicBool, status: fn() -> String) {
     let Some(engfuncs) = engine::engfuncs() else { return };
 
     // Cmd_Argc counts the command name itself, so a bare invocation is 1 and
@@ -64,7 +64,14 @@ fn handle_toggle(name: &str, flag: &AtomicBool) {
         // sends it bare, which reads as "the toggle didn't work" unless the
         // reply says otherwise. DoD's own commands answer this shape the same
         // way (`usage: spec_menu <0|1>`), so match that.
-        console_print(&format!("{name} = {state}\nusage: {name} <0|1>\n"));
+        //
+        // A bare call is also the natural "is this thing doing anything?"
+        // question, so answer that too rather than only echoing the flag --
+        // the flag being on says nothing about whether the fix's preconditions
+        // are being met in the current view.
+        let report = status();
+        console_print(&format!("{name} = {state}\nusage: {name} <0|1>\n{report}\n"));
+        unsafe { crate::debug::report(&format!("commands: {name} status -- {report}")) };
     }
     // Also to the log, so it stays a complete record of what was actually
     // enabled during a capture -- the console scrollback doesn't survive the
@@ -80,11 +87,11 @@ fn handle_toggle(name: &str, flag: &AtomicBool) {
 }
 
 unsafe extern "C" fn cmd_gunshots_fix() {
-    handle_toggle(GUNSHOTS_FIX_NAME, &sound_fix::ENABLED);
+    handle_toggle(GUNSHOTS_FIX_NAME, &sound_fix::ENABLED, sound_fix::status);
 }
 
 unsafe extern "C" fn cmd_animation_fix() {
-    handle_toggle(ANIMATION_FIX_NAME, &anim_fix::ENABLED);
+    handle_toggle(ANIMATION_FIX_NAME, &anim_fix::ENABLED, anim_fix::status);
 }
 
 /// Registers both console commands. Must be called after `engine::engfuncs()`

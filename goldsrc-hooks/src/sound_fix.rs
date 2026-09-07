@@ -14,13 +14,43 @@
 //! track weapon-fire *events* the way the animation fix does.
 
 use std::ffi::{c_char, c_void, CStr};
-use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, Ordering};
 
 use crate::engine::{self, EventApiPartial};
 
 pub static ENABLED: AtomicBool = AtomicBool::new(false);
 
 const ATTN_NONE: f32 = 0.0;
+
+// Counters, not per-call logging: this runs for every sound the engine plays,
+// so a log line per call would flood the file and cost real time in a capture.
+// They answer the question a silent take actually raises -- did the hook run
+// at all, did it ever see a gunshot, and did it boost one.
+static CALLS: AtomicU32 = AtomicU32::new(0);
+static SHOOT_SAMPLES: AtomicU32 = AtomicU32::new(0);
+static BOOSTED: AtomicU32 = AtomicU32::new(0);
+static SKIPPED_NOT_SPECTATING: AtomicU32 = AtomicU32::new(0);
+
+/// One-line summary of what the hook has actually done this session, for the
+/// `dodtools_hltv_gunshots_fix` status reply.
+pub fn status() -> String {
+    format!(
+        "sounds seen: {}, weapon-fire samples: {}, boosted: {}, skipped (not spectating): {}",
+        CALLS.load(Ordering::Relaxed),
+        SHOOT_SAMPLES.load(Ordering::Relaxed),
+        BOOSTED.load(Ordering::Relaxed),
+        SKIPPED_NOT_SPECTATING.load(Ordering::Relaxed),
+    )
+}
+
+/// Substring test without allocating -- the previous `to_string_lossy()` built
+/// a `String` for every sound the engine played.
+fn is_weapon_fire(sample: *const c_char) -> bool {
+    if sample.is_null() {
+        return false;
+    }
+    unsafe { CStr::from_ptr(sample) }.to_bytes().windows(6).any(|w| w == b"_shoot")
+}
 
 type EvPlaySoundFn = unsafe extern "C" fn(i32, *mut f32, i32, *const c_char, f32, f32, i32, i32);
 static REAL_EV_PLAY_SOUND: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
@@ -38,14 +68,33 @@ unsafe extern "C" fn hook_ev_play_sound(
     let real = REAL_EV_PLAY_SOUND.load(Ordering::Acquire);
     let real: EvPlaySoundFn = unsafe { std::mem::transmute(real) };
 
-    let should_boost = ENABLED.load(Ordering::Relaxed)
-        && !sample.is_null()
-        && unsafe { CStr::from_ptr(sample) }.to_string_lossy().contains("_shoot")
-        && engine::engfuncs().map(|e| unsafe { (e.is_spectate_only)() } != 0).unwrap_or(false);
+    if CALLS.fetch_add(1, Ordering::Relaxed) == 0 {
+        unsafe { crate::debug::report("sound_fix: EV_PlaySound hook is live (first sound played through it)") };
+    }
+
+    let is_fire = is_weapon_fire(sample);
+    if is_fire {
+        SHOOT_SAMPLES.fetch_add(1, Ordering::Relaxed);
+    }
+    let spectating = engine::engfuncs().map(|e| unsafe { (e.is_spectate_only)() } != 0).unwrap_or(false);
+    let should_boost = ENABLED.load(Ordering::Relaxed) && is_fire && spectating;
 
     if should_boost {
+        if BOOSTED.fetch_add(1, Ordering::Relaxed) == 0 {
+            let name = unsafe { CStr::from_ptr(sample) }.to_string_lossy().into_owned();
+            unsafe {
+                crate::debug::report(&format!(
+                    "sound_fix: first boosted gunshot -- \"{name}\" (was volume {volume}, attenuation {attenuation}; now 1.0 / {ATTN_NONE})"
+                ))
+            };
+        }
         unsafe { real(ent, origin, channel, sample, 1.0, ATTN_NONE, f_flags, pitch) };
     } else {
+        // The most likely reason a take sounds unchanged with the fix on: the
+        // gunshots are there, but IsSpectateOnly() is false so nothing boosts.
+        if is_fire && ENABLED.load(Ordering::Relaxed) && !spectating && SKIPPED_NOT_SPECTATING.fetch_add(1, Ordering::Relaxed) == 0 {
+            unsafe { crate::debug::report("sound_fix: saw a weapon-fire sample but IsSpectateOnly() is false, so it was left alone -- the fix only acts while spectating") };
+        }
         unsafe { real(ent, origin, channel, sample, volume, attenuation, f_flags, pitch) };
     }
 }
