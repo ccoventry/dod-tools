@@ -30,16 +30,26 @@ fn console_print(text: &str) {
 fn handle_toggle(name: &str, flag: &AtomicBool) {
     let Some(engfuncs) = engine::engfuncs() else { return };
 
+    // Cmd_Argc counts the command name itself, so a bare invocation is 1 and
+    // an argument makes it 2. Bare is a query, not a no-op.
     let argc = unsafe { (engfuncs.cmd_argc)() };
+    let mut assigned = false;
     if argc >= 2 {
         let arg1 = unsafe { (engfuncs.cmd_argv)(1) };
         if !arg1.is_null() {
             let value = unsafe { CStr::from_ptr(arg1 as *const c_char) }.to_string_lossy();
             match value.trim() {
-                "0" => flag.store(false, Ordering::Relaxed),
-                "1" => flag.store(true, Ordering::Relaxed),
+                "0" => {
+                    flag.store(false, Ordering::Relaxed);
+                    assigned = true;
+                }
+                "1" => {
+                    flag.store(true, Ordering::Relaxed);
+                    assigned = true;
+                }
                 other => {
                     console_print(&format!("{name}: expected 0 or 1, got \"{other}\"\n"));
+                    unsafe { crate::debug::report(&format!("commands: {name} rejected argument \"{other}\"")) };
                     return;
                 }
             }
@@ -47,12 +57,26 @@ fn handle_toggle(name: &str, flag: &AtomicBool) {
     }
 
     let state = if flag.load(Ordering::Relaxed) { "1 (on)" } else { "0 (off)" };
-    console_print(&format!("{name} = {state}\n"));
+    if assigned {
+        console_print(&format!("{name} = {state}\n"));
+    } else {
+        // Selecting the name from the console's type-ahead and pressing enter
+        // sends it bare, which reads as "the toggle didn't work" unless the
+        // reply says otherwise. DoD's own commands answer this shape the same
+        // way (`usage: spec_menu <0|1>`), so match that.
+        console_print(&format!("{name} = {state}\nusage: {name} <0|1>\n"));
+    }
     // Also to the log, so it stays a complete record of what was actually
     // enabled during a capture -- the console scrollback doesn't survive the
     // session, and "was the fix even on for that take?" is the first question
-    // worth answering when a capture looks unchanged.
-    unsafe { crate::debug::report(&format!("commands: {name} = {state}")) };
+    // worth answering when a capture looks unchanged. argc distinguishes a
+    // query from an assignment that didn't take.
+    unsafe {
+        crate::debug::report(&format!(
+            "commands: {name} = {state} ({}, argc={argc})",
+            if assigned { "set" } else { "queried, unchanged" }
+        ))
+    };
 }
 
 unsafe extern "C" fn cmd_gunshots_fix() {
