@@ -49,6 +49,18 @@ unsafe extern "system" fn worker_thread(_lp_param: *mut std::ffi::c_void) -> u32
     unsafe { debug::new_session_separator() };
     unsafe { debug::report("goldsrc-hooks worker thread started") };
 
+    // Both fixes default to OFF, so a session where the hooks all install
+    // correctly but nothing visibly changes is the expected outcome of simply
+    // not having turned them on. Log the starting state so that case is
+    // obvious from the log rather than mistaken for a broken hook.
+    unsafe {
+        debug::report(&format!(
+            "goldsrc-hooks: starting state -- gunshots fix: {}, animation fix: {} (env vars set the default; dodtools_hltv_gunshots_fix / dodtools_hltv_animation_fix toggle live)",
+            if sound_fix::ENABLED.load(Ordering::Relaxed) { "ON" } else { "off" },
+            if anim_fix::ENABLED.load(Ordering::Relaxed) { "ON" } else { "off" },
+        ))
+    };
+
     // Registered before install() so there's no window in which Initialize
     // could fire before the callback exists.
     engine::set_on_engine_ready(install_fixes);

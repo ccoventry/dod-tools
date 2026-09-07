@@ -42,14 +42,23 @@ ret
 
 If `F` is present the engine calls it and is **done**. If `F` is absent it calls
 `FreeLibrary` and fails — there is no per-name fallback on this path. DoD 1.3's
-`client.dll` exports `F`, so `Initialize`, `HUD_Frame`,
-`HUD_GetStudioModelInterface` and the other classic names are exported but **never
-looked up**.
+`client.dll` exports `F`, so the whole 43-entry client interface, `Initialize` and
+`HUD_Frame` included, is established without a single by-name lookup.
 
-That is the complete explanation for the failure recorded in #204: patching
-`client.dll`'s export table was mechanically perfect (the real Win32 `GetProcAddress`
-read our patched value straight back) and yet nothing ever called through it, because
-the engine never asks for those names.
+That is the explanation for the failure recorded in #204: patching `client.dll`'s export
+table was mechanically perfect (the real Win32 `GetProcAddress` read our patched value
+straight back) and yet nothing ever called through it, because the engine does not ask
+for those names here.
+
+> **Refinement, from the first successful live run (2026-09-07).** "Never looked up" is
+> too strong as a blanket claim, and the log disproves it. After `F` returns, the engine
+> separately resolves `CreateInterface` and then `HUD_GetStudioModelInterface` **by name**
+> — a different code path (renderer/studio initialisation) from the client-interface
+> setup analysed above. So a secured `client.dll` sees both conventions in one session:
+> `F` for the `cldll_func_t` table, and by-name lookups for a few later interfaces.
+> Why the earlier export-table patch failed to intercept *that* particular lookup is
+> still unexplained; it is moot now, because the `GetProcAddress` hook covers both paths,
+> but it is not something this document has evidence to claim it solved.
 
 **Independent corroboration.** Xash3D's GoldSrc-compatible client loader implements the
 same convention and names it explicitly

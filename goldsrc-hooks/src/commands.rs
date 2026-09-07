@@ -48,6 +48,11 @@ fn handle_toggle(name: &str, flag: &AtomicBool) {
 
     let state = if flag.load(Ordering::Relaxed) { "1 (on)" } else { "0 (off)" };
     console_print(&format!("{name} = {state}\n"));
+    // Also to the log, so it stays a complete record of what was actually
+    // enabled during a capture -- the console scrollback doesn't survive the
+    // session, and "was the fix even on for that take?" is the first question
+    // worth answering when a capture looks unchanged.
+    unsafe { crate::debug::report(&format!("commands: {name} = {state}")) };
 }
 
 unsafe extern "C" fn cmd_gunshots_fix() {
