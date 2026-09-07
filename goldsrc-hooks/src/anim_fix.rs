@@ -398,18 +398,34 @@ pub fn status() -> String {
 /// per frame.
 static SEEN_VIEWMODELS: Mutex<Option<HashSet<String>>> = Mutex::new(None);
 
-fn note_viewmodel(name: &str, deployable: bool) {
+fn note_viewmodel(name: &str, deployable: bool, model: *mut ModelSPartial) {
     const LIMIT: usize = 24;
     let mut guard = SEEN_VIEWMODELS.lock().unwrap();
     let seen = guard.get_or_insert_with(HashSet::new);
-    if seen.len() < LIMIT && seen.insert(name.to_string()) {
-        unsafe {
-            crate::debug::report(&format!(
-                "anim_fix: viewmodel seen -- \"{name}\" (deployable weapon: {})",
-                if deployable { "yes" } else { "no" }
-            ))
-        };
+    if seen.len() >= LIMIT || !seen.insert(name.to_string()) {
+        return;
     }
+    drop(guard);
+
+    // Dump the model's whole sequence list the first time it is seen. Every
+    // animation this fix plays is found by matching a label ("shoot", "draw",
+    // "reload"), so when a lookup comes back empty the only thing worth
+    // knowing is what the model actually calls its animations -- and DoD is
+    // not consistent about it. One line per weapon, not per frame.
+    let labels = model_sequence_strings(model);
+    unsafe {
+        crate::debug::report(&format!(
+            "anim_fix: viewmodel seen -- \"{name}\" (deployable weapon: {}), {} sequences: [{}]",
+            if deployable { "yes" } else { "no" },
+            labels.len(),
+            labels
+                .iter()
+                .enumerate()
+                .map(|(i, l)| format!("{i}:{l}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))
+    };
 }
 
 /// Plays the firing animation when the player being spectated in-eye shoots.
@@ -444,6 +460,40 @@ pub fn on_weapon_fired(entity_index: i32) {
     play_viewmodel_animation(sequence, "spectated player fired", state, viewmodel);
 }
 
+/// Whether to resolve spectated players' names via
+/// `PlayerInfo_ValueForKey`. Off by default: that engine slot is inferred
+/// rather than confirmed by any call site in the binary, so a wrong guess
+/// would be calling an unknown function. See its field docs in `engine.rs`.
+pub static PLAYER_NAMES: AtomicBool = AtomicBool::new(false);
+
+/// Best-effort player name, `None` if the lookup is off or looks wrong.
+fn player_name(index: i32) -> Option<String> {
+    if !PLAYER_NAMES.load(Ordering::Relaxed) || index <= 0 {
+        return None;
+    }
+    let engfuncs = engine::engfuncs()?;
+    let key = c"name";
+    let raw = unsafe { (engfuncs.player_info_value_for_key)(index, key.as_ptr() as *const std::ffi::c_char) };
+    if raw.is_null() {
+        return None;
+    }
+    let name = unsafe { std::ffi::CStr::from_ptr(raw) }.to_string_lossy().into_owned();
+    // A wrong slot would most likely return something unreadable, so refuse to
+    // trust anything that doesn't look like a name.
+    if name.is_empty() || name.len() > 64 || !name.chars().all(|c| !c.is_control()) {
+        return None;
+    }
+    Some(name)
+}
+
+/// `"idx 6 (SomePlayer)"`, or just `"idx 6"` when names are off.
+fn describe_player(index: i32) -> String {
+    match player_name(index) {
+        Some(name) => format!("idx {index} ({name})"),
+        None => format!("idx {index}"),
+    }
+}
+
 /// Runs once per client frame (see `engine::set_per_frame_callback`).
 pub fn apply() {
     if !ENABLED.load(Ordering::Relaxed) {
@@ -474,7 +524,7 @@ pub fn apply() {
     // weapon still needs draw/reload/shoot driven, so this is no longer a
     // reason to bail out -- it just means there is no deploy state to track.
     let deployable = find_deployable_weapon(&viewmodel_name);
-    note_viewmodel(&viewmodel_name, deployable.is_some());
+    note_viewmodel(&viewmodel_name, deployable.is_some(), viewmodel_model);
 
     let viewmodel_index = unsafe { (*viewmodel_entity).index };
     let spectated = unsafe { (engfuncs.get_entity_by_index)(viewmodel_index) };
@@ -499,6 +549,23 @@ pub fn apply() {
 
     let previous_entity = PREVIOUS_SPECTATED_ENTITY.swap(viewmodel_index, Ordering::Relaxed);
     let switched_players = previous_entity != viewmodel_index;
+    if switched_players {
+        // The single most useful line for reading a session back: which player
+        // the camera moved to, and what they are holding according to their own
+        // replicated state rather than the viewmodel.
+        let held = engine::engine_studio()
+            .map(|studio| unsafe { (studio.get_model_by_index)(spectated.curstate.weaponmodel) })
+            .filter(|m| !m.is_null())
+            .map(|m| unsafe { (*m).name_str() }.into_owned())
+            .unwrap_or_else(|| "<unknown>".into());
+        unsafe {
+            crate::debug::report(&format!(
+                "anim_fix: now spectating {} (was {}), holding {held}, viewmodel \"{viewmodel_name}\"",
+                describe_player(viewmodel_index),
+                describe_player(previous_entity),
+            ))
+        };
+    }
 
     stage_with(STAGE_RUNNING, viewmodel_entity, viewmodel_model, viewmodel_index);
 
