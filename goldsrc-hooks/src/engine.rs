@@ -399,6 +399,19 @@ fn run_per_frame_callback() {
     }
 }
 
+/// Runs once per frame *after* the engine has built the view, from
+/// `V_CalcRefdef`.
+///
+/// This exists because `HUD_Frame` runs early in the client frame, before the
+/// viewmodel is set up for rendering -- reading the viewmodel there sees a
+/// state that flickers between frames. By `V_CalcRefdef` the view, and with it
+/// the viewmodel entity, is current.
+static POST_VIEW_CALLBACK: std::sync::OnceLock<fn()> = std::sync::OnceLock::new();
+
+pub fn set_post_view_callback(callback: fn()) {
+    let _ = POST_VIEW_CALLBACK.set(callback);
+}
+
 unsafe extern "system" fn per_frame_timer_thread(_lp_param: *mut c_void) -> u32 {
     loop {
         unsafe { Sleep(16) };
@@ -425,11 +438,16 @@ const CLDLL_FUNC_SLOTS: usize = 43;
 /// Slot indices within that table -- verified by resolving every address DoD's
 /// `F` writes back to its own export name.
 const SLOT_INITIALIZE: usize = 0;
+/// `V_CalcRefdef` -- where the engine builds the view for this frame, and so
+/// where the viewmodel entity is actually current. `HUD_Frame` runs earlier in
+/// the client frame, before that setup.
+const SLOT_V_CALC_REFDEF: usize = 19;
 const SLOT_HUD_FRAME: usize = 33;
 const SLOT_GET_STUDIO_MODEL_INTERFACE: usize = 39;
 
 const _: () = assert!(
     SLOT_INITIALIZE < CLDLL_FUNC_SLOTS
+        && SLOT_V_CALC_REFDEF < CLDLL_FUNC_SLOTS
         && SLOT_HUD_FRAME < CLDLL_FUNC_SLOTS
         && SLOT_GET_STUDIO_MODEL_INTERFACE < CLDLL_FUNC_SLOTS,
     "a cldll_func_t slot index is outside the table F actually writes"
@@ -437,6 +455,9 @@ const _: () = assert!(
 
 type InitializeFn = unsafe extern "C" fn(*mut ClEngineFuncsPartial, i32) -> i32;
 type HudFrameFn = unsafe extern "C" fn(f64);
+/// `void V_CalcRefdef(struct ref_params_s *pparams)` -- the argument is only
+/// forwarded, never inspected, so it stays opaque.
+type VCalcRefdefFn = unsafe extern "C" fn(*mut c_void);
 type GetStudioModelInterfaceFn =
     unsafe extern "C" fn(i32, *mut *mut c_void, *mut EngineStudioApiPartial) -> i32;
 /// The secured single-callback export: fills the caller-provided buffer with
@@ -447,6 +468,7 @@ type ClientApiFn = unsafe extern "C" fn(*mut *mut c_void);
 static REAL_F: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
 static REAL_INITIALIZE: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
 static REAL_HUD_FRAME: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
+static REAL_V_CALC_REFDEF: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
 static REAL_GET_STUDIO_MODEL_INTERFACE: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
 
 /// Runs once, on the engine's own thread, immediately after `client.dll`'s
@@ -517,6 +539,20 @@ unsafe extern "C" fn tramp_hud_frame(time: f64) {
     run_per_frame_callback();
 }
 
+/// Runs after the engine has built this frame's view, which is the point at
+/// which the viewmodel entity is current -- see `set_post_view_callback`.
+unsafe extern "C" fn tramp_v_calc_refdef(pparams: *mut c_void) {
+    let real = REAL_V_CALC_REFDEF.load(Ordering::Acquire);
+    if !real.is_null() {
+        let real: VCalcRefdefFn = unsafe { std::mem::transmute(real) };
+        unsafe { real(pparams) };
+    }
+
+    if let Some(callback) = POST_VIEW_CALLBACK.get() {
+        callback();
+    }
+}
+
 /// Captures `pstudio`, which `anim_fix` needs to read a model's sequence
 /// labels.
 unsafe extern "C" fn tramp_get_studio_model_interface(
@@ -581,6 +617,7 @@ unsafe extern "C" fn hook_f(table: *mut *mut c_void) {
     unsafe {
         swap_slot(table, SLOT_INITIALIZE, &REAL_INITIALIZE, tramp_initialize as *mut c_void, "Initialize");
         swap_slot(table, SLOT_HUD_FRAME, &REAL_HUD_FRAME, tramp_hud_frame as *mut c_void, "HUD_Frame");
+        swap_slot(table, SLOT_V_CALC_REFDEF, &REAL_V_CALC_REFDEF, tramp_v_calc_refdef as *mut c_void, "V_CalcRefdef");
         swap_slot(
             table,
             SLOT_GET_STUDIO_MODEL_INTERFACE,
@@ -673,6 +710,10 @@ unsafe extern "system" fn hook_get_proc_address(module: HMODULE, name: *const u8
         "HUD_Frame" => {
             REAL_HUD_FRAME.store(result, Ordering::Release);
             tramp_hud_frame as *mut c_void
+        }
+        "V_CalcRefdef" => {
+            REAL_V_CALC_REFDEF.store(result, Ordering::Release);
+            tramp_v_calc_refdef as *mut c_void
         }
         "HUD_GetStudioModelInterface" => {
             REAL_GET_STUDIO_MODEL_INTERFACE.store(result, Ordering::Release);

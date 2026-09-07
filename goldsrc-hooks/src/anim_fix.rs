@@ -192,6 +192,9 @@ fn i32_to_deploy_state(v: i32) -> Option<DeployState> {
 /// during the session (there's no per-install teardown needed).
 pub fn install() {
     engine::set_per_frame_callback(apply);
+    // Diagnostic only for now -- reads nothing and changes nothing, it just
+    // records what the viewmodel looks like at the other candidate hook point.
+    engine::set_post_view_callback(sample_from_view);
 }
 
 /// How far `apply()` got on the most recent frame. Reported only when it
@@ -249,18 +252,52 @@ pub fn status() -> String {
 /// per frame.
 static SEEN_VIEWMODELS: Mutex<Option<HashSet<String>>> = Mutex::new(None);
 
-fn note_viewmodel(name: &str, deployable: bool) {
-    const LIMIT: usize = 24;
+fn note_viewmodel(source: &str, name: &str, deployable: bool) {
+    const LIMIT: usize = 32;
     let mut guard = SEEN_VIEWMODELS.lock().unwrap();
     let seen = guard.get_or_insert_with(HashSet::new);
-    if seen.len() < LIMIT && seen.insert(name.to_string()) {
+    let key = format!("{source}|{name}");
+    if seen.len() < LIMIT && seen.insert(key) {
         unsafe {
             crate::debug::report(&format!(
-                "anim_fix: viewmodel seen -- \"{name}\" (deployable weapon: {})",
+                "anim_fix: viewmodel seen [{source}] -- \"{name}\" (deployable weapon: {})",
                 if deployable { "yes" } else { "no" }
             ))
         };
     }
+}
+
+/// Read-only sample of the viewmodel taken from `V_CalcRefdef`, purely to
+/// compare against what `HUD_Frame` sees.
+///
+/// `apply()` currently runs from `HUD_Frame` and its stage trace flickers
+/// between "running" and "no model"/"not a deployable weapon" every frame,
+/// which would mean the viewmodel itself changes that fast. The likelier
+/// explanation is that `HUD_Frame` runs before the engine sets the viewmodel
+/// up for this frame, so it is reading a state that is not meant to be read
+/// yet. If the names logged from here are stable while the `HUD_Frame` ones
+/// flap, `apply()` belongs on this callback instead.
+pub fn sample_from_view() {
+    if !ENABLED.load(Ordering::Relaxed) {
+        return;
+    }
+    let Some(engfuncs) = engine::engfuncs() else { return };
+    if unsafe { (engfuncs.is_spectate_only)() } == 0 {
+        return;
+    }
+    let entity = unsafe { (engfuncs.get_view_model)() };
+    if entity.is_null() {
+        note_viewmodel("V_CalcRefdef", "<null viewmodel entity>", false);
+        return;
+    }
+    let model = unsafe { (*entity).model };
+    if model.is_null() {
+        note_viewmodel("V_CalcRefdef", "<entity has no model>", false);
+        return;
+    }
+    let name = unsafe { (*model).name_str() }.into_owned();
+    let deployable = find_deployable_weapon(&name).is_some();
+    note_viewmodel("V_CalcRefdef", &name, deployable);
 }
 
 /// Runs once per client frame (see `engine::set_per_frame_callback`).
@@ -290,7 +327,7 @@ pub fn apply() {
     }
     let viewmodel_name = unsafe { (*viewmodel_model).name_str() }.into_owned();
     let deployable = find_deployable_weapon(&viewmodel_name);
-    note_viewmodel(&viewmodel_name, deployable.is_some());
+    note_viewmodel("HUD_Frame", &viewmodel_name, deployable.is_some());
 
     let Some(weapon) = deployable else {
         stage(STAGE_NOT_A_DEPLOYABLE_WEAPON);
