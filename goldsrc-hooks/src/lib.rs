@@ -5,12 +5,11 @@
 //! toolchain, and doesn't touch any function HLAE itself already hooks (see
 //! `engine.rs` for exactly which functions this DLL depends on). It's built
 //! as a separate workspace crate specifically so it doesn't have to live
-//! inside a forked copy of HLAE's own repository -- though `addresses.rs`'s
-//! byte-signature scan for `pEngfuncs` is a direct, faithful port of
-//! HLAE's own `hl_addresses.cpp` technique, since live testing proved the
-//! more "obvious" approach (hooking `client.dll`'s exported `Initialize`)
-//! doesn't actually work on at least some engine builds -- see that
-//! module's docs.
+//! inside a forked copy of HLAE's own repository. How it gets a foothold in
+//! `client.dll` is genuinely non-obvious -- patching that DLL's export table
+//! does nothing on a "secured" build, because the engine resolves the whole
+//! client interface through a single `F` export instead. See `engine.rs`'s
+//! module docs and `docs/goldsrc_client_dll_internals.md`.
 //!
 //! Implements two fixes, each independently toggled and each safe to inject
 //! without the other:
@@ -27,9 +26,7 @@
 //! <0|1>` (see `commands.rs`) -- either mechanism flips the same runtime
 //! flag, so whichever is more convenient for a given session works.
 
-mod addresses;
 mod anim_fix;
-mod binscan;
 mod commands;
 mod debug;
 mod engine;
@@ -52,21 +49,18 @@ unsafe extern "system" fn worker_thread(_lp_param: *mut std::ffi::c_void) -> u32
     unsafe { debug::new_session_separator() };
     unsafe { debug::report("goldsrc-hooks worker thread started") };
 
-    // Hooks hw.dll's LoadLibraryA import to detect the moment client.dll
-    // loads, then signature-scans it for pEngfuncs/pstudio -- see engine.rs
-    // and addresses.rs's module docs for the full mechanism and why it
-    // doesn't hook client.dll's own Initialize export.
+    // Hooks hw.dll's LoadLibraryA and GetProcAddress imports, so we see
+    // client.dll load and can substitute our own entry points as the engine
+    // resolves it -- see engine.rs's module docs for the full mechanism and
+    // why patching client.dll's export table does nothing.
     engine::install();
 
-    // The scan runs synchronously the instant client.dll is detected loading
-    // (it reads static bytes already in the file image, no engine call
-    // needs to happen first), so this is normally near-instant -- the wait
-    // loop is just a safety margin in case client.dll takes a while to load
-    // at all.
+    // pEngfuncs arrives when the engine calls client.dll's Initialize, which
+    // happens during normal startup shortly after client.dll loads.
     let mut waited = 0u32;
     while engine::engfuncs().is_none() {
         if waited >= 30_000 {
-            unsafe { debug::report("goldsrc-hooks: timed out waiting for client.dll to load and be scanned; fixes not installed this session") };
+            unsafe { debug::report("goldsrc-hooks: timed out waiting for client.dll's Initialize to run; fixes not installed this session") };
             return 0;
         }
         unsafe { Sleep(50) };
@@ -76,14 +70,13 @@ unsafe extern "system" fn worker_thread(_lp_param: *mut std::ffi::c_void) -> u32
     unsafe { debug::report("goldsrc-hooks: engfuncs captured, installing sound_fix") };
     sound_fix::install();
 
-    // anim_fix additionally needs engine_studio (captured via
-    // HUD_GetStudioModelInterface, a separate one-time export hook -- see
-    // engine.rs); install() itself only registers the per-frame poll, which
-    // checks for that availability on every call, so it's safe to install
-    // even if that capture hasn't landed yet.
+    // anim_fix additionally needs engine_studio, captured when the engine
+    // calls HUD_GetStudioModelInterface; install() itself only registers the
+    // per-frame callback, which re-checks that availability on every call, so
+    // it's safe to install even if that capture hasn't landed yet.
     anim_fix::install();
 
-    // In-game mirv_dod_hltv_gunshots_fix / mirv_dod_hltv_animation_fix
+    // In-game dodtools_hltv_gunshots_fix / dodtools_hltv_animation_fix
     // console commands -- toggle the same ENABLED flags the env vars above
     // set as the initial default, so either mechanism works.
     commands::install();

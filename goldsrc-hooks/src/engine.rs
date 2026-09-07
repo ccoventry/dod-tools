@@ -1,25 +1,54 @@
-//! Captures the engine's `cl_enginefuncs_s` pointer table (`pEngfuncs`), and
-//! optionally `engine_studio_api_s` (`pstudio`), directly out of a loaded
-//! `client.dll`'s own memory -- via `addresses::scan_client_dll`, a faithful
-//! port of HLAE's own `hl_addresses.cpp` byte-signature scan.
+//! Captures the engine's `cl_enginefuncs_s` table (`pEngfuncs`), the
+//! `engine_studio_api_s` table (`pstudio`), and a genuine per-frame callback,
+//! by intercepting how `hw.dll` resolves `client.dll`'s entry points in the
+//! first place.
 //!
-//! An earlier version of this module instead patched `client.dll`'s
-//! *exported* `Initialize`/`HUD_GetStudioModelInterface`/`HUD_Frame` entries,
-//! on the assumption that the engine resolves them via a live
-//! `GetProcAddress` call each time (the documented GoldSrc mod ABI). Live
-//! testing against a real DoD 1.3 session disproved that: the export-table
-//! patch was verified correct (even the real Win32 `GetProcAddress` agreed,
-//! immediately after patching), yet nothing ever called through to it, even
-//! over 30+ seconds of active gameplay. HLAE's own source confirms why --
-//! it never hooks `Initialize` either, and instead reads `client.dll`'s own
-//! already-populated copy of the pointer directly out of memory, which is
-//! what `addresses.rs` now replicates. See that module's docs for the full
-//! mechanism and the two `client.dll` build variants it handles.
+//! ## Why this isn't the "obvious" export hook
 //!
-//! `client.dll`'s load is still detected the same way as before: patch
-//! `hw.dll`'s own Import Address Table so its calls to `KERNEL32!LoadLibraryA`
-//! come through us first (the same technique HLAE's own `CAfxImportDllHook`
-//! uses) -- confirmed reliable by testing, this part was never the problem.
+//! Two earlier designs failed, and understanding why is what makes this one
+//! correct (see `docs/goldsrc_client_dll_internals.md` for the full
+//! reverse-engineering write-up, and issue #204 for the investigation trail):
+//!
+//! 1. **Patching `client.dll`'s export table** for `Initialize` / `HUD_Frame`
+//!    / `HUD_GetStudioModelInterface`. The patch was provably applied (the
+//!    real Win32 `GetProcAddress` read our value back), yet nothing ever
+//!    called through it. Root cause, confirmed by disassembling `hw.dll`:
+//!    **the engine never asks for those names at all** on a "secured"
+//!    `client.dll`. It calls `GetProcAddress(hClient, "F")` and, if that
+//!    single export exists, calls it and stops -- if `F` is absent it
+//!    `FreeLibrary`s and fails outright, with no per-name fallback on that
+//!    path. DoD 1.3's `client.dll` does export `F`, so the classic names are
+//!    dead weight in it. Xash3D's own GoldSrc-compatible loader calls this
+//!    exact case "single callback export (secured client dlls)".
+//!
+//! 2. **Byte-signature scanning for `pEngfuncs`**, ported faithfully from
+//!    HLAE's `hl_addresses.cpp`. Its anchor string `"ScreenFade"` simply does
+//!    not exist anywhere in DoD's `client.dll` (verified both in-process and
+//!    by offline string extraction from the file), so the scan can't start.
+//!
+//! ## What this module does instead
+//!
+//! It hooks **`hw.dll`'s Import Address Table entry for
+//! `KERNEL32!GetProcAddress`** -- the exact call site the disassembly shows
+//! the engine using -- alongside the `LoadLibraryA` entry it already hooked
+//! to spot `client.dll` loading. This is the same IAT technique HLAE's own
+//! `CAfxImportDllHook` uses, and the `LoadLibraryA` half was already proven
+//! reliable in testing; the `GetProcAddress` half is a direct extension of it.
+//!
+//! Every lookup against the `client.dll` module is then handled in one place,
+//! covering **both** engine conventions with one mechanism and no byte
+//! patterns or hardcoded offsets:
+//!
+//! - `"F"` (secured builds, what DoD 1.3 actually uses) -- we return our own
+//!   wrapper, which calls the real `F` to let it fill the caller's
+//!   `cldll_func_t` table, then swaps three of its 43 slots for our
+//!   trampolines before handing it back to the engine.
+//! - `"Initialize"` / `"HUD_Frame"` / `"HUD_GetStudioModelInterface"`
+//!   (classic non-secured builds) -- we return the trampoline directly.
+//!
+//! Either way the trampolines receive what we need as ordinary arguments:
+//! `Initialize` hands us `pEnginefuncs`, `HUD_GetStudioModelInterface` hands
+//! us `pstudio`, and `HUD_Frame` gives a real per-frame tick.
 
 use std::ffi::{c_char, c_void};
 use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
@@ -342,17 +371,18 @@ pub fn engine_studio() -> Option<&'static EngineStudioApiPartial> {
     }
 }
 
-/// Runs `callback` on a fixed timer instead of hooking a genuine per-frame
-/// engine callback -- `HUD_Frame` turned out to be just as unreachable via
-/// export-table patching as `Initialize` was (see module docs), and unlike
-/// `pEngfuncs`/`pstudio` there's no static byte-signature equivalent to scan
-/// for "the next frame". A ~60Hz poll from an independent thread is a
-/// pragmatic substitute for this crate's purposes (checking/re-applying a
-/// spectated player's viewmodel animation state) -- not perfectly
-/// frame-accurate, but not a driving concern for a moviemaking aid, and it
-/// sidesteps needing another fragile per-build pattern entirely.
+/// Registers `callback` to run once per rendered frame.
+///
+/// Normally driven by the real `HUD_Frame` trampoline. A ~60Hz timer thread
+/// is started as a safety net for the case where the `HUD_Frame` hook never
+/// lands (an engine build that resolves it by some path we don't intercept),
+/// and retires itself the moment a real frame callback arrives so the two
+/// never both drive it.
 static PER_FRAME_CALLBACK: std::sync::OnceLock<fn()> = std::sync::OnceLock::new();
 static TIMER_THREAD_STARTED: AtomicBool = AtomicBool::new(false);
+/// Set by the `HUD_Frame` trampoline the first time the engine actually
+/// renders a frame through us; retires the fallback timer thread.
+static HUD_FRAME_DRIVING: AtomicBool = AtomicBool::new(false);
 
 pub fn set_per_frame_callback(callback: fn()) {
     let _ = PER_FRAME_CALLBACK.set(callback);
@@ -363,17 +393,184 @@ pub fn set_per_frame_callback(callback: fn()) {
     }
 }
 
-unsafe extern "system" fn per_frame_timer_thread(_lp_param: *mut c_void) -> u32 {
-    loop {
-        unsafe { Sleep(16) };
-        if let Some(callback) = PER_FRAME_CALLBACK.get() {
-            callback();
-        }
+fn run_per_frame_callback() {
+    if let Some(callback) = PER_FRAME_CALLBACK.get() {
+        callback();
     }
 }
 
+unsafe extern "system" fn per_frame_timer_thread(_lp_param: *mut c_void) -> u32 {
+    loop {
+        unsafe { Sleep(16) };
+        if HUD_FRAME_DRIVING.load(Ordering::Acquire) {
+            unsafe { crate::debug::report("per-frame: real HUD_Frame hook is driving, retiring the fallback timer thread") };
+            return 0;
+        }
+        run_per_frame_callback();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// client.dll's `cldll_func_t` table
+// ---------------------------------------------------------------------------
+
+/// Number of function-pointer slots the secured `F` export writes into the
+/// buffer the engine hands it. Confirmed two independent ways: by
+/// disassembling DoD 1.3's own `F` (`rep movsd` with `ecx = 0x2b` = 43), and
+/// against Xash3D's `cldll_func_src_t`, whose 43 members line up name-for-name
+/// with the 43 addresses `F` writes (each of which resolves back to the
+/// identically-named export in `client.dll`).
+const CLDLL_FUNC_SLOTS: usize = 43;
+
+/// Slot indices within that table -- verified by resolving every address DoD's
+/// `F` writes back to its own export name.
+const SLOT_INITIALIZE: usize = 0;
+const SLOT_HUD_FRAME: usize = 33;
+const SLOT_GET_STUDIO_MODEL_INTERFACE: usize = 39;
+
+const _: () = assert!(
+    SLOT_INITIALIZE < CLDLL_FUNC_SLOTS
+        && SLOT_HUD_FRAME < CLDLL_FUNC_SLOTS
+        && SLOT_GET_STUDIO_MODEL_INTERFACE < CLDLL_FUNC_SLOTS,
+    "a cldll_func_t slot index is outside the table F actually writes"
+);
+
+type InitializeFn = unsafe extern "C" fn(*mut ClEngineFuncsPartial, i32) -> i32;
+type HudFrameFn = unsafe extern "C" fn(f64);
+type GetStudioModelInterfaceFn =
+    unsafe extern "C" fn(i32, *mut *mut c_void, *mut EngineStudioApiPartial) -> i32;
+/// The secured single-callback export: fills the caller-provided buffer with
+/// `CLDLL_FUNC_SLOTS` function pointers. `__cdecl`, one pointer argument --
+/// confirmed from `hw.dll`'s call site (`push edx; call eax; add esp, 4`).
+type ClientApiFn = unsafe extern "C" fn(*mut *mut c_void);
+
+static REAL_F: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
+static REAL_INITIALIZE: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
+static REAL_HUD_FRAME: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
+static REAL_GET_STUDIO_MODEL_INTERFACE: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
+
+/// Captures `pEnginefuncs` -- the whole reason this crate exists -- then hands
+/// straight off to `client.dll`'s real `Initialize` so the game is unaffected.
+unsafe extern "C" fn tramp_initialize(engfuncs: *mut ClEngineFuncsPartial, version: i32) -> i32 {
+    if !engfuncs.is_null() {
+        ENGFUNCS.store(engfuncs, Ordering::Release);
+        unsafe { crate::debug::report(&format!("Initialize: captured pEngfuncs at {engfuncs:p} (interface version {version})")) };
+    } else {
+        unsafe { crate::debug::report("Initialize: engine passed a null pEnginefuncs -- nothing captured") };
+    }
+
+    let real = REAL_INITIALIZE.load(Ordering::Acquire);
+    if real.is_null() {
+        // Can't happen (we only ever install the trampoline after storing the
+        // real pointer), but returning "wrong interface version" is the
+        // engine's own documented failure signal, so fail visibly, not weirdly.
+        return 0;
+    }
+    let real: InitializeFn = unsafe { std::mem::transmute(real) };
+    unsafe { real(engfuncs, version) }
+}
+
+/// Real per-frame tick. Runs `client.dll`'s own `HUD_Frame` first so our
+/// callback observes the state the engine just finished producing.
+unsafe extern "C" fn tramp_hud_frame(time: f64) {
+    let real = REAL_HUD_FRAME.load(Ordering::Acquire);
+    if !real.is_null() {
+        let real: HudFrameFn = unsafe { std::mem::transmute(real) };
+        unsafe { real(time) };
+    }
+
+    if !HUD_FRAME_DRIVING.swap(true, Ordering::AcqRel) {
+        unsafe { crate::debug::report("HUD_Frame: first real per-frame callback received") };
+    }
+    run_per_frame_callback();
+}
+
+/// Captures `pstudio`, which `anim_fix` needs to read a model's sequence
+/// labels.
+unsafe extern "C" fn tramp_get_studio_model_interface(
+    version: i32,
+    ppinterface: *mut *mut c_void,
+    pstudio: *mut EngineStudioApiPartial,
+) -> i32 {
+    if !pstudio.is_null() {
+        ENGINE_STUDIO.store(pstudio, Ordering::Release);
+        unsafe { crate::debug::report(&format!("HUD_GetStudioModelInterface: captured pstudio at {pstudio:p} (studio interface version {version})")) };
+    }
+
+    let real = REAL_GET_STUDIO_MODEL_INTERFACE.load(Ordering::Acquire);
+    if real.is_null() {
+        return 0;
+    }
+    let real: GetStudioModelInterfaceFn = unsafe { std::mem::transmute(real) };
+    unsafe { real(version, ppinterface, pstudio) }
+}
+
+/// Swaps one slot of the `cldll_func_t` table `F` just filled for our own
+/// trampoline, stashing the real pointer so the trampoline can chain to it.
+///
+/// Safety: `table` must point to at least `CLDLL_FUNC_SLOTS` writable
+/// pointer-sized slots (guaranteed by `F`'s own contract -- it just wrote
+/// exactly that many).
+unsafe fn swap_slot(
+    table: *mut *mut c_void,
+    slot: usize,
+    real_store: &AtomicPtr<c_void>,
+    trampoline: *mut c_void,
+    name: &str,
+) {
+    let entry = unsafe { table.add(slot) };
+    let real = unsafe { *entry };
+    if real.is_null() {
+        unsafe { crate::debug::report(&format!("F: slot {slot} ({name}) is null -- leaving it alone")) };
+        return;
+    }
+    real_store.store(real, Ordering::Release);
+    unsafe { *entry = trampoline };
+    unsafe { crate::debug::report(&format!("F: hooked slot {slot} ({name}), real implementation at {real:p}")) };
+}
+
+/// Our stand-in for `client.dll`'s secured `F` export. Lets the real `F` fill
+/// the engine's `cldll_func_t` buffer exactly as it normally would, then
+/// replaces the three slots we care about before the engine ever reads them.
+unsafe extern "C" fn hook_f(table: *mut *mut c_void) {
+    let real = REAL_F.load(Ordering::Acquire);
+    if real.is_null() {
+        unsafe { crate::debug::report("F: real export pointer missing -- cannot forward, client will fail to initialise") };
+        return;
+    }
+    let real: ClientApiFn = unsafe { std::mem::transmute(real) };
+    unsafe { real(table) };
+
+    if table.is_null() {
+        unsafe { crate::debug::report("F: engine passed a null table -- nothing hooked") };
+        return;
+    }
+
+    unsafe {
+        swap_slot(table, SLOT_INITIALIZE, &REAL_INITIALIZE, tramp_initialize as *mut c_void, "Initialize");
+        swap_slot(table, SLOT_HUD_FRAME, &REAL_HUD_FRAME, tramp_hud_frame as *mut c_void, "HUD_Frame");
+        swap_slot(
+            table,
+            SLOT_GET_STUDIO_MODEL_INTERFACE,
+            &REAL_GET_STUDIO_MODEL_INTERFACE,
+            tramp_get_studio_model_interface as *mut c_void,
+            "HUD_GetStudioModelInterface",
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// hw.dll IAT hooks
+// ---------------------------------------------------------------------------
+
 type LoadLibraryAFn = unsafe extern "system" fn(*const u8) -> HMODULE;
+type GetProcAddressFn = unsafe extern "system" fn(HMODULE, *const u8) -> *mut c_void;
 static REAL_LOAD_LIBRARY_A: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
+static REAL_GET_PROC_ADDRESS: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
+/// The `client.dll` module handle, as observed coming back out of
+/// `LoadLibraryA`. Used to tell *its* `GetProcAddress` lookups apart from the
+/// many others `hw.dll` makes against other modules.
+static CLIENT_DLL: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
 
 /// The engine loads the mod's client DLL by a path relative to the game exe
 /// (e.g. `dod\cl_dlls\client.dll`), never by the bare filename -- so this
@@ -395,64 +592,100 @@ unsafe extern "system" fn hook_load_library_a(lp_lib_file_name: *const u8) -> HM
     let result = unsafe { real(lp_lib_file_name) };
 
     if !result.is_null() && unsafe { path_basename_eq_ignore_ascii_case(lp_lib_file_name, "client.dll") } {
-        unsafe { capture_via_scan(result as *mut u8) };
+        CLIENT_DLL.store(result, Ordering::Release);
+        unsafe { crate::debug::report(&format!("LoadLibraryA: client.dll loaded at {result:p}, watching its GetProcAddress lookups")) };
     }
 
     result
 }
 
-/// Captures `pEngfuncs`/`pstudio` by signature-scanning the just-loaded
-/// `client.dll` -- see `addresses::scan_client_dll` and this module's docs
-/// for why this replaced hooking `client.dll`'s own exports.
-unsafe fn capture_via_scan(client_dll_base: *mut u8) {
-    match unsafe { crate::addresses::scan_client_dll(client_dll_base) } {
-        Some(found) => {
-            ENGFUNCS.store(found.engfuncs as *mut ClEngineFuncsPartial, Ordering::Release);
-            unsafe { crate::debug::report(&format!("capture_via_scan: pEngfuncs found at {:#x}", found.engfuncs)) };
+/// Intercepts every export `hw.dll` resolves out of `client.dll`, and swaps in
+/// our own entry points for the ones we need. See the module docs for why this
+/// -- rather than patching `client.dll`'s export table -- is the hook point
+/// that actually works.
+unsafe extern "system" fn hook_get_proc_address(module: HMODULE, name: *const u8) -> *mut c_void {
+    let real = REAL_GET_PROC_ADDRESS.load(Ordering::Acquire);
+    let real: GetProcAddressFn = unsafe { std::mem::transmute(real) };
+    let result = unsafe { real(module, name) };
 
-            match found.pstudio {
-                Some(pstudio) => {
-                    ENGINE_STUDIO.store(pstudio as *mut EngineStudioApiPartial, Ordering::Release);
-                    unsafe { crate::debug::report(&format!("capture_via_scan: pstudio found at {:#x}", pstudio)) };
-                }
-                None => {
-                    unsafe { crate::debug::report("capture_via_scan: pstudio NOT found -- animation fix's model-sequence lookups won't work this session") };
-                }
-            }
+    let client = CLIENT_DLL.load(Ordering::Acquire);
+    if client.is_null() || !std::ptr::eq(module, client) || result.is_null() {
+        return result;
+    }
+
+    // An import can be requested by ordinal instead of by name, in which case
+    // `name` is not a pointer at all -- it's the ordinal in its low word, and
+    // dereferencing it would fault.
+    if (name as usize) >> 16 == 0 {
+        return result;
+    }
+    let Ok(requested) = (unsafe { std::ffi::CStr::from_ptr(name as *const c_char) }).to_str() else {
+        return result;
+    };
+
+    unsafe { crate::debug::report(&format!("GetProcAddress(client.dll, \"{requested}\") -> {result:p}")) };
+
+    // "F" is the secured single-callback export, and is what DoD 1.3 actually
+    // uses; the three named entries below are the classic convention, kept so
+    // this works unchanged on a non-secured client.dll too.
+    match requested {
+        "F" => {
+            REAL_F.store(result, Ordering::Release);
+            unsafe { crate::debug::report("GetProcAddress: secured \"F\" export intercepted -- returning our wrapper") };
+            hook_f as *mut c_void
         }
-        None => {
-            unsafe { crate::debug::report("capture_via_scan: signature scan failed to find pEngfuncs in client.dll -- sound/animation fixes and console commands can't activate this session") };
+        "Initialize" => {
+            REAL_INITIALIZE.store(result, Ordering::Release);
+            tramp_initialize as *mut c_void
         }
+        "HUD_Frame" => {
+            REAL_HUD_FRAME.store(result, Ordering::Release);
+            tramp_hud_frame as *mut c_void
+        }
+        "HUD_GetStudioModelInterface" => {
+            REAL_GET_STUDIO_MODEL_INTERFACE.store(result, Ordering::Release);
+            tramp_get_studio_model_interface as *mut c_void
+        }
+        _ => result,
     }
 }
 
-/// Finds `module_name` (e.g. "hw.dll"), patches its IAT so its own calls to
-/// `KERNEL32!LoadLibraryA` route through us, and returns whether the patch
-/// was applied. Polls briefly since the module may not be loaded yet at the
-/// moment we're injected.
-fn hook_loadlibrary_in(module_name: &str, timeout_ms: u32) -> bool {
+/// Waits (briefly) for `module_name` to be loaded -- we're injected before the
+/// engine's own modules exist, so this can't assume it's already there.
+fn wait_for_module(module_name: &str, timeout_ms: u32) -> Option<HMODULE> {
     let module_name_c = format!("{module_name}\0");
     let mut waited = 0u32;
-    let module = loop {
+    loop {
         let h = unsafe { GetModuleHandleA(module_name_c.as_ptr()) };
         if !h.is_null() {
-            break h;
+            return Some(h);
         }
         if waited >= timeout_ms {
-            return false;
+            return None;
         }
         unsafe { Sleep(25) };
         waited += 25;
-    };
+    }
+}
 
-    let Some(slot) =
-        (unsafe { pe::find_iat_slot(module as *mut u8, "KERNEL32.dll", "LoadLibraryA") })
+/// Overwrites one of `module`'s IAT slots so its own calls to
+/// `KERNEL32!<import_name>` route through `replacement`, stashing the original
+/// in `real_store`. Only that module's calls are affected -- unlike
+/// inline-patching the function itself, which would redirect the whole
+/// process (HLAE's `CAfxImportDllHook` makes the same trade-off).
+fn hook_import(
+    module: HMODULE,
+    import_name: &str,
+    replacement: *mut c_void,
+    real_store: &AtomicPtr<c_void>,
+) -> bool {
+    let Some(slot) = (unsafe { pe::find_iat_slot(module as *mut u8, "KERNEL32.dll", import_name) })
     else {
         return false;
     };
 
     unsafe {
-        REAL_LOAD_LIBRARY_A.store(*slot, Ordering::Release);
+        real_store.store(*slot, Ordering::Release);
 
         let mut old_protect: PAGE_PROTECTION_FLAGS = 0;
         let ok = VirtualProtect(
@@ -464,7 +697,7 @@ fn hook_loadlibrary_in(module_name: &str, timeout_ms: u32) -> bool {
         if ok == 0 {
             return false;
         }
-        *slot = hook_load_library_a as *mut c_void;
+        *slot = replacement;
         VirtualProtect(
             slot as *mut c_void,
             size_of::<*mut c_void>(),
@@ -476,16 +709,33 @@ fn hook_loadlibrary_in(module_name: &str, timeout_ms: u32) -> bool {
     true
 }
 
-/// Installs the LoadLibraryA hook that detects `client.dll` loading and
-/// triggers `capture_via_scan`. Call once, from a background thread (never
-/// do this work directly in `DllMain` -- see `lib.rs`).
+/// Installs both `hw.dll` IAT hooks: `LoadLibraryA` (to learn `client.dll`'s
+/// module handle) and `GetProcAddress` (to intercept how the engine resolves
+/// `client.dll`'s entry points). Call once, from a background thread -- never
+/// do this work directly in `DllMain` (see `lib.rs`).
 pub fn install() {
     // GoldSrc's OpenGL renderer module is virtually always what's actually
     // loaded in any modern setup (HLAE's own recording pipeline requires
     // it); `sw.dll` (the old software renderer) is not handled here.
-    if hook_loadlibrary_in("hw.dll", 15_000) {
-        unsafe { crate::debug::report("goldsrc-hooks: hooked hw.dll's LoadLibraryA import successfully") };
-    } else {
-        unsafe { crate::debug::report("goldsrc-hooks: could not hook hw.dll's LoadLibraryA import (module never appeared, or the IAT slot wasn't found) -- sound/animation fixes are inactive this session.") };
+    let Some(hw) = wait_for_module("hw.dll", 15_000) else {
+        unsafe { crate::debug::report("goldsrc-hooks: hw.dll never appeared -- sound/animation fixes are inactive this session.") };
+        return;
+    };
+
+    // Order matters: GetProcAddress first, so there is no window in which
+    // client.dll could load and be resolved before that hook is armed.
+    let hooked_gpa = hook_import(hw, "GetProcAddress", hook_get_proc_address as *mut c_void, &REAL_GET_PROC_ADDRESS);
+    let hooked_lla = hook_import(hw, "LoadLibraryA", hook_load_library_a as *mut c_void, &REAL_LOAD_LIBRARY_A);
+
+    unsafe {
+        crate::debug::report(&format!(
+            "goldsrc-hooks: hw.dll IAT hooks -- GetProcAddress: {}, LoadLibraryA: {}",
+            if hooked_gpa { "ok" } else { "FAILED" },
+            if hooked_lla { "ok" } else { "FAILED" },
+        ))
+    };
+
+    if !hooked_gpa || !hooked_lla {
+        unsafe { crate::debug::report("goldsrc-hooks: an IAT slot wasn't found -- sound/animation fixes are inactive this session.") };
     }
 }
