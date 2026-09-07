@@ -157,12 +157,44 @@ fn get_spectated_deploy_state(weapon: &DeployableWeapon, entity: &ClEntityS) -> 
     }
 }
 
-fn play_viewmodel_animation(sequence: i32) {
-    if sequence >= 0
-        && let Some(engfuncs) = engine::engfuncs()
-    {
-        unsafe { (engfuncs.pfn_weapon_anim)(sequence, 0) };
+/// Counts the animations this fix has actually forced, so a session can be
+/// judged without trusting scrollback -- reaching "running" says the
+/// preconditions held, not that anything was corrected.
+static ANIMATIONS_PLAYED: AtomicI32 = AtomicI32::new(0);
+static ANIMATION_LOGS: AtomicI32 = AtomicI32::new(0);
+const MAX_ANIMATION_LOGS: i32 = 40;
+
+fn play_viewmodel_animation(sequence: i32, reason: &str, state: Option<DeployState>, viewmodel: *mut ModelSPartial) {
+    if sequence < 0 {
+        // Worth seeing: it means the model had no sequence matching what the
+        // deploy state asked for, which is a gap in the up/down mapping rather
+        // than a no-op.
+        if ANIMATION_LOGS.fetch_add(1, Ordering::Relaxed) < MAX_ANIMATION_LOGS {
+            unsafe { crate::debug::report(&format!("anim_fix: {reason} -- no matching sequence found, nothing played")) };
+        }
+        return;
     }
+    let Some(engfuncs) = engine::engfuncs() else { return };
+
+    ANIMATIONS_PLAYED.fetch_add(1, Ordering::Relaxed);
+    if ANIMATION_LOGS.fetch_add(1, Ordering::Relaxed) < MAX_ANIMATION_LOGS {
+        let label = model_sequence_strings(viewmodel)
+            .get(sequence as usize)
+            .cloned()
+            .unwrap_or_else(|| "<unknown>".into());
+        let family = match state {
+            Some(DeployState::Up) => "bipod up",
+            Some(DeployState::Down) => "bipod down",
+            None => "deploy state unknown",
+        };
+        unsafe {
+            crate::debug::report(&format!(
+                "anim_fix: {reason} -- {family}, playing sequence {sequence} (\"{label}\")"
+            ))
+        };
+    }
+
+    unsafe { (engfuncs.pfn_weapon_anim)(sequence, 0) };
 }
 
 static PREVIOUS_SPECTATED_ENTITY: AtomicI32 = AtomicI32::new(-1);
@@ -272,8 +304,9 @@ pub fn status() -> String {
     let seen = SEEN_VIEWMODELS.lock().unwrap();
     let count = seen.as_ref().map(|s| s.len()).unwrap_or(0);
     format!(
-        "state: {} (distinct viewmodels seen: {count})",
-        stage_name(STAGE.load(Ordering::Relaxed))
+        "state: {} (distinct viewmodels seen: {count}, animations corrected: {})",
+        stage_name(STAGE.load(Ordering::Relaxed)),
+        ANIMATIONS_PLAYED.load(Ordering::Relaxed),
     )
 }
 
@@ -357,11 +390,11 @@ pub fn apply() {
         // Snap the new viewmodel straight to the right family's idle so it
         // doesn't sit on whatever sequence the previously-spectated player
         // left it on.
-        play_viewmodel_animation(animation_lookup_sequence("idle", state, viewmodel_model));
+        play_viewmodel_animation(animation_lookup_sequence("idle", state, viewmodel_model), "spectated player changed", state, viewmodel_model);
     } else if deploy_state_changed {
         // TODO(R&D, unverified live): play the "uptodown"/"downtoup"-style
         // transition sequence here instead of snapping straight to idle.
-        play_viewmodel_animation(animation_lookup_sequence("idle", state, viewmodel_model));
+        play_viewmodel_animation(animation_lookup_sequence("idle", state, viewmodel_model), "bipod deploy state changed", state, viewmodel_model);
     } else {
         let previous_sequence = PREVIOUS_SEQUENCE.load(Ordering::Relaxed);
         // Use the spectated player's own body-model sequence table to
@@ -370,12 +403,12 @@ pub fn apply() {
             let labels = model_sequence_strings(spectated.model);
             let seq = spectated.curstate.sequence.max(0) as usize;
             if labels.get(seq).is_some_and(|label| label.to_lowercase().contains("reload")) {
-                play_viewmodel_animation(animation_lookup_sequence("reload", state, viewmodel_model));
+                play_viewmodel_animation(animation_lookup_sequence("reload", state, viewmodel_model), "spectated player reloaded", state, viewmodel_model);
             }
         }
 
         if viewmodel_changed {
-            play_viewmodel_animation(animation_lookup_sequence("draw", state, viewmodel_model));
+            play_viewmodel_animation(animation_lookup_sequence("draw", state, viewmodel_model), "viewmodel changed", state, viewmodel_model);
         }
     }
 
