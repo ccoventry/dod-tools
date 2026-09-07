@@ -4,6 +4,25 @@
 
 use std::io::Write;
 
+use windows_sys::Win32::System::SystemInformation::GetLocalTime;
+
+/// Local wall-clock time as `HH:MM:SS.mmm`.
+///
+/// Wall clock rather than time-since-load: the point of the timestamps is to
+/// line log lines up against something that happened in the game while
+/// watching it, and milliseconds are kept because most of what this logs
+/// changes at frame rate, where second resolution would collapse a burst of
+/// distinct events into one indistinguishable clump.
+fn timestamp() -> String {
+    // Safety: fills a plain struct we own; cannot fail.
+    let mut now = unsafe { std::mem::zeroed() };
+    unsafe { GetLocalTime(&mut now) };
+    format!(
+        "{:02}:{:02}:{:02}.{:03}",
+        now.wHour, now.wMinute, now.wSecond, now.wMilliseconds
+    )
+}
+
 /// Appends a line to `%TEMP%\goldsrc_hooks.log`. Failures are swallowed --
 /// logging must never be the thing that destabilizes the host process.
 pub unsafe fn report(message: &str) {
@@ -13,7 +32,7 @@ pub unsafe fn report(message: &str) {
     path.push("goldsrc_hooks.log");
 
     if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
-        let _ = writeln!(file, "[goldsrc-hooks] {message}");
+        let _ = writeln!(file, "[{}] [goldsrc-hooks] {message}", timestamp());
     }
 }
 
@@ -21,5 +40,14 @@ pub unsafe fn report(message: &str) {
 /// can be left in place across runs instead of deleted each time -- just
 /// copy from the last separator down.
 pub unsafe fn new_session_separator() {
-    unsafe { report("==================== new session ====================") };
+    // The date goes here rather than on every line: the log spans days, but a
+    // session does not, so it only needs stating once per session.
+    let mut now = unsafe { std::mem::zeroed() };
+    unsafe { GetLocalTime(&mut now) };
+    unsafe {
+        report(&format!(
+            "========== new session, {:04}-{:02}-{:02} ==========",
+            now.wYear, now.wMonth, now.wDay
+        ))
+    };
 }
