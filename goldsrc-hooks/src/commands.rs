@@ -17,6 +17,7 @@ use crate::{anim_fix, sound_fix};
 
 const GUNSHOTS_FIX_NAME: &str = "dodtools_hltv_gunshots_fix";
 const ANIMATION_FIX_NAME: &str = "dodtools_hltv_animation_fix";
+const ATTENUATION_NAME: &str = "dodtools_hltv_gunshot_attenuation";
 
 fn console_print(text: &str) {
     let Some(engfuncs) = engine::engfuncs() else { return };
@@ -90,6 +91,43 @@ unsafe extern "C" fn cmd_gunshots_fix() {
     handle_toggle(GUNSHOTS_FIX_NAME, &sound_fix::ENABLED, sound_fix::status);
 }
 
+/// How far boosted gunshots carry. Separate from the on/off toggle because
+/// it's the value you actually want to sweep while listening -- the right
+/// setting is a judgement call about a mix, not something to rebuild for.
+unsafe extern "C" fn cmd_gunshot_attenuation() {
+    let Some(engfuncs) = engine::engfuncs() else { return };
+
+    if unsafe { (engfuncs.cmd_argc)() } >= 2 {
+        let arg1 = unsafe { (engfuncs.cmd_argv)(1) };
+        if !arg1.is_null() {
+            let raw = unsafe { CStr::from_ptr(arg1 as *const c_char) }.to_string_lossy().into_owned();
+            match raw.trim().parse::<f32>() {
+                Ok(value) => match sound_fix::set_carry_attenuation(value) {
+                    Ok(()) => {
+                        console_print(&format!("{ATTENUATION_NAME} = {value}\n"));
+                        unsafe { crate::debug::report(&format!("commands: {ATTENUATION_NAME} = {value} (set)")) };
+                        return;
+                    }
+                    Err(why) => {
+                        console_print(&format!("{ATTENUATION_NAME}: {why}\n"));
+                        unsafe { crate::debug::report(&format!("commands: {ATTENUATION_NAME} rejected \"{raw}\" -- {why}")) };
+                        return;
+                    }
+                },
+                Err(_) => {
+                    console_print(&format!("{ATTENUATION_NAME}: expected a number, got \"{raw}\"\n"));
+                    return;
+                }
+            }
+        }
+    }
+
+    console_print(&format!(
+        "{ATTENUATION_NAME} = {}\nusage: {ATTENUATION_NAME} <0.05..0.79>  (lower carries further; the game's own default is 0.8)\n",
+        sound_fix::carry_attenuation()
+    ));
+}
+
 unsafe extern "C" fn cmd_animation_fix() {
     handle_toggle(ANIMATION_FIX_NAME, &anim_fix::ENABLED, anim_fix::status);
 }
@@ -104,14 +142,21 @@ pub fn install() {
 
     let gunshots_name = CString::new(GUNSHOTS_FIX_NAME).unwrap();
     let animation_name = CString::new(ANIMATION_FIX_NAME).unwrap();
+    let attenuation_name = CString::new(ATTENUATION_NAME).unwrap();
     unsafe {
         (engfuncs.pfn_add_command)(gunshots_name.as_ptr(), cmd_gunshots_fix);
         (engfuncs.pfn_add_command)(animation_name.as_ptr(), cmd_animation_fix);
+        (engfuncs.pfn_add_command)(attenuation_name.as_ptr(), cmd_gunshot_attenuation);
     }
     // Leak intentionally: pfnAddCommand keeps this pointer for the life of
     // the engine session, same lifetime as the DLL itself.
     std::mem::forget(gunshots_name);
     std::mem::forget(animation_name);
+    std::mem::forget(attenuation_name);
 
-    unsafe { crate::debug::report("commands: registered dodtools_hltv_gunshots_fix and dodtools_hltv_animation_fix") };
+    unsafe {
+        crate::debug::report(&format!(
+            "commands: registered {GUNSHOTS_FIX_NAME}, {ANIMATION_FIX_NAME}, {ATTENUATION_NAME}"
+        ))
+    };
 }
