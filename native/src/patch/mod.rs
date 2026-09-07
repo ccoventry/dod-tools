@@ -88,6 +88,7 @@ pub use types::{
     PatcherConfig,
     HighlightRules,
     HighlightStatus,
+    default_goldsrc_hooks_dll_path,
 };
 
 #[cfg(not(target_arch = "wasm32"))]

@@ -42,6 +42,10 @@ pub struct CapturePayload {
     /// Optional absolute path to ffmpeg.exe; falls back to bundled then PATH.
     #[serde(default)]
     pub ffmpeg_override_path: Option<String>,
+    /// Optional override for `goldsrc_hooks.dll`; falls back to the bundled
+    /// default -- see `PatcherConfig::goldsrc_hooks_dll_path`.
+    #[serde(default)]
+    pub goldsrc_hooks_dll_path: Option<String>,
     #[serde(default = "default_resolution_width")]
     pub resolution_width: i32,
     #[serde(default = "default_resolution_height")]
@@ -241,6 +245,7 @@ fn config_from_payload(payload: &CapturePayload) -> PatcherConfig {
     cfg.initial_delay = payload.initial_delay;
     cfg.fast_forward_speed = payload.fast_forward_speed;
     cfg.ffmpeg_override_path = payload.ffmpeg_override_path.clone();
+    cfg.goldsrc_hooks_dll_path = payload.goldsrc_hooks_dll_path.clone();
     cfg.resolution_width = payload.resolution_width;
     cfg.resolution_height = payload.resolution_height;
     cfg.separate_hud = payload.separate_hud;
@@ -1564,6 +1569,7 @@ pub async fn launch_standalone_game(app: tauri::AppHandle) -> Result<(), String>
             separate_hud: settings.separate_hud,
             ffmpeg_capture: settings.ffmpeg_capture,
             ffmpeg_capture_codec: native::patch::CaptureCodec::from_str_id(&settings.ffmpeg_capture_codec),
+            goldsrc_hooks_dll_path: settings.goldsrc_hooks_dll_path.clone(),
             ..PatcherConfig::default()
         };
 
@@ -1807,6 +1813,7 @@ mod tests {
             hlae_path: "C:/hlae/hlae.exe".to_string(),
             game_path: "C:/dod/hl.exe".to_string(),
             ffmpeg_override_path: None,
+            goldsrc_hooks_dll_path: None,
             resolution_width: 1920,
             resolution_height: 1080,
             separate_hud: true,
