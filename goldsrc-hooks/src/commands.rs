@@ -18,11 +18,6 @@ use crate::{anim_fix, sound_fix};
 const GUNSHOTS_FIX_NAME: &str = "dodtools_hltv_gunshots_fix";
 const ANIMATION_FIX_NAME: &str = "dodtools_hltv_animation_fix";
 const ATTENUATION_NAME: &str = "dodtools_hltv_gunshot_attenuation";
-/// Opt-in, and deliberately so -- see `anim_fix::PLAYER_NAMES`. The engine
-/// slot it calls is inferred from the surrounding ordering rather than
-/// confirmed by any call site, and calling the wrong slot is how an earlier
-/// hook closed the game.
-const PLAYER_NAMES_NAME: &str = "dodtools_hltv_player_names";
 
 fn console_print(text: &str) {
     let Some(engfuncs) = engine::engfuncs() else { return };
@@ -137,11 +132,6 @@ unsafe extern "C" fn cmd_animation_fix() {
     handle_toggle(ANIMATION_FIX_NAME, &anim_fix::ENABLED, anim_fix::status);
 }
 
-unsafe extern "C" fn cmd_player_names() {
-    handle_toggle(PLAYER_NAMES_NAME, &anim_fix::PLAYER_NAMES, || {
-        "resolves spectated players' names; off by default because the engine slot it uses is inferred".into()
-    });
-}
 
 /// Registers both console commands. Must be called after `engine::engfuncs()`
 /// returns `Some`.
@@ -154,14 +144,11 @@ pub fn install() {
     let gunshots_name = CString::new(GUNSHOTS_FIX_NAME).unwrap();
     let animation_name = CString::new(ANIMATION_FIX_NAME).unwrap();
     let attenuation_name = CString::new(ATTENUATION_NAME).unwrap();
-    let player_names_name = CString::new(PLAYER_NAMES_NAME).unwrap();
     unsafe {
         (engfuncs.pfn_add_command)(gunshots_name.as_ptr(), cmd_gunshots_fix);
         (engfuncs.pfn_add_command)(animation_name.as_ptr(), cmd_animation_fix);
         (engfuncs.pfn_add_command)(attenuation_name.as_ptr(), cmd_gunshot_attenuation);
-        (engfuncs.pfn_add_command)(player_names_name.as_ptr(), cmd_player_names);
     }
-    std::mem::forget(player_names_name);
     // Leak intentionally: pfnAddCommand keeps this pointer for the life of
     // the engine session, same lifetime as the DLL itself.
     std::mem::forget(gunshots_name);
@@ -170,7 +157,7 @@ pub fn install() {
 
     unsafe {
         crate::debug::report(&format!(
-            "commands: registered {GUNSHOTS_FIX_NAME}, {ANIMATION_FIX_NAME}, {ATTENUATION_NAME}, {PLAYER_NAMES_NAME}"
+            "commands: registered {GUNSHOTS_FIX_NAME}, {ANIMATION_FIX_NAME}, {ATTENUATION_NAME}"
         ))
     };
 }

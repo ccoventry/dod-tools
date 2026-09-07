@@ -140,7 +140,22 @@ fn model_sequence_strings(model: *mut ModelSPartial) -> Vec<String> {
     }
 
     let header = extradata as *const StudioHdrPartial;
-    let (numseq, seqindex) = unsafe { ((*header).numseq, (*header).seqindex) };
+    // Validate before trusting anything in here. `mod_extradata` is happy to
+    // hand back a pointer for a model that is not a studio model at all, and
+    // the loop below walks `numseq` entries at `seqindex` with no bound of its
+    // own -- a garbage header would read arbitrary memory until it faulted.
+    const STUDIO_MAGIC: i32 = 0x5453_4449; // "IDST"
+    const MAX_SEQUENCES: i32 = 512;
+    let (id, numseq, seqindex) = unsafe { ((*header).id, (*header).numseq, (*header).seqindex) };
+    if id != STUDIO_MAGIC || !(0..=MAX_SEQUENCES).contains(&numseq) || seqindex <= 0 {
+        unsafe {
+            crate::debug::report(&format!(
+                "anim_fix: refusing to read sequences from {model:p} -- header id {id:#x}, numseq {numseq}, seqindex {seqindex}"
+            ))
+        };
+        cache.insert(key, Vec::new());
+        return Vec::new();
+    }
     let base = extradata as *const u8;
 
     let mut labels = Vec::with_capacity(numseq.max(0) as usize);
@@ -460,38 +475,12 @@ pub fn on_weapon_fired(entity_index: i32) {
     play_viewmodel_animation(sequence, "spectated player fired", state, viewmodel);
 }
 
-/// Whether to resolve spectated players' names via
-/// `PlayerInfo_ValueForKey`. Off by default: that engine slot is inferred
-/// rather than confirmed by any call site in the binary, so a wrong guess
-/// would be calling an unknown function. See its field docs in `engine.rs`.
-pub static PLAYER_NAMES: AtomicBool = AtomicBool::new(false);
-
-/// Best-effort player name, `None` if the lookup is off or looks wrong.
-fn player_name(index: i32) -> Option<String> {
-    if !PLAYER_NAMES.load(Ordering::Relaxed) || index <= 0 {
-        return None;
-    }
-    let engfuncs = engine::engfuncs()?;
-    let key = c"name";
-    let raw = unsafe { (engfuncs.player_info_value_for_key)(index, key.as_ptr() as *const std::ffi::c_char) };
-    if raw.is_null() {
-        return None;
-    }
-    let name = unsafe { std::ffi::CStr::from_ptr(raw) }.to_string_lossy().into_owned();
-    // A wrong slot would most likely return something unreadable, so refuse to
-    // trust anything that doesn't look like a name.
-    if name.is_empty() || name.len() > 64 || !name.chars().all(|c| !c.is_control()) {
-        return None;
-    }
-    Some(name)
-}
-
-/// `"idx 6 (SomePlayer)"`, or just `"idx 6"` when names are off.
+/// `"idx 6"`. Names would be nicer, but reaching them needs an engine slot
+/// that cannot be verified against any call site in client.dll -- see the note
+/// on `ClEngineFuncsPartial`. The index is stable within a match and can be
+/// matched against the scoreboard.
 fn describe_player(index: i32) -> String {
-    match player_name(index) {
-        Some(name) => format!("idx {index} ({name})"),
-        None => format!("idx {index}"),
-    }
+    format!("idx {index}")
 }
 
 /// Runs once per client frame (see `engine::set_per_frame_callback`).

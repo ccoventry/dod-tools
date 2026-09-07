@@ -90,7 +90,6 @@ pub type AddCommandFn = unsafe extern "C" fn(cmd_name: *const c_char, function: 
 pub type ConsolePrintFn = unsafe extern "C" fn(text: *const c_char);
 pub type CmdArgcFn = unsafe extern "C" fn() -> i32;
 pub type CmdArgvFn = unsafe extern "C" fn(arg: i32) -> *const c_char;
-pub type PlayerInfoValueForKeyFn = unsafe extern "C" fn(player_num: i32, key: *const c_char) -> *const c_char;
 
 /// A 3D vector, matching `vec3_t` (`float[3]`) everywhere it's embedded in a
 /// GoldSrc SDK struct below.
@@ -332,27 +331,21 @@ pub struct ClEngineFuncsPartial {
     pub p_event_api: *mut EventApiPartial,
     _slots_after_event_api: [*mut c_void; 3], // pDemoAPI, pNetAPI, pVoiceTweak
     pub is_spectate_only: IsSpectateOnlyFn,
-    _slots_before_player_info: [*mut c_void; 3], // pfnLoadMapSprite, COM_AddAppDirectoryToSearchPath, COM_ExpandFilename
-    /// `PlayerInfo_ValueForKey(playerNum, key)` -- "name", "team", "model".
-    ///
-    /// This slot is **inferred, not confirmed by use**: DoD's client never
-    /// calls it, so unlike every other field here there is no call site in the
-    /// binary to check it against. The index is bracketed by two that *are*
-    /// confirmed -- 88 `IsSpectateOnly` (35 argument-less calls, and it
-    /// behaves correctly live) and 91 `COM_ExpandFilename` (called with
-    /// "Bin/TrackerUI.dll" and "cl_dlls/particleman.dll") -- which pins the
-    /// ordering either side of it. Anything reached through this pointer is
-    /// therefore opt-in; see `commands::PLAYER_NAMES_NAME`.
-    pub player_info_value_for_key: PlayerInfoValueForKeyFn,
 }
 
 // Compile-time cross-check against the field count transcribed from
-// APIProxy.h (pfnSPR_Load..PlayerInfo_ValueForKey inclusive = 93
-// pointer-sized slots on a 32-bit build). If this ever fails, a slot count
+// APIProxy.h (pfnSPR_Load..IsSpectateOnly inclusive = 89 pointer-sized
+// slots on a 32-bit build, i.e. 356 bytes). If this ever fails, a slot count
 // above drifted from the reference header.
+//
+// Every field here is confirmed against a real call site in client.dll. A
+// field was briefly added past this point for PlayerInfo_ValueForKey, whose
+// slot could only be inferred; it is a non-nullable fn pointer, so merely
+// forming a reference over it asserted that slot is non-null, with no call
+// needed. Do not extend this struct past a field that cannot be verified.
 const _: () = assert!(
-    size_of::<ClEngineFuncsPartial>() == 93 * size_of::<usize>(),
-    "ClEngineFuncsPartial's layout doesn't match APIProxy.h's field count (expected 93 pointer-sized slots)"
+    size_of::<ClEngineFuncsPartial>() == 89 * size_of::<usize>(),
+    "ClEngineFuncsPartial's layout doesn't match APIProxy.h's field count (expected 89 pointer-sized slots)"
 );
 
 static ENGFUNCS: AtomicPtr<ClEngineFuncsPartial> = AtomicPtr::new(std::ptr::null_mut());
