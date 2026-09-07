@@ -127,6 +127,11 @@ unsafe extern "C" fn hook_ev_play_sound(
     let is_fire = is_weapon_fire(sample);
     if is_fire {
         SHOOT_SAMPLES.fetch_add(1, Ordering::Relaxed);
+        // A weapon-fire sample names the entity that fired, which is the one
+        // signal anim_fix needs to drive the firing animation -- see
+        // `anim_fix::on_weapon_fired`. Independent of this fix's own on/off
+        // state; the two are toggled separately.
+        crate::anim_fix::on_weapon_fired(ent);
     }
     let spectating = engine::engfuncs().map(|e| unsafe { (e.is_spectate_only)() } != 0).unwrap_or(false);
     let should_boost = ENABLED.load(Ordering::Relaxed) && is_fire && spectating;

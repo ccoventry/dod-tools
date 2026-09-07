@@ -1,23 +1,49 @@
-//! DoD 1.3 viewmodel deploy-animation fix for HLAE's in-eye spectating of
-//! MG42, MG34, BAR, and Bren -- see the R&D write-up for the full mechanism.
-//! Ported from the prototype patch written against HLAE's own source
-//! (`AfxHookGoldSrc/hooks/client/dod/ViewmodelAnimationFix.cpp`); this is the
-//! same logic, adapted to read the engine interfaces this crate captures
-//! itself instead of ones HLAE already has resolved.
+//! Drives the first-person viewmodel's animations while spectating a player
+//! in-eye, which the engine otherwise leaves largely static.
 //!
-//! Short version: these weapons' first-person viewmodels keep two parallel
-//! sequence families baked into one model file -- "up" (hip-fire) and "down"
-//! (bipod-deployed), e.g. `upidle`/`downidle`, `up_shoot`/`down_shoot` -- and
-//! nothing tells HLAE's puppeted in-eye viewmodel which family to use, since
-//! that's normally decided by client-side prediction logic HLAE bypasses.
-//! Confirmed against the actual `.mdl` files shipped with DoD 1.3.
+//! ## Why the animations are missing
 //!
-//! Unlike Counter-Strike's silenced/unsilenced M4A1 fix this is modeled on,
-//! DoD's deploy state isn't hidden in a fire-event side channel: it drives a
-//! real, always-replicated `entity_state_t::weaponmodel` swap between two
-//! separate third-person attachment models (e.g. `p_mg42bu.mdl` <->
-//! `p_mg42bd.mdl`), so this fix reads the spectated player's current weapon
-//! model name directly every frame instead of tracking fire events.
+//! Structural, not a bug. GoldSrc's weapon event scripts animate the viewmodel
+//! only for the **local** player -- the `EV_IsLocal` check in every
+//! `events/weapons/*.sc`. Every other player gets the sound and the muzzle
+//! flash but no first-person animation, because normally nobody is looking
+//! down their sights. Spectating in-eye, and HLTV playback in particular, is
+//! exactly the case that assumption does not hold for: the viewmodel on screen
+//! belongs to someone who is not the local player, so firing, reloading and
+//! drawing never reach it.
+//!
+//! ## What this drives, and from where
+//!
+//! - **shoot** -- from the weapon-fire sound, which names the entity that
+//!   fired (`sound_fix`'s `EV_PlaySound` hook, see `on_weapon_fired`). This is
+//!   the most visible omission, and the fire events are present in HLTV demos
+//!   even though some rounds of automatic fire are dropped.
+//! - **reload** -- from the spectated player's own third-person sequence
+//!   label, which *is* replicated.
+//! - **draw** -- from the viewmodel's model changing.
+//! - **idle** -- on switching to a different spectated player, so the new
+//!   viewmodel does not inherit whatever sequence the last one was left on.
+//!
+//! ## Bipod weapons, additionally
+//!
+//! MG42, MG34, BAR and Bren keep two parallel sequence families in one model
+//! -- "up" (hip-fire) and "down" (deployed), e.g. `upidle`/`downidle` -- and
+//! nothing tells a puppeted in-eye viewmodel which to use. Unlike Counter-
+//! Strike's silenced/unsilenced M4A1 fix this was modeled on, DoD's deploy
+//! state is not hidden in a fire-event side channel: it drives a real,
+//! always-replicated `entity_state_t::weaponmodel` swap between two
+//! third-person models (`p_mg42bu.mdl` <-> `p_mg42bd.mdl`), so it can be read
+//! directly each frame. Every animation above is then looked up within
+//! whichever family is current. Confirmed against the `.mdl` files shipped
+//! with DoD 1.3.
+//!
+//! This part matters far less in practice than the plain animations: league
+//! configs generally limit the MGs to zero, and deploying the BAR's bipod is
+//! rare. It is a refinement on top, not the point.
+//!
+//! Originally ported from a prototype written against HLAE's own source
+//! (`AfxHookGoldSrc/hooks/client/dod/ViewmodelAnimationFix.cpp`), adapted to
+//! the engine interfaces this crate captures itself.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, Ordering};
@@ -134,11 +160,23 @@ fn apply_deploy_state_to_sequence(sequence: i32, state: Option<DeployState>, vie
 }
 
 fn animation_lookup_sequence(label: &str, state: Option<DeployState>, viewmodel: *mut ModelSPartial) -> i32 {
+    animation_lookup_any(&[label], state, viewmodel)
+}
+
+/// Finds the first sequence matching any of `candidates`, in order.
+///
+/// DoD's models are not consistent about what they call things -- a firing
+/// animation is `shoot` on some weapons and `fire` on others -- so the caller
+/// gives the names worth trying rather than assuming one.
+fn animation_lookup_any(candidates: &[&str], state: Option<DeployState>, viewmodel: *mut ModelSPartial) -> i32 {
     let labels = model_sequence_strings(viewmodel);
-    match labels.iter().position(|l| l.to_lowercase().contains(&label.to_lowercase())) {
-        Some(i) => apply_deploy_state_to_sequence(i as i32, state, viewmodel),
-        None => -1,
+    for candidate in candidates {
+        let needle = candidate.to_lowercase();
+        if let Some(i) = labels.iter().position(|l| l.to_lowercase().contains(&needle)) {
+            return apply_deploy_state_to_sequence(i as i32, state, viewmodel);
+        }
     }
+    -1
 }
 
 fn get_spectated_deploy_state(weapon: &DeployableWeapon, entity: &ClEntityS) -> Option<DeployState> {
@@ -196,6 +234,12 @@ fn play_viewmodel_animation(sequence: i32, reason: &str, state: Option<DeploySta
 
     unsafe { (engfuncs.pfn_weapon_anim)(sequence, 0) };
 }
+
+/// What `apply()` last saw, published for `on_weapon_fired`, which runs from
+/// the sound hook on the same thread but has none of this context.
+static CURRENT_SPECTATED: AtomicI32 = AtomicI32::new(-1);
+static CURRENT_VIEWMODEL: AtomicPtr<ModelSPartial> = AtomicPtr::new(std::ptr::null_mut());
+static CURRENT_DEPLOY_STATE: AtomicI32 = AtomicI32::new(-1);
 
 static PREVIOUS_SPECTATED_ENTITY: AtomicI32 = AtomicI32::new(-1);
 static PREVIOUS_SEQUENCE: AtomicI32 = AtomicI32::new(-1);
@@ -332,6 +376,38 @@ fn note_viewmodel(name: &str, deployable: bool) {
     }
 }
 
+/// Plays the firing animation when the player being spectated in-eye shoots.
+///
+/// This is the animation most obviously missing in an HLTV demo, and the
+/// reason is structural rather than a bug: GoldSrc's weapon event scripts only
+/// drive the viewmodel for the *local* player (`EV_IsLocal`). Everyone else
+/// gets the sound and the muzzle flash but no first-person animation, because
+/// normally nobody is looking down their sights. Spectating in-eye is exactly
+/// the case that assumption doesn't hold for.
+///
+/// Driven from `sound_fix`'s `EV_PlaySound` hook rather than from the frame
+/// callback: the fire sound carries the entity that fired, which is precisely
+/// the signal needed and is already being intercepted. Called on the engine
+/// thread, same as `apply()`.
+pub fn on_weapon_fired(entity_index: i32) {
+    if !ENABLED.load(Ordering::Relaxed) {
+        return;
+    }
+    // Only the player actually being watched -- every other shot in the match
+    // comes through here too.
+    if entity_index < 0 || entity_index != CURRENT_SPECTATED.load(Ordering::Relaxed) {
+        return;
+    }
+    let viewmodel = CURRENT_VIEWMODEL.load(Ordering::Relaxed);
+    if viewmodel.is_null() {
+        return;
+    }
+
+    let state = i32_to_deploy_state(CURRENT_DEPLOY_STATE.load(Ordering::Relaxed));
+    let sequence = animation_lookup_any(&["shoot", "fire"], state, viewmodel);
+    play_viewmodel_animation(sequence, "spectated player fired", state, viewmodel);
+}
+
 /// Runs once per client frame (see `engine::set_per_frame_callback`).
 pub fn apply() {
     if !ENABLED.load(Ordering::Relaxed) {
@@ -358,14 +434,11 @@ pub fn apply() {
         return;
     }
     let viewmodel_name = unsafe { (*viewmodel_model).name_str() }.into_owned();
+    // Only the four bipod weapons have an up/down sequence split; every other
+    // weapon still needs draw/reload/shoot driven, so this is no longer a
+    // reason to bail out -- it just means there is no deploy state to track.
     let deployable = find_deployable_weapon(&viewmodel_name);
     note_viewmodel(&viewmodel_name, deployable.is_some());
-
-    let Some(weapon) = deployable else {
-        stage_with(STAGE_NOT_A_DEPLOYABLE_WEAPON, viewmodel_entity, viewmodel_model, unsafe { (*viewmodel_entity).index });
-        PREVIOUS_DEPLOY_STATE.store(-1, Ordering::Relaxed);
-        return;
-    };
 
     let viewmodel_index = unsafe { (*viewmodel_entity).index };
     let previous_entity = PREVIOUS_SPECTATED_ENTITY.swap(viewmodel_index, Ordering::Relaxed);
@@ -379,7 +452,13 @@ pub fn apply() {
     let spectated = unsafe { &*spectated };
     stage_with(STAGE_RUNNING, viewmodel_entity, viewmodel_model, viewmodel_index);
 
-    let state = get_spectated_deploy_state(weapon, spectated);
+    let state = deployable.and_then(|weapon| get_spectated_deploy_state(weapon, spectated));
+
+    // Published for the fire-event path, which runs from the sound hook rather
+    // than from here and so has no view of any of this.
+    CURRENT_SPECTATED.store(viewmodel_index, Ordering::Relaxed);
+    CURRENT_VIEWMODEL.store(viewmodel_model, Ordering::Relaxed);
+    CURRENT_DEPLOY_STATE.store(deploy_state_to_i32(state), Ordering::Relaxed);
     let previous_state = i32_to_deploy_state(PREVIOUS_DEPLOY_STATE.load(Ordering::Relaxed));
     let deploy_state_changed = previous_state.is_some() && state.is_some() && previous_state != state;
 
