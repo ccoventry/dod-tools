@@ -199,6 +199,23 @@ With `gEngfuncs` known, every call of the form `call dword ptr [gEngfuncs + idx*
 be found in `.text` and its string argument recovered, giving an authoritative inventory
 of what DoD 1.3's client registers. Indices are `cl_enginefunc_t` declaration order.
 
+This doubles as an **independent, binary-level check of `goldsrc-hooks`'
+`ClEngineFuncsPartial`**, whose slot offsets were previously only transcribed from
+HLAE's `cdll_int.h`. Walking that struct's declared slot counts gives the indices below,
+and every one of them lands on a slot DoD's own client uses, in the shape its type
+implies — a single miscounted field anywhere would push all later ones off:
+
+| index | field | how DoD uses it |
+| --- | --- | --- |
+| 17 | `pfn_add_command` | 110 calls — exactly the 110 command names recovered below |
+| 30 | `pfn_console_print` | 37 calls |
+| 38 / 39 | `cmd_argc` / `cmd_argv` | 4 / 6 calls |
+| 52 / 53 | `get_view_model` / `get_entity_by_index` | 7 / 38 calls |
+| 66 | `pfn_weapon_anim` | 3 calls |
+| 71 | `pfn_get_game_directory` | 2 calls |
+| 84 | `p_event_api` | 165 references, **0 direct calls** — the signature of a data pointer, which is what it is |
+| 88 | `is_spectate_only` | 35 calls |
+
 ### Console commands — `pfnAddCommand` (index 17), 107 registered
 
 Beyond the expected `+`/`-` movement and `slot0..slot10` bindings:

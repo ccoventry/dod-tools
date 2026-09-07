@@ -49,14 +49,19 @@ unsafe extern "system" fn worker_thread(_lp_param: *mut std::ffi::c_void) -> u32
     unsafe { debug::new_session_separator() };
     unsafe { debug::report("goldsrc-hooks worker thread started") };
 
+    // Registered before install() so there's no window in which Initialize
+    // could fire before the callback exists.
+    engine::set_on_engine_ready(install_fixes);
+
     // Hooks hw.dll's LoadLibraryA and GetProcAddress imports, so we see
     // client.dll load and can substitute our own entry points as the engine
     // resolves it -- see engine.rs's module docs for the full mechanism and
     // why patching client.dll's export table does nothing.
     engine::install();
 
-    // pEngfuncs arrives when the engine calls client.dll's Initialize, which
-    // happens during normal startup shortly after client.dll loads.
+    // Nothing left to do but report if the fixes never activated. pEngfuncs
+    // arrives when the engine calls client.dll's Initialize during normal
+    // startup, and `install_fixes` runs from there, on the engine's thread.
     let mut waited = 0u32;
     while engine::engfuncs().is_none() {
         if waited >= 30_000 {
@@ -67,7 +72,14 @@ unsafe extern "system" fn worker_thread(_lp_param: *mut std::ffi::c_void) -> u32
         waited += 50;
     }
 
-    unsafe { debug::report("goldsrc-hooks: engfuncs captured, installing sound_fix") };
+    0
+}
+
+/// Runs on the engine's own thread, once `client.dll`'s `Initialize` has
+/// returned and `pEngfuncs` is live -- see `engine::set_on_engine_ready` for
+/// why this must not run from the worker thread.
+fn install_fixes() {
+    unsafe { debug::report("goldsrc-hooks: engfuncs captured, installing fixes") };
     sound_fix::install();
 
     // anim_fix additionally needs engine_studio, captured when the engine
@@ -80,8 +92,6 @@ unsafe extern "system" fn worker_thread(_lp_param: *mut std::ffi::c_void) -> u32
     // console commands -- toggle the same ENABLED flags the env vars above
     // set as the initial default, so either mechanism works.
     commands::install();
-
-    0
 }
 
 /// # Safety

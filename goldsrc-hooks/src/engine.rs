@@ -449,6 +449,27 @@ static REAL_INITIALIZE: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut())
 static REAL_HUD_FRAME: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
 static REAL_GET_STUDIO_MODEL_INTERFACE: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
 
+/// Runs once, on the engine's own thread, immediately after `client.dll`'s
+/// real `Initialize` returns -- see `set_on_engine_ready`.
+static ON_ENGINE_READY: std::sync::OnceLock<fn()> = std::sync::OnceLock::new();
+
+/// Registers the work that must happen once `pEngfuncs` is live.
+///
+/// This exists so that work runs **on the engine thread, at a deterministic
+/// point**, rather than from our worker thread whenever it happens to notice.
+/// It matters because that work mutates engine-owned global state --
+/// `pfnAddCommand` prepends to the engine's command list, and `sound_fix`
+/// overwrites a function pointer inside the live `event_api_s` -- none of
+/// which is thread-safe against an engine that may be running concurrently.
+/// Registering right after `Initialize` also matches where DoD's own client
+/// registers its 110 console commands (from `HUD_Init`, immediately after).
+///
+/// Must be called before `install()`, so there is no window in which
+/// `Initialize` could fire before the callback is set.
+pub fn set_on_engine_ready(callback: fn()) {
+    let _ = ON_ENGINE_READY.set(callback);
+}
+
 /// Captures `pEnginefuncs` -- the whole reason this crate exists -- then hands
 /// straight off to `client.dll`'s real `Initialize` so the game is unaffected.
 unsafe extern "C" fn tramp_initialize(engfuncs: *mut ClEngineFuncsPartial, version: i32) -> i32 {
@@ -467,7 +488,18 @@ unsafe extern "C" fn tramp_initialize(engfuncs: *mut ClEngineFuncsPartial, versi
         return 0;
     }
     let real: InitializeFn = unsafe { std::mem::transmute(real) };
-    unsafe { real(engfuncs, version) }
+    let result = unsafe { real(engfuncs, version) };
+
+    // Only once the client is genuinely initialised, and only if we actually
+    // captured the table -- installing against a null pEngfuncs would crash
+    // the game rather than merely fail.
+    if !engfuncs.is_null()
+        && let Some(callback) = ON_ENGINE_READY.get()
+    {
+        callback();
+    }
+
+    result
 }
 
 /// Real per-frame tick. Runs `client.dll`'s own `HUD_Frame` first so our
