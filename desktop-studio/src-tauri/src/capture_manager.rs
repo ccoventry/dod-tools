@@ -1343,8 +1343,15 @@ fn write_hidden_sidecar(path: &Path) -> std::io::Result<()> {
 
 /// Validates the HLAE/hl.exe paths, ensures `<hl_parent>/dod` exists, and
 /// builds a minimal `PatcherConfig` carrying just the fields
-/// `build_hlae_process` reads (hlae_path/game_path/resolution/separate_hud).
-fn resolve_preview_env(hlae_path: &str, game_path: &str) -> Result<(PatcherConfig, PathBuf), String> {
+/// `build_hlae_process` reads (hlae_path/game_path/resolution/separate_hud/
+/// goldsrc_hooks_dll_path). `goldsrc_hooks_dll_path` matters only to callers
+/// that actually launch HLAE (`launch_demo_preview`) — `generate_all_previews`
+/// never spawns a process, so it passes `None` here and it's simply unused.
+fn resolve_preview_env(
+    hlae_path: &str,
+    game_path: &str,
+    goldsrc_hooks_dll_path: Option<String>,
+) -> Result<(PatcherConfig, PathBuf), String> {
     if hlae_path.trim().is_empty() || game_path.trim().is_empty() {
         return Err(crate::messages::configure_paths_before("previewing"));
     }
@@ -1367,6 +1374,7 @@ fn resolve_preview_env(hlae_path: &str, game_path: &str) -> Result<(PatcherConfi
     let patcher_config = PatcherConfig {
         hlae_path: hlae_path.to_string(),
         game_path: game_path.to_string(),
+        goldsrc_hooks_dll_path,
         ..PatcherConfig::default()
     };
     Ok((patcher_config, dod_dir))
@@ -1424,9 +1432,10 @@ pub async fn launch_demo_preview(
     hlae_path: String,
     game_path: String,
     streaks: Vec<SerializedStreak>,
+    goldsrc_hooks_dll_path: Option<String>,
 ) -> Result<(), String> {
     crate::messages::flatten_spawn_blocking(tokio::task::spawn_blocking(move || {
-        let (patcher_config, dod_dir) = resolve_preview_env(&hlae_path, &game_path)?;
+        let (patcher_config, dod_dir) = resolve_preview_env(&hlae_path, &game_path, goldsrc_hooks_dll_path)?;
         let (jobs, _generated) = patch_bookmark_previews(streaks, &dod_dir, &patcher_config)?;
         let job = jobs.first().ok_or_else(|| crate::messages::FAILED_TO_BUILD_PREVIEW_PATCH_JOB.to_string())?;
 
@@ -1457,7 +1466,7 @@ pub async fn generate_all_previews(
     streaks: Vec<SerializedStreak>,
 ) -> Result<usize, String> {
     crate::messages::flatten_spawn_blocking(tokio::task::spawn_blocking(move || {
-        let (patcher_config, dod_dir) = resolve_preview_env(&hlae_path, &game_path)?;
+        let (patcher_config, dod_dir) = resolve_preview_env(&hlae_path, &game_path, None)?;
         let (_jobs, generated) = patch_bookmark_previews(streaks, &dod_dir, &patcher_config)?;
         Ok(generated)
     }))

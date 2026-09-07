@@ -3,10 +3,14 @@
 //!
 //! Unlike patching HLAE's own source, this doesn't need HLAE's build
 //! toolchain, and doesn't touch any function HLAE itself already hooks (see
-//! `engine.rs` for exactly which functions this DLL depends on and why
-//! there's no HLAE-internal signature-scanning involved). It's built as a
-//! separate workspace crate specifically so it doesn't have to live inside
-//! a forked copy of HLAE's own repository.
+//! `engine.rs` for exactly which functions this DLL depends on). It's built
+//! as a separate workspace crate specifically so it doesn't have to live
+//! inside a forked copy of HLAE's own repository -- though `addresses.rs`'s
+//! byte-signature scan for `pEngfuncs` is a direct, faithful port of
+//! HLAE's own `hl_addresses.cpp` technique, since live testing proved the
+//! more "obvious" approach (hooking `client.dll`'s exported `Initialize`)
+//! doesn't actually work on at least some engine builds -- see that
+//! module's docs.
 //!
 //! Implements two fixes, each independently toggled and each safe to inject
 //! without the other:
@@ -16,12 +20,17 @@
 //!
 //! See each module's docs for the full R&D reasoning.
 //!
-//! Toggled via environment variables set on the `hl.exe` process before
-//! launch (dod-tools already controls that launch, so this is simpler than
-//! wiring up our own console-command parser):
-//! `GOLDSRC_HOOKS_FORCE_WEAPON_VOLUME=1`, `GOLDSRC_HOOKS_ANIM_FIX=1`.
+//! Each fix has a default set via an environment variable on the `hl.exe`
+//! process before launch (`GOLDSRC_HOOKS_FORCE_WEAPON_VOLUME=1`,
+//! `GOLDSRC_HOOKS_ANIM_FIX=1`), and can also be toggled live from the game
+//! console via `dodtools_hltv_gunshots_fix <0|1>` / `dodtools_hltv_animation_fix
+//! <0|1>` (see `commands.rs`) -- either mechanism flips the same runtime
+//! flag, so whichever is more convenient for a given session works.
 
+mod addresses;
 mod anim_fix;
+mod binscan;
+mod commands;
 mod debug;
 mod engine;
 mod pe;
@@ -40,21 +49,24 @@ unsafe extern "system" fn worker_thread(_lp_param: *mut std::ffi::c_void) -> u32
     sound_fix::ENABLED.store(env_flag_set("GOLDSRC_HOOKS_FORCE_WEAPON_VOLUME"), Ordering::Relaxed);
     anim_fix::ENABLED.store(env_flag_set("GOLDSRC_HOOKS_ANIM_FIX"), Ordering::Relaxed);
 
+    unsafe { debug::new_session_separator() };
     unsafe { debug::report("goldsrc-hooks worker thread started") };
 
-    // Hooks client.dll's Initialize export (via hw.dll's LoadLibraryA IAT --
-    // see engine.rs's module docs for the full chain and why this needs no
-    // DoD-specific byte pattern).
+    // Hooks hw.dll's LoadLibraryA import to detect the moment client.dll
+    // loads, then signature-scans it for pEngfuncs/pstudio -- see engine.rs
+    // and addresses.rs's module docs for the full mechanism and why it
+    // doesn't hook client.dll's own Initialize export.
     engine::install();
 
-    // engine::install() only arranges for `hook_initialize` to fire the next
-    // time client.dll's real Initialize runs; wait for that to actually
-    // happen (map load can take a few seconds) before wiring up fixes that
-    // need the captured engfuncs table.
+    // The scan runs synchronously the instant client.dll is detected loading
+    // (it reads static bytes already in the file image, no engine call
+    // needs to happen first), so this is normally near-instant -- the wait
+    // loop is just a safety margin in case client.dll takes a while to load
+    // at all.
     let mut waited = 0u32;
     while engine::engfuncs().is_none() {
         if waited >= 30_000 {
-            unsafe { debug::report("goldsrc-hooks: timed out waiting for client.dll's Initialize to fire; fixes not installed this session") };
+            unsafe { debug::report("goldsrc-hooks: timed out waiting for client.dll to load and be scanned; fixes not installed this session") };
             return 0;
         }
         unsafe { Sleep(50) };
@@ -70,6 +82,11 @@ unsafe extern "system" fn worker_thread(_lp_param: *mut std::ffi::c_void) -> u32
     // checks for that availability on every call, so it's safe to install
     // even if that capture hasn't landed yet.
     anim_fix::install();
+
+    // In-game mirv_dod_hltv_gunshots_fix / mirv_dod_hltv_animation_fix
+    // console commands -- toggle the same ENABLED flags the env vars above
+    // set as the initial default, so either mechanism works.
+    commands::install();
 
     0
 }

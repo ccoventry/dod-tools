@@ -16,3 +16,10 @@ pub unsafe fn report(message: &str) {
         let _ = writeln!(file, "[goldsrc-hooks] {message}");
     }
 }
+
+/// Writes a visual break before a new session's first line, so the log file
+/// can be left in place across runs instead of deleted each time -- just
+/// copy from the last separator down.
+pub unsafe fn new_session_separator() {
+    unsafe { report("==================== new session ====================") };
+}

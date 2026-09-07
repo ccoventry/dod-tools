@@ -1,34 +1,33 @@
-//! Captures the engine's `cl_enginefuncs_s` pointer table -- the same table
-//! GoldSrc hands to `client.dll` exactly once, at startup, via its exported
-//! `Initialize(cl_enginefuncs_t*, int)` -- without needing HLAE's approach of
-//! byte-signature-scanning `client.dll`'s data section for a specific engine
-//! build. Reused for both fixes.
+//! Captures the engine's `cl_enginefuncs_s` pointer table (`pEngfuncs`), and
+//! optionally `engine_studio_api_s` (`pstudio`), directly out of a loaded
+//! `client.dll`'s own memory -- via `addresses::scan_client_dll`, a faithful
+//! port of HLAE's own `hl_addresses.cpp` byte-signature scan.
 //!
-//! Mechanism, in order:
-//! 1. Patch `hw.dll`'s own Import Address Table so its calls to
-//!    `KERNEL32!LoadLibraryA` come through us first -- the exact technique
-//!    HLAE itself already uses (`AfxHookGoldSrc`'s `CAfxImportDllHook`) to
-//!    catch the moment `client.dll` gets loaded.
-//! 2. When that happens, patch `client.dll`'s *export table* entry for
-//!    `Initialize` to point at our own wrapper, before returning control.
-//!    The engine's very next step is `GetProcAddress(hClient, "Initialize")`
-//!    followed immediately by calling it -- both PE/ABI-guaranteed steps we
-//!    don't need to race against, we just need to have already rewritten
-//!    what that lookup resolves to.
-//! 3. Our `Initialize` wrapper records the real pointer, then calls through
-//!    to the real `Initialize` so the game starts up completely normally.
+//! An earlier version of this module instead patched `client.dll`'s
+//! *exported* `Initialize`/`HUD_GetStudioModelInterface`/`HUD_Frame` entries,
+//! on the assumption that the engine resolves them via a live
+//! `GetProcAddress` call each time (the documented GoldSrc mod ABI). Live
+//! testing against a real DoD 1.3 session disproved that: the export-table
+//! patch was verified correct (even the real Win32 `GetProcAddress` agreed,
+//! immediately after patching), yet nothing ever called through to it, even
+//! over 30+ seconds of active gameplay. HLAE's own source confirms why --
+//! it never hooks `Initialize` either, and instead reads `client.dll`'s own
+//! already-populated copy of the pointer directly out of memory, which is
+//! what `addresses.rs` now replicates. See that module's docs for the full
+//! mechanism and the two `client.dll` build variants it handles.
 //!
-//! None of this depends on any DoD-specific (or even engine-build-specific)
-//! byte pattern -- only on the PE format and the GoldSrc mod ABI, both of
-//! which are permanently frozen.
+//! `client.dll`'s load is still detected the same way as before: patch
+//! `hw.dll`'s own Import Address Table so its calls to `KERNEL32!LoadLibraryA`
+//! come through us first (the same technique HLAE's own `CAfxImportDllHook`
+//! uses) -- confirmed reliable by testing, this part was never the problem.
 
 use std::ffi::{c_char, c_void};
-use std::sync::atomic::{AtomicPtr, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 
 use windows_sys::Win32::Foundation::HMODULE;
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleA;
 use windows_sys::Win32::System::Memory::{VirtualProtect, PAGE_EXECUTE_READWRITE, PAGE_PROTECTION_FLAGS};
-use windows_sys::Win32::System::Threading::Sleep;
+use windows_sys::Win32::System::Threading::{CreateThread, Sleep};
 
 use crate::pe;
 
@@ -57,6 +56,11 @@ pub type GetGameDirectoryFn = unsafe extern "C" fn(sz_get_game_dir: *mut c_char)
 pub type IsSpectateOnlyFn = unsafe extern "C" fn() -> i32;
 pub type GetViewModelFn = unsafe extern "C" fn() -> *mut ClEntityS;
 pub type GetEntityByIndexFn = unsafe extern "C" fn(index: i32) -> *mut ClEntityS;
+pub type ConsoleCommandFn = unsafe extern "C" fn();
+pub type AddCommandFn = unsafe extern "C" fn(cmd_name: *const c_char, function: ConsoleCommandFn);
+pub type ConsolePrintFn = unsafe extern "C" fn(text: *const c_char);
+pub type CmdArgcFn = unsafe extern "C" fn() -> i32;
+pub type CmdArgvFn = unsafe extern "C" fn(arg: i32) -> *const c_char;
 
 /// A 3D vector, matching `vec3_t` (`float[3]`) everywhere it's embedded in a
 /// GoldSrc SDK struct below.
@@ -270,15 +274,24 @@ pub struct EngineStudioApiPartial {
 }
 
 /// Partial, offset-accurate mirror of `cl_enginefuncs_s` (see
-/// `advancedfx/halflife`'s `engine/APIProxy.h`, which matches the vanilla
-/// Half-Life SDK layout DoD 1.3 was built against). Every field up through
-/// `IsSpectateOnly` is present, in order, so the four we actually use
-/// (`pfn_weapon_anim`, `pfn_get_game_directory`, `p_event_api`,
-/// `is_spectate_only`) land at the correct byte offsets; everything else is
-/// kept as an opaque, untyped slot purely to hold the layout together.
+/// `advancedfx/halflife`'s `engine/cdll_int.h`, whose `k_engdstNull` macro
+/// lists every field of the real struct in declaration order -- confirmed
+/// against it field-by-field. Every field up through `IsSpectateOnly` is
+/// present, in order, so the ones we actually use (`pfn_add_command`,
+/// `pfn_console_print`, `cmd_argc`, `cmd_argv`, `pfn_weapon_anim`,
+/// `pfn_get_game_directory`, `p_event_api`, `is_spectate_only`) land at the
+/// correct byte offsets; everything else is kept as an opaque, untyped slot
+/// purely to hold the layout together.
 #[repr(C)]
 pub struct ClEngineFuncsPartial {
-    _slots_before_viewmodel: [*mut c_void; 52], // pfnSPR_Load .. GetLocalPlayer
+    _slots_before_add_command: [*mut c_void; 17], // pfnSPR_Load .. pfnGetCvarString
+    pub pfn_add_command: AddCommandFn,
+    _slots_before_console_print: [*mut c_void; 12], // pfnHookUserMsg .. pfnDrawConsoleStringLen
+    pub pfn_console_print: ConsolePrintFn,
+    _slots_before_cmd_argc: [*mut c_void; 7], // pfnCenterPrint .. Cvar_SetValue
+    pub cmd_argc: CmdArgcFn,
+    pub cmd_argv: CmdArgvFn,
+    _slots_before_viewmodel: [*mut c_void; 12], // Con_Printf .. GetLocalPlayer
     pub get_view_model: GetViewModelFn,
     pub get_entity_by_index: GetEntityByIndexFn,
     _slots_before_weapon_anim: [*mut c_void; 12], // GetClientTime .. pfnPlaybackEvent
@@ -303,22 +316,22 @@ const _: () = assert!(
 static ENGFUNCS: AtomicPtr<ClEngineFuncsPartial> = AtomicPtr::new(std::ptr::null_mut());
 static ENGINE_STUDIO: AtomicPtr<EngineStudioApiPartial> = AtomicPtr::new(std::ptr::null_mut());
 
-/// Returns the captured engine function table, once `client.dll` has
-/// finished loading and calling its own `Initialize`. `None` before that.
+/// Returns the captured engine function table, once `client.dll` has loaded
+/// and been successfully signature-scanned. `None` before that.
 pub fn engfuncs() -> Option<&'static ClEngineFuncsPartial> {
     let ptr = ENGFUNCS.load(Ordering::Acquire);
     if ptr.is_null() {
         None
     } else {
-        // Safety: only ever set once, from `hook_initialize`, to a pointer
-        // the engine itself handed us and guarantees stays valid for the
-        // life of the client.dll instance.
+        // Safety: only ever set once, from `capture_via_scan`, to a pointer
+        // the engine itself owns for the life of the client.dll instance.
         Some(unsafe { &*ptr })
     }
 }
 
 /// Returns the captured studio-model engine interface, once `client.dll` has
-/// called its own exported `HUD_GetStudioModelInterface`. `None` before that.
+/// loaded and been successfully signature-scanned. `None` before that (or if
+/// the scan found `pEngfuncs` but not `pstudio`).
 pub fn engine_studio() -> Option<&'static EngineStudioApiPartial> {
     let ptr = ENGINE_STUDIO.load(Ordering::Acquire);
     if ptr.is_null() {
@@ -329,79 +342,50 @@ pub fn engine_studio() -> Option<&'static EngineStudioApiPartial> {
     }
 }
 
-type InitializeFn = unsafe extern "C" fn(*mut ClEngineFuncsPartial, i32) -> i32;
-static REAL_INITIALIZE: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
-
-type GetStudioModelInterfaceFn =
-    unsafe extern "C" fn(i32, *mut *mut c_void, *mut EngineStudioApiPartial) -> i32;
-static REAL_GET_STUDIO_MODEL_INTERFACE: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
-
-unsafe extern "C" fn hook_get_studio_model_interface(
-    version: i32,
-    ppinterface: *mut *mut c_void,
-    pstudio: *mut EngineStudioApiPartial,
-) -> i32 {
-    ENGINE_STUDIO.store(pstudio, Ordering::Release);
-
-    let real = REAL_GET_STUDIO_MODEL_INTERFACE.load(Ordering::Acquire);
-    if real.is_null() {
-        return 0;
-    }
-    let real: GetStudioModelInterfaceFn = unsafe { std::mem::transmute(real) };
-    unsafe { real(version, ppinterface, pstudio) }
-}
-
-type HudFrameFn = unsafe extern "C" fn(f64);
-static REAL_HUD_FRAME: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
-
-/// Registers `callback` to run once per client frame, driven by hooking
-/// `client.dll`'s exported `HUD_Frame` (guaranteed to fire every frame,
-/// including while passively watching a demo -- the same "runs every frame
-/// regardless of anything else" spot HLAE's own `filming.cpp` calls its
-/// per-frame fixes from, which we don't have access to from outside HLAE).
+/// Runs `callback` on a fixed timer instead of hooking a genuine per-frame
+/// engine callback -- `HUD_Frame` turned out to be just as unreachable via
+/// export-table patching as `Initialize` was (see module docs), and unlike
+/// `pEngfuncs`/`pstudio` there's no static byte-signature equivalent to scan
+/// for "the next frame". A ~60Hz poll from an independent thread is a
+/// pragmatic substitute for this crate's purposes (checking/re-applying a
+/// spectated player's viewmodel animation state) -- not perfectly
+/// frame-accurate, but not a driving concern for a moviemaking aid, and it
+/// sidesteps needing another fragile per-build pattern entirely.
 static PER_FRAME_CALLBACK: std::sync::OnceLock<fn()> = std::sync::OnceLock::new();
+static TIMER_THREAD_STARTED: AtomicBool = AtomicBool::new(false);
 
 pub fn set_per_frame_callback(callback: fn()) {
     let _ = PER_FRAME_CALLBACK.set(callback);
+    if !TIMER_THREAD_STARTED.swap(true, Ordering::AcqRel) {
+        unsafe {
+            CreateThread(std::ptr::null(), 0, Some(per_frame_timer_thread), std::ptr::null(), 0, std::ptr::null_mut());
+        }
+    }
 }
 
-unsafe extern "C" fn hook_hud_frame(time: f64) {
-    let real = REAL_HUD_FRAME.load(Ordering::Acquire);
-    if !real.is_null() {
-        let real: HudFrameFn = unsafe { std::mem::transmute(real) };
-        unsafe { real(time) };
-    }
-
-    if let Some(callback) = PER_FRAME_CALLBACK.get() {
-        callback();
+unsafe extern "system" fn per_frame_timer_thread(_lp_param: *mut c_void) -> u32 {
+    loop {
+        unsafe { Sleep(16) };
+        if let Some(callback) = PER_FRAME_CALLBACK.get() {
+            callback();
+        }
     }
 }
 
 type LoadLibraryAFn = unsafe extern "system" fn(*const u8) -> HMODULE;
 static REAL_LOAD_LIBRARY_A: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
 
-unsafe extern "C" fn hook_initialize(engfuncs: *mut ClEngineFuncsPartial, version: i32) -> i32 {
-    ENGFUNCS.store(engfuncs, Ordering::Release);
-
-    let real = REAL_INITIALIZE.load(Ordering::Acquire);
-    if real.is_null() {
-        // Should never happen: we only ever install this hook after
-        // resolving the real address. Fail closed rather than crash the
-        // game's own client.dll load.
-        return 0;
-    }
-    let real: InitializeFn = unsafe { std::mem::transmute(real) };
-    unsafe { real(engfuncs, version) }
-}
-
-unsafe fn c_str_eq_ignore_ascii_case(ptr: *const u8, other: &str) -> bool {
+/// The engine loads the mod's client DLL by a path relative to the game exe
+/// (e.g. `dod\cl_dlls\client.dll`), never by the bare filename -- so this
+/// compares only the path's basename, not the whole string.
+unsafe fn path_basename_eq_ignore_ascii_case(ptr: *const u8, other: &str) -> bool {
     unsafe {
         if ptr.is_null() {
             return false;
         }
-        std::ffi::CStr::from_ptr(ptr as *const i8)
-            .to_string_lossy()
-            .eq_ignore_ascii_case(other)
+        let path = std::ffi::CStr::from_ptr(ptr as *const i8).to_string_lossy();
+        let basename = path.rsplit(['\\', '/']).next().unwrap_or(&path);
+        basename.eq_ignore_ascii_case(other)
     }
 }
 
@@ -410,45 +394,35 @@ unsafe extern "system" fn hook_load_library_a(lp_lib_file_name: *const u8) -> HM
     let real: LoadLibraryAFn = unsafe { std::mem::transmute(real) };
     let result = unsafe { real(lp_lib_file_name) };
 
-    if !result.is_null() && unsafe { c_str_eq_ignore_ascii_case(lp_lib_file_name, "client.dll") } {
-        unsafe { hook_client_initialize(result as *mut u8) };
+    if !result.is_null() && unsafe { path_basename_eq_ignore_ascii_case(lp_lib_file_name, "client.dll") } {
+        unsafe { capture_via_scan(result as *mut u8) };
     }
 
     result
 }
 
-unsafe fn hook_client_initialize(client_dll_base: *mut u8) {
-    if let Some(real_init) = unsafe { pe::find_export(client_dll_base, "Initialize") } {
-        REAL_INITIALIZE.store(real_init, Ordering::Release);
-        // Patch client.dll's OWN export-table entry so the engine's imminent
-        // GetProcAddress(hClient, "Initialize") resolves to our wrapper
-        // instead.
-        unsafe { pe::patch_export(client_dll_base, "Initialize", hook_initialize as *mut c_void) };
-    } else {
-        unsafe { crate::debug::report("goldsrc-hooks: client.dll has no 'Initialize' export -- unexpected, sound/animation fixes can't activate") };
-    }
+/// Captures `pEngfuncs`/`pstudio` by signature-scanning the just-loaded
+/// `client.dll` -- see `addresses::scan_client_dll` and this module's docs
+/// for why this replaced hooking `client.dll`'s own exports.
+unsafe fn capture_via_scan(client_dll_base: *mut u8) {
+    match unsafe { crate::addresses::scan_client_dll(client_dll_base) } {
+        Some(found) => {
+            ENGFUNCS.store(found.engfuncs as *mut ClEngineFuncsPartial, Ordering::Release);
+            unsafe { crate::debug::report(&format!("capture_via_scan: pEngfuncs found at {:#x}", found.engfuncs)) };
 
-    // Same technique, for the *studio model* interface exchange the
-    // animation fix needs (engine_studio_api_s, via a completely separate
-    // export -- see EngineStudioApiPartial's docs).
-    if let Some(real_get_studio) = unsafe { pe::find_export(client_dll_base, "HUD_GetStudioModelInterface") } {
-        REAL_GET_STUDIO_MODEL_INTERFACE.store(real_get_studio, Ordering::Release);
-        unsafe {
-            pe::patch_export(
-                client_dll_base,
-                "HUD_GetStudioModelInterface",
-                hook_get_studio_model_interface as *mut c_void,
-            )
-        };
-    } else {
-        unsafe { crate::debug::report("goldsrc-hooks: client.dll has no 'HUD_GetStudioModelInterface' export -- animation fix can't activate") };
-    }
-
-    if let Some(real_hud_frame) = unsafe { pe::find_export(client_dll_base, "HUD_Frame") } {
-        REAL_HUD_FRAME.store(real_hud_frame, Ordering::Release);
-        unsafe { pe::patch_export(client_dll_base, "HUD_Frame", hook_hud_frame as *mut c_void) };
-    } else {
-        unsafe { crate::debug::report("goldsrc-hooks: client.dll has no 'HUD_Frame' export -- per-frame fixes (animation) can't activate") };
+            match found.pstudio {
+                Some(pstudio) => {
+                    ENGINE_STUDIO.store(pstudio as *mut EngineStudioApiPartial, Ordering::Release);
+                    unsafe { crate::debug::report(&format!("capture_via_scan: pstudio found at {:#x}", pstudio)) };
+                }
+                None => {
+                    unsafe { crate::debug::report("capture_via_scan: pstudio NOT found -- animation fix's model-sequence lookups won't work this session") };
+                }
+            }
+        }
+        None => {
+            unsafe { crate::debug::report("capture_via_scan: signature scan failed to find pEngfuncs in client.dll -- sound/animation fixes and console commands can't activate this session") };
+        }
     }
 }
 
@@ -502,14 +476,16 @@ fn hook_loadlibrary_in(module_name: &str, timeout_ms: u32) -> bool {
     true
 }
 
-/// Installs the LoadLibraryA -> Initialize interception chain. Call once,
-/// from a background thread (never do this work directly in `DllMain` --
-/// see `lib.rs`).
+/// Installs the LoadLibraryA hook that detects `client.dll` loading and
+/// triggers `capture_via_scan`. Call once, from a background thread (never
+/// do this work directly in `DllMain` -- see `lib.rs`).
 pub fn install() {
     // GoldSrc's OpenGL renderer module is virtually always what's actually
     // loaded in any modern setup (HLAE's own recording pipeline requires
     // it); `sw.dll` (the old software renderer) is not handled here.
-    if !hook_loadlibrary_in("hw.dll", 15_000) {
+    if hook_loadlibrary_in("hw.dll", 15_000) {
+        unsafe { crate::debug::report("goldsrc-hooks: hooked hw.dll's LoadLibraryA import successfully") };
+    } else {
         unsafe { crate::debug::report("goldsrc-hooks: could not hook hw.dll's LoadLibraryA import (module never appeared, or the IAT slot wasn't found) -- sound/animation fixes are inactive this session.") };
     }
 }
