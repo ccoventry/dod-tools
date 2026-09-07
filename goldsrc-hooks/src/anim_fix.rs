@@ -228,22 +228,27 @@ fn stage_name(stage: i32) -> &'static str {
 /// changed either. Logging keys off all three, so an alternation between two
 /// different viewmodels and one viewmodel flickering to null look different in
 /// the log instead of both reading as "stage changed".
-static LAST_TRACE: Mutex<Option<(i32, usize, usize)>> = Mutex::new(None);
+static LAST_TRACE: Mutex<Option<(i32, usize, usize, i32)>> = Mutex::new(None);
 static TRACE_LINES: AtomicI32 = AtomicI32::new(0);
 /// The flicker being investigated is per-frame, so this has to be capped or a
 /// single session would write tens of thousands of lines.
 const MAX_TRACE_LINES: i32 = 80;
 
 fn stage(stage: i32) {
-    stage_with(stage, std::ptr::null_mut::<u8>(), std::ptr::null_mut::<u8>());
+    stage_with(stage, std::ptr::null_mut::<u8>(), std::ptr::null_mut::<u8>(), -1);
 }
 
-/// Records how far this frame got, logging only when the stage or either
-/// pointer changes.
-fn stage_with<A, B>(stage: i32, entity: *mut A, model: *mut B) {
+/// Records how far this frame got, logging only when the stage, either
+/// pointer, or the entity index changes.
+///
+/// `index` is the viewmodel entity's own `index` field, which `apply()` uses
+/// as the spectated player. Logging it answers the question the model pointer
+/// alone leaves open: whether the weapon changing means the *spectated player*
+/// changed (the director moving on) or the same player swapped weapons.
+fn stage_with<A, B>(stage: i32, entity: *mut A, model: *mut B, index: i32) {
     STAGE.store(stage, Ordering::Relaxed);
 
-    let key = (stage, entity as usize, model as usize);
+    let key = (stage, entity as usize, model as usize, index);
     let mut last = LAST_TRACE.lock().unwrap();
     if *last == Some(key) {
         return;
@@ -256,7 +261,7 @@ fn stage_with<A, B>(stage: i32, entity: *mut A, model: *mut B) {
     }
     unsafe {
         crate::debug::report(&format!(
-            "anim_fix: {} | viewmodel entity {entity:p}, model {model:p}",
+            "anim_fix: {} | entity {entity:p} idx {index}, model {model:p}",
             stage_name(stage)
         ))
     };
@@ -311,12 +316,12 @@ pub fn apply() {
 
     let viewmodel_entity = unsafe { (engfuncs.get_view_model)() };
     if viewmodel_entity.is_null() {
-        stage_with(STAGE_NO_VIEWMODEL_ENTITY, viewmodel_entity, std::ptr::null_mut::<u8>());
+        stage_with(STAGE_NO_VIEWMODEL_ENTITY, viewmodel_entity, std::ptr::null_mut::<u8>(), -1);
         return;
     }
     let viewmodel_model = unsafe { (*viewmodel_entity).model };
     if viewmodel_model.is_null() {
-        stage_with(STAGE_NO_VIEWMODEL_MODEL, viewmodel_entity, viewmodel_model);
+        stage_with(STAGE_NO_VIEWMODEL_MODEL, viewmodel_entity, viewmodel_model, unsafe { (*viewmodel_entity).index });
         return;
     }
     let viewmodel_name = unsafe { (*viewmodel_model).name_str() }.into_owned();
@@ -324,7 +329,7 @@ pub fn apply() {
     note_viewmodel(&viewmodel_name, deployable.is_some());
 
     let Some(weapon) = deployable else {
-        stage_with(STAGE_NOT_A_DEPLOYABLE_WEAPON, viewmodel_entity, viewmodel_model);
+        stage_with(STAGE_NOT_A_DEPLOYABLE_WEAPON, viewmodel_entity, viewmodel_model, unsafe { (*viewmodel_entity).index });
         PREVIOUS_DEPLOY_STATE.store(-1, Ordering::Relaxed);
         return;
     };
@@ -335,11 +340,11 @@ pub fn apply() {
 
     let spectated = unsafe { (engfuncs.get_entity_by_index)(viewmodel_index) };
     if spectated.is_null() || unsafe { (*spectated).player } == 0 {
-        stage_with(STAGE_NO_SPECTATED_PLAYER, viewmodel_entity, viewmodel_model);
+        stage_with(STAGE_NO_SPECTATED_PLAYER, viewmodel_entity, viewmodel_model, viewmodel_index);
         return;
     }
     let spectated = unsafe { &*spectated };
-    stage_with(STAGE_RUNNING, viewmodel_entity, viewmodel_model);
+    stage_with(STAGE_RUNNING, viewmodel_entity, viewmodel_model, viewmodel_index);
 
     let state = get_spectated_deploy_state(weapon, spectated);
     let previous_state = i32_to_deploy_state(PREVIOUS_DEPLOY_STATE.load(Ordering::Relaxed));
