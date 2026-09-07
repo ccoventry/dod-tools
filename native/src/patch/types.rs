@@ -563,8 +563,26 @@ impl PatcherConfig {
 
         let mut cmd = std::process::Command::new(hlae_exe);
         cmd.args(["-customLoader", "-noGui", "-autoStart", "-hookDllPath", &hook_dll_str]);
-        if let Some(extra_dll) = &goldsrc_hooks_dll_str {
-            cmd.args(["-hookDllPath", extra_dll]);
+        // Say either way. "Optional" used to mean this resolved to nothing and
+        // the launch proceeded in silence, which is indistinguishable from the
+        // DLL loading and doing nothing -- the same log file stays empty and
+        // the dodtools_* commands are equally absent. That cost a live-testing
+        // session to diagnose, so the absent case is now a warning naming every
+        // path that was tried.
+        match &goldsrc_hooks_dll_str {
+            Some(extra_dll) => {
+                log::info!("goldsrc-hooks: injecting {extra_dll}");
+                cmd.args(["-hookDllPath", extra_dll]);
+            }
+            None => log::warn!(
+                "goldsrc-hooks: no goldsrc_hooks.dll found, so the sound/animation fixes and the \
+                 dodtools_* console commands will be absent this session. Tried: override={:?}, \
+                 bundled default={:?}, legacy spot beside hlae.exe={:?}. In a dev build only the \
+                 override is ever present -- set Studio -> Configuration -> Paths -> GoldSrc Hooks DLL.",
+                self.goldsrc_hooks_dll_path,
+                default_goldsrc_hooks_dll_path(),
+                hlae_dir.map(|parent| parent.join("goldsrc_hooks.dll")),
+            ),
         }
         cmd.args(["-programPath", &program_path_str, "-cmdLine", &cmd_line_str]);
         cmd.env("SteamAppId", "30");

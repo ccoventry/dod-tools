@@ -916,9 +916,17 @@ window.addEventListener("DOMContentLoaded", async () => {
   }
   // Every path field, including Half-Life, which the row above says nothing
   // about.
+  //
+  // These also persist on change (blur/Enter), not only via their Browse
+  // buttons and the save-on-close in onCloseRequested. A path typed by hand
+  // into a field whose picker was never used survived only until the app next
+  // exited *cleanly* — and during development the app is routinely killed and
+  // rebuilt instead, which skips onCloseRequested entirely. The GoldSrc Hooks
+  // DLL path is the field where that bites hardest: losing it silently
+  // un-injects the companion DLL on the next run (see build_hlae_process).
   for (const [input] of PATH_FIELDS) {
     document.querySelector(input)
-      ?.addEventListener('change', () => { refreshPathWarnings(); });
+      ?.addEventListener('change', () => { refreshPathWarnings(); persistAppSettings(); });
   }
   refreshPathWarnings();
 
