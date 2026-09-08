@@ -24,11 +24,19 @@ struct Peak {
     entities: usize,
     time: f32,
     over_legacy: usize,
+    /// When the limit is first breached. The peak alone is misleading for
+    /// diagnosis: playback dies at the *first* snapshot over the limit, not at
+    /// the worst one, and the two can be twenty minutes apart.
+    first_breach: Option<(f32, usize)>,
+    /// The first few snapshots, to tell "over from the opening frame" apart
+    /// from "climbs past the limit later".
+    opening: Vec<usize>,
 }
 
 fn measure(bytes: &[u8]) -> Option<Peak> {
     let demo = open_demo_from_bytes(bytes).ok()?;
-    let mut peak = Peak { entities: 0, time: 0.0, over_legacy: 0 };
+    let mut peak =
+        Peak { entities: 0, time: 0.0, over_legacy: 0, first_breach: None, opening: Vec::new() };
 
     for entry in &demo.directory.entries {
         for frame in &entry.frames {
@@ -41,8 +49,14 @@ fn measure(bytes: &[u8]) -> Option<Peak> {
                     EngineMessage::SvcDeltaPacketEntities(pe) => pe.entity_count.to_u32() as usize,
                     _ => continue,
                 };
+                if peak.opening.len() < 12 {
+                    peak.opening.push(count);
+                }
                 if count > LEGACY_LIMIT {
                     peak.over_legacy += 1;
+                    if peak.first_breach.is_none() {
+                        peak.first_breach = Some((frame.time, count));
+                    }
                 }
                 if count > peak.entities {
                     peak.entities = count;
@@ -85,6 +99,9 @@ fn main() {
                     "ok"
                 };
                 println!("{name:<58} {:>6} {:>10.1} {:>9}  {verdict}", p.entities, p.time, p.over_legacy);
+                if let Some((t, c)) = p.first_breach {
+                    println!("    first over {LEGACY_LIMIT} at demo t={t:.1}s ({c} entities); opening snapshots: {:?}", p.opening);
+                }
             }
             None => println!("{name:<58} {:>6}", "<unparseable>"),
         }
