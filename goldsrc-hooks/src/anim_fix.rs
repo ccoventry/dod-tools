@@ -619,7 +619,18 @@ pub fn on_weapon_fired(entity_index: i32) {
 
     let state = i32_to_deploy_state(CURRENT_DEPLOY_STATE.load(Ordering::Relaxed));
     // Every DoD viewmodel names its firing animation one of these, confirmed
-    // by dumping the sequence list of all 41 v_*.mdl files: plain "shoot"
+    // by dumping the sequence list of all 41 v_*.mdl files.
+    //
+    // Those came from a moviemaking install where 17 of the viewmodels are
+    // replaced by custom ones, which sounds like it would invalidate the
+    // table and does not: diffing sequence *names* against a stock install
+    // gives 37 of 38 shared models identical, because a custom model has to
+    // keep the same sequence order to work with the game at all. The one
+    // exception is v_luger.mdl, stock "idle_1/idle_2/idle_3" against custom
+    // "idle/idle/idle" -- which the exact-then-substring lookup above resolves
+    // to index 0 either way.
+    //
+    // The names: plain "shoot"
     // (98k, enfield, luger, sten, webley, m1carbine), numbered "shoot1"
     // (colt, garand, k43, mp40, mp44, tommy, greasegun, spring), prefixed
     // "up_shoot"/"upshoot" (bar, bren, fg42, mg42, mg34, 30cal), "launch"
