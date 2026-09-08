@@ -151,6 +151,7 @@ fn main() {
     rows.sort_by_key(|(_, s)| std::cmp::Reverse(s.iter().map(|t| t.len()).sum::<usize>()));
 
     let (mut total_shots, mut total_dropped) = (0usize, 0usize);
+    let mut bursts: Vec<Burst> = Vec::new();
 
     for (name, streams) in rows {
         let shots: usize = streams.iter().map(|t| t.len()).sum();
@@ -186,6 +187,24 @@ fn main() {
             }
         }
 
+        // Split each shooter's stream into runs of fire, using the same
+        // "gap under MAX_BURST_GAP is still the same burst" rule the loss
+        // estimate above works from.
+        for times in &streams {
+            let mut start = 0usize;
+            for i in 1..=times.len() {
+                let ends = i == times.len() || times[i] - times[i - 1] >= MAX_BURST_GAP;
+                if ends {
+                    bursts.push(Burst {
+                        weapon: name.clone(),
+                        start: times[start],
+                        rounds: i - start,
+                    });
+                    start = i;
+                }
+            }
+        }
+
         let recorded_plus_lost = shots + dropped;
         println!(
             "{name:<12} {shots:>7} {:>9} {:>7.0}ms {:>9} {dropped:>9} {:>7.1}%",
@@ -202,6 +221,49 @@ fn main() {
         println!(
             "\ntotal: {total_shots} recorded, {total_dropped} estimated dropped ({:.1}% loss)",
             100.0 * total_dropped as f32 / (total_shots + total_dropped) as f32
+        );
+    }
+
+    report_longest_bursts(&bursts);
+}
+
+/// A run of automatic fire, as a place in the demo worth seeking to.
+struct Burst {
+    weapon: String,
+    start: f32,
+    rounds: usize,
+}
+
+/// Prints where the longest sustained bursts are.
+///
+/// Aggregate loss says whether a recording drops rounds; it does not say where
+/// to look. Testing anything against sustained automatic fire otherwise means
+/// spectating a demo and waiting for someone to hold a trigger down, which is
+/// most of a session spent hunting -- these are timestamps to seek straight to.
+fn report_longest_bursts(bursts: &[Burst]) {
+    if bursts.is_empty() {
+        return;
+    }
+    let mut longest: Vec<&Burst> = bursts.iter().filter(|b| b.rounds >= 5).collect();
+    longest.sort_by_key(|b| std::cmp::Reverse(b.rounds));
+    if longest.is_empty() {
+        println!("\nno sustained bursts (5+ rounds) in this demo");
+        return;
+    }
+
+    println!("\nlongest sustained bursts -- seek here to see automatic fire:");
+    println!("{:<12} {:>7} {:>10}  {}", "weapon", "rounds", "demo time", "seek to");
+    for b in longest.iter().take(12) {
+        // A couple of seconds early, so the camera is settled and on the player
+        // before the burst rather than arriving mid-way through it.
+        let seek = (b.start - 3.0).max(0.0);
+        println!(
+            "{:<12} {:>7} {:>9.1}s  {:02}:{:04.1}",
+            b.weapon,
+            b.rounds,
+            b.start,
+            (seek / 60.0) as u32,
+            seek % 60.0,
         );
     }
 }
