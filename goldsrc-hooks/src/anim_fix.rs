@@ -118,10 +118,15 @@ enum BodyAction {
 
 fn classify_body_sequence(label: &str) -> BodyAction {
     let label = label.to_ascii_lowercase();
-    if label.ends_with("_shoot") {
+    if label.ends_with("_shoot") || label.ends_with("_roll") {
         // Covers every attack, not just gunfire: `stand_gren_shoot` is a
         // grenade throw and `crouch_knife_shoot` a stab, and the viewmodel
         // lookup below has the labels for both.
+        //
+        // `_roll` is the underhand grenade throw (`stand_stick_roll`), which
+        // was being ignored -- the grenade viewmodels have one animation,
+        // "throw", for both, so an overhand throw animated and a rolled one
+        // did not.
         BodyAction::Shoot
     } else if label.contains("reload") || label.contains("zoomload") {
         // "zoomload" is the rocket weapons reloading while scoped.
@@ -572,36 +577,38 @@ static PREVIOUS_SEQUENCE: AtomicI32 = AtomicI32::new(-1);
 static PREVIOUS_DEPLOY_STATE: AtomicI32 = AtomicI32::new(-1); // -1 none, 0 up, 1 down
 /// Which weapon the viewmodel is *currently* showing, and since when.
 ///
-/// The viewmodel can change far faster than a draw animation takes to play.
-/// One spectated player was measured cycling four models thirteen times in 1.4
-/// seconds; the *replicated* `curstate.weaponmodel` bounces too, `p_stg44 ->
-/// p_luger -> p_stg44` inside 0.17s. Under the old "pointer differs from last
-/// frame" test every one of those started a draw, and each was replaced ~100ms
-/// later by a draw on a different model, so none ever played long enough to
-/// see -- which is why the STG44's draw was reported missing when it was
-/// really being restarted out of existence.
-///
-/// **Whether that churn is the engine or the player is not established.** The
-/// measured burst was pre-game, where someone scrolling through their
-/// inventory or mashing `lastinv` would look exactly like this, and the
-/// held-model trace was not switched on until well after it. It does not
-/// change what to do: a draw that is cut off after 100ms is not worth playing
-/// either way, and settling on the weapon actually ended up with is the right
-/// response to a scroll through three of them. It does mean this must not be
-/// written down as an engine quirk.
-///
-/// To tell the two apart, run a session with `dodtools_log_weapon_model 1`
-/// from the start: real input moves the held model and the viewmodel together,
-/// an engine artifact moves the viewmodel far more often.
+/// Players switch weapons far faster than a draw animation takes to play --
+/// one was measured alternating `p_colt` and `p_garand` six times in 1.5
+/// seconds. That is real input, not engine noise: the spectated player's body
+/// sequence changes on the *same frame*, `stand_pistol_aim` <->
+/// `stand_rifle_aim`, which nothing happening only in the viewmodel could
+/// cause. A POV recording of the same behaviour would start a draw each time
+/// and cut each one short, so that is what to reproduce.
 static PENDING_VIEWMODEL: AtomicPtr<ModelSPartial> = AtomicPtr::new(std::ptr::null_mut());
 static PENDING_VIEWMODEL_SINCE: AtomicU64 = AtomicU64::new(0);
 static SETTLED_VIEWMODEL: AtomicPtr<ModelSPartial> = AtomicPtr::new(std::ptr::null_mut());
 
 /// How long a viewmodel has to hold still before it counts as the weapon in
-/// hand. Longer than the longest observed excursion (~0.35s), at the cost of
-/// the draw starting that much after a switch. Tuning it down risks the
-/// cut-off draws coming back; tuning it up makes a genuine switch feel late.
-const VIEWMODEL_SETTLE_SECONDS: f64 = 0.4;
+/// hand.
+///
+/// Deliberately small -- about three frames. It exists only to coalesce a
+/// viewmodel that changes and changes back inside a frame or two, not to
+/// second-guess the player.
+///
+/// It was 0.4s, on the theory that rapid weapon churn was engine noise worth
+/// suppressing. That was wrong twice over. The weapon it was blamed for (the
+/// STG44 never drawing) was really `VIEWMODEL_ALIASES` discarding every frame
+/// for that weapon; and the churn is not noise -- the spectated player's *body
+/// sequence* changes on the same frame as the held model, `stand_pistol_aim`
+/// <-> `stand_rifle_aim` tracking `p_colt` <-> `p_garand`, which no engine
+/// artifact in the viewmodel could do. It is somebody switching weapons that
+/// fast, which is ordinary in DoD.
+///
+/// So the faithful behaviour is the one a POV recording would show: a draw per
+/// switch, each cut short by the next. At 0.4s a kar-to-pistol-to-kar flick --
+/// common, and reported from live testing -- produced no draw at all, because
+/// neither weapon was held long enough to settle.
+const VIEWMODEL_SETTLE_SECONDS: f64 = 0.05;
 
 /// Whether the viewmodel has settled on a weapon that is not the one it had
 /// settled on before -- i.e. whether a real weapon switch just completed.
@@ -1037,6 +1044,10 @@ mod tests {
             // "throw" and "slash1" for them.
             "stand_gren_shoot",
             "crouch_knife_shoot",
+            // The underhand grenade throw. Same "throw" viewmodel animation as
+            // the overhand one, and it was being ignored.
+            "stand_stick_roll",
+            "crouch_mills_roll",
         ] {
             assert_eq!(classify_body_sequence(label), BodyAction::Shoot, "{label}");
         }
@@ -1171,27 +1182,42 @@ mod tests {
         assert_eq!(model_stem("models/player/us-inf/us-inf.mdl"), "us-inf");
     }
 
-    /// Reproduces the churn that made the STG44's draw animation invisible:
-    /// four models cycling ~10 times a second, the real weapon recurring but
-    /// never holding still. Whether a player or the engine drove it does not
-    /// matter here -- a draw cut off after 100ms is not worth starting.
+    /// Rapid switching is real input -- the player's body sequence moves with
+    /// it -- so each switch must produce its own draw, exactly as a POV
+    /// recording would. This used to assert the opposite, on a misdiagnosis.
     #[test]
-    fn a_flapping_viewmodel_is_not_a_weapon_switch() {
-        let (a, b, c) = (1 as *mut ModelSPartial, 2 as *mut ModelSPartial, 3 as *mut ModelSPartial);
+    fn rapid_switching_still_draws_each_time() {
+        let (a, b) = (1 as *mut ModelSPartial, 2 as *mut ModelSPartial);
         reset_settle_state();
 
-        // Settle on `a` first, so there is a previous weapon to change from.
         assert!(!viewmodel_settled_on_a_new_weapon(a, 0.0));
-        assert!(!viewmodel_settled_on_a_new_weapon(a, 1.0), "first settle has nothing to differ from");
+        assert!(!viewmodel_settled_on_a_new_weapon(a, 1.0), "nothing to differ from yet");
 
-        // Now flap between three models every 0.1s for two seconds. None of it
-        // is a weapon switch.
-        let mut t = 1.0;
-        for i in 0..20 {
-            let m = [a, b, c][i % 3];
-            t += 0.1;
-            assert!(!viewmodel_settled_on_a_new_weapon(m, t), "flap at t={t} model {i}");
+        // A kar -> pistol -> kar flick, the case reported from live testing.
+        // Each leg is held ~0.2s, far under the old 0.4s window that swallowed
+        // both of them.
+        let mut draws = 0;
+        for (i, t) in [1.20, 1.25, 1.40, 1.45, 1.60, 1.65].iter().enumerate() {
+            let model = if (i / 2) % 2 == 0 { b } else { a };
+            if viewmodel_settled_on_a_new_weapon(model, *t) {
+                draws += 1;
+            }
         }
+        assert!(draws >= 2, "expected a draw per switch, got {draws}");
+    }
+
+    /// The window still exists to absorb a viewmodel that changes and changes
+    /// back within a frame or two, which should read as no switch at all.
+    #[test]
+    fn a_single_frame_blip_is_absorbed() {
+        let (a, b) = (1 as *mut ModelSPartial, 2 as *mut ModelSPartial);
+        reset_settle_state();
+        assert!(!viewmodel_settled_on_a_new_weapon(a, 0.0));
+        assert!(!viewmodel_settled_on_a_new_weapon(a, 1.0));
+
+        // b appears for one frame, then a is back. Neither settles.
+        assert!(!viewmodel_settled_on_a_new_weapon(b, 1.016));
+        assert!(!viewmodel_settled_on_a_new_weapon(a, 1.032));
     }
 
     #[test]
