@@ -93,10 +93,19 @@ fn find_deployable_weapon(viewmodel_name: &str) -> Option<&'static DeployableWea
 }
 
 /// `"models/v_98k.mdl"` -> `"98k"`, `"models/p_mg42bd.mdl"` -> `"mg42bd"`.
+///
+/// DoD uses three model prefixes and all three are stripped: `v_` is the
+/// first-person viewmodel (41 files), `p_` the third-person attachment in a
+/// player's hands (75), `w_` the world model of a dropped weapon (56).
 fn model_stem(name: &str) -> &str {
     let file = name.rsplit(['/', '\\']).next().unwrap_or(name);
     let file = file.strip_suffix(".mdl").unwrap_or(file);
-    file.strip_prefix("v_").or_else(|| file.strip_prefix("p_")).unwrap_or(file)
+    for prefix in ["v_", "p_", "w_"] {
+        if let Some(rest) = file.strip_prefix(prefix) {
+            return rest;
+        }
+    }
+    file
 }
 
 /// Whether the viewmodel on screen is the weapon the spectated player is
@@ -279,6 +288,18 @@ fn animation_lookup_any(candidates: &[&str], state: Option<DeployState>, viewmod
     -1
 }
 
+/// Reads bipod state off the third-person model the spectated player is
+/// holding.
+///
+/// Returns `None` for anything that is neither "bu" nor "bd", which is a real
+/// and common case rather than an error: there are far more `p_` models than
+/// weapons, because they also vary by stance. The MGs alone ship
+/// `p_mg42bu` / `p_mg42bd` / `p_mg42pr` / `p_mg42sr`, and the Bren adds
+/// `p_brenbr` / `p_brenpr` / `p_brensr` / `p_bren_l`. A player prone with an
+/// MG is on one of those stance variants, so the deploy state is simply not
+/// readable from the model name at that moment and the animation falls back to
+/// whichever family was last known. Worth knowing before reading "deploy state
+/// unknown" in a log as a failure.
 fn get_spectated_deploy_state(weapon: &DeployableWeapon, entity: &ClEntityS) -> Option<DeployState> {
     let studio = engine::engine_studio()?;
     let weapon_model = unsafe { (studio.get_model_by_index)(entity.curstate.weaponmodel) };
