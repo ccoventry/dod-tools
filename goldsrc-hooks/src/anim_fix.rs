@@ -439,23 +439,55 @@ fn get_spectated_deploy_state(weapon: &DeployableWeapon, entity: &ClEntityS) -> 
 /// judged without trusting scrollback -- reaching "running" says the
 /// preconditions held, not that anything was corrected.
 static ANIMATIONS_PLAYED: AtomicI32 = AtomicI32::new(0);
-static ANIMATION_LOGS: AtomicI32 = AtomicI32::new(0);
-const MAX_ANIMATION_LOGS: i32 = 40;
 
-fn play_viewmodel_animation(sequence: i32, reason: &str, state: Option<DeployState>, viewmodel: *mut ModelSPartial) {
+/// Which animation is being played, used only to keep the log budgets apart.
+///
+/// They have to be separate. Draws and player switches happen constantly while
+/// spectating, and under one shared cap they consumed the entire budget 44
+/// seconds into a session -- so every firing animation after that played but
+/// was never logged, which read exactly like the fix having stopped working.
+#[derive(Clone, Copy)]
+enum AnimKind {
+    Idle,
+    Draw,
+    Reload,
+    Fire,
+}
+
+static ANIMATION_LOGS: [AtomicI32; 4] = [const { AtomicI32::new(0) }; 4];
+const MAX_ANIMATION_LOGS: i32 = 25;
+
+/// Reassurance that a long session is still working after the per-kind budgets
+/// above have run out.
+const ANIMATION_SUMMARY_EVERY: i32 = 100;
+
+fn animation_log_allowed(kind: AnimKind) -> bool {
+    ANIMATION_LOGS[kind as usize].fetch_add(1, Ordering::Relaxed) < MAX_ANIMATION_LOGS
+}
+
+fn play_viewmodel_animation(
+    sequence: i32,
+    kind: AnimKind,
+    reason: &str,
+    state: Option<DeployState>,
+    viewmodel: *mut ModelSPartial,
+) {
     if sequence < 0 {
         // Worth seeing: it means the model had no sequence matching what the
         // deploy state asked for, which is a gap in the up/down mapping rather
         // than a no-op.
-        if ANIMATION_LOGS.fetch_add(1, Ordering::Relaxed) < MAX_ANIMATION_LOGS {
+        if animation_log_allowed(kind) {
             unsafe { crate::debug::report(&format!("anim_fix: {reason} -- no matching sequence found, nothing played")) };
         }
         return;
     }
     let Some(engfuncs) = engine::engfuncs() else { return };
 
-    ANIMATIONS_PLAYED.fetch_add(1, Ordering::Relaxed);
-    if ANIMATION_LOGS.fetch_add(1, Ordering::Relaxed) < MAX_ANIMATION_LOGS {
+    let played = ANIMATIONS_PLAYED.fetch_add(1, Ordering::Relaxed) + 1;
+    if played % ANIMATION_SUMMARY_EVERY == 0 {
+        unsafe { crate::debug::report(&format!("anim_fix: {played} animations corrected so far")) };
+    }
+    if animation_log_allowed(kind) {
         let label = model_sequence_strings(viewmodel)
             .get(sequence as usize)
             .cloned()
@@ -720,7 +752,7 @@ pub fn on_weapon_fired(entity_index: i32) {
 
     let state = i32_to_deploy_state(CURRENT_DEPLOY_STATE.load(Ordering::Relaxed));
     let sequence = animation_lookup_any(ATTACK_SEQUENCES, state, viewmodel);
-    play_viewmodel_animation(sequence, "spectated player fired (sound)", state, viewmodel);
+    play_viewmodel_animation(sequence, AnimKind::Fire, "spectated player fired (sound)", state, viewmodel);
 }
 
 /// `"idx 6"`. Names would be nicer, but reaching them needs an engine slot
@@ -863,11 +895,11 @@ pub fn apply() {
         // Snap the new viewmodel straight to the right family's idle so it
         // doesn't sit on whatever sequence the previously-spectated player
         // left it on.
-        play_viewmodel_animation(animation_lookup_sequence("idle", state, viewmodel_model), "spectated player changed", state, viewmodel_model);
+        play_viewmodel_animation(animation_lookup_sequence("idle", state, viewmodel_model), AnimKind::Idle, "spectated player changed", state, viewmodel_model);
     } else if deploy_state_changed {
         // TODO(R&D, unverified live): play the "uptodown"/"downtoup"-style
         // transition sequence here instead of snapping straight to idle.
-        play_viewmodel_animation(animation_lookup_sequence("idle", state, viewmodel_model), "bipod deploy state changed", state, viewmodel_model);
+        play_viewmodel_animation(animation_lookup_sequence("idle", state, viewmodel_model), AnimKind::Idle, "bipod deploy state changed", state, viewmodel_model);
     } else {
         // Classify the action from the spectated player's body animation, not
         // the viewmodel's. Only on a *change* of sequence: the label persists
@@ -893,11 +925,12 @@ pub fn apply() {
                     if claim_fire(engine::client_time()) {
                         play_viewmodel_animation(
                             animation_lookup_any(ATTACK_SEQUENCES, state, viewmodel_model),
+                            AnimKind::Fire,
                             "spectated player fired",
                             state,
                             viewmodel_model,
                         );
-                    } else if ANIMATION_LOGS.fetch_add(1, Ordering::Relaxed) < MAX_ANIMATION_LOGS {
+                    } else if animation_log_allowed(AnimKind::Fire) {
                         // A detected shot that plays nothing looks identical in
                         // the log to a shot that was never detected, and the
                         // two have completely different causes. Say which.
@@ -911,6 +944,7 @@ pub fn apply() {
                 Some(BodyAction::Reload) => {
                     play_viewmodel_animation(
                         animation_lookup_sequence("reload", state, viewmodel_model),
+                        AnimKind::Reload,
                         "spectated player reloaded",
                         state,
                         viewmodel_model,
@@ -921,7 +955,7 @@ pub fn apply() {
         }
 
         if viewmodel_changed {
-            play_viewmodel_animation(animation_lookup_sequence("draw", state, viewmodel_model), "viewmodel changed", state, viewmodel_model);
+            play_viewmodel_animation(animation_lookup_sequence("draw", state, viewmodel_model), AnimKind::Draw, "viewmodel changed", state, viewmodel_model);
         }
     }
 
