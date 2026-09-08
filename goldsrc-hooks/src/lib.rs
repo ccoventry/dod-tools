@@ -21,12 +21,17 @@
 //!
 //! See each module's docs for the full R&D reasoning.
 //!
-//! Each fix has a default set via an environment variable on the `hl.exe`
-//! process before launch (`GOLDSRC_HOOKS_FORCE_WEAPON_VOLUME=1`,
-//! `GOLDSRC_HOOKS_ANIM_FIX=1`), and can also be toggled live from the game
-//! console via `dodtools_hltv_gunshots_fix <0|1>` / `dodtools_hltv_animation_fix
-//! <0|1>` (see `commands.rs`) -- either mechanism flips the same runtime
-//! flag, so whichever is more convenient for a given session works.
+//! Both are `dodtools_*` **cvars**, so they behave like any other engine
+//! setting: `dodtools_hltv_animation_fix 1` from the console, `+dodtools_hltv_animation_fix 1`
+//! on the launch line, or a line in any `.cfg` the user execs. `commands.rs`
+//! copies them into the runtime flags once per frame, and `dodtools_status`
+//! reports what each fix is actually doing rather than only what it is set to.
+//!
+//! The `GOLDSRC_HOOKS_FORCE_WEAPON_VOLUME` / `GOLDSRC_HOOKS_ANIM_FIX`
+//! environment variables still set the starting value and are still the only
+//! route if cvar registration ever falls back to plain commands, but the launch
+//! line is now the better one: it is visible in the command that started the
+//! session.
 
 mod anim_fix;
 mod commands;

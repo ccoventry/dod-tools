@@ -90,6 +90,42 @@ pub type AddCommandFn = unsafe extern "C" fn(cmd_name: *const c_char, function: 
 pub type ConsolePrintFn = unsafe extern "C" fn(text: *const c_char);
 pub type CmdArgcFn = unsafe extern "C" fn() -> i32;
 pub type CmdArgvFn = unsafe extern "C" fn(arg: i32) -> *const c_char;
+pub type RegisterVariableFn =
+    unsafe extern "C" fn(name: *const c_char, value: *const c_char, flags: i32) -> *mut CvarSPartial;
+
+/// `cvar_s` (`common/cvardef.h`). Small, stable, and unchanged since Quake.
+///
+/// Only `value` is ever read; `name` exists so a registration can be checked
+/// against the name it asked for, which is the cheapest possible proof that
+/// this layout and the engine's agree. See `commands::install`.
+#[repr(C)]
+pub struct CvarSPartial {
+    pub name: *const c_char,
+    pub string: *const c_char,
+    pub flags: i32,
+    pub value: f32,
+    pub next: *mut CvarSPartial,
+}
+
+const _: () = assert!(
+    size_of::<CvarSPartial>() == 5 * size_of::<usize>(),
+    "CvarSPartial's layout doesn't match cvardef.h (expected 5 pointer-sized slots)"
+);
+
+impl CvarSPartial {
+    /// The name the engine holds for this cvar, or `None` if the pointer is
+    /// null. Borrowed from the engine's own storage, which outlives us.
+    ///
+    /// # Safety
+    ///
+    /// `self` must point at a live cvar the engine returned.
+    pub unsafe fn name_str(&self) -> Option<std::borrow::Cow<'_, str>> {
+        if self.name.is_null() {
+            return None;
+        }
+        Some(unsafe { std::ffi::CStr::from_ptr(self.name) }.to_string_lossy())
+    }
+}
 
 /// A 3D vector, matching `vec3_t` (`float[3]`) everywhere it's embedded in a
 /// GoldSrc SDK struct below.
@@ -311,9 +347,18 @@ pub struct EngineStudioApiPartial {
 /// `pfn_get_game_directory`, `p_event_api`, `is_spectate_only`) land at the
 /// correct byte offsets; everything else is kept as an opaque, untyped slot
 /// purely to hold the layout together.
+///
+/// `pfn_register_variable` sits at index 14, which is bracketed on both sides
+/// by slots proved from real call sites in DoD's own `client.dll`: index 14
+/// itself carries 111 calls (exactly the 111 cvar names recovered in
+/// `docs/goldsrc_client_dll_internals.md` §5) and index 17 carries 110 (the
+/// 110 command names). Two independently-confirmed anchors three slots apart
+/// leave no room for the count between them to be wrong.
 #[repr(C)]
 pub struct ClEngineFuncsPartial {
-    _slots_before_add_command: [*mut c_void; 17], // pfnSPR_Load .. pfnGetCvarString
+    _slots_before_register_variable: [*mut c_void; 14], // pfnSPR_Load .. pfnSetCrosshair
+    pub pfn_register_variable: RegisterVariableFn,
+    _slots_before_add_command: [*mut c_void; 2], // pfnGetCvarFloat, pfnGetCvarString
     pub pfn_add_command: AddCommandFn,
     _slots_before_console_print: [*mut c_void; 12], // pfnHookUserMsg .. pfnDrawConsoleStringLen
     pub pfn_console_print: ConsolePrintFn,
@@ -390,6 +435,18 @@ static TIMER_THREAD_STARTED: AtomicBool = AtomicBool::new(false);
 /// renders a frame through us; retires the fallback timer thread.
 static HUD_FRAME_DRIVING: AtomicBool = AtomicBool::new(false);
 
+/// Runs immediately before the main per-frame callback.
+///
+/// Exists so the cvar poll can write the flags `anim_fix::apply()` then reads
+/// on the same frame, without either module having to know about the other.
+/// Separate `OnceLock`s rather than a list because this is the frame path:
+/// no allocation, no locking.
+static PER_FRAME_PROLOGUE: std::sync::OnceLock<fn()> = std::sync::OnceLock::new();
+
+pub fn set_per_frame_prologue(callback: fn()) {
+    let _ = PER_FRAME_PROLOGUE.set(callback);
+}
+
 pub fn set_per_frame_callback(callback: fn()) {
     let _ = PER_FRAME_CALLBACK.set(callback);
     if !TIMER_THREAD_STARTED.swap(true, Ordering::AcqRel) {
@@ -400,6 +457,9 @@ pub fn set_per_frame_callback(callback: fn()) {
 }
 
 fn run_per_frame_callback() {
+    if let Some(prologue) = PER_FRAME_PROLOGUE.get() {
+        prologue();
+    }
     if let Some(callback) = PER_FRAME_CALLBACK.get() {
         callback();
     }

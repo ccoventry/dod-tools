@@ -4,8 +4,9 @@
 > Lives in `goldsrc-hooks/src/anim_fix.rs`, on branch
 > `feat/goldsrc-hooks-companion-dll`. Tracked by
 > [#204](https://github.com/ccoventry/dod-tools/issues/204).
-> Defaults **off**; turn it on per session with `dodtools_hltv_animation_fix 1`
-> or start it on with `GOLDSRC_HOOKS_ANIM_FIX=1`.
+> Defaults **off**. It is a cvar: turn it on in the console with
+> `dodtools_hltv_animation_fix 1`, on the launch line with
+> `+dodtools_hltv_animation_fix 1`, or from any `.cfg` the session execs.
 
 Watching a DoD demo in first person, the weapon on screen barely moves. It does
 not recoil when the player fires, does not reload when they reload, and does not
@@ -150,9 +151,15 @@ refinement on top, not the point.
 
 ## 8. Diagnostics
 
-- `dodtools_hltv_animation_fix <0|1>` — toggle. Bare call prints status and usage.
-- `dodtools_log_weapon_model <0|1>` — logs every held-model change *and* every
-  body-sequence change, which is the trail to read a session back from.
+- `dodtools_hltv_animation_fix <0|1>` — a **cvar**, so it also takes
+  `+dodtools_hltv_animation_fix 1` on the launch line or a line in any `.cfg`,
+  and shows its value in the console type-ahead.
+- `dodtools_log_weapon_model <0|1>` — cvar. Logs every held-model change *and*
+  every body-sequence change, which is the trail to read a session back from.
+- `dodtools_status` — what each fix is *doing*, not just what it is set to. A
+  cvar can answer "what is this set to" on its own; whether the fix's
+  preconditions are being met in the current view is a different question, and
+  this is where it is answered.
 - Log file: `%TEMP%\goldsrc_hooks.log`, with wall clock **and** a `[demo NNN.NNN]`
   prefix. Read it directly.
 - **"animations corrected" counter** — the honest number. A running total is
