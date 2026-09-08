@@ -265,6 +265,61 @@ fn note_held_model(spectated: &ClEntityS) {
     };
 }
 
+/// Weapons whose first- and third-person models are not named the same thing.
+///
+/// The match filter below compares the viewmodel's stem against the held
+/// model's, which works for most weapons (`v_garand` / `p_garand`). Seven do
+/// not match at all, and for those *every* frame was discarded as "the
+/// viewmodel is not the weapon the spectated player is holding" -- 7139 frames
+/// in a single session for the STG44 alone. That silently disabled draw,
+/// reload and the body-sequence firing trigger for all seven; only the
+/// sound-driven firing trigger still worked, which is what made it look like a
+/// missing draw animation rather than a whole weapon being skipped.
+///
+/// Keys are exact viewmodel stems, values a substring of the third-person
+/// stem. Read out of the shipped model files rather than guessed.
+const VIEWMODEL_ALIASES: &[(&str, &str)] = &[
+    ("98k", "k98"),
+    ("scoped98k", "k98s"),
+    ("mp44", "stg44"),
+    ("greasegun", "grease"),
+    ("m1carbine", "m1carb"),
+    ("panzerschreck", "pschreck"),
+    ("enfield_scoped", "enfields"),
+];
+
+/// The third-person name to look for, given a viewmodel's stem.
+fn third_person_stem(viewmodel_stem: &str) -> &str {
+    VIEWMODEL_ALIASES
+        .iter()
+        .find(|(viewmodel, _)| *viewmodel == viewmodel_stem)
+        .map(|(_, third_person)| *third_person)
+        .unwrap_or(viewmodel_stem)
+}
+
+/// Viewmodel/held pairs that could not be matched, reported once each.
+///
+/// The failure mode this guards against is silent and total: an unlisted
+/// naming mismatch discards every frame for that weapon forever, and the only
+/// symptom is an animation that never plays. Logged unconditionally, not behind
+/// the verbose switch, because nobody would think to turn it on for a weapon
+/// they had no reason to suspect.
+static REPORTED_MISMATCHES: Mutex<Option<HashSet<(String, String)>>> = Mutex::new(None);
+
+fn note_unmatched_pair(viewmodel_name: &str, held_name: &str) {
+    let mut guard = REPORTED_MISMATCHES.lock().unwrap();
+    let seen = guard.get_or_insert_with(HashSet::new);
+    if !seen.insert((viewmodel_name.to_string(), held_name.to_string())) {
+        return;
+    }
+    drop(guard);
+    unsafe {
+        crate::debug::report(&format!(
+            "anim_fix: \"{viewmodel_name}\" and \"{held_name}\" never match, so every frame holding this weapon is skipped -- if they are the same weapon, it needs a VIEWMODEL_ALIASES entry"
+        ))
+    };
+}
+
 fn viewmodel_match_inner(viewmodel_name: &str, spectated: &ClEntityS) -> Option<bool> {
     let studio = engine::engine_studio()?;
     let held = unsafe { (studio.get_model_by_index)(spectated.curstate.weaponmodel) };
@@ -272,11 +327,15 @@ fn viewmodel_match_inner(viewmodel_name: &str, spectated: &ClEntityS) -> Option<
         return None;
     }
     let held_name = unsafe { (*held).name_str() }.into_owned();
-    let stem = model_stem(viewmodel_name);
+    let stem = third_person_stem(model_stem(viewmodel_name));
     if stem.is_empty() {
         return None;
     }
-    Some(model_stem(&held_name).contains(stem))
+    let matched = model_stem(&held_name).contains(stem);
+    if !matched {
+        note_unmatched_pair(viewmodel_name, &held_name);
+    }
+    Some(matched)
 }
 
 static SEQUENCE_CACHE: Mutex<Option<HashMap<usize, Vec<String>>>> = Mutex::new(None);
@@ -1025,6 +1084,54 @@ mod tests {
         // be read as "not deployed".
         assert_eq!(deploy_state_from_body_sequence("dod_idle1"), None);
         assert_eq!(deploy_state_from_body_sequence("hs_gogogo"), None);
+    }
+
+    /// Every pair here is a real (v_*.mdl, p_*.mdl) pair shipped with DoD 1.3.
+    /// The STG44 row is the one that cost 7139 discarded frames in a session.
+    #[test]
+    fn viewmodels_match_their_third_person_models() {
+        let pairs = [
+            // The seven that need an alias.
+            ("models/v_98k.mdl", "models/p_k98.mdl"),
+            ("models/v_scoped98k.mdl", "models/p_k98s.mdl"),
+            ("models/v_mp44.mdl", "models/p_stg44.mdl"),
+            ("models/v_greasegun.mdl", "models/p_grease.mdl"),
+            ("models/v_m1carbine.mdl", "models/p_m1carb.mdl"),
+            ("models/v_panzerschreck.mdl", "models/p_pschreck.mdl"),
+            ("models/v_enfield_scoped.mdl", "models/p_enfields.mdl"),
+            // Ordinary ones, which must keep working.
+            ("models/v_garand.mdl", "models/p_garand.mdl"),
+            ("models/v_colt.mdl", "models/p_colt.mdl"),
+            // Stance and bipod suffixes live on the third-person side only.
+            ("models/v_bar.mdl", "models/p_barbu.mdl"),
+            ("models/v_mg42.mdl", "models/p_mg42bd.mdl"),
+            ("models/v_bren.mdl", "models/p_brenpr.mdl"),
+            ("models/v_greasegun.mdl", "models/p_grease_l.mdl"),
+        ];
+        for (viewmodel, held) in pairs {
+            let stem = third_person_stem(model_stem(viewmodel));
+            assert!(
+                model_stem(held).contains(stem),
+                "{viewmodel} should match {held} (looked for {stem:?})"
+            );
+        }
+    }
+
+    #[test]
+    fn aliases_do_not_confuse_the_scoped_and_unscoped_variants() {
+        // A scoped k98's viewmodel must not accept the plain k98 in hand.
+        let scoped = third_person_stem(model_stem("models/v_scoped98k.mdl"));
+        assert!(!model_stem("models/p_k98.mdl").contains(scoped));
+        assert!(model_stem("models/p_k98s.mdl").contains(scoped));
+
+        // Same for the Enfield, whose scoped third-person model is p_enfields.
+        let scoped = third_person_stem(model_stem("models/v_enfield_scoped.mdl"));
+        assert!(!model_stem("models/p_enfield.mdl").contains(scoped));
+        assert!(model_stem("models/p_enfields.mdl").contains(scoped));
+
+        // And the M1 carbine must not match the folding-stock carbine.
+        let carbine = third_person_stem(model_stem("models/v_m1carbine.mdl"));
+        assert!(!model_stem("models/p_fcarb.mdl").contains(carbine));
     }
 
     #[test]
