@@ -172,7 +172,16 @@ const MAX_HELD_LOGS: i32 = 200;
 /// A timestamped trail of the changes can be matched against what the player
 /// was visibly doing, which settles it by observation rather than by guessing
 /// at abbreviations.
+pub static LOG_HELD_MODELS: AtomicBool = AtomicBool::new(false);
+
 fn note_held_model(spectated: &ClEntityS) {
+    if !LOG_HELD_MODELS.load(Ordering::Relaxed) {
+        // Forget what was last seen, so switching this on mid-session reports
+        // the current model straight away rather than waiting for the next
+        // change -- which might never come if the player just stands there.
+        *LAST_HELD_MODEL.lock().unwrap() = None;
+        return;
+    }
     let Some(studio) = engine::engine_studio() else { return };
     let held = unsafe { (studio.get_model_by_index)(spectated.curstate.weaponmodel) };
     if held.is_null() {

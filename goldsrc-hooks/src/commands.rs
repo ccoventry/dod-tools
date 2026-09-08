@@ -18,6 +18,7 @@ use crate::{anim_fix, sound_fix};
 const GUNSHOTS_FIX_NAME: &str = "dodtools_hltv_gunshots_fix";
 const ANIMATION_FIX_NAME: &str = "dodtools_hltv_animation_fix";
 const ATTENUATION_NAME: &str = "dodtools_hltv_gunshot_attenuation";
+const HELD_MODELS_NAME: &str = "dodtools_hltv_log_held_models";
 
 fn console_print(text: &str) {
     let Some(engfuncs) = engine::engfuncs() else { return };
@@ -132,6 +133,14 @@ unsafe extern "C" fn cmd_animation_fix() {
     handle_toggle(ANIMATION_FIX_NAME, &anim_fix::ENABLED, anim_fix::status);
 }
 
+/// Off by default: it fires on every weapon *and* stance change, which is a
+/// lot of noise unless you are deliberately watching for it.
+unsafe extern "C" fn cmd_log_held_models() {
+    handle_toggle(HELD_MODELS_NAME, &anim_fix::LOG_HELD_MODELS, || {
+        "logs the third-person model the spectated player holds, each time it changes".into()
+    });
+}
+
 
 /// Registers both console commands. Must be called after `engine::engfuncs()`
 /// returns `Some`.
@@ -144,20 +153,23 @@ pub fn install() {
     let gunshots_name = CString::new(GUNSHOTS_FIX_NAME).unwrap();
     let animation_name = CString::new(ANIMATION_FIX_NAME).unwrap();
     let attenuation_name = CString::new(ATTENUATION_NAME).unwrap();
+    let held_models_name = CString::new(HELD_MODELS_NAME).unwrap();
     unsafe {
         (engfuncs.pfn_add_command)(gunshots_name.as_ptr(), cmd_gunshots_fix);
         (engfuncs.pfn_add_command)(animation_name.as_ptr(), cmd_animation_fix);
         (engfuncs.pfn_add_command)(attenuation_name.as_ptr(), cmd_gunshot_attenuation);
+        (engfuncs.pfn_add_command)(held_models_name.as_ptr(), cmd_log_held_models);
     }
     // Leak intentionally: pfnAddCommand keeps this pointer for the life of
     // the engine session, same lifetime as the DLL itself.
+    std::mem::forget(held_models_name);
     std::mem::forget(gunshots_name);
     std::mem::forget(animation_name);
     std::mem::forget(attenuation_name);
 
     unsafe {
         crate::debug::report(&format!(
-            "commands: registered {GUNSHOTS_FIX_NAME}, {ANIMATION_FIX_NAME}, {ATTENUATION_NAME}"
+            "commands: registered {GUNSHOTS_FIX_NAME}, {ANIMATION_FIX_NAME}, {ATTENUATION_NAME}, {HELD_MODELS_NAME}"
         ))
     };
 }
