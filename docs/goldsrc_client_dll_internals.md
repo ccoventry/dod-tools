@@ -489,7 +489,67 @@ Anything that needs the camera on a particular player has to reach the
 spectator state directly — `goldsrc-hooks` territory, not the demo stream. See
 issue #206.
 
-## 8. Reproducing this analysis
+## 8. Sprint does nothing to the first-person viewmodel
+
+`goldsrc-hooks`' animation fix was thought to be missing a behaviour: DoD appears to
+lower or hide the weapon while a player sprints, and the fix does not reproduce it. It is
+not missing. **DoD 1.3 does not touch the viewmodel during a sprint at all**, and the
+place the weapon visibly changes is the player's *body*, which the engine already
+animates correctly from the replicated `sprint_*` sequence.
+
+There were only three mechanisms it could have been, and all three are ruled out.
+
+**It does not switch the viewmodel off, and it does not play a sequence on it.**
+`analysis/examples/sprint_viewmodel_probe` finds sprints in a POV demo the way the client
+does — see the stamina field below — and reports what the viewmodel did across each one.
+Over four POV demos and roughly 500 sprints longer than half a second,
+`clientdata.viewmodel` holds one non-zero model index through every sprint and
+`weaponanim` holds one value. Neither ever moves *because of* a sprint. The
+`clientdata.viewmodel == 0` intervals that do exist run 6–13 seconds and are deaths.
+
+**It is not a client-side transform either**, which is the case a demo could not see. The
+view module (`V_CalcRefdef` at `0x1951470`, dispatching to `V_CalcNormalRefdef` at
+`0x194f430`) never reads any of the three things it would need:
+
+| what it would have to read | where it lives | reads inside `0x194e000..0x1951600` |
+| --- | --- | --- |
+| the sprint key | `in_speed.state`, `0x1a8a950` | 0 (all 10 refs are in the input module) |
+| the player's buttons | `pparams->cmd`, `+0xc8` | 0 |
+| stamina | `0x19e9d4c` | 0 (its 3 refs are the stamina bar, the sprint grunt, and a clamp helper) |
+
+So there is nothing to reproduce, and adding a "lower the weapon on sprint" behaviour
+would make HLTV playback *less* faithful than a POV recording, not more.
+
+### Two things worth keeping from the search
+
+**Sprint is `+speed`.** `client.dll` registers no `+sprint`; the bind is `+speed`
+(handler `0x193c3b0`, `kbutton_t in_speed` at `0x1a8a948`, its `state` at `0x1a8a950`).
+The only sprint-specific strings in the whole client are `player/sprintgrunts.wav` and
+`hud_staminabar`.
+
+**Stamina is `entity_state_t.fuser4`, and it is replicated per player.**
+`HUD_ProcessPlayerState` (slot 28, `0x1930dc0`) copies `iuser1..4`, `fuser1..4` and
+`vuser1` for *every* player, then — behind a `pfnGetLocalPlayer` check that the state
+being processed is the local player's — publishes a handful of them to globals:
+
+```
+iuser1 -> 0x19e88d4   (g_iUser1, the spectator mode V_CalcRefdef branches on)
+iuser2 -> 0x19e88d8
+iuser3 -> 0x19e88dc
+iuser4 -> 0x19e910c
+movetype -> 0x19e9110
+effects  -> 0x19e9d48
+fuser4   -> 0x19e9d4c   <- stamina: the stamina bar and the sprint grunt both read this
+```
+
+The per-player copy happens *before* the local-player check, so a spectated player's
+stamina is present in `entity_state.fuser4` if the server sends it — which makes a
+falling `fuser4` the one honest "this player is sprinting" signal available to an HLTV
+recording. Nothing currently needs it, but it is the handle if something ever does.
+
+---
+
+## 9. Reproducing this analysis
 
 No IDA or Ghidra required; everything above came from `pefile` + `capstone`
 (`pip install capstone pefile`). The core of it:
