@@ -513,29 +513,35 @@ static PREVIOUS_SEQUENCE: AtomicI32 = AtomicI32::new(-1);
 static PREVIOUS_DEPLOY_STATE: AtomicI32 = AtomicI32::new(-1); // -1 none, 0 up, 1 down
 /// Which weapon the viewmodel is *currently* showing, and since when.
 ///
-/// The viewmodel does not simply change when a player switches weapons -- it
-/// rotates through several of the weapons they are carrying, many times a
-/// second. One spectated player was measured cycling four models
-/// (v_stick / v_spade and two others) thirteen times in 1.4 seconds, every one
-/// of which the old "pointer differs from last frame" test read as a weapon
-/// switch and started a draw animation for. Nothing ever got to play: each
-/// draw was replaced ~100ms later by a draw on a different model, which is why
-/// the STG44's draw was reported missing when it was in fact being restarted
-/// out of existence.
+/// The viewmodel can change far faster than a draw animation takes to play.
+/// One spectated player was measured cycling four models thirteen times in 1.4
+/// seconds; the *replicated* `curstate.weaponmodel` bounces too, `p_stg44 ->
+/// p_luger -> p_stg44` inside 0.17s. Under the old "pointer differs from last
+/// frame" test every one of those started a draw, and each was replaced ~100ms
+/// later by a draw on a different model, so none ever played long enough to
+/// see -- which is why the STG44's draw was reported missing when it was
+/// really being restarted out of existence.
 ///
-/// `curstate.weaponmodel` is no better, which is worth recording because this
-/// module used to claim otherwise: the same session shows the *replicated*
-/// held model bouncing `p_stg44 -> p_luger -> p_stg44` in 0.17s and again in
-/// 0.33s, always returning to the real weapon. The excursions are short and
-/// they revert, so requiring a model to hold still is what separates a switch
-/// from the noise.
+/// **Whether that churn is the engine or the player is not established.** The
+/// measured burst was pre-game, where someone scrolling through their
+/// inventory or mashing `lastinv` would look exactly like this, and the
+/// held-model trace was not switched on until well after it. It does not
+/// change what to do: a draw that is cut off after 100ms is not worth playing
+/// either way, and settling on the weapon actually ended up with is the right
+/// response to a scroll through three of them. It does mean this must not be
+/// written down as an engine quirk.
+///
+/// To tell the two apart, run a session with `dodtools_log_weapon_model 1`
+/// from the start: real input moves the held model and the viewmodel together,
+/// an engine artifact moves the viewmodel far more often.
 static PENDING_VIEWMODEL: AtomicPtr<ModelSPartial> = AtomicPtr::new(std::ptr::null_mut());
 static PENDING_VIEWMODEL_SINCE: AtomicU64 = AtomicU64::new(0);
 static SETTLED_VIEWMODEL: AtomicPtr<ModelSPartial> = AtomicPtr::new(std::ptr::null_mut());
 
 /// How long a viewmodel has to hold still before it counts as the weapon in
-/// hand. Comfortably longer than the longest observed excursion (~0.35s), at
-/// the cost of the draw animation starting that much after the switch.
+/// hand. Longer than the longest observed excursion (~0.35s), at the cost of
+/// the draw starting that much after a switch. Tuning it down risks the
+/// cut-off draws coming back; tuning it up makes a genuine switch feel late.
 const VIEWMODEL_SETTLE_SECONDS: f64 = 0.4;
 
 /// Whether the viewmodel has settled on a weapon that is not the one it had
@@ -1029,9 +1035,10 @@ mod tests {
         assert_eq!(model_stem("models/player/us-inf/us-inf.mdl"), "us-inf");
     }
 
-    /// Reproduces the measured flap that made the STG44's draw animation
-    /// invisible: four models cycling ~10 times a second, with the real weapon
-    /// recurring but never holding still.
+    /// Reproduces the churn that made the STG44's draw animation invisible:
+    /// four models cycling ~10 times a second, the real weapon recurring but
+    /// never holding still. Whether a player or the engine drove it does not
+    /// matter here -- a draw cut off after 100ms is not worth starting.
     #[test]
     fn a_flapping_viewmodel_is_not_a_weapon_switch() {
         let (a, b, c) = (1 as *mut ModelSPartial, 2 as *mut ModelSPartial, 3 as *mut ModelSPartial);
