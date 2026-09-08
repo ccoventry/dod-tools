@@ -153,6 +153,51 @@ fn viewmodel_matches_held_weapon(viewmodel_name: &str, spectated: &ClEntityS) ->
 static MATCH_LOGS: AtomicI32 = AtomicI32::new(0);
 const MAX_MATCH_LOGS: i32 = 30;
 
+/// The third-person model the spectated player was last seen holding.
+static LAST_HELD_MODEL: Mutex<Option<String>> = Mutex::new(None);
+static HELD_LOGS: AtomicI32 = AtomicI32::new(0);
+/// Generous, because this only changes on a weapon or stance change, not per
+/// frame -- and the whole point is to catch every one of them.
+const MAX_HELD_LOGS: i32 = 200;
+
+/// Logs the held third-person model whenever it changes.
+///
+/// DoD ships far more `p_` models than weapons because they encode stance as
+/// well: `p_mg42bu` / `p_mg42bd` / `p_mg42pr` / `p_mg42sr`, and the 30cal set
+/// runs `pr` / `r` / `sr`. Only "bu" and "bd" are known for certain (bipod up
+/// and down, and they are the only two carrying a shoot sequence); the rest
+/// are inferred -- "pr" looks like prone and "sr" like sprint, but that is a
+/// reading of the filenames, not a fact.
+///
+/// A timestamped trail of the changes can be matched against what the player
+/// was visibly doing, which settles it by observation rather than by guessing
+/// at abbreviations.
+fn note_held_model(spectated: &ClEntityS) {
+    let Some(studio) = engine::engine_studio() else { return };
+    let held = unsafe { (studio.get_model_by_index)(spectated.curstate.weaponmodel) };
+    if held.is_null() {
+        return;
+    }
+    let name = unsafe { (*held).name_str() }.into_owned();
+
+    let mut last = LAST_HELD_MODEL.lock().unwrap();
+    if last.as_deref() == Some(name.as_str()) {
+        return;
+    }
+    let previous = last.replace(name.clone());
+    drop(last);
+
+    if HELD_LOGS.fetch_add(1, Ordering::Relaxed) >= MAX_HELD_LOGS {
+        return;
+    }
+    unsafe {
+        crate::debug::report(&format!(
+            "anim_fix: held model changed -- \"{name}\" (was {}) -- what was the player doing?",
+            previous.as_deref().unwrap_or("<none>")
+        ))
+    };
+}
+
 fn viewmodel_match_inner(viewmodel_name: &str, spectated: &ClEntityS) -> Option<bool> {
     let studio = engine::engine_studio()?;
     let held = unsafe { (studio.get_model_by_index)(spectated.curstate.weaponmodel) };
@@ -621,6 +666,10 @@ pub fn apply() {
         return;
     }
     let spectated = unsafe { &*spectated };
+
+    // Before the mismatch filter, so stance changes are still recorded on
+    // frames the filter drops.
+    note_held_model(spectated);
 
     // The viewmodel flaps between a player's weapons faster than they could
     // possibly be switching. Acting on a frame where it disagrees with what
