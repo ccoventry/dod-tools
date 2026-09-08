@@ -364,6 +364,10 @@ const MAX_FIRE_LOGS: i32 = 25;
 static CURRENT_SPECTATED: AtomicI32 = AtomicI32::new(-1);
 static CURRENT_VIEWMODEL: AtomicPtr<ModelSPartial> = AtomicPtr::new(std::ptr::null_mut());
 static CURRENT_DEPLOY_STATE: AtomicI32 = AtomicI32::new(-1);
+/// Last bipod state actually read off a "bu"/"bd" model, carried across the
+/// stance variants that do not encode one. Cleared on a player switch, since
+/// it says nothing about the next person.
+static LAST_KNOWN_DEPLOY_STATE: AtomicI32 = AtomicI32::new(-1);
 
 static PREVIOUS_SPECTATED_ENTITY: AtomicI32 = AtomicI32::new(-1);
 static PREVIOUS_SEQUENCE: AtomicI32 = AtomicI32::new(-1);
@@ -634,6 +638,8 @@ pub fn apply() {
     let previous_entity = PREVIOUS_SPECTATED_ENTITY.swap(viewmodel_index, Ordering::Relaxed);
     let switched_players = previous_entity != viewmodel_index;
     if switched_players {
+        // Says nothing about the new player.
+        LAST_KNOWN_DEPLOY_STATE.store(-1, Ordering::Relaxed);
         // The single most useful line for reading a session back: which player
         // the camera moved to, and what they are holding according to their own
         // replicated state rather than the viewmodel.
@@ -653,7 +659,23 @@ pub fn apply() {
 
     stage_with(STAGE_RUNNING, viewmodel_entity, viewmodel_model, viewmodel_index);
 
-    let state = deployable.and_then(|weapon| get_spectated_deploy_state(weapon, spectated));
+    // Bipod state is only readable while the player is on a "bu"/"bd" model.
+    // Prone and sprint put them on a stance variant that carries neither
+    // marker (and only an idle pose -- p_mg42pr.mdl has no shoot sequence at
+    // all), so the state goes unreadable for as long as they hold it. Falling
+    // back to the last one actually observed keeps the viewmodel in the right
+    // sequence family across that gap, instead of dropping to whichever family
+    // a bare lookup happens to find first.
+    let observed = deployable.and_then(|weapon| get_spectated_deploy_state(weapon, spectated));
+    let state = match observed {
+        Some(seen) => {
+            LAST_KNOWN_DEPLOY_STATE.store(deploy_state_to_i32(Some(seen)), Ordering::Relaxed);
+            Some(seen)
+        }
+        // Only worth remembering for a weapon that has the two families at all.
+        None if deployable.is_some() => i32_to_deploy_state(LAST_KNOWN_DEPLOY_STATE.load(Ordering::Relaxed)),
+        None => None,
+    };
 
     // Published for the fire-event path, which runs from the sound hook rather
     // than from here and so has no view of any of this.
