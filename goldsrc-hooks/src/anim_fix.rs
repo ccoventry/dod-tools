@@ -477,8 +477,14 @@ fn play_viewmodel_animation(sequence: i32, reason: &str, state: Option<DeploySta
 
 /// What `apply()` last saw, published for `on_weapon_fired`, which runs from
 /// the sound hook on the same thread but has none of this context.
-static FIRE_LOGS: AtomicI32 = AtomicI32::new(0);
-const MAX_FIRE_LOGS: i32 = 25;
+/// Counted separately from the matches, because gunfire from the rest of the
+/// match vastly outnumbers the spectated player's own and a single shared cap
+/// let the noise crowd out the one line worth reading. (It did exactly that on
+/// the first run: 25 "ignored" lines used the whole budget.)
+static FIRE_LOGS_IGNORED: AtomicI32 = AtomicI32::new(0);
+const MAX_FIRE_LOGS_IGNORED: i32 = 15;
+static FIRE_LOGS_MATCHED: AtomicI32 = AtomicI32::new(0);
+const MAX_FIRE_LOGS_MATCHED: i32 = 40;
 
 /// Demo time of the last firing animation played, so the two independent
 /// triggers cannot both play one shot.
@@ -679,16 +685,22 @@ pub fn on_weapon_fired(entity_index: i32) {
         return;
     }
 
-    // Whether the entity a fire sound names is ever the spectated player has
-    // never actually been confirmed, and if it is not then this trigger is
-    // inert and only the body-sequence one is doing any work. Log the first few
-    // raw so a single session settles it.
+    // Confirmed live: `ent` is a real, varying player index (3, 5, 8, 10,
+    // 12, 13 across one session), so the sound does name the shooter. Still
+    // logged, because what it cannot yet show is a session where the spectated
+    // player is among them.
     let spectated = CURRENT_SPECTATED.load(Ordering::Relaxed);
-    if FIRE_LOGS.fetch_add(1, Ordering::Relaxed) < MAX_FIRE_LOGS {
+    let matched = entity_index == spectated;
+    let (counter, cap) = if matched {
+        (&FIRE_LOGS_MATCHED, MAX_FIRE_LOGS_MATCHED)
+    } else {
+        (&FIRE_LOGS_IGNORED, MAX_FIRE_LOGS_IGNORED)
+    };
+    if counter.fetch_add(1, Ordering::Relaxed) < cap {
         unsafe {
             crate::debug::report(&format!(
                 "anim_fix: weapon-fire sound from entity {entity_index}, currently spectating {spectated} -- {}",
-                if entity_index == spectated { "MATCH" } else { "ignored" }
+                if matched { "MATCH" } else { "ignored" }
             ))
         };
     }
@@ -877,13 +889,24 @@ pub fn apply() {
                 };
             }
             match body_label.as_deref().map(classify_body_sequence) {
-                Some(BodyAction::Shoot) if claim_fire(engine::client_time()) => {
-                    play_viewmodel_animation(
-                        animation_lookup_any(ATTACK_SEQUENCES, state, viewmodel_model),
-                        "spectated player fired",
-                        state,
-                        viewmodel_model,
-                    );
+                Some(BodyAction::Shoot) => {
+                    if claim_fire(engine::client_time()) {
+                        play_viewmodel_animation(
+                            animation_lookup_any(ATTACK_SEQUENCES, state, viewmodel_model),
+                            "spectated player fired",
+                            state,
+                            viewmodel_model,
+                        );
+                    } else if ANIMATION_LOGS.fetch_add(1, Ordering::Relaxed) < MAX_ANIMATION_LOGS {
+                        // A detected shot that plays nothing looks identical in
+                        // the log to a shot that was never detected, and the
+                        // two have completely different causes. Say which.
+                        unsafe {
+                            crate::debug::report(
+                                "anim_fix: spectated player fired, but the dedup window swallowed it -- the sound trigger should already have played this shot",
+                            )
+                        };
+                    }
                 }
                 Some(BodyAction::Reload) => {
                     play_viewmodel_animation(

@@ -514,21 +514,43 @@ unsafe extern "C" fn tramp_initialize(engfuncs: *mut ClEngineFuncsPartial, versi
 
 /// Real per-frame tick. Runs `client.dll`'s own `HUD_Frame` first so our
 /// callback observes the state the engine just finished producing.
-/// The client time `HUD_Frame` was last called with, as raw f64 bits.
+/// Seconds of playback elapsed, as raw f64 bits, summed from the per-frame
+/// deltas `HUD_Frame` is passed.
 ///
-/// Free: the engine already passes it every frame and it was being discarded.
-/// During demo playback this is the demo's own clock, which is what a log line
-/// needs to be matched against something seen on screen -- wall-clock time
-/// cannot be, once playback is paused, seeked or fast-forwarded.
-static CLIENT_TIME: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// Free: the engine already passes the delta every frame and it was otherwise
+/// discarded. Playback time is what a log line has to be matched against
+/// something seen on screen -- wall-clock time cannot be, once playback is
+/// paused, seeked or fast-forwarded.
+///
+/// The value `HUD_Frame(double time)` receives is the frame's *duration*
+/// (`host_frametime`, 6-11ms at ordinary framerates), **not** a clock. Storing
+/// it directly was a bug: every log line read `[demo 0.006]` no matter how far
+/// into the demo it was, and `anim_fix`'s fire-dedup window ended up comparing
+/// two frame durations, which put it permanently inside its own window and
+/// suppressed every firing animation. Summing the deltas gives the elapsed
+/// reading both uses actually wanted.
+///
+/// Elapsed since the client loaded rather than since the current demo started:
+/// loading a second demo in the same session does not reset it, because the
+/// engine gives no clean signal to reset on. Monotonic within a session, which
+/// is all either caller needs.
+static DEMO_ELAPSED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-/// Seconds into the demo, or 0 before the first frame.
+/// Seconds of playback elapsed, or 0 before the first frame.
 pub fn client_time() -> f64 {
-    f64::from_bits(CLIENT_TIME.load(Ordering::Relaxed))
+    f64::from_bits(DEMO_ELAPSED.load(Ordering::Relaxed))
 }
 
 unsafe extern "C" fn tramp_hud_frame(time: f64) {
-    CLIENT_TIME.store(time.to_bits(), Ordering::Relaxed);
+    // Only ever called from the engine thread, so a plain load/store pair needs
+    // no stronger ordering than this.
+    let elapsed = f64::from_bits(DEMO_ELAPSED.load(Ordering::Relaxed));
+    // Guard against a nonsense delta rather than letting it poison the running
+    // total permanently: a hitch, a breakpoint or a paused demo can hand back a
+    // very large frametime, and NaN would make every later comparison false.
+    if time.is_finite() && time > 0.0 {
+        DEMO_ELAPSED.store((elapsed + time.min(1.0)).to_bits(), Ordering::Relaxed);
+    }
 
     let real = REAL_HUD_FRAME.load(Ordering::Acquire);
     if !real.is_null() {
