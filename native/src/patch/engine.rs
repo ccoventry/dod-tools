@@ -82,14 +82,20 @@ fn write_director_event_payload(
     Ok(total_bytes as i32)
 }
 
-/// Parked R&D, deliberately kept: forcing the spectator view into one player's
-/// eyes by injecting `DRC_CMD_INEYE`.
+/// Forces the spectator view into one player's eyes by injecting
+/// `DRC_CMD_INEYE`, as a **standalone** network-message frame.
 ///
-/// **Unused, and not dead.** It exists for the HLTV case, which is still open.
-/// An HLTV demo carries every player's highlights and the app offers all of
-/// them, but there is no reliable way yet to put the camera on the one a clip
-/// is about — today that means left/right-clicking through spectator targets by
-/// hand. This is the attempt at doing it from the stream instead.
+/// Standalone is the whole point. An HLTV demo carries every player's
+/// highlights and its camera is the auto-director's, so putting the view on the
+/// player a clip is about used to mean clicking through spectator targets by
+/// hand. The first attempt at doing it from the stream prepended this
+/// svc_director inside the *existing* frame's payload instead of writing its
+/// own frame, and the result would not play at all -- "illegal server message"
+/// and "packet read overflow" on load, which is the documented consequence of
+/// interleaving injected messages into an existing packet.
+///
+/// Used by `preview_cli --player`; see `HIJACK_REASSERT_SECONDS` for why it is
+/// written repeatedly rather than once.
 ///
 /// It is NOT about first-person demos. Those already record the only camera
 /// they have, and the Highlights table filters a POV demo down to the recording
@@ -101,7 +107,9 @@ fn write_director_event_payload(
 /// visibility test most of all — reads the demo's recorded `refparams`, which
 /// is correct exactly while this stays unused. Switching it on moves the camera
 /// away from what those samples describe, and the flush would have to follow.
-#[allow(dead_code)]
+/// How often the spectator target is re-asserted, in demo seconds.
+const HIJACK_REASSERT_SECONDS: f32 = 1.0;
+
 fn write_ineye_hijack_payload(
     writer: &mut std::io::BufWriter<std::fs::File>,
     time: f32,
@@ -211,6 +219,14 @@ impl StreamPatcher {
             b.into()
         };
         let mut scheduled_queue: std::collections::VecDeque<(i32, String)> = job.scheduled_commands.iter().cloned().collect();
+
+        // In-eye hijack: which player to pin the spectator view to, if any.
+        // `target_player` names them; the id the wire format wants is the entity
+        // index, which the job's streaks carry (they have been filtered to that
+        // one player by the caller).
+        let hijack_target: Option<u8> =
+            job.target_player.as_ref().and_then(|_| job.streaks.first().map(|s| s.player_index as u8));
+        let mut last_hijack_time = f32::NEG_INFINITY;
 
         // Step 2.5: Pre-read the directory to map entry boundaries
         let mut dir_entries: Vec<(i32, i32)> = Vec::new();
@@ -410,6 +426,26 @@ impl StreamPatcher {
                         }
                     }
 
+                    // Re-assert the spectator target periodically. Once is not
+                    // enough: the auto-director takes the camera back whenever
+                    // the player being watched dies, and at round transitions.
+                    //
+                    // Every frame would be the surest lock and is what the
+                    // original attempt did, but a standalone frame costs
+                    // NETMSG_INFO_SIZE + 18 bytes, so asserting it 30 times a
+                    // second would add ~19MB to a 21-minute demo and double its
+                    // frame count. Once a second costs ~600KB and gives up at
+                    // most a second of the wrong player after a death.
+                    if let Some(target) = hijack_target
+                        && playback_started
+                        && time - last_hijack_time >= HIJACK_REASSERT_SECONDS
+                    {
+                        last_hijack_time = time;
+                        let b = write_ineye_hijack_payload(&mut writer, time, file_tick, &scratch_buf, target)?;
+                        update_injection(pos, b, 1);
+                        bytes_injected += b;
+                    }
+
                     // Write original frame header and info block
                     writer.write_all(&frame_hdr)?;
                     writer.write_all(&scratch_buf)?;
@@ -430,26 +466,14 @@ impl StreamPatcher {
                     let mut net_buf = vec![0u8; msg_len];
                     read_exact(&mut reader, &mut net_buf, "NetworkMessage Body")?;
 
-                    let mut final_net_buf = net_buf;
-                    let mut added_bytes: i32 = 0;
-
-                    if let Some(ref _tp) = job.target_player {
-                        let target_player_id: u8 = job.streaks.first().map(|s| s.player_index as u8).unwrap_or(1);
-                        let mut hijacked_buf = vec![51u8, 2, 5, target_player_id];
-                        hijacked_buf.extend_from_slice(&final_net_buf);
-                        final_net_buf = hijacked_buf;
-                        added_bytes += 4;
-                    }
-
-                    let final_len_buf = (final_net_buf.len() as u32).to_le_bytes();
-
-                    if added_bytes > 0 {
-                        update_injection(pos, added_bytes, 0);
-                        bytes_injected += added_bytes;
-                    }
-
+                    // The in-eye hijack used to prepend its svc_director *inside*
+                    // this payload, which is exactly what the packet-integrity
+                    // rule forbids -- it loaded as svc_bad / "packet read
+                    // overflow" and never played. It is written as a standalone
+                    // frame above instead.
+                    let final_len_buf = (net_buf.len() as u32).to_le_bytes();
                     writer.write_all(&final_len_buf)?;
-                    writer.write_all(&final_net_buf)?;
+                    writer.write_all(&net_buf)?;
                 }
             }
         }
