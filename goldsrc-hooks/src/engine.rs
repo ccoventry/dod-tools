@@ -107,10 +107,20 @@ pub struct CvarSPartial {
     pub next: *mut CvarSPartial,
 }
 
-const _: () = assert!(
-    size_of::<CvarSPartial>() == 5 * size_of::<usize>(),
-    "CvarSPartial's layout doesn't match cvardef.h (expected 5 pointer-sized slots)"
-);
+// Unlike the tables above, `cvar_s` mixes pointers with 32-bit scalars, so its
+// size does not scale with the pointer width and the check has to name a target.
+// The DLL only ever loads into 32-bit `hl.exe`; `cargo test --workspace` builds
+// this crate for the host as well, hence the gate rather than a formula.
+#[cfg(target_pointer_width = "32")]
+const _: () = {
+    assert!(
+        size_of::<CvarSPartial>() == 20,
+        "CvarSPartial's layout doesn't match cvardef.h (expected 20 bytes on a 32-bit build)"
+    );
+    // `value` is the only field read at runtime, so its offset is the one that
+    // has to be right.
+    assert!(std::mem::offset_of!(CvarSPartial, value) == 12);
+};
 
 impl CvarSPartial {
     /// The name the engine holds for this cvar, or `None` if the pointer is
