@@ -49,15 +49,16 @@ fn env_flag(name: &str, default: bool) -> bool {
     }
 }
 
-/// TEMPORARY, for the current round of live testing: the animation fix starts
-/// on rather than off, because every session otherwise begins by forgetting to
-/// type `dodtools_hltv_animation_fix 1` and producing a log with nothing in
-/// it. Set `GOLDSRC_HOOKS_ANIM_FIX=0` to override.
+/// The animation fix starts **off**, like the sound fix: a capture pipeline
+/// should not silently alter viewmodel animations for anyone who happens to
+/// have the DLL loaded. Turn it on per session with
+/// `dodtools_hltv_animation_fix 1`, or set `GOLDSRC_HOOKS_ANIM_FIX=1` to have
+/// it start on.
 ///
-/// **Restore this to `false` before the branch merges.** A capture pipeline
-/// should not silently alter viewmodel animations because a debugging default
-/// was left behind.
-const ANIM_FIX_DEFAULT: bool = true;
+/// It was `true` through live testing, because a session that begins by
+/// forgetting to type the command produces a log with nothing in it and looks
+/// like a broken hook.
+const ANIM_FIX_DEFAULT: bool = false;
 
 unsafe extern "system" fn worker_thread(_lp_param: *mut std::ffi::c_void) -> u32 {
     // The sound fix stays default-off: what it currently does (extending how
@@ -77,10 +78,9 @@ unsafe extern "system" fn worker_thread(_lp_param: *mut std::ffi::c_void) -> u32
     // obvious from the log rather than mistaken for a broken hook.
     unsafe {
         debug::report(&format!(
-            "goldsrc-hooks: starting state -- gunshots fix: {}, animation fix: {}{} (env vars set the default; dodtools_hltv_gunshots_fix / dodtools_hltv_animation_fix toggle live)",
+            "goldsrc-hooks: starting state -- gunshots fix: {}, animation fix: {} (env vars set the default; dodtools_hltv_gunshots_fix / dodtools_hltv_animation_fix toggle live)",
             if sound_fix::ENABLED.load(Ordering::Relaxed) { "ON" } else { "off" },
             if anim_fix::ENABLED.load(Ordering::Relaxed) { "ON" } else { "off" },
-            if ANIM_FIX_DEFAULT { "  [TEMPORARY testing default -- animation fix starts ON; restore before merge]" } else { "" },
         ))
     };
 
