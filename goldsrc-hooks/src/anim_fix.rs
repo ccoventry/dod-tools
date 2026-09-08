@@ -74,6 +74,11 @@ const DEPLOYABLE_WEAPONS: &[DeployableWeapon] = &[
     DeployableWeapon { viewmodel_match: "mg34", deployed_marker: "bd.mdl", undeployed_marker: "bu.mdl" },
     DeployableWeapon { viewmodel_match: "bar", deployed_marker: "bd.mdl", undeployed_marker: "bu.mdl" },
     DeployableWeapon { viewmodel_match: "bren", deployed_marker: "bd.mdl", undeployed_marker: "bu.mdl" },
+    // Also matches v_scopedfg42.mdl, which is correct: it has the same
+    // up_*/down_* sequence set. It ships only p_scopedfg42bu.mdl with no "bd"
+    // counterpart, so its deploy state simply always reads as up, which is
+    // what a scoped FG42 does.
+    DeployableWeapon { viewmodel_match: "fg42", deployed_marker: "bd.mdl", undeployed_marker: "bu.mdl" },
     // v_30cal.mdl has the same upidle/downidle first-person split, but its
     // p_30cal*.mdl set (p_30cal / p_30calpr / p_30calr / p_30calsr) has no
     // matching bd/bu third-person pair -- DoD 1.3's 30cal is normally a
@@ -251,6 +256,20 @@ fn animation_lookup_sequence(label: &str, state: Option<DeployState>, viewmodel:
 /// gives the names worth trying rather than assuming one.
 fn animation_lookup_any(candidates: &[&str], state: Option<DeployState>, viewmodel: *mut ModelSPartial) -> i32 {
     let labels = model_sequence_strings(viewmodel);
+
+    // Exact match first, substring only as a fallback. Several models list a
+    // qualified variant *before* the plain one -- v_luger.mdl is
+    // [.., 5:reload_empty, 6:reload, ..] -- so a substring-first search picks
+    // the wrong animation, which is exactly what made a luger reload play as
+    // reload_empty in testing. The fallback still matters, because the bipod
+    // weapons have no bare label at all: v_bar.mdl is up_reload / down_reload,
+    // v_mg42.mdl is upshoot / downshoot.
+    for candidate in candidates {
+        let needle = candidate.to_lowercase();
+        if let Some(i) = labels.iter().position(|l| l.to_lowercase() == needle) {
+            return apply_deploy_state_to_sequence(i as i32, state, viewmodel);
+        }
+    }
     for candidate in candidates {
         let needle = candidate.to_lowercase();
         if let Some(i) = labels.iter().position(|l| l.to_lowercase().contains(&needle)) {
@@ -520,7 +539,13 @@ pub fn on_weapon_fired(entity_index: i32) {
     }
 
     let state = i32_to_deploy_state(CURRENT_DEPLOY_STATE.load(Ordering::Relaxed));
-    let sequence = animation_lookup_any(&["shoot", "fire"], state, viewmodel);
+    // Every DoD viewmodel names its firing animation one of these, confirmed
+    // by dumping the sequence list of all 41 v_*.mdl files: plain "shoot"
+    // (98k, enfield, luger, sten, webley, m1carbine), numbered "shoot1"
+    // (colt, garand, k43, mp40, mp44, tommy, greasegun, spring), prefixed
+    // "up_shoot"/"upshoot" (bar, bren, fg42, mg42, mg34, 30cal), "launch"
+    // (bazooka, panzerschreck, piat) or "fire" (mortar).
+    let sequence = animation_lookup_any(&["shoot", "launch", "fire"], state, viewmodel);
     play_viewmodel_animation(sequence, "spectated player fired", state, viewmodel);
 }
 
