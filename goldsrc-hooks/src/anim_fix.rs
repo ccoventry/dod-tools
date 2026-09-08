@@ -108,6 +108,38 @@ fn model_stem(name: &str) -> &str {
 /// reverse, because the bipod weapons append a deploy suffix on the
 /// third-person side only (`v_mg42.mdl` vs `p_mg42bu.mdl` / `p_mg42bd.mdl`).
 fn viewmodel_matches_held_weapon(viewmodel_name: &str, spectated: &ClEntityS) -> Option<bool> {
+    let verdict = viewmodel_match_inner(viewmodel_name, spectated);
+
+    // The filter is still letting a spurious draw through, alternating between
+    // v_bar and v_colt, so log how the decision is actually being reached for
+    // the first few. `None` means the held weapon could not be resolved at all,
+    // which is currently treated as "allow" and would explain it.
+    if MATCH_LOGS.fetch_add(1, Ordering::Relaxed) < MAX_MATCH_LOGS {
+        let held = engine::engine_studio()
+            .map(|studio| unsafe { (studio.get_model_by_index)(spectated.curstate.weaponmodel) })
+            .filter(|m| !m.is_null())
+            .map(|m| unsafe { (*m).name_str() }.into_owned())
+            .unwrap_or_else(|| "<unresolved>".into());
+        unsafe {
+            crate::debug::report(&format!(
+                "anim_fix: match check -- viewmodel \"{viewmodel_name}\" vs held \"{held}\" (weaponmodel index {}) -> {}",
+                spectated.curstate.weaponmodel,
+                match verdict {
+                    Some(true) => "match",
+                    Some(false) => "MISMATCH, frame skipped",
+                    None => "UNRESOLVED, frame allowed through",
+                }
+            ))
+        };
+    }
+
+    verdict
+}
+
+static MATCH_LOGS: AtomicI32 = AtomicI32::new(0);
+const MAX_MATCH_LOGS: i32 = 30;
+
+fn viewmodel_match_inner(viewmodel_name: &str, spectated: &ClEntityS) -> Option<bool> {
     let studio = engine::engine_studio()?;
     let held = unsafe { (studio.get_model_by_index)(spectated.curstate.weaponmodel) };
     if held.is_null() {
@@ -286,6 +318,9 @@ fn play_viewmodel_animation(sequence: i32, reason: &str, state: Option<DeploySta
 
 /// What `apply()` last saw, published for `on_weapon_fired`, which runs from
 /// the sound hook on the same thread but has none of this context.
+static FIRE_LOGS: AtomicI32 = AtomicI32::new(0);
+const MAX_FIRE_LOGS: i32 = 25;
+
 static CURRENT_SPECTATED: AtomicI32 = AtomicI32::new(-1);
 static CURRENT_VIEWMODEL: AtomicPtr<ModelSPartial> = AtomicPtr::new(std::ptr::null_mut());
 static CURRENT_DEPLOY_STATE: AtomicI32 = AtomicI32::new(-1);
@@ -460,9 +495,23 @@ pub fn on_weapon_fired(entity_index: i32) {
     if !ENABLED.load(Ordering::Relaxed) {
         return;
     }
-    // Only the player actually being watched -- every other shot in the match
-    // comes through here too.
-    if entity_index < 0 || entity_index != CURRENT_SPECTATED.load(Ordering::Relaxed) {
+
+    // Every weapon-fire sound in the match arrives here, and so far *none* has
+    // matched, so log the first few raw: if the entity a fire sound reports is
+    // never the one being spectated, the sound's `ent` is not the shooter and
+    // this whole trigger needs a different signal.
+    let spectated = CURRENT_SPECTATED.load(Ordering::Relaxed);
+    if FIRE_LOGS.fetch_add(1, Ordering::Relaxed) < MAX_FIRE_LOGS {
+        unsafe {
+            crate::debug::report(&format!(
+                "anim_fix: weapon-fire sound from entity {entity_index}, currently spectating {spectated} -- {}",
+                if entity_index == spectated { "MATCH" } else { "ignored" }
+            ))
+        };
+    }
+
+    // Only the player actually being watched.
+    if entity_index < 0 || entity_index != spectated {
         return;
     }
     let viewmodel = CURRENT_VIEWMODEL.load(Ordering::Relaxed);
