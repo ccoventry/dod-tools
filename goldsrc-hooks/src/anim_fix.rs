@@ -24,9 +24,6 @@
 //!   first have no sequence change to key off.
 //! - **reload** -- from the spectated player's body animation as well
 //!   (`crouch_bar_reload`, `prone_webley_reload`, ...).
-//! - **grenades** -- `pinpull` when the body enters its throwing animation,
-//!   then `throw` a measured 0.49s later, which is when the grenade actually
-//!   leaves the hand. See `GRENADE_WINDUP_SECONDS`.
 //! - **draw** -- when the viewmodel *settles* on a different weapon. Not
 //!   simply when it changes: the viewmodel rotates through several of a
 //!   player's weapons many times a second, so a bare change test starts a draw
@@ -168,49 +165,33 @@ fn deploy_state_from_body_sequence(label: &str) -> Option<DeployState> {
 /// every grenade, and "slash1" the knife and spade.
 const ATTACK_SEQUENCES: &[&str] = &["shoot", "launch", "fire", "throw", "slash1"];
 
-/// How long after a player's body enters its grenade-throwing animation the
-/// grenade actually leaves their hand.
+/// Why grenades get no pin-pull animation, despite having one.
 ///
-/// Measured, not guessed: across 207 throws in one HLTV half, every single
-/// `weapons/grenthrow.wav` was preceded by the thrower's body sequence
-/// changing to a grenade attack, and the gap was 0.481s at its shortest and
-/// 0.566s at its longest, median 0.494s. None landed within 50ms. It is a
-/// fixed wind-up in the animation, not a player-controlled cook time.
+/// A grenade's viewmodel animates `idle -> pinpull -> (cook) -> throw`, and the
+/// pin pull is unreachable for a spectated player: `p_grenade`, `p_stick` and
+/// `p_mills` carry a single `idle` sequence each, and `weapons/grenpinpull.wav`
+/// appears in no demo's `svc_sound`, POV included -- it is played client-side
+/// for the local player only, exactly like the animation it accompanies.
 ///
-/// That gap is the pin pull. The viewmodel has an animation for it
-/// (`pinpull`), and playing the *throw* at the moment the body sequence
-/// changes -- which is what this module used to do -- released the grenade
-/// half a second before it left the player's hand.
-const GRENADE_WINDUP_SECONDS: f64 = 0.49;
-
-/// When the deferred grenade throw is due, as f64 bits; 0 means none pending.
-static PENDING_THROW_AT: AtomicU64 = AtomicU64::new(0);
-
-fn schedule_throw(at: f64) {
-    PENDING_THROW_AT.store(at.to_bits(), Ordering::Relaxed);
-}
-
-fn cancel_throw() {
-    PENDING_THROW_AT.store(0, Ordering::Relaxed);
-}
-
-/// Whether the deferred throw is now due, clearing it if so.
-fn throw_is_due(now: f64) -> bool {
-    let at = f64::from_bits(PENDING_THROW_AT.load(Ordering::Relaxed));
-    if at == 0.0 || now < at {
-        return false;
-    }
-    cancel_throw();
-    true
-}
-
-/// Whether this viewmodel is a grenade, asked of the model rather than its
-/// name: the three grenades (US `v_grenade`, Wehrmacht `v_stick`, British
-/// `v_mills`) are the only viewmodels in the game with a `pinpull` sequence,
-/// and they are otherwise identical in layout.
-fn is_grenade(viewmodel: *mut ModelSPartial) -> bool {
-    model_sequence_strings(viewmodel).iter().any(|l| l.eq_ignore_ascii_case("pinpull"))
-}
+/// What is observable is the body sequence entering its grenade attack, and
+/// that is the **release**, not the pull. Two measurements settle it:
+///
+/// - body sequence to `weapons/grenthrow.wav`: 846 throws across three HLTV
+///   halves, 0.461s to 0.566s, median 0.494s, one-to-one with no orphans in
+///   either direction. Far too tight to be a player holding a button.
+/// - the real cook time, taken from a POV demo's own viewmodel animations
+///   (`pinpull` to `throw`): 0.065s to 4.852s, medians 0.64s and 1.46s across
+///   two demos. That is the button being held -- and DoD players also "prime"
+///   grenades, rolling one out and picking it back up to shorten the remaining
+///   fuse, which widens the spread further still.
+///
+/// So the steady 0.49s is the throw animation's own wind-up before the grenade
+/// leaves the hand, and playing `throw` the moment the body sequence changes is
+/// right. An earlier attempt read that gap as the pin pull and deferred the
+/// throw by it, which played `pinpull` at the instant the player was actually
+/// throwing and released the grenade half a second late.
+///
+/// See `analysis/examples/grenade_timing_probe.rs`.
 
 /// `"models/v_98k.mdl"` -> `"98k"`, `"models/p_mg42bd.mdl"` -> `"mg42bd"`.
 ///
@@ -936,8 +917,6 @@ pub fn apply() {
     if switched_players {
         // Says nothing about the new player.
         LAST_KNOWN_DEPLOY_STATE.store(-1, Ordering::Relaxed);
-        // Neither does a grenade the previous one was in the middle of throwing.
-        cancel_throw();
         // The single most useful line for reading a session back: which player
         // the camera moved to, and what they are holding according to their own
         // replicated state rather than the viewmodel.
@@ -956,24 +935,6 @@ pub fn apply() {
     }
 
     stage_with(STAGE_RUNNING, viewmodel_entity, viewmodel_model, viewmodel_index);
-
-    // The throw half of a grenade, deferred by GRENADE_WINDUP_SECONDS from the
-    // pin pull below. Checked before anything that might return early, so a
-    // scheduled throw cannot be stranded by a quiet frame.
-    if !is_grenade(viewmodel_model) {
-        // Switched off the grenade mid-cook; the throw belongs to a weapon that
-        // is no longer in hand.
-        cancel_throw();
-    } else if throw_is_due(engine::client_time()) {
-        let state = deployable
-            .and_then(|weapon| get_spectated_deploy_state(weapon, spectated));
-        play_viewmodel_animation(
-            animation_lookup_sequence("throw", state, viewmodel_model),
-            "spectated player released a grenade",
-            state,
-            viewmodel_model,
-        );
-    }
 
     // The spectated player's own body animation. Replicated, so unlike almost
     // anything else about another player's weapon it survives into an HLTV
@@ -1051,20 +1012,6 @@ pub fn apply() {
                 };
             }
             match body_label.as_deref().map(classify_body_sequence) {
-                Some(BodyAction::Shoot) if is_grenade(viewmodel_model) => {
-                    // A grenade is not thrown when the body animation starts --
-                    // it leaves the hand ~0.49s later, and the gap is the pin
-                    // pull. Play that now and defer the throw, instead of
-                    // releasing the grenade half a second early.
-                    let now = engine::client_time();
-                    play_viewmodel_animation(
-                        animation_lookup_sequence("pinpull", state, viewmodel_model),
-                        "spectated player pulled a grenade pin",
-                        state,
-                        viewmodel_model,
-                    );
-                    schedule_throw(now + GRENADE_WINDUP_SECONDS);
-                }
                 Some(BodyAction::Shoot) => {
                     if claim_fire(engine::client_time()) {
                         play_viewmodel_animation(
@@ -1253,25 +1200,6 @@ mod tests {
         assert!(claim_fire(after + 2.0));
         assert!(!claim_fire(after + 2.0 + FIRE_DEDUP_SECONDS / 2.0), "same shot");
         assert!(claim_fire(after + 2.1), "next round");
-    }
-
-    /// The grenade throw is deferred by a measured wind-up, so it has to fire
-    /// exactly once, only when due, and be droppable if the player switches
-    /// away mid-cook.
-    #[test]
-    fn a_grenade_throw_waits_for_its_wind_up() {
-        cancel_throw();
-        assert!(!throw_is_due(10.0), "nothing scheduled");
-
-        schedule_throw(10.0 + GRENADE_WINDUP_SECONDS);
-        assert!(!throw_is_due(10.0), "not yet");
-        assert!(!throw_is_due(10.0 + GRENADE_WINDUP_SECONDS / 2.0), "still cooking");
-        assert!(throw_is_due(10.0 + GRENADE_WINDUP_SECONDS + 0.01), "due");
-        assert!(!throw_is_due(11.0), "must not throw twice");
-
-        schedule_throw(20.0);
-        cancel_throw();
-        assert!(!throw_is_due(21.0), "cancelled throws stay cancelled");
     }
 
     #[test]
