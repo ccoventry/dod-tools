@@ -14,12 +14,16 @@
 //!
 //! ## What this drives, and from where
 //!
-//! - **shoot** -- from the weapon-fire sound, which names the entity that
-//!   fired (`sound_fix`'s `EV_PlaySound` hook, see `on_weapon_fired`). This is
-//!   the most visible omission, and the fire events are present in HLTV demos
-//!   even though some rounds of automatic fire are dropped.
-//! - **reload** -- from the spectated player's own third-person sequence
-//!   label, which *is* replicated.
+//! - **shoot** -- from the spectated player's own body animation. DoD's player
+//!   models name every sequence `<stance>_<weapon>_<action>`, so
+//!   `stand_bolt_shoot` or `bipod_mg_shoot` says outright that they are firing,
+//!   and that is replicated entity state present in an HLTV demo. The
+//!   weapon-fire *sound* is kept as a second trigger (`on_weapon_fired`), which
+//!   matters only for automatic fire: a held trigger leaves the body sequence
+//!   sitting on the same `_shoot` label, so the individual rounds after the
+//!   first have no sequence change to key off.
+//! - **reload** -- from the spectated player's body animation as well
+//!   (`crouch_bar_reload`, `prone_webley_reload`, ...).
 //! - **draw** -- from the viewmodel's model changing.
 //! - **idle** -- on switching to a different spectated player, so the new
 //!   viewmodel does not inherit whatever sequence the last one was left on.
@@ -46,14 +50,14 @@
 //! the engine interfaces this crate captures itself.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use crate::engine::{self, ClEntityS, ModelSPartial, StudioHdrPartial, StudioSeqDescPartial};
 
 pub static ENABLED: AtomicBool = AtomicBool::new(false);
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum DeployState {
     Up,
     Down,
@@ -91,6 +95,67 @@ const DEPLOYABLE_WEAPONS: &[DeployableWeapon] = &[
 fn find_deployable_weapon(viewmodel_name: &str) -> Option<&'static DeployableWeapon> {
     DEPLOYABLE_WEAPONS.iter().find(|w| viewmodel_name.contains(w.viewmodel_match))
 }
+
+/// What the player being spectated is doing, read off their own body animation.
+///
+/// DoD's player models name every sequence `<stance>_<weapon>_<action>` --
+/// `stand_bolt_shoot`, `crouch_bar_reload`, `bipod_mg_aim`, `sprint_sten_aim`.
+/// Read straight out of `models/player/us-inf/us-inf.mdl`, whose 345 sequences
+/// cover every weapon and stance in the game.
+///
+/// This is the trigger the firing animation hangs off, and the reason it does
+/// is that `curstate.sequence` is *replicated*: it survives into an HLTV demo,
+/// which almost nothing about another player's weapon does.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum BodyAction {
+    Shoot,
+    Reload,
+    Other,
+}
+
+fn classify_body_sequence(label: &str) -> BodyAction {
+    let label = label.to_ascii_lowercase();
+    if label.ends_with("_shoot") {
+        // Covers every attack, not just gunfire: `stand_gren_shoot` is a
+        // grenade throw and `crouch_knife_shoot` a stab, and the viewmodel
+        // lookup below has the labels for both.
+        BodyAction::Shoot
+    } else if label.contains("reload") || label.contains("zoomload") {
+        // "zoomload" is the rocket weapons reloading while scoped.
+        BodyAction::Reload
+    } else {
+        BodyAction::Other
+    }
+}
+
+/// Bipod state read from the player's own body animation.
+///
+/// Better than the `p_*bu`/`p_*bd` model name it falls back to, which only
+/// carries the marker in some stances and so goes unreadable exactly when a
+/// machine gunner is prone. The body label carries it in every stance.
+fn deploy_state_from_body_sequence(label: &str) -> Option<DeployState> {
+    let label = label.to_ascii_lowercase();
+    // `sandbag_` is deployed onto cover rather than on the bipod, but it drives
+    // the same "down" first-person sequence family.
+    if label.starts_with("bipod_") || label.starts_with("sandbag_") {
+        Some(DeployState::Down)
+    } else if ["stand_", "crouch_", "prone_", "sprint_"].iter().any(|p| label.starts_with(p)) {
+        Some(DeployState::Up)
+    } else {
+        None
+    }
+}
+
+/// The names DoD's viewmodels give their attack animation, in the order worth
+/// trying. Taken from a dump of all 41 `v_*.mdl` sequence lists.
+///
+/// Plain "shoot" (98k, enfield, luger, sten, webley, m1carbine), numbered
+/// "shoot1" (colt, garand, k43, mp40, mp44, tommy, greasegun, spring) and
+/// prefixed "up_shoot"/"upshoot" (bar, bren, fg42, mg42, mg34, 30cal) are all
+/// reached by the "shoot" entry via the substring fallback. "launch" is the
+/// rocket weapons (bazooka, panzerschreck, PIAT), "fire" the mortar, "throw"
+/// every grenade, and "slash1" the knife and spade.
+const ATTACK_SEQUENCES: &[&str] = &["shoot", "launch", "fire", "throw", "slash1"];
 
 /// `"models/v_98k.mdl"` -> `"98k"`, `"models/p_mg42bd.mdl"` -> `"mg42bd"`.
 ///
@@ -415,6 +480,28 @@ fn play_viewmodel_animation(sequence: i32, reason: &str, state: Option<DeploySta
 static FIRE_LOGS: AtomicI32 = AtomicI32::new(0);
 const MAX_FIRE_LOGS: i32 = 25;
 
+/// Demo time of the last firing animation played, so the two independent
+/// triggers cannot both play one shot.
+static LAST_FIRE_PLAYED: AtomicU64 = AtomicU64::new(0);
+/// The MG42's ~1200rpm puts 0.05s between rounds, so the window that keeps the
+/// body-sequence and sound triggers from doubling up on a single shot has to
+/// sit clear of that -- otherwise it would swallow real rounds of automatic
+/// fire, which is the one case the sound trigger exists to catch.
+const FIRE_DEDUP_SECONDS: f64 = 0.03;
+
+/// Returns whether a firing animation should play now, or whether the other
+/// trigger already played one for this same shot.
+fn claim_fire(now: f64) -> bool {
+    let last = f64::from_bits(LAST_FIRE_PLAYED.load(Ordering::Relaxed));
+    // `now < last` means the clock went backwards -- a demo restarting -- so
+    // let it through rather than blocking until it catches up again.
+    if now >= last && now - last < FIRE_DEDUP_SECONDS {
+        return false;
+    }
+    LAST_FIRE_PLAYED.store(now.to_bits(), Ordering::Relaxed);
+    true
+}
+
 static CURRENT_SPECTATED: AtomicI32 = AtomicI32::new(-1);
 static CURRENT_VIEWMODEL: AtomicPtr<ModelSPartial> = AtomicPtr::new(std::ptr::null_mut());
 static CURRENT_DEPLOY_STATE: AtomicI32 = AtomicI32::new(-1);
@@ -576,28 +663,26 @@ fn note_viewmodel(name: &str, deployable: bool, model: *mut ModelSPartial) {
     };
 }
 
-/// Plays the firing animation when the player being spectated in-eye shoots.
+/// Plays the firing animation from the weapon-fire *sound*, as a second
+/// trigger behind the body-sequence one in `apply()`.
 ///
-/// This is the animation most obviously missing in an HLTV demo, and the
-/// reason is structural rather than a bug: GoldSrc's weapon event scripts only
-/// drive the viewmodel for the *local* player (`EV_IsLocal`). Everyone else
-/// gets the sound and the muzzle flash but no first-person animation, because
-/// normally nobody is looking down their sights. Spectating in-eye is exactly
-/// the case that assumption doesn't hold for.
+/// It exists for one case the body sequence cannot cover: a held trigger. The
+/// server sets the player's body to `stand_mg_shoot` once and leaves it there
+/// for the whole burst, so every round after the first has no sequence change
+/// to detect, while the sound fires per round. Anything the body sequence
+/// already caught is filtered out by `claim_fire`.
 ///
-/// Driven from `sound_fix`'s `EV_PlaySound` hook rather than from the frame
-/// callback: the fire sound carries the entity that fired, which is precisely
-/// the signal needed and is already being intercepted. Called on the engine
-/// thread, same as `apply()`.
+/// Called from `sound_fix`'s `EV_PlaySound` hook, on the engine thread, same as
+/// `apply()`.
 pub fn on_weapon_fired(entity_index: i32) {
     if !ENABLED.load(Ordering::Relaxed) {
         return;
     }
 
-    // Every weapon-fire sound in the match arrives here, and so far *none* has
-    // matched, so log the first few raw: if the entity a fire sound reports is
-    // never the one being spectated, the sound's `ent` is not the shooter and
-    // this whole trigger needs a different signal.
+    // Whether the entity a fire sound names is ever the spectated player has
+    // never actually been confirmed, and if it is not then this trigger is
+    // inert and only the body-sequence one is doing any work. Log the first few
+    // raw so a single session settles it.
     let spectated = CURRENT_SPECTATED.load(Ordering::Relaxed);
     if FIRE_LOGS.fetch_add(1, Ordering::Relaxed) < MAX_FIRE_LOGS {
         unsafe {
@@ -608,7 +693,8 @@ pub fn on_weapon_fired(entity_index: i32) {
         };
     }
 
-    // Only the player actually being watched.
+    // Only the player actually being watched. Playing a viewmodel animation
+    // because somebody else fired would be worse than missing the round.
     if entity_index < 0 || entity_index != spectated {
         return;
     }
@@ -616,27 +702,13 @@ pub fn on_weapon_fired(entity_index: i32) {
     if viewmodel.is_null() {
         return;
     }
+    if !claim_fire(engine::client_time()) {
+        return;
+    }
 
     let state = i32_to_deploy_state(CURRENT_DEPLOY_STATE.load(Ordering::Relaxed));
-    // Every DoD viewmodel names its firing animation one of these, confirmed
-    // by dumping the sequence list of all 41 v_*.mdl files.
-    //
-    // Those came from a moviemaking install where 17 of the viewmodels are
-    // replaced by custom ones, which sounds like it would invalidate the
-    // table and does not: diffing sequence *names* against a stock install
-    // gives 37 of 38 shared models identical, because a custom model has to
-    // keep the same sequence order to work with the game at all. The one
-    // exception is v_luger.mdl, stock "idle_1/idle_2/idle_3" against custom
-    // "idle/idle/idle" -- which the exact-then-substring lookup above resolves
-    // to index 0 either way.
-    //
-    // The names: plain "shoot"
-    // (98k, enfield, luger, sten, webley, m1carbine), numbered "shoot1"
-    // (colt, garand, k43, mp40, mp44, tommy, greasegun, spring), prefixed
-    // "up_shoot"/"upshoot" (bar, bren, fg42, mg42, mg34, 30cal), "launch"
-    // (bazooka, panzerschreck, piat) or "fire" (mortar).
-    let sequence = animation_lookup_any(&["shoot", "launch", "fire"], state, viewmodel);
-    play_viewmodel_animation(sequence, "spectated player fired", state, viewmodel);
+    let sequence = animation_lookup_any(ATTACK_SEQUENCES, state, viewmodel);
+    play_viewmodel_animation(sequence, "spectated player fired (sound)", state, viewmodel);
 }
 
 /// `"idx 6"`. Names would be nicer, but reaching them needs an engine slot
@@ -728,14 +800,32 @@ pub fn apply() {
 
     stage_with(STAGE_RUNNING, viewmodel_entity, viewmodel_model, viewmodel_index);
 
-    // Bipod state is only readable while the player is on a "bu"/"bd" model.
-    // Prone and sprint put them on a stance variant that carries neither
-    // marker (and only an idle pose -- p_mg42pr.mdl has no shoot sequence at
-    // all), so the state goes unreadable for as long as they hold it. Falling
-    // back to the last one actually observed keeps the viewmodel in the right
-    // sequence family across that gap, instead of dropping to whichever family
-    // a bare lookup happens to find first.
-    let observed = deployable.and_then(|weapon| get_spectated_deploy_state(weapon, spectated));
+    // The spectated player's own body animation. Replicated, so unlike almost
+    // anything else about another player's weapon it survives into an HLTV
+    // demo, and its label names both the action and the stance. Everything
+    // below is read off it.
+    let body_label = if spectated.model.is_null() {
+        None
+    } else {
+        model_sequence_strings(spectated.model)
+            .get(spectated.curstate.sequence.max(0) as usize)
+            .cloned()
+    };
+
+    // Bipod state, preferring the body sequence because it carries the state in
+    // every stance. The "bu"/"bd" model name is the fallback: it goes
+    // unreadable whenever the player is on a stance variant that carries
+    // neither marker (p_mg42pr.mdl, p_mg42sr.mdl), which is most of the time a
+    // machine gunner actually matters. Falling back further to the last state
+    // actually observed keeps the viewmodel in the right sequence family across
+    // any remaining gap, rather than dropping to whichever family a bare lookup
+    // happens to find first.
+    let observed = deployable.and_then(|weapon| {
+        body_label
+            .as_deref()
+            .and_then(deploy_state_from_body_sequence)
+            .or_else(|| get_spectated_deploy_state(weapon, spectated))
+    });
     let state = match observed {
         Some(seen) => {
             LAST_KNOWN_DEPLOY_STATE.store(deploy_state_to_i32(Some(seen)), Ordering::Relaxed);
@@ -767,14 +857,43 @@ pub fn apply() {
         // transition sequence here instead of snapping straight to idle.
         play_viewmodel_animation(animation_lookup_sequence("idle", state, viewmodel_model), "bipod deploy state changed", state, viewmodel_model);
     } else {
+        // Classify the action from the spectated player's body animation, not
+        // the viewmodel's. Only on a *change* of sequence: the label persists
+        // for as long as the animation runs, so acting on its mere presence
+        // would restart the viewmodel animation every frame.
         let previous_sequence = PREVIOUS_SEQUENCE.load(Ordering::Relaxed);
-        // Use the spectated player's own body-model sequence table to
-        // classify their current action, not the viewmodel's.
-        if previous_sequence != spectated.curstate.sequence && !spectated.model.is_null() {
-            let labels = model_sequence_strings(spectated.model);
-            let seq = spectated.curstate.sequence.max(0) as usize;
-            if labels.get(seq).is_some_and(|label| label.to_lowercase().contains("reload")) {
-                play_viewmodel_animation(animation_lookup_sequence("reload", state, viewmodel_model), "spectated player reloaded", state, viewmodel_model);
+        if previous_sequence != spectated.curstate.sequence {
+            // Under the same switch as the held-model trail, because it answers
+            // the same question and reads better next to it: the body label
+            // names the stance outright ("prone_bar_reload"), where the `p_`
+            // model name only abbreviates it.
+            if LOG_HELD_MODELS.load(Ordering::Relaxed) {
+                unsafe {
+                    crate::debug::report(&format!(
+                        "anim_fix: body sequence -> {} (index {})",
+                        body_label.as_deref().unwrap_or("<unreadable>"),
+                        spectated.curstate.sequence,
+                    ))
+                };
+            }
+            match body_label.as_deref().map(classify_body_sequence) {
+                Some(BodyAction::Shoot) if claim_fire(engine::client_time()) => {
+                    play_viewmodel_animation(
+                        animation_lookup_any(ATTACK_SEQUENCES, state, viewmodel_model),
+                        "spectated player fired",
+                        state,
+                        viewmodel_model,
+                    );
+                }
+                Some(BodyAction::Reload) => {
+                    play_viewmodel_animation(
+                        animation_lookup_sequence("reload", state, viewmodel_model),
+                        "spectated player reloaded",
+                        state,
+                        viewmodel_model,
+                    );
+                }
+                _ => {}
             }
         }
 
@@ -785,4 +904,91 @@ pub fn apply() {
 
     PREVIOUS_DEPLOY_STATE.store(deploy_state_to_i32(state), Ordering::Relaxed);
     PREVIOUS_SEQUENCE.store(spectated.curstate.sequence, Ordering::Relaxed);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every label below is copied from a dump of the real
+    /// `models/player/us-inf/us-inf.mdl` and `models/v_*.mdl` shipped with
+    /// DoD 1.3, not invented -- these functions exist only to read that
+    /// naming scheme, so made-up labels would test nothing.
+    #[test]
+    fn body_sequences_classify_by_action() {
+        for label in [
+            "stand_bolt_shoot",
+            "crouch_rifle_shoot",
+            "prone_mg_shoot",
+            "bipod_bren_shoot",
+            "sandbag_30cal_shoot",
+            // Not gunfire, but still an attack, and the viewmodels have
+            // "throw" and "slash1" for them.
+            "stand_gren_shoot",
+            "crouch_knife_shoot",
+        ] {
+            assert_eq!(classify_body_sequence(label), BodyAction::Shoot, "{label}");
+        }
+
+        for label in [
+            "stand_garand_reload",
+            "crouch_reload_webley",
+            "prone_bar_reload",
+            "bipod_mg42_reload",
+            "stand_pschreck_zoomload",
+        ] {
+            assert_eq!(classify_body_sequence(label), BodyAction::Reload, "{label}");
+        }
+
+        for label in [
+            // Aiming is the resting state between shots, and is what makes a
+            // repeated shot show up as a sequence *change* at all.
+            "stand_bolt_aim",
+            "sprint_sten_aim",
+            "bipod_mg_aim",
+            "dod_idle1",
+            "prone_forward",
+            "die_headshot",
+            // A rifle-butt swing, deliberately left alone: the viewmodels have
+            // no matching sequence.
+            "stand_rifle_swing",
+        ] {
+            assert_eq!(classify_body_sequence(label), BodyAction::Other, "{label}");
+        }
+    }
+
+    #[test]
+    fn body_sequences_carry_the_deploy_state_in_every_stance() {
+        // The whole point of preferring this over the p_*bu/bd model name: a
+        // prone or sprinting machine gunner still reports a state here.
+        assert_eq!(deploy_state_from_body_sequence("prone_mg_shoot"), Some(DeployState::Up));
+        assert_eq!(deploy_state_from_body_sequence("sprint_bren_aim"), Some(DeployState::Up));
+        assert_eq!(deploy_state_from_body_sequence("stand_mg_aim"), Some(DeployState::Up));
+        assert_eq!(deploy_state_from_body_sequence("crouch_bar_reload"), Some(DeployState::Up));
+
+        assert_eq!(deploy_state_from_body_sequence("bipod_mg_shoot"), Some(DeployState::Down));
+        assert_eq!(deploy_state_from_body_sequence("sandbag_bren_reload"), Some(DeployState::Down));
+
+        // Sequences with no stance prefix say nothing either way, and must not
+        // be read as "not deployed".
+        assert_eq!(deploy_state_from_body_sequence("dod_idle1"), None);
+        assert_eq!(deploy_state_from_body_sequence("hs_gogogo"), None);
+    }
+
+    #[test]
+    fn model_stem_strips_all_three_prefixes() {
+        assert_eq!(model_stem("models/v_98k.mdl"), "98k");
+        assert_eq!(model_stem("models/p_mg42bd.mdl"), "mg42bd");
+        assert_eq!(model_stem("models\\w_luger.mdl"), "luger");
+        assert_eq!(model_stem("models/player/us-inf/us-inf.mdl"), "us-inf");
+    }
+
+    #[test]
+    fn family_prefix_swaps_both_spellings() {
+        assert_eq!(swap_family_prefix("upidle", DeployState::Down), "downidle");
+        assert_eq!(swap_family_prefix("down_reload", DeployState::Up), "up_reload");
+        // Already in the target family, and unfamilied labels, are untouched.
+        assert_eq!(swap_family_prefix("upshoot", DeployState::Up), "upshoot");
+        assert_eq!(swap_family_prefix("reload", DeployState::Down), "reload");
+    }
 }
