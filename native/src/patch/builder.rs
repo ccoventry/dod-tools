@@ -1282,12 +1282,23 @@ impl Drop for WorkspaceGuard {
             }
             
             if self.auto_clear_temp_demos && !self.save_local_patched_copy {
-                let _ = std::fs::remove_file(dod_dir.join("primer.dem"));
+                // Retried, and logged loudly on final failure -- see
+                // `remove_file_retrying`'s doc comment and #198. Mirrors
+                // `CaptureCleanupGuard::drop` in `capture_engine.rs`.
+                if let Some(e) = crate::shared::paths::remove_file_retrying(&dod_dir.join("primer.dem")) {
+                    crate::log_markdown(&format!(
+                        "⚠️ **Cleanup** — could not remove primer.dem after retrying: {e} (auto_clear_temp_demos left it behind; hl.exe may still have had it open)"
+                    ));
+                }
                 if let Ok(entries) = std::fs::read_dir(&dod_dir) {
                     for entry in entries.flatten() {
                         let filename = entry.file_name().to_string_lossy().to_string();
                         if crate::shared::paths::is_chain_demo_filename(&filename) {
-                            let _ = std::fs::remove_file(entry.path());
+                            if let Some(e) = crate::shared::paths::remove_file_retrying(&entry.path()) {
+                                crate::log_markdown(&format!(
+                                    "⚠️ **Cleanup** — could not remove {filename} after retrying: {e} (auto_clear_temp_demos left it behind; hl.exe may still have had it open)"
+                                ));
+                            }
                         }
                     }
                 }
@@ -2617,6 +2628,39 @@ mod tests {
         );
 
         assert_eq!(result, Err(0));
+    }
+
+    /// A regression guard for #198's fix -- `workspace_guard_drop_actually_
+    /// removes_chain_demos_when_auto_clear_is_on` above already covers the
+    /// enabled case; this is the one combination it doesn't, and the reason
+    /// `remove_file_retrying` is called through `auto_clear_temp_demos &&
+    /// !save_local_patched_copy` rather than unconditionally.
+    #[test]
+    fn dropping_the_workspace_guard_keeps_demos_when_a_local_copy_was_requested() {
+        let root = std::env::temp_dir().join(format!("dod_workspace_guard_keep_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let dod = root.join("dod");
+        std::fs::create_dir_all(&dod).unwrap();
+        std::fs::write(dod.join("primer.dem"), b"x").unwrap();
+        std::fs::write(dod.join("chain_01.dem"), b"x").unwrap();
+
+        {
+            let _guard = WorkspaceGuard {
+                session_junction: root.join("session_junction"),
+                exit_trigger: root.join("exit_trigger"),
+                pool_junctions: vec![],
+                route_junctions: vec![],
+                auto_clear_logs: false,
+                auto_clear_temp_demos: true,
+                auto_clear_previews: false,
+                save_local_patched_copy: true,
+            };
+        }
+
+        assert!(dod.join("primer.dem").exists());
+        assert!(dod.join("chain_01.dem").exists());
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
 

@@ -193,3 +193,98 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 }
+
+/// Deletes a file, retrying a few times with a short pause between attempts.
+///
+/// `taskkill /F` returning does not mean hl.exe's open file handles are
+/// released yet, and even confirming the process itself has left the process
+/// list (`sysinfo`) does not guarantee it either -- kernel object cleanup can
+/// lag a beat past both. Both cleanup guards (`CaptureCleanupGuard` in
+/// `capture_engine.rs`, `WorkspaceGuard` in `patch/builder.rs`) call this for
+/// the demo files hl.exe just had open (`primer.dem`, `chain_NN.dem`) rather
+/// than the single unretried `let _ = std::fs::remove_file(..)` every other
+/// file they clean up gets, because those other files were never mid-close
+/// the way a demo hl.exe was just playing can be. See #198.
+///
+/// Returns the last error seen, or `None` on success or if the file was
+/// already gone -- callers decide how loudly to report a real failure; this
+/// only decides how hard to try first.
+pub fn remove_file_retrying(path: &Path) -> Option<std::io::Error> {
+    const ATTEMPTS: u32 = 5;
+    const DELAY: std::time::Duration = std::time::Duration::from_millis(200);
+    let mut last_err = None;
+    for attempt in 1..=ATTEMPTS {
+        match std::fs::remove_file(path) {
+            Ok(()) => return None,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+            Err(e) => {
+                last_err = Some(e);
+                if attempt < ATTEMPTS {
+                    std::thread::sleep(DELAY);
+                }
+            }
+        }
+    }
+    last_err
+}
+
+#[cfg(test)]
+mod remove_file_retrying_tests {
+    use super::*;
+
+    #[test]
+    fn a_missing_file_is_not_an_error() {
+        let dir = std::env::temp_dir().join(format!("dod_rfr_missing_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(remove_file_retrying(&dir.join("nope.dem")).is_none());
+    }
+
+    #[test]
+    fn an_unlocked_file_is_removed_on_the_first_attempt() {
+        let dir = std::env::temp_dir().join(format!("dod_rfr_plain_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("chain_01.dem");
+        std::fs::write(&file, b"demo").unwrap();
+
+        assert!(remove_file_retrying(&file).is_none());
+        assert!(!file.exists());
+    }
+
+    // Only on Windows: `std::fs::File::open`'s default share mode there
+    // already includes FILE_SHARE_DELETE, so holding a plain handle open
+    // would not actually block a delete and this test would pass without the
+    // retry loop doing anything. `share_mode(1)` (FILE_SHARE_READ only,
+    // matching the pattern already used in `capture_engine.rs`'s demo-copy
+    // path) withholds delete sharing, which is what reproduces a file hl.exe
+    // still has open the way this function exists to wait out.
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn a_file_that_becomes_removable_partway_through_succeeds() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let dir = std::env::temp_dir().join(format!("dod_rfr_delayed_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("chain_02.dem");
+        std::fs::write(&file, b"demo").unwrap();
+
+        let handle = std::fs::OpenOptions::new().read(true).share_mode(1).open(&file).unwrap();
+        assert!(
+            std::fs::remove_file(&file).is_err(),
+            "the fixture itself is wrong if a plain remove_file succeeds while this handle is open"
+        );
+
+        let releaser = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(350));
+            drop(handle);
+        });
+
+        let result = remove_file_retrying(&file);
+        releaser.join().unwrap();
+
+        assert!(result.is_none(), "{result:?}");
+        assert!(!file.exists());
+    }
+}
