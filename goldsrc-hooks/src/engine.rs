@@ -514,7 +514,22 @@ unsafe extern "C" fn tramp_initialize(engfuncs: *mut ClEngineFuncsPartial, versi
 
 /// Real per-frame tick. Runs `client.dll`'s own `HUD_Frame` first so our
 /// callback observes the state the engine just finished producing.
+/// The client time `HUD_Frame` was last called with, as raw f64 bits.
+///
+/// Free: the engine already passes it every frame and it was being discarded.
+/// During demo playback this is the demo's own clock, which is what a log line
+/// needs to be matched against something seen on screen -- wall-clock time
+/// cannot be, once playback is paused, seeked or fast-forwarded.
+static CLIENT_TIME: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Seconds into the demo, or 0 before the first frame.
+pub fn client_time() -> f64 {
+    f64::from_bits(CLIENT_TIME.load(Ordering::Relaxed))
+}
+
 unsafe extern "C" fn tramp_hud_frame(time: f64) {
+    CLIENT_TIME.store(time.to_bits(), Ordering::Relaxed);
+
     let real = REAL_HUD_FRAME.load(Ordering::Acquire);
     if !real.is_null() {
         let real: HudFrameFn = unsafe { std::mem::transmute(real) };

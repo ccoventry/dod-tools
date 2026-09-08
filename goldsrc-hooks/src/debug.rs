@@ -31,8 +31,17 @@ pub unsafe fn report(message: &str) {
     };
     path.push("goldsrc_hooks.log");
 
+    // Demo time alongside wall clock. Wall clock cannot be matched against
+    // something seen on screen once playback is paused, seeked or
+    // fast-forwarded; the demo clock can. Omitted before the first frame,
+    // when there is no playback to be at a position in.
+    let demo = match crate::engine::client_time() {
+        t if t > 0.0 => format!(" [demo {t:9.3}]"),
+        _ => String::new(),
+    };
+
     if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
-        let _ = writeln!(file, "[{}] [goldsrc-hooks] {message}", timestamp());
+        let _ = writeln!(file, "[{}]{demo} [goldsrc-hooks] {message}", timestamp());
     }
 }
 
