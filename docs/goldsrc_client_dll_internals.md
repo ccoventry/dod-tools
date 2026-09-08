@@ -549,7 +549,65 @@ recording. Nothing currently needs it, but it is the handle if something ever do
 
 ---
 
-## 9. Reproducing this analysis
+## 9. The `exploding_` grenade family is a second weapon, not a state
+
+Every grenade viewmodel — `v_grenade`, `v_stick`, `v_mills` — carries nine sequences in
+the same order:
+
+```
+0 idle   1 draw   2 pinpull   3 holster   4 throw
+5 exploding_idle   6 exploding_draw   7 exploding_pinpull   8 exploding_throw
+```
+
+Both halves are used heavily in a real match, and what selected between them was open.
+Nothing selects between them: **they belong to two mirrored weapon classes**, and which
+one is playing is simply which weapon entity the player holds.
+
+`dod.dll` registers `weapon_handgrenade` / `weapon_stickgrenade` and, beside each, a
+`_ex` variant whose short name in its item-info blob is `primgren` / `primstick` — a
+*primed* grenade. The two classes' animation call sites mirror exactly:
+
+| what | plain | anim | `_ex` | anim |
+| --- | --- | --- | --- | --- |
+| Deploy | `0x10009610` | 1 `draw` | `0x1000a7c0` | 6 `exploding_draw` |
+| PrimaryAttack | `0x10009ac0` | 2 `pinpull` | `0x1000a950` | 7 `exploding_pinpull` |
+| throw | `0x10009730` | 4 `throw` | `0x1000aa40` | 8 `exploding_throw` |
+| idle | `0x10009b80` | 0 `idle` | `0x1000adf0` | 5 `exploding_idle` |
+| Holster | `0x100099a0` | 3 `holster` | — refused, see below | |
+
+A live grenade on the ground gives the primed weapon out: the Touch handler at
+`0x10054600` checks the toucher is a living player, then gives and selects
+`weapon_handgrenade_ex` or `weapon_stickgrenade_ex` by team (`player+0x398`). That is
+DoD's pick-a-grenade-up-and-throw-it-back mechanic, and it is the same mechanic as the
+"priming" trick — rolling one out and picking it up to shorten the fuse. Separately,
+`0x1007e800` refuses a weapon switch whose target classname is either `_ex` grenade: you
+cannot put a live grenade away.
+
+The switch happens without a deploy animation. Measured over three POV halves,
+`exploding_draw` fires **once** while `draw` fires 103 times, yet `exploding_idle`,
+`exploding_pinpull` and `exploding_throw` (142 / 152 / 54) are used about as often as
+their plain counterparts (121 / 145 / 60). `analysis/examples/grenade_family_probe`
+prints the ordered stream and the transition table that shows the two chains running in
+parallel.
+
+### Why `anim_fix` cannot tell them apart, and should not try
+
+Both classes share **the same three model files and the same body-animation token**. From
+the item-info blobs, plain is `('gren', 'gren')` and `_ex` is `('primgren', 'gren')`, on
+`models/p_grenade.mdl` + `models/v_grenade.mdl` in both cases. So for a spectated player,
+an HLTV recording carries:
+
+- the same `weaponmodel` (`p_grenade.mdl`) either way,
+- the same body sequence label (`*_gren_*`) either way,
+- and no weapon-entity identity at all.
+
+There is nothing replicated that separates a primed grenade from a fresh one, so the
+animation fix should keep playing the plain family and this question is closed rather
+than open.
+
+---
+
+## 10. Reproducing this analysis
 
 No IDA or Ghidra required; everything above came from `pefile` + `capstone`
 (`pip install capstone pefile`). The core of it:
