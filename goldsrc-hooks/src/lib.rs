@@ -14,8 +14,10 @@
 //! Implements two fixes, each independently toggled and each safe to inject
 //! without the other:
 //! - `sound_fix`: force full-volume weapon-fire audio while spectating.
-//! - `anim_fix`: correct MG42/MG34/BAR/Bren viewmodel deploy animations
-//!   while spectating in-eye.
+//! - `anim_fix`: drive the first-person viewmodel's animations -- shoot,
+//!   reload, draw, idle -- while spectating a player in-eye, which the engine
+//!   otherwise leaves static. Full design write-up in
+//!   `docs/goldsrc_hltv_animation_fix.md`.
 //!
 //! See each module's docs for the full R&D reasoning.
 //!

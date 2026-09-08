@@ -48,6 +48,14 @@
 //! configs generally limit the MGs to zero, and deploying the BAR's bipod is
 //! rare. It is a refinement on top, not the point.
 //!
+//! ## Where the rest of the reasoning lives
+//!
+//! `docs/goldsrc_hltv_animation_fix.md` is the design write-up: the measurement
+//! that justifies inferring at all, the per-frame stage order, the two firing
+//! triggers and the window between them, the four mistakes worth not repeating,
+//! and how to check a session. This module's comments explain each decision at
+//! its own call site; the document explains the shape.
+//!
 //! Originally ported from a prototype written against HLAE's own source
 //! (`AfxHookGoldSrc/hooks/client/dod/ViewmodelAnimationFix.cpp`), adapted to
 //! the engine interfaces this crate captures itself.
