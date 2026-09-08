@@ -64,6 +64,7 @@ fn main() {
     let mut fires: HashMap<(u32, u32), Vec<f32>> = HashMap::new();
     let mut unattributed = 0usize;
     let mut attributed = 0usize;
+    let mut director_messages = 0usize;
 
     for entry in &demo.directory.entries {
         for frame in &entry.frames {
@@ -104,6 +105,23 @@ fn main() {
                         }
                     }
                     EngineMessage::SvcEventReliable(_) => {}
+                    // Only an HLTV proxy's recording carries the director
+                    // stream that drives the auto-director's camera.
+                    //
+                    // Counting *any* svc_director is not enough: dod-tools
+                    // injects its own into previews of POV demos, so those
+                    // misreported as HLTV. Its injections are only
+                    // DRC_CMD_MESSAGE (0x06) and DRC_CMD_STUFFTEXT (0x0A) --
+                    // bookmarks and console commands -- and neither moves a
+                    // camera, so excluding them separates a real director
+                    // stream from a patched one.
+                    EngineMessage::SvcDirector(d) => {
+                        const DRC_CMD_MESSAGE: u8 = 0x06;
+                        const DRC_CMD_STUFFTEXT: u8 = 0x0A;
+                        if d.command != DRC_CMD_MESSAGE && d.command != DRC_CMD_STUFFTEXT {
+                            director_messages += 1;
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -133,7 +151,19 @@ fn main() {
         per_weapon.entry(short).or_default().push(times);
     }
 
+    // Which kind of recording this is decides whether the numbers below mean
+    // anything for HLTV work. A POV demo records its own player's fire nearly
+    // completely, so its loss figure is the method's false-positive rate, not
+    // a real loss -- reading one as the other has already sent this
+    // investigation down the wrong path once.
+    let recording = if director_messages > 0 {
+        format!("HLTV ({director_messages} director messages)")
+    } else {
+        "POV -- a player's own recording, NOT HLTV".to_string()
+    };
+
     println!("=== {path} ===");
+    println!("recording: {recording}");
     println!(
         "shooter attribution: {attributed} events carried an entindex, {unattributed} did not{}\n",
         if attributed == 0 {
