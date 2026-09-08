@@ -429,7 +429,67 @@ non-weapon deaths). Notably **`Mg42` appears 6 times and `Browning30Cal`, `Mg34`
 all** — consistent with competitive class restrictions, and worth knowing before
 optimising analyzer paths for weapons that never fire in this corpus.
 
-## 7. Reproducing this analysis
+## 7. The director stream cannot aim DoD's spectator camera
+
+`svc_director` (51) is dispatched to `HUD_DirectorMessage`, slot 38 of the
+`cldll_func_t` table, exported by name as well at RVA `0x2a6a0`. It forwards to
+`CHudSpectator::DirectorMessage` at `0x38030`, which reads the sub-command byte
+and dispatches through a jump table:
+
+```
+0x38046  call     0x193eb20                       ; READ_BYTE() -> command
+0x3804b  lea      ecx, [eax - 1]
+0x3804e  cmp      ecx, 9
+0x38051  ja       0x193835b                       ; default: discard
+0x38057  jmp      dword ptr [ecx*4 + 0x1938370]   ; exactly 10 entries
+```
+
+The bounds check admits `command - 1` in `0..=9`, so **only DRC commands 1
+through 10 are implemented**:
+
+| Cmd | Name | Handler |
+|-----|------|---------|
+| 1 | `DRC_CMD_START` | `0x3805e` |
+| 2 | `DRC_CMD_EVENT` | `0x3809a` |
+| 3 | `DRC_CMD_MODE` | `0x38115` |
+| 4 | `DRC_CMD_CAMERA` | `0x38143` |
+| 5 | `DRC_CMD_TIMESCALE` | `0x382ef` |
+| 6 | `DRC_CMD_MESSAGE` | `0x381bc` |
+| 7 | `DRC_CMD_SOUND` | `0x382b6` |
+| 8 | `DRC_CMD_STATUS` | `0x382fb` |
+| 9 | `DRC_CMD_BANNER` | `0x38320` |
+| 10 | `DRC_CMD_STUFFTEXT` | `0x38347` |
+
+`DRC_CMD_CHASE` (11) and `DRC_CMD_INEYE` (12) — the two commands that aim a
+spectator camera at a chosen player — are **past the end of the table** and
+discarded unread. The bytes following the table are instruction padding, not
+entries.
+
+### Why this matters
+
+Pinning the spectator view to one player by injecting `DRC_CMD_INEYE` into an
+HLTV demo cannot work on DoD 1.3. That was parked R&D in `patch::engine` for a
+long time on the assumption it was merely unfinished; it is not implementable
+by this route. Live testing agreed before the disassembly did: an injected
+INEYE left the camera fully controllable, with every spectator mode still
+switchable by hand.
+
+Two separate bugs had masked the real answer. The injection wrote its
+`svc_director` *inside* an existing frame's payload rather than as a standalone
+frame, so the demo would not load at all (`illegal server message`, `packet
+read overflow`); and the constant it used, `DRC_CMD_INEYE = 5`, is actually
+`DRC_CMD_TIMESCALE` — so even once the framing was fixed, the message being
+sent was not the one intended. Neither mattered in the end.
+
+`MESSAGE` (6) and `STUFFTEXT` (10), the two commands dod-tools injects for
+bookmarks, sit inside the handled range. That is why those work, and it
+corroborates the command numbering above.
+
+Anything that needs the camera on a particular player has to reach the
+spectator state directly — `goldsrc-hooks` territory, not the demo stream. See
+issue #206.
+
+## 8. Reproducing this analysis
 
 No IDA or Ghidra required; everything above came from `pefile` + `capstone`
 (`pip install capstone pefile`). The core of it:

@@ -107,47 +107,14 @@ fn write_director_event_payload(
 /// visibility test most of all — reads the demo's recorded `refparams`, which
 /// is correct exactly while this stays unused. Switching it on moves the camera
 /// away from what those samples describe, and the flush would have to follow.
-/// How often the spectator target is re-asserted, in demo seconds.
-const HIJACK_REASSERT_SECONDS: f32 = 1.0;
-
-fn write_ineye_hijack_payload(
-    writer: &mut std::io::BufWriter<std::fs::File>,
-    time: f32,
-    tick: i32,
-    info_block: &[u8],
-    target_player_id: u8,
-) -> std::io::Result<i32> {
-    use std::io::Write;
-
-    const FRAME_TYPE_NETMSG: u8 = 1;
-    const SVC_DIRECTOR: u8 = 51;
-    const DRC_PAYLOAD_LENGTH: u8 = 2;
-    const DRC_CMD_INEYE: u8 = 5;
-    const SVC_NOP: u8 = 1;
-
-    let payload: &[u8] = &[SVC_DIRECTOR, DRC_PAYLOAD_LENGTH, DRC_CMD_INEYE, target_player_id];
-
-    writer.write_all(&[FRAME_TYPE_NETMSG])?;
-    writer.write_all(&time.to_le_bytes())?;
-    writer.write_all(&tick.to_le_bytes())?;
-    writer.write_all(info_block)?;
-
-    // payload_length includes the trailing svc_nop (1 byte)
-    let msg_len = (payload.len() as u32) + 1;
-    writer.write_all(&msg_len.to_le_bytes())?;
-    writer.write_all(payload)?;
-    writer.write_all(&[SVC_NOP])?;
-
-    let total_bytes = std::mem::size_of::<u8>() // FRAME_TYPE_NETMSG
-        + std::mem::size_of::<f32>()            // time
-        + std::mem::size_of::<i32>()            // tick
-        + info_block.len()                      // info_block
-        + std::mem::size_of::<u32>()            // msg_len
-        + payload.len()                         // payload
-        + std::mem::size_of::<u8>();            // SVC_NOP
-
-    Ok(total_bytes as i32)
-}
+// GoldSrc's director stream cannot aim DoD's spectator camera. DoD 1.3's
+// client handles DRC commands 1-10 only -- its jump table has exactly ten
+// entries behind a `cmp cmd-1, 9 / ja default` bounds check -- so DRC_CMD_CHASE
+// (11) and DRC_CMD_INEYE (12) fall straight through and are discarded. The
+// in-eye hijack that used to live here was removed once that was read out of
+// client.dll; see docs/goldsrc_client_dll_internals.md. The two director
+// commands this file does inject, MESSAGE (6) and STUFFTEXT (10), are inside
+// the handled range, which is why they work.
 
 // ── Stream patcher ────────────────────────────────────────────────────────────
 
@@ -220,13 +187,6 @@ impl StreamPatcher {
         };
         let mut scheduled_queue: std::collections::VecDeque<(i32, String)> = job.scheduled_commands.iter().cloned().collect();
 
-        // In-eye hijack: which player to pin the spectator view to, if any.
-        // `target_player` names them; the id the wire format wants is the entity
-        // index, which the job's streaks carry (they have been filtered to that
-        // one player by the caller).
-        let hijack_target: Option<u8> =
-            job.target_player.as_ref().and_then(|_| job.streaks.first().map(|s| s.player_index as u8));
-        let mut last_hijack_time = f32::NEG_INFINITY;
 
         // Step 2.5: Pre-read the directory to map entry boundaries
         let mut dir_entries: Vec<(i32, i32)> = Vec::new();
@@ -426,26 +386,6 @@ impl StreamPatcher {
                         }
                     }
 
-                    // Re-assert the spectator target periodically. Once is not
-                    // enough: the auto-director takes the camera back whenever
-                    // the player being watched dies, and at round transitions.
-                    //
-                    // Every frame would be the surest lock and is what the
-                    // original attempt did, but a standalone frame costs
-                    // NETMSG_INFO_SIZE + 18 bytes, so asserting it 30 times a
-                    // second would add ~19MB to a 21-minute demo and double its
-                    // frame count. Once a second costs ~600KB and gives up at
-                    // most a second of the wrong player after a death.
-                    if let Some(target) = hijack_target
-                        && playback_started
-                        && time - last_hijack_time >= HIJACK_REASSERT_SECONDS
-                    {
-                        last_hijack_time = time;
-                        let b = write_ineye_hijack_payload(&mut writer, time, file_tick, &scratch_buf, target)?;
-                        update_injection(pos, b, 1);
-                        bytes_injected += b;
-                    }
-
                     // Write original frame header and info block
                     writer.write_all(&frame_hdr)?;
                     writer.write_all(&scratch_buf)?;
@@ -466,11 +406,6 @@ impl StreamPatcher {
                     let mut net_buf = vec![0u8; msg_len];
                     read_exact(&mut reader, &mut net_buf, "NetworkMessage Body")?;
 
-                    // The in-eye hijack used to prepend its svc_director *inside*
-                    // this payload, which is exactly what the packet-integrity
-                    // rule forbids -- it loaded as svc_bad / "packet read
-                    // overflow" and never played. It is written as a standalone
-                    // frame above instead.
                     let final_len_buf = (net_buf.len() as u32).to_le_bytes();
                     writer.write_all(&final_len_buf)?;
                     writer.write_all(&net_buf)?;

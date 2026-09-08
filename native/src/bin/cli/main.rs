@@ -3,15 +3,19 @@
 //!
 //! ## `--player` on an HLTV demo
 //!
-//! An HLTV demo holds every player's highlights, and its camera is the
-//! auto-director's -- so a preview of one carries bookmarks for kills the
-//! camera was never pointed at, and switches away the moment the player it was
-//! watching dies. Naming a player filters the bookmarks to theirs *and* pins
-//! the spectator view to them, by injecting `DRC_CMD_INEYE` into the director
-//! stream (`patch::engine`'s in-eye hijack, which this is the first caller of).
+//! An HLTV demo holds every player's highlights, so a preview of one is a wall
+//! of bookmarks for twelve people. Naming a player narrows them to that one,
+//! which is what makes the Event List usable for finding somebody's rounds.
 //!
-//! Meaningless for a POV demo, which already records the only camera it has,
-//! so it is refused there rather than silently ignored.
+//! It does **not** move the camera, and cannot: DoD 1.3's client implements
+//! DRC commands 1-10 only, so the two that aim a spectator camera --
+//! DRC_CMD_CHASE (11) and DRC_CMD_INEYE (12) -- are discarded unread. That was
+//! tried, and read out of client.dll afterwards; see
+//! docs/goldsrc_client_dll_internals.md. Jumping to a bookmark still lands on
+//! the right moment, but the camera is wherever the auto-director left it.
+//!
+//! Meaningless for a POV demo, which is already one player's, so it is refused
+//! there rather than silently ignored.
 
 use std::io::{self, Write};
 
@@ -239,7 +243,7 @@ fn process_demo(
     // filtered to the recording player anyway, so there is nothing for
     // `--player` to do. Say so instead of silently ignoring it, or a mistyped
     // name looks like it worked.
-    let hijack_player = if is_pov {
+    let selected_player = if is_pov {
         streaks.retain(|s| Some(s.player_index) == local_player_idx);
         if requested_player.is_some() {
             println!("  Note: {original_filename} is a POV demo — --player ignored (its camera is already one player's)");
@@ -255,7 +259,7 @@ fn process_demo(
         return;
     }
 
-    if let Some(want) = hijack_player {
+    if let Some(want) = selected_player {
         let roster = streaks.clone();
         streaks.retain(|s| streak_matches_player(s, want));
         if streaks.is_empty() {
@@ -268,30 +272,19 @@ fn process_demo(
         // Not an error -- the all-players preview is still what most runs want.
         // But an HLTV preview bookmarks kills the auto-director may never have
         // been pointed at, so it is worth knowing the option exists.
-        println!("  HLTV demo: bookmarking all players. Re-run with --player to pin the camera to one.");
+        println!("  HLTV demo: bookmarking all players. Re-run with --player to narrow it to one.");
         print_roster(&streaks);
     }
 
     // Taken before `streaks` is moved into the builder.
-    let hijack_label = hijack_player.map(|_| {
+    let chosen_player = selected_player.map(|_| {
         let s = &streaks[0];
         (s.player_index, s.target_player.clone().unwrap_or_else(|| format!("p{}", s.player_index)))
     });
 
     let mut jobs = native::patch::build_preview_patch_jobs(streaks, Some(output_dir));
 
-    // `PatchJob::target_player` being set is what turns on the in-eye hijack in
-    // `patch::engine` -- it reads the player index off the job's first streak,
-    // which the filter above has just made the only player present.
-    let mut patcher_config = patcher_config.clone();
-    if let Some((index, name)) = &hijack_label {
-        // The decal flush decides what is on screen from the demo's *recorded*
-        // refparams, which describe the auto-director's camera -- exactly the
-        // camera the hijack is replacing. Its visibility test would be reasoning
-        // about a view that is no longer being rendered, so leave the decals
-        // alone here; a preview is for finding highlights, not for final output.
-        patcher_config.decal_flush = false;
-
+    if let Some((index, name)) = &chosen_player {
         for job in &mut jobs {
             job.target_player = Some(name.clone());
             // Distinguish one player's preview from another's, through the same
@@ -306,9 +299,8 @@ fn process_demo(
             let safe = native::patch::playdemo_safe_stem(&format!("{stem}_{index}"));
             job.output_demo = output_dir.join(format!("{safe}_preview.dem"));
         }
-        println!("  Pinning spectator camera to {name} (index {index})");
+        println!("  Bookmarking only {name} (index {index}) — the camera stays with the auto-director");
     }
-    let patcher_config = &patcher_config;
 
     for job in &jobs {
         let new_filename = job.output_demo
