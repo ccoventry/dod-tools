@@ -18,7 +18,9 @@ use crate::{anim_fix, sound_fix};
 const GUNSHOTS_FIX_NAME: &str = "dodtools_hltv_gunshots_fix";
 const ANIMATION_FIX_NAME: &str = "dodtools_hltv_animation_fix";
 const ATTENUATION_NAME: &str = "dodtools_hltv_gunshot_attenuation";
-const HELD_MODELS_NAME: &str = "dodtools_hltv_log_held_models";
+// Not "..._weapon_switch": it fires on stance changes too (p_mg42pr,
+// p_mg42sr), and those are the reason it exists.
+const HELD_MODELS_NAME: &str = "dodtools_log_weapon_model";
 
 fn console_print(text: &str) {
     let Some(engfuncs) = engine::engfuncs() else { return };
