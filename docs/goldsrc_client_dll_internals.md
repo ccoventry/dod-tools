@@ -11,6 +11,16 @@ Movies* depot (the SteamLegacy/beta branch this project captures against), 977,8
 32-bit PE, `ImageBase 0x1900000`, four sections (`.text 0x1901000`, `.rdata 0x19a4000`,
 `.data 0x19bf000`, `.reloc 0x1a9f000`), 125 named exports.
 
+> **This is not pre-Anniversary-specific**, which is worth stating because the depot name
+> suggests otherwise. Compared against a stock 25th-Anniversary install (2026-09-07):
+> `dod/cl_dlls/client.dll` and `dod/dlls/dod.dll` are **byte-identical** across the two,
+> so everything in §§1–5 holds for both. Only `hw.dll` differs, being the engine — and
+> the one thing taken from it, the `GetProcAddress(hClient, "F")` convention in §1, is
+> present in *all three* installs checked (pre-Anniversary, post-Anniversary, and stock
+> Anniversary; the latter two share an engine). Its IAT address differs between
+> generations, which costs nothing: `goldsrc-hooks` resolves that slot by import name
+> rather than by offset.
+
 ---
 
 ## 1. The engine does not resolve `client.dll`'s exports by name
