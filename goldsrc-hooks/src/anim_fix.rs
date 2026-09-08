@@ -24,7 +24,10 @@
 //!   first have no sequence change to key off.
 //! - **reload** -- from the spectated player's body animation as well
 //!   (`crouch_bar_reload`, `prone_webley_reload`, ...).
-//! - **draw** -- from the viewmodel's model changing.
+//! - **draw** -- when the viewmodel *settles* on a different weapon. Not
+//!   simply when it changes: the viewmodel rotates through several of a
+//!   player's weapons many times a second, so a bare change test starts a draw
+//!   ten times a second and none of them survive long enough to be seen.
 //! - **idle** -- on switching to a different spectated player, so the new
 //!   viewmodel does not inherit whatever sequence the last one was left on.
 //!
@@ -193,7 +196,7 @@ fn viewmodel_matches_held_weapon(viewmodel_name: &str, spectated: &ClEntityS) ->
     // v_bar and v_colt, so log how the decision is actually being reached for
     // the first few. `None` means the held weapon could not be resolved at all,
     // which is currently treated as "allow" and would explain it.
-    if MATCH_LOGS.fetch_add(1, Ordering::Relaxed) < MAX_MATCH_LOGS {
+    if LOG_HELD_MODELS.load(Ordering::Relaxed) {
         let held = engine::engine_studio()
             .map(|studio| unsafe { (studio.get_model_by_index)(spectated.curstate.weaponmodel) })
             .filter(|m| !m.is_null())
@@ -215,15 +218,8 @@ fn viewmodel_matches_held_weapon(viewmodel_name: &str, spectated: &ClEntityS) ->
     verdict
 }
 
-static MATCH_LOGS: AtomicI32 = AtomicI32::new(0);
-const MAX_MATCH_LOGS: i32 = 30;
-
 /// The third-person model the spectated player was last seen holding.
 static LAST_HELD_MODEL: Mutex<Option<String>> = Mutex::new(None);
-static HELD_LOGS: AtomicI32 = AtomicI32::new(0);
-/// Generous, because this only changes on a weapon or stance change, not per
-/// frame -- and the whole point is to catch every one of them.
-const MAX_HELD_LOGS: i32 = 200;
 
 /// Logs the held third-person model whenever it changes.
 ///
@@ -261,9 +257,6 @@ fn note_held_model(spectated: &ClEntityS) {
     let previous = last.replace(name.clone());
     drop(last);
 
-    if HELD_LOGS.fetch_add(1, Ordering::Relaxed) >= MAX_HELD_LOGS {
-        return;
-    }
     unsafe {
         crate::debug::report(&format!(
             "anim_fix: held model changed -- \"{name}\" (was {}) -- what was the player doing?",
@@ -440,34 +433,11 @@ fn get_spectated_deploy_state(weapon: &DeployableWeapon, entity: &ClEntityS) -> 
 /// preconditions held, not that anything was corrected.
 static ANIMATIONS_PLAYED: AtomicI32 = AtomicI32::new(0);
 
-/// Which animation is being played, used only to keep the log budgets apart.
-///
-/// They have to be separate. Draws and player switches happen constantly while
-/// spectating, and under one shared cap they consumed the entire budget 44
-/// seconds into a session -- so every firing animation after that played but
-/// was never logged, which read exactly like the fix having stopped working.
-#[derive(Clone, Copy)]
-enum AnimKind {
-    Idle,
-    Draw,
-    Reload,
-    Fire,
-}
-
-static ANIMATION_LOGS: [AtomicI32; 4] = [const { AtomicI32::new(0) }; 4];
-const MAX_ANIMATION_LOGS: i32 = 25;
-
-/// Reassurance that a long session is still working after the per-kind budgets
-/// above have run out.
+/// Reassurance that a long session is still working.
 const ANIMATION_SUMMARY_EVERY: i32 = 100;
-
-fn animation_log_allowed(kind: AnimKind) -> bool {
-    ANIMATION_LOGS[kind as usize].fetch_add(1, Ordering::Relaxed) < MAX_ANIMATION_LOGS
-}
 
 fn play_viewmodel_animation(
     sequence: i32,
-    kind: AnimKind,
     reason: &str,
     state: Option<DeployState>,
     viewmodel: *mut ModelSPartial,
@@ -476,9 +446,7 @@ fn play_viewmodel_animation(
         // Worth seeing: it means the model had no sequence matching what the
         // deploy state asked for, which is a gap in the up/down mapping rather
         // than a no-op.
-        if animation_log_allowed(kind) {
-            unsafe { crate::debug::report(&format!("anim_fix: {reason} -- no matching sequence found, nothing played")) };
-        }
+        unsafe { crate::debug::report(&format!("anim_fix: {reason} -- no matching sequence found, nothing played")) };
         return;
     }
     let Some(engfuncs) = engine::engfuncs() else { return };
@@ -487,7 +455,7 @@ fn play_viewmodel_animation(
     if played % ANIMATION_SUMMARY_EVERY == 0 {
         unsafe { crate::debug::report(&format!("anim_fix: {played} animations corrected so far")) };
     }
-    if animation_log_allowed(kind) {
+    {
         let label = model_sequence_strings(viewmodel)
             .get(sequence as usize)
             .cloned()
@@ -509,14 +477,6 @@ fn play_viewmodel_animation(
 
 /// What `apply()` last saw, published for `on_weapon_fired`, which runs from
 /// the sound hook on the same thread but has none of this context.
-/// Counted separately from the matches, because gunfire from the rest of the
-/// match vastly outnumbers the spectated player's own and a single shared cap
-/// let the noise crowd out the one line worth reading. (It did exactly that on
-/// the first run: 25 "ignored" lines used the whole budget.)
-static FIRE_LOGS_IGNORED: AtomicI32 = AtomicI32::new(0);
-const MAX_FIRE_LOGS_IGNORED: i32 = 15;
-static FIRE_LOGS_MATCHED: AtomicI32 = AtomicI32::new(0);
-const MAX_FIRE_LOGS_MATCHED: i32 = 40;
 
 /// Demo time of the last firing animation played, so the two independent
 /// triggers cannot both play one shot.
@@ -551,7 +511,49 @@ static LAST_KNOWN_DEPLOY_STATE: AtomicI32 = AtomicI32::new(-1);
 static PREVIOUS_SPECTATED_ENTITY: AtomicI32 = AtomicI32::new(-1);
 static PREVIOUS_SEQUENCE: AtomicI32 = AtomicI32::new(-1);
 static PREVIOUS_DEPLOY_STATE: AtomicI32 = AtomicI32::new(-1); // -1 none, 0 up, 1 down
-static PREVIOUS_VIEWMODEL: AtomicPtr<ModelSPartial> = AtomicPtr::new(std::ptr::null_mut());
+/// Which weapon the viewmodel is *currently* showing, and since when.
+///
+/// The viewmodel does not simply change when a player switches weapons -- it
+/// rotates through several of the weapons they are carrying, many times a
+/// second. One spectated player was measured cycling four models
+/// (v_stick / v_spade and two others) thirteen times in 1.4 seconds, every one
+/// of which the old "pointer differs from last frame" test read as a weapon
+/// switch and started a draw animation for. Nothing ever got to play: each
+/// draw was replaced ~100ms later by a draw on a different model, which is why
+/// the STG44's draw was reported missing when it was in fact being restarted
+/// out of existence.
+///
+/// `curstate.weaponmodel` is no better, which is worth recording because this
+/// module used to claim otherwise: the same session shows the *replicated*
+/// held model bouncing `p_stg44 -> p_luger -> p_stg44` in 0.17s and again in
+/// 0.33s, always returning to the real weapon. The excursions are short and
+/// they revert, so requiring a model to hold still is what separates a switch
+/// from the noise.
+static PENDING_VIEWMODEL: AtomicPtr<ModelSPartial> = AtomicPtr::new(std::ptr::null_mut());
+static PENDING_VIEWMODEL_SINCE: AtomicU64 = AtomicU64::new(0);
+static SETTLED_VIEWMODEL: AtomicPtr<ModelSPartial> = AtomicPtr::new(std::ptr::null_mut());
+
+/// How long a viewmodel has to hold still before it counts as the weapon in
+/// hand. Comfortably longer than the longest observed excursion (~0.35s), at
+/// the cost of the draw animation starting that much after the switch.
+const VIEWMODEL_SETTLE_SECONDS: f64 = 0.4;
+
+/// Whether the viewmodel has settled on a weapon that is not the one it had
+/// settled on before -- i.e. whether a real weapon switch just completed.
+fn viewmodel_settled_on_a_new_weapon(current: *mut ModelSPartial, now: f64) -> bool {
+    if PENDING_VIEWMODEL.swap(current, Ordering::Relaxed) != current {
+        // Still flapping (or genuinely just changed): restart the clock.
+        PENDING_VIEWMODEL_SINCE.store(now.to_bits(), Ordering::Relaxed);
+        return false;
+    }
+    let since = f64::from_bits(PENDING_VIEWMODEL_SINCE.load(Ordering::Relaxed));
+    if now >= since && now - since < VIEWMODEL_SETTLE_SECONDS {
+        return false;
+    }
+    // Settled. Report it once, on the transition.
+    let previous = SETTLED_VIEWMODEL.swap(current, Ordering::Relaxed);
+    !previous.is_null() && previous != current
+}
 
 fn deploy_state_to_i32(state: Option<DeployState>) -> i32 {
     match state {
@@ -614,10 +616,6 @@ fn stage_name(stage: i32) -> &'static str {
 /// different viewmodels and one viewmodel flickering to null look different in
 /// the log instead of both reading as "stage changed".
 static LAST_TRACE: Mutex<Option<(i32, usize, usize, i32)>> = Mutex::new(None);
-static TRACE_LINES: AtomicI32 = AtomicI32::new(0);
-/// The flicker being investigated is per-frame, so this has to be capped or a
-/// single session would write tens of thousands of lines.
-const MAX_TRACE_LINES: i32 = 80;
 
 fn stage(stage: i32) {
     stage_with(stage, std::ptr::null_mut::<u8>(), std::ptr::null_mut::<u8>(), -1);
@@ -641,9 +639,6 @@ fn stage_with<A, B>(stage: i32, entity: *mut A, model: *mut B, index: i32) {
     *last = Some(key);
     drop(last);
 
-    if TRACE_LINES.fetch_add(1, Ordering::Relaxed) >= MAX_TRACE_LINES {
-        return;
-    }
     unsafe {
         crate::debug::report(&format!(
             "anim_fix: {} | entity {entity:p} idx {index}, model {model:p}",
@@ -723,12 +718,9 @@ pub fn on_weapon_fired(entity_index: i32) {
     // player is among them.
     let spectated = CURRENT_SPECTATED.load(Ordering::Relaxed);
     let matched = entity_index == spectated;
-    let (counter, cap) = if matched {
-        (&FIRE_LOGS_MATCHED, MAX_FIRE_LOGS_MATCHED)
-    } else {
-        (&FIRE_LOGS_IGNORED, MAX_FIRE_LOGS_IGNORED)
-    };
-    if counter.fetch_add(1, Ordering::Relaxed) < cap {
+    // Gunfire from the rest of the match vastly outnumbers the spectated
+    // player's own, so the misses are verbose-only; a hit is always worth a line.
+    if matched || LOG_HELD_MODELS.load(Ordering::Relaxed) {
         unsafe {
             crate::debug::report(&format!(
                 "anim_fix: weapon-fire sound from entity {entity_index}, currently spectating {spectated} -- {}",
@@ -752,7 +744,7 @@ pub fn on_weapon_fired(entity_index: i32) {
 
     let state = i32_to_deploy_state(CURRENT_DEPLOY_STATE.load(Ordering::Relaxed));
     let sequence = animation_lookup_any(ATTACK_SEQUENCES, state, viewmodel);
-    play_viewmodel_animation(sequence, AnimKind::Fire, "spectated player fired (sound)", state, viewmodel);
+    play_viewmodel_animation(sequence, "spectated player fired (sound)", state, viewmodel);
 }
 
 /// `"idx 6"`. Names would be nicer, but reaching them needs an engine slot
@@ -888,18 +880,17 @@ pub fn apply() {
     let previous_state = i32_to_deploy_state(PREVIOUS_DEPLOY_STATE.load(Ordering::Relaxed));
     let deploy_state_changed = previous_state.is_some() && state.is_some() && previous_state != state;
 
-    let previous_viewmodel = PREVIOUS_VIEWMODEL.swap(viewmodel_model, Ordering::Relaxed);
-    let viewmodel_changed = previous_viewmodel != viewmodel_model && !previous_viewmodel.is_null();
+    let viewmodel_changed = viewmodel_settled_on_a_new_weapon(viewmodel_model, engine::client_time());
 
     if switched_players {
         // Snap the new viewmodel straight to the right family's idle so it
         // doesn't sit on whatever sequence the previously-spectated player
         // left it on.
-        play_viewmodel_animation(animation_lookup_sequence("idle", state, viewmodel_model), AnimKind::Idle, "spectated player changed", state, viewmodel_model);
+        play_viewmodel_animation(animation_lookup_sequence("idle", state, viewmodel_model), "spectated player changed", state, viewmodel_model);
     } else if deploy_state_changed {
         // TODO(R&D, unverified live): play the "uptodown"/"downtoup"-style
         // transition sequence here instead of snapping straight to idle.
-        play_viewmodel_animation(animation_lookup_sequence("idle", state, viewmodel_model), AnimKind::Idle, "bipod deploy state changed", state, viewmodel_model);
+        play_viewmodel_animation(animation_lookup_sequence("idle", state, viewmodel_model), "bipod deploy state changed", state, viewmodel_model);
     } else {
         // Classify the action from the spectated player's body animation, not
         // the viewmodel's. Only on a *change* of sequence: the label persists
@@ -925,12 +916,11 @@ pub fn apply() {
                     if claim_fire(engine::client_time()) {
                         play_viewmodel_animation(
                             animation_lookup_any(ATTACK_SEQUENCES, state, viewmodel_model),
-                            AnimKind::Fire,
                             "spectated player fired",
                             state,
                             viewmodel_model,
                         );
-                    } else if animation_log_allowed(AnimKind::Fire) {
+                    } else {
                         // A detected shot that plays nothing looks identical in
                         // the log to a shot that was never detected, and the
                         // two have completely different causes. Say which.
@@ -944,7 +934,6 @@ pub fn apply() {
                 Some(BodyAction::Reload) => {
                     play_viewmodel_animation(
                         animation_lookup_sequence("reload", state, viewmodel_model),
-                        AnimKind::Reload,
                         "spectated player reloaded",
                         state,
                         viewmodel_model,
@@ -955,7 +944,7 @@ pub fn apply() {
         }
 
         if viewmodel_changed {
-            play_viewmodel_animation(animation_lookup_sequence("draw", state, viewmodel_model), AnimKind::Draw, "viewmodel changed", state, viewmodel_model);
+            play_viewmodel_animation(animation_lookup_sequence("draw", state, viewmodel_model), "weapon changed", state, viewmodel_model);
         }
     }
 
@@ -1038,6 +1027,58 @@ mod tests {
         assert_eq!(model_stem("models/p_mg42bd.mdl"), "mg42bd");
         assert_eq!(model_stem("models\\w_luger.mdl"), "luger");
         assert_eq!(model_stem("models/player/us-inf/us-inf.mdl"), "us-inf");
+    }
+
+    /// Reproduces the measured flap that made the STG44's draw animation
+    /// invisible: four models cycling ~10 times a second, with the real weapon
+    /// recurring but never holding still.
+    #[test]
+    fn a_flapping_viewmodel_is_not_a_weapon_switch() {
+        let (a, b, c) = (1 as *mut ModelSPartial, 2 as *mut ModelSPartial, 3 as *mut ModelSPartial);
+        reset_settle_state();
+
+        // Settle on `a` first, so there is a previous weapon to change from.
+        assert!(!viewmodel_settled_on_a_new_weapon(a, 0.0));
+        assert!(!viewmodel_settled_on_a_new_weapon(a, 1.0), "first settle has nothing to differ from");
+
+        // Now flap between three models every 0.1s for two seconds. None of it
+        // is a weapon switch.
+        let mut t = 1.0;
+        for i in 0..20 {
+            let m = [a, b, c][i % 3];
+            t += 0.1;
+            assert!(!viewmodel_settled_on_a_new_weapon(m, t), "flap at t={t} model {i}");
+        }
+    }
+
+    #[test]
+    fn a_weapon_that_holds_still_reports_once() {
+        let (a, b) = (1 as *mut ModelSPartial, 2 as *mut ModelSPartial);
+        reset_settle_state();
+
+        assert!(!viewmodel_settled_on_a_new_weapon(a, 0.0));
+        assert!(!viewmodel_settled_on_a_new_weapon(a, 0.5));
+
+        // `b` appears and stays. It is not a switch until it has held still.
+        assert!(!viewmodel_settled_on_a_new_weapon(b, 1.0));
+        assert!(!viewmodel_settled_on_a_new_weapon(b, 1.0 + VIEWMODEL_SETTLE_SECONDS / 2.0));
+        // Comfortably past the threshold rather than exactly on it: the sum
+        // lands a hair under in floating point, and a frame arriving exactly on
+        // the boundary would simply settle on the next one.
+        let settled_at = 1.0 + VIEWMODEL_SETTLE_SECONDS + 0.05;
+        assert!(viewmodel_settled_on_a_new_weapon(b, settled_at));
+
+        // And only once -- a draw must not restart every frame afterwards.
+        for i in 1..10 {
+            let t = settled_at + i as f64 * 0.1;
+            assert!(!viewmodel_settled_on_a_new_weapon(b, t), "re-reported at t={t}");
+        }
+    }
+
+    fn reset_settle_state() {
+        PENDING_VIEWMODEL.store(std::ptr::null_mut(), Ordering::Relaxed);
+        PENDING_VIEWMODEL_SINCE.store(0f64.to_bits(), Ordering::Relaxed);
+        SETTLED_VIEWMODEL.store(std::ptr::null_mut(), Ordering::Relaxed);
     }
 
     #[test]
