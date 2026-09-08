@@ -1134,6 +1134,35 @@ mod tests {
         assert!(!model_stem("models/p_fcarb.mdl").contains(carbine));
     }
 
+    /// Fast-forwarding through the slow parts of a demo is routine when making
+    /// movies, so returning to normal speed must not leave the fix mistiming
+    /// animations. Nothing here integrates demo position -- every decision is
+    /// made from the current frame against one stored timestamp -- so a jump
+    /// can cost at most the animation at the boundary.
+    #[test]
+    fn a_time_jump_does_not_leave_the_state_stuck() {
+        let (a, b) = (1 as *mut ModelSPartial, 2 as *mut ModelSPartial);
+        reset_settle_state();
+        LAST_FIRE_PLAYED.store(0f64.to_bits(), Ordering::Relaxed);
+
+        assert!(!viewmodel_settled_on_a_new_weapon(a, 0.0));
+        assert!(!viewmodel_settled_on_a_new_weapon(a, 1.0));
+        assert!(claim_fire(1.0));
+
+        // Fast-forward: the clock leaps, and the weapon is different when it
+        // lands. The switch is still reported, once, as soon as it settles.
+        let after = 500.0;
+        assert!(!viewmodel_settled_on_a_new_weapon(b, after));
+        assert!(viewmodel_settled_on_a_new_weapon(b, after + 1.0));
+        assert!(!viewmodel_settled_on_a_new_weapon(b, after + 2.0));
+
+        // And normal-speed firing resumes immediately, at the real cyclic rate
+        // rather than being held off by the stale timestamp.
+        assert!(claim_fire(after + 2.0));
+        assert!(!claim_fire(after + 2.0 + FIRE_DEDUP_SECONDS / 2.0), "same shot");
+        assert!(claim_fire(after + 2.1), "next round");
+    }
+
     #[test]
     fn model_stem_strips_all_three_prefixes() {
         assert_eq!(model_stem("models/v_98k.mdl"), "98k");
