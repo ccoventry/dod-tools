@@ -1608,7 +1608,7 @@ function drawTimelineChart(canvas, seriesA, seriesB, colorA, colorB, labelA, lab
       ctx.beginPath();
       ctx.arc(px, py, 2.5, 0, Math.PI * 2);
       ctx.fill();
-      hitPoints.push({ px, py, x, y, color, label });
+      hitPoints.push({ px, py, x, y, rawX: x + rebaseBy, color, label });
     });
   };
   drawSeries(seriesA, colorA, labelA);
@@ -1633,9 +1633,11 @@ function initTimelineTooltip(canvas, tooltip, points) {
     }
     if (nearest) {
       tooltip.style.display = 'block';
-      tooltip.style.left = `${Math.min(nearest.px + 12, canvas.clientWidth - 90)}px`;
-      tooltip.style.top = `${Math.max(nearest.py - 30, 0)}px`;
-      tooltip.innerHTML = `${esc(formatMMSS(nearest.x))}<br><span style="color:${nearest.color};">${esc(nearest.label)}: ${nearest.y}</span>`;
+      tooltip.style.left = `${Math.min(nearest.px + 12, canvas.clientWidth - 170)}px`;
+      tooltip.style.top = `${Math.max(nearest.py - 46, 0)}px`;
+      tooltip.innerHTML = `<strong>${esc(STRINGS.ANALYZER.TIMELINE_TOOLTIP_ELAPSED_LABEL)}</strong> ${esc(formatMMSS(nearest.x))}<br>`
+        + `<strong>${esc(STRINGS.ANALYZER.TIMELINE_TOOLTIP_TIMESTAMP_LABEL)}</strong> ${esc(formatGameTime(nearest.rawX))}<br>`
+        + `<span style="color:${nearest.color};"><strong>${esc(nearest.label)}:</strong> ${nearest.y}</span>`;
     } else {
       tooltip.style.display = 'none';
     }
