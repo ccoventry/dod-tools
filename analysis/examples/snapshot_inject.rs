@@ -9,9 +9,19 @@
 //! dropped, and is never corrected.
 //!
 //! The fix is to give the client a complete table at the cut. This replays every
-//! entity update in the prefix, merging each entity's fields into one accumulated
-//! state, and writes that out as a full `SvcPacketEntities` at the join -- the
-//! message type the demo otherwise only contains at t=0.
+//! entity update in the prefix -- seeded from entry 0's `SvcSpawnBaseline`, so a
+//! field set only at spawn and genuinely never resent survives too -- merging
+//! each entity's fields into one accumulated state, and writes that out as a
+//! full `SvcPacketEntities` at the join -- the message type the demo otherwise
+//! only contains at t=0.
+//!
+//! **Two live-crash fixes are baked into how that packet is encoded**, both
+//! found by testing in-engine rather than by offline checks (which all still
+//! pass on the broken versions): entity 0 is dropped from the list entirely
+//! rather than restated, and its entities are encoded with increment/difference
+//! indexing rather than absolute, matching what real `SvcPacketEntities`
+//! traffic actually does. See the comment just above where the snapshot is
+//! built for the measurements behind both.
 //!
 //!     cargo run --release -p analysis --example snapshot_inject -- <in.dem> <out.dem>
 use dem::open_demo_from_bytes;
@@ -142,21 +152,63 @@ fn main() {
     // Encode each join's state as a full snapshot. Absolute indices throughout:
     // unambiguous, and it avoids depending on the incremental index arithmetic
     // being right.
+    // Two encoding choices below came from a live svc_bad crash (playdemo and
+    // viewdemo both, same underlying cause) and are backed by measurement, not
+    // guesswork -- checked across 3 healthy demos, ~1.65M real entity
+    // observations combined:
+    //
+    // - entity_index 0 (world) appears in ZERO of them, full snapshots or
+    //   deltas. The client keeps its signon baseline for it permanently; no
+    //   real server ever restates it. So it is dropped here rather than
+    //   encoded, matching real traffic exactly rather than inventing a
+    //   representation nothing has ever validated.
+    // - `is_absolute_entity_index = true` appears in 0 of 2,337 entities across
+    //   every real *full* `SvcPacketEntities` sampled -- yet in ~4% of entities
+    //   in real *delta* packets. So the 11-bit absolute-index path is a
+    //   genuinely exercised, presumably-correct part of the wire format, but
+    //   specifically for the message type we are NOT constructing here. The
+    //   previous version of this code used absolute indexing for every single
+    //   entity in the injected full snapshot, exercising a path with zero
+    //   precedent for that message type -- and does not reach the parser via a
+    //   normal read either, only the injector's own writer. Increment/
+    //   difference encoding, computed against a running index starting at 0
+    //   (dem-patch's own decoder, `packet_entities.rs`), is used instead,
+    //   falling back to absolute only for a gap too wide for 6 bits (>63) --
+    //   never observed in real full snapshots, but not structurally
+    //   impossible for a set reconstructed from scratch rather than walked
+    //   live by a server.
     let snapshots: Vec<SvcPacketEntities> = at_join.iter().enumerate().map(|(n, state)| {
-        let players = state.keys().filter(|i| **i >= 1 && **i <= 32).count();
-        println!("  join {}: {} live entities ({players} player-slot, {} world)",
-            n + 1, state.len(), state.len() - players);
-        let states: Vec<EntityState> = state.iter().map(|(idx, e)| EntityState {
-            entity_index: *idx,
-            increment_entity_number: false,
-            is_absolute_entity_index: Some(true),
-            absolute_entity_index: Some(dem::nbit_num!(*idx as u32, 11)),
-            entity_index_difference: None,
-            has_custom_delta: e.custom,
-            has_baseline_index: false,
-            baseline_index: None,
-            delta: e.fields.clone(),
-        }).collect();
+        let live: Vec<(&u16, &EntAcc)> = state.iter().filter(|(idx, _)| **idx != 0).collect();
+        let players = live.iter().filter(|(i, _)| **i >= 1 && **i <= 32).count();
+        println!("  join {}: {} live entities ({players} player-slot, {} world, entity 0 excluded)",
+            n + 1, live.len(), live.len() - players);
+
+        let mut running: u32 = 0;
+        let mut states: Vec<EntityState> = Vec::with_capacity(live.len());
+        for (idx, e) in live {
+            let idx32 = *idx as u32;
+            let gap = idx32 - running; // ascending BTreeMap keys, entity 0 excluded: always > 0
+            let (increment_entity_number, is_absolute_entity_index, absolute_entity_index, entity_index_difference) =
+                if gap == 1 {
+                    (true, None, None, None)
+                } else if gap <= 63 {
+                    (false, Some(false), None, Some(dem::nbit_num!(gap, 6)))
+                } else {
+                    (false, Some(true), Some(dem::nbit_num!(idx32, 11)), None)
+                };
+            running = idx32;
+            states.push(EntityState {
+                entity_index: *idx,
+                increment_entity_number,
+                is_absolute_entity_index,
+                absolute_entity_index,
+                entity_index_difference,
+                has_custom_delta: e.custom,
+                has_baseline_index: false,
+                baseline_index: None,
+                delta: e.fields.clone(),
+            });
+        }
         SvcPacketEntities {
             entity_count: dem::nbit_num!(states.len() as u32, 16),
             entity_states: states,
