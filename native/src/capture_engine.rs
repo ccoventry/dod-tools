@@ -60,6 +60,34 @@ fn marker_stall_deadline(longest_gap: std::time::Duration) -> std::time::Duratio
     std::cmp::max(MARKER_STALL_FLOOR, longest_gap * 3)
 }
 
+/// Waits, briefly, for `hl.exe` to actually leave the process list after a
+/// `taskkill /F` -- `taskkill` returning only means Windows has been asked to
+/// end the process, not that it (and its open file handles) are gone yet.
+/// `_cleanup_guard`'s `Drop` deletes this batch's demo files the moment the
+/// closure that owns `sys` returns, right after every `taskkill` call site
+/// below `break`s out of this loop -- without this wait, the very last demo
+/// in the chain can still be open when that delete runs. See #198.
+///
+/// Bounded to 3 seconds so a process that was already gone when `taskkill`
+/// ran (the game crashed on its own, or was closed by the user moments
+/// earlier) can never turn this into an extra wait on every batch --
+/// `remove_file_retrying` is the second, independent line of defence for
+/// whatever this window doesn't cover.
+fn wait_for_hl_exe_to_exit(sys: &mut sysinfo::System) {
+    use sysinfo::{ProcessExt, SystemExt};
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    loop {
+        sys.refresh_processes();
+        if !sys.processes().values().any(|p| p.name().eq_ignore_ascii_case("hl.exe")) {
+            return;
+        }
+        if std::time::Instant::now() >= deadline {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
 struct CaptureCleanupGuard {
     exit_trigger: PathBuf,
     session_junction: PathBuf,
@@ -165,12 +193,26 @@ impl Drop for CaptureCleanupGuard {
             }
             
             if self.auto_clear_temp_demos && !self.save_local_patched_copy {
-                let _ = std::fs::remove_file(dod_dir.join("primer.dem"));
+                // Retried, and logged loudly on final failure -- unlike every
+                // other `let _ = std::fs::remove_file` in this Drop impl, the
+                // last demo in a batch can still have hl.exe's file handle
+                // attached to it here (see #198's investigation), and a
+                // leftover chain file after auto-clear went completely
+                // unnoticed the first time this happened.
+                if let Some(e) = crate::shared::paths::remove_file_retrying(&dod_dir.join("primer.dem")) {
+                    log_markdown(&format!(
+                        "⚠️ **Cleanup** — could not remove primer.dem after retrying: {e} (auto_clear_temp_demos left it behind; hl.exe may still have had it open)"
+                    ));
+                }
                 if let Ok(entries) = std::fs::read_dir(&dod_dir) {
                     for entry in entries.flatten() {
                         let filename = entry.file_name().to_string_lossy().to_string();
                         if crate::shared::paths::is_chain_demo_filename(&filename) {
-                            let _ = std::fs::remove_file(entry.path());
+                            if let Some(e) = crate::shared::paths::remove_file_retrying(&entry.path()) {
+                                log_markdown(&format!(
+                                    "⚠️ **Cleanup** — could not remove {filename} after retrying: {e} (auto_clear_temp_demos left it behind; hl.exe may still have had it open)"
+                                ));
+                            }
                         }
                     }
                 }
@@ -760,6 +802,7 @@ pub fn spawn_capture_engine(
                 if cancel_token.load(Ordering::Relaxed) {
                     log_markdown(&format!("[HLAE] Cancelled by user after {:.1}s", start_time.elapsed().as_secs_f32()));
                     std::process::Command::new("taskkill").args(&["/F", "/IM", "hl.exe"]).output().ok();
+                    wait_for_hl_exe_to_exit(&mut sys);
                     break;
                 }
                 // Counts from the last marker, or from hl.exe first appearing
@@ -786,6 +829,7 @@ pub fn spawn_capture_engine(
                                 "the batch stopped progressing while hl.exe was still running — no console markers arrived for several minutes"
                             });
                             std::process::Command::new("taskkill").args(&["/F", "/IM", "hl.exe"]).output().ok();
+                            wait_for_hl_exe_to_exit(&mut sys);
                             break;
                         }
                     }
@@ -797,6 +841,7 @@ pub fn spawn_capture_engine(
                     log_markdown("[HLAE] OBS is unreachable and could not be reconnected — aborting rather than finishing the batch with nothing recorded.");
                     failure_reason = Some("lost contact with OBS mid-batch and could not reconnect");
                     std::process::Command::new("taskkill").args(&["/F", "/IM", "hl.exe"]).output().ok();
+                    wait_for_hl_exe_to_exit(&mut sys);
                     break;
                 }
                 if start_time.elapsed().as_secs() > 10
@@ -819,6 +864,7 @@ pub fn spawn_capture_engine(
                         via
                     ));
                     std::process::Command::new("taskkill").args(&["/F", "/IM", "hl.exe"]).output().ok();
+                    wait_for_hl_exe_to_exit(&mut sys);
                     break;
                 }
                 // Only treat this as a real failure once the launcher has handed off
@@ -991,5 +1037,67 @@ mod tests {
         for secs in [0, 1, 10, 99, 100, 101] {
             assert!(marker_stall_deadline(Duration::from_secs(secs)) >= MARKER_STALL_FLOOR);
         }
+    }
+
+    /// A regression guard for #198's fix, not the retry behaviour itself --
+    /// `remove_file_retrying` (`shared/paths.rs`) already covers that in
+    /// isolation. This just confirms the guard still calls it correctly and
+    /// leaves everything else in `dod/` untouched.
+    #[test]
+    fn dropping_the_guard_removes_primer_and_chain_demos_when_enabled() {
+        let root = std::env::temp_dir().join(format!("dod_cleanup_guard_on_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let dod = root.join("dod");
+        std::fs::create_dir_all(&dod).unwrap();
+        std::fs::write(dod.join("primer.dem"), b"x").unwrap();
+        std::fs::write(dod.join("chain_01.dem"), b"x").unwrap();
+        std::fs::write(dod.join("chain_02.dem"), b"x").unwrap();
+        std::fs::write(dod.join("not_a_chain_demo.dem"), b"x").unwrap();
+
+        {
+            let _guard = CaptureCleanupGuard::new(
+                root.join("exit_trigger"),
+                root.join("session_junction"),
+                false,
+                true,
+                false,
+                false,
+            );
+        }
+
+        assert!(!dod.join("primer.dem").exists());
+        assert!(!dod.join("chain_01.dem").exists());
+        assert!(!dod.join("chain_02.dem").exists());
+        assert!(dod.join("not_a_chain_demo.dem").exists(), "must not touch an unrelated file");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// `save_local_patched_copy` means the user asked to keep these files --
+    /// the guard must not clean them up even with `auto_clear_temp_demos` on.
+    #[test]
+    fn dropping_the_guard_keeps_demos_when_a_local_copy_was_requested() {
+        let root = std::env::temp_dir().join(format!("dod_cleanup_guard_keep_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let dod = root.join("dod");
+        std::fs::create_dir_all(&dod).unwrap();
+        std::fs::write(dod.join("primer.dem"), b"x").unwrap();
+        std::fs::write(dod.join("chain_01.dem"), b"x").unwrap();
+
+        {
+            let _guard = CaptureCleanupGuard::new(
+                root.join("exit_trigger"),
+                root.join("session_junction"),
+                false,
+                true,
+                false,
+                true,
+            );
+        }
+
+        assert!(dod.join("primer.dem").exists());
+        assert!(dod.join("chain_01.dem").exists());
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
