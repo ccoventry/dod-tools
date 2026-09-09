@@ -34,8 +34,14 @@ fn main() {
                     }
                     NetMessage::UserMessage(um) => {
                         if let Ok(UserMessage::DeathMsg(d)) = UserMessage::new(&um.name, &um.data) {
-                            let killer = names.get(&d.killer_client_index).cloned().unwrap_or(format!("#{}", d.killer_client_index));
-                            let victim = names.get(&d.victim_client_index).cloned().unwrap_or(format!("#{}", d.victim_client_index));
+                            // DeathMsg's client indices are 1-based (analysis/src/lib.rs
+                            // subtracts 1 before its own player lookup); SvcUpdateUserInfo.index,
+                            // used un-adjusted to populate `names` above, is not -- a direct
+                            // match here was off by one slot for every kill.
+                            let killer_idx = d.killer_client_index.wrapping_sub(1);
+                            let victim_idx = d.victim_client_index.wrapping_sub(1);
+                            let killer = names.get(&killer_idx).cloned().unwrap_or(format!("#{killer_idx}"));
+                            let victim = names.get(&victim_idx).cloned().unwrap_or(format!("#{victim_idx}"));
                             println!("frame_idx={idx} t={time:.2}s seq={seq}: {killer} killed {victim} with {:?}", d.weapon);
                         }
                     }
