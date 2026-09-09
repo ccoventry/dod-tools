@@ -28,7 +28,7 @@ use dem::bit::BitSliceCast;
 use dem::open_demo_from_bytes;
 use dem::types::{
     Delta, EngineMessage, EntityState, Frame, FrameData, MessageData, NetMessage,
-    SvcDeltaPacketEntities, SvcPacketEntities, SvcTime,
+    SvcClientData, SvcDeltaPacketEntities, SvcPacketEntities, SvcTime,
 };
 use std::collections::BTreeMap;
 
@@ -279,6 +279,24 @@ fn main() {
         let seq_gap = (end_seq as i64 - start_seq as i64).max(0);
         let n_steps = (seq_gap.saturating_sub(1) as usize).min(MAX_SMOOTH_FRAMES);
         if n_steps == 0 { return Vec::new() }
+        // A no-op template for svc_clientdata (structure cloned, content zeroed).
+        // The first live test crashed with "World::ParseClientData: couldn't
+        // uncompress delta frame %i" (Core.dll) -- a *separate*, per-player
+        // history ring from the entity one, keyed by frame number, that
+        // `svc_clientdata` deltas against. Omitting it from every ramp frame
+        // starved that ring for the whole gap; the real frame that finally
+        // followed then tried to delta against a reference no longer in it.
+        // Same failure mode as the original entity-flush bug, one layer over.
+        let clientdata_template: Option<SvcClientData> =
+            if let MessageData::Parsed(msgs) = &tbt.1.messages {
+                msgs.iter().find_map(|m| match m {
+                    NetMessage::EngineMessage(em) => match &**em {
+                        EngineMessage::SvcClientData(cd) => Some(cd.clone()),
+                        _ => None,
+                    },
+                    _ => None,
+                })
+            } else { None };
         // NOT `tbt.1.info.timestamp` -- that field is 0.0 on every frame checked
         // in this capture (confirmed directly, not assumed), unrelated to demo
         // playback time. The real per-frame time is the outer `Frame.time`.
@@ -303,16 +321,33 @@ fn main() {
                 delta_sequence: dem::nbit_num!(delta_seq_i, 8),
                 entity_states: Vec::new(),
             };
-            let messages = MessageData::Parsed(vec![
+            let mut msgs = vec![
                 NetMessage::EngineMessage(Box::new(EngineMessage::SvcTime(SvcTime { time: time_i }))),
-                NetMessage::EngineMessage(Box::new(EngineMessage::SvcDeltaPacketEntities(no_op))),
-            ]);
+            ];
+            if let Some(cd) = &clientdata_template {
+                // Structural fields (has_delta_update_mask/delta_update_mask)
+                // cloned as-is; content zeroed -- "no clientdata fields
+                // changed, no weapon-data update this frame", the same
+                // no-op convention used for the entity delta above.
+                msgs.push(NetMessage::EngineMessage(Box::new(EngineMessage::SvcClientData(SvcClientData {
+                    has_delta_update_mask: cd.has_delta_update_mask,
+                    delta_update_mask: cd.delta_update_mask.clone(),
+                    client_data: Delta::new(),
+                    weapon_data: None,
+                }))));
+            }
+            msgs.push(NetMessage::EngineMessage(Box::new(EngineMessage::SvcDeltaPacketEntities(no_op))));
             Frame {
                 time: time_i,
-                frame: template.frame,
+                // Unique and monotonic, continuing from the template's own
+                // ordinal -- not `template.frame` repeated on every ramp frame.
+                // `Core.dll`'s per-player clientdata history ring is keyed by
+                // this number; ~2000 frames sharing one value is exactly the
+                // kind of collision "couldn't uncompress delta frame %i" reports.
+                frame: template.frame + i as i32,
                 frame_data: FrameData::NetworkMessage(Box::new((
                     tbt.0.clone(),
-                    dem::types::NetworkMessage { info, sequence_info, message_length: 0, messages },
+                    dem::types::NetworkMessage { info, sequence_info, message_length: 0, messages: MessageData::Parsed(msgs) },
                 ))),
             }
         }).collect()
