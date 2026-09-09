@@ -38,9 +38,11 @@ fn main() {
     // entities at all and injects an empty snapshot over a healthy packet.
     // `incoming_sequence` advances by one per network frame and jumps by
     // thousands at a splice, so it names the join whatever the clock does.
-    let mut join_idx = 0usize;
-    let mut join_time = 0.0f32;
-    let mut best = 0i64;
+    // And find *every* join, not just the largest: `multi_bridge` splices a demo
+    // once per hole, so `m1_h1` carries two and `m1_h2` three. A snapshot at only
+    // one of them leaves the others resolving deltas against entity state the
+    // client never built.
+    let mut joins: Vec<(usize, f32, i64)> = Vec::new();
     {
         let mut idx = 0usize;
         let mut prev: Option<(i32, f32)> = None;
@@ -49,8 +51,10 @@ fn main() {
                 if let FrameData::NetworkMessage(bt) = &f.frame_data {
                     let seq = bt.1.sequence_info.incoming_sequence;
                     if let Some((p, pt)) = prev {
+                        // A network frame advances the sequence by one; a splice
+                        // moves it by thousands. Anything past a handful is a cut.
                         let jump = (seq as i64 - p as i64).abs();
-                        if jump > best { best = jump; join_idx = idx; join_time = pt; }
+                        if jump > 100 { joins.push((idx, pt, jump)) }
                     }
                     prev = Some((seq, f.time));
                 }
@@ -58,17 +62,26 @@ fn main() {
             }
         }
     }
-    println!("join at frame {join_idx} (t={join_time:.2}s), incoming_sequence jumps by {best}");
-
-    // Replay the prefix, merging every entity's fields into one state.
+    if joins.is_empty() { println!("no join found -- nothing to inject"); return }
+    println!("{} join(s) found:", joins.len());
+    for (i, t, j) in &joins { println!("  frame {i} (t={t:.2}s), incoming_sequence jumps by {j}") }
+    // Replay the whole demo once, merging every entity's fields into one state,
+    // and take a copy of that state as each join goes past. Replaying up to each
+    // join separately would be the same work over again per join.
     let mut acc: BTreeMap<u16, EntAcc> = BTreeMap::new();
+    let mut at_join: Vec<BTreeMap<u16, EntAcc>> = Vec::new();
+    let mut next_join = 0usize;
     let mut updates = 0usize;
     let mut idx = 0usize;
-    for entry in demo.directory.entries.iter().skip(1) {
+    'replay: for entry in demo.directory.entries.iter().skip(1) {
         for f in &entry.frames {
             let here = idx;
             idx += 1;
-            if here > join_idx { continue }
+            while next_join < joins.len() && here > joins[next_join].0 {
+                at_join.push(acc.clone());
+                next_join += 1;
+            }
+            if next_join >= joins.len() { break 'replay }
             let FrameData::NetworkMessage(bt) = &f.frame_data else { continue };
             let MessageData::Parsed(msgs) = &bt.1.messages else { continue };
             for m in msgs {
@@ -97,15 +110,17 @@ fn main() {
             }
         }
     }
-    println!("replayed {updates} entity updates -> {} live entities at the join", acc.len());
-    let players = acc.keys().filter(|i| **i >= 1 && **i <= 32).count();
-    println!("  {players} player-slot entities, {} world entities", acc.len() - players);
+    while at_join.len() < joins.len() { at_join.push(acc.clone()) }
+    println!("replayed {updates} entity updates");
 
-    // Encode them as one full snapshot. Absolute indices throughout: unambiguous,
-    // and it avoids depending on the incremental index arithmetic being right.
-    let mut states: Vec<EntityState> = Vec::with_capacity(acc.len());
-    for (idx, e) in &acc {
-        states.push(EntityState {
+    // Encode each join's state as a full snapshot. Absolute indices throughout:
+    // unambiguous, and it avoids depending on the incremental index arithmetic
+    // being right.
+    let snapshots: Vec<SvcPacketEntities> = at_join.iter().enumerate().map(|(n, state)| {
+        let players = state.keys().filter(|i| **i >= 1 && **i <= 32).count();
+        println!("  join {}: {} live entities ({players} player-slot, {} world)",
+            n + 1, state.len(), state.len() - players);
+        let states: Vec<EntityState> = state.iter().map(|(idx, e)| EntityState {
             entity_index: *idx,
             increment_entity_number: false,
             is_absolute_entity_index: Some(true),
@@ -115,12 +130,12 @@ fn main() {
             has_baseline_index: false,
             baseline_index: None,
             delta: e.fields.clone(),
-        });
-    }
-    let snapshot = SvcPacketEntities {
-        entity_count: dem::nbit_num!(states.len() as u32, 16),
-        entity_states: states,
-    };
+        }).collect();
+        SvcPacketEntities {
+            entity_count: dem::nbit_num!(states.len() as u32, 16),
+            entity_states: states,
+        }
+    }).collect();
 
     // *Replace* the first post-join delta packet rather than sitting in front of
     // it. Both messages would share one frame, so they share one
@@ -129,24 +144,29 @@ fn main() {
     // the delta still lands on top of it, resolved against a ring slot that
     // holds a frame from the *prefix*, which is the state this whole probe
     // exists to stop the client from using.
-    let mut injected = false;
+    let mut injected = 0usize;
     let mut idx = 0usize;
     for entry in demo.directory.entries.iter_mut().skip(1) {
         for f in entry.frames.iter_mut() {
             let here = idx;
             idx += 1;
-            if injected || here <= join_idx { continue }
+            if injected >= joins.len() || here <= joins[injected].0 { continue }
             let FrameData::NetworkMessage(bt) = &mut f.frame_data else { continue };
             let MessageData::Parsed(msgs) = &mut bt.1.messages else { continue };
             let Some(at) = msgs.iter().position(|m| matches!(m, NetMessage::EngineMessage(em)
                 if matches!(**em, EngineMessage::SvcDeltaPacketEntities(_)))) else { continue };
             msgs[at] = NetMessage::EngineMessage(Box::new(
-                EngineMessage::SvcPacketEntities(snapshot.clone())));
-            println!("replaced the first post-join delta packet with the snapshot at t={:.2}s", f.time);
-            injected = true;
+                EngineMessage::SvcPacketEntities(snapshots[injected].clone())));
+            println!("replaced the first delta packet after join {} with its snapshot, at t={:.2}s",
+                injected + 1, f.time);
+            injected += 1;
         }
     }
-    if !injected { println!("no post-join frame carried entity data; nothing injected"); return }
+    if injected < joins.len() {
+        println!("only {injected} of {} joins got a snapshot -- no frame carrying entity data followed the rest",
+            joins.len());
+    }
+    if injected == 0 { return }
 
     let out = demo.write_to_bytes();
     std::fs::write(&output, &out).expect("write");
