@@ -182,16 +182,6 @@ function applyCaptureModeUI() {
   // suggest OBS is involved when it is not.
   const obsGroup = document.querySelector('#obs-settings-group');
   if (obsGroup) obsGroup.style.display = obs ? '' : 'none';
-
-  // Separate HUD cannot work on the OBS path — OBS captures one composited
-  // window, and there is no second stream to alphamerge. The backend forces it
-  // off in `normalise_capture_mode`; this makes the UI agree rather than
-  // showing a tick that silently does nothing.
-  const hud = document.querySelector('#config-separate-hud');
-  if (hud) {
-    hud.disabled = obs;
-    if (obs) hud.checked = false;
-  }
 }
 
 // ── HLAE's own FFmpeg ─────────────────────────────────────────────────────────
@@ -424,7 +414,6 @@ window.addEventListener("DOMContentLoaded", async () => {
 
     const resWidth = parseInt(document.querySelector('#config-res-width')?.value, 10) || 1280;
     const resHeight = parseInt(document.querySelector('#config-res-height')?.value, 10) || 720;
-    const separateHud = document.querySelector('#config-separate-hud')?.checked || false;
     // Defaults on when the element is missing, matching the backend default —
     // `?? true` rather than `|| false`, which would silently disable it.
     const decalFlush = document.querySelector('#config-decal-flush')?.checked ?? true;
@@ -484,7 +473,6 @@ window.addEventListener("DOMContentLoaded", async () => {
       post_roll_seconds: postRoll,
       resolution_width: resWidth,
       resolution_height: resHeight,
-      separate_hud: separateHud,
       decal_flush: decalFlush,
       ffmpeg_capture: ffmpegCapture,
       ffmpeg_capture_codec: ffmpegCaptureCodec,
@@ -590,8 +578,6 @@ window.addEventListener("DOMContentLoaded", async () => {
         const inputEl = document.querySelector('#config-res-height');
         if (inputEl) inputEl.value = settings.resolution_height;
       }
-      const separateHudEl = document.querySelector('#config-separate-hud');
-      if (separateHudEl) separateHudEl.checked = !!settings.separate_hud;
       const decalFlushEl = document.querySelector('#config-decal-flush');
       if (decalFlushEl) decalFlushEl.checked = settings.decal_flush !== false;
       const ffmpegCaptureEl = document.querySelector('#config-ffmpeg-capture');

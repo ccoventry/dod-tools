@@ -201,10 +201,6 @@ pub fn final_init_commands(config: &PatcherConfig) -> Vec<String> {
     let mut out = config.init_commands.clone();
     out.push("sys_autodir".to_string());
     out.push(format!("mirv_movie_fps {}", config.capture_fps));
-    out.push(format!(
-        "mirv_movie_separate_hud {}",
-        if config.separate_hud { "1" } else { "0" }
-    ));
 
     // OBS mode is real time: HLAE issues no `mirv_movie_start` at all, so
     // `mirv_movie_fps` above is inert on this path — nothing reads it. What
@@ -651,9 +647,6 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
         let first_source = sorted_groups[0].0.0.to_string();
         let mut primer_init = config.init_commands.clone();
         primer_init.push("sys_autodir".to_string());
-        
-        let separate_hud_str = if config.separate_hud { "1" } else { "0" };
-        primer_init.push(format!("mirv_movie_separate_hud {}", separate_hud_str));
 
         // Every patched demo lands directly in the game's own dod/ folder --
         // that's the only place GoldSrc's `playdemo` can find it. This used

@@ -37,8 +37,6 @@ pub struct AppSettings {
     pub resolution_width: i32,
     #[serde(default = "default_resolution_height")]
     pub resolution_height: i32,
-    #[serde(default)]
-    pub separate_hud: bool,
     /// Whether the pipeline sweeps the decal ring between clips.
     ///
     /// Distinct from `r_decals` in `init_commands`, which says how many decals
@@ -192,7 +190,6 @@ impl Default for AppSettings {
             post_roll_seconds: 0.6,
             resolution_width: default_resolution_width(),
             resolution_height: default_resolution_height(),
-            separate_hud: false,
             decal_flush: default_decal_flush(),
             ffmpeg_capture: false,
             ffmpeg_capture_codec: default_capture_codec(),

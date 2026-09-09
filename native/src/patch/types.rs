@@ -395,7 +395,6 @@ pub struct PatcherConfig {
     pub fast_forward_speed: f32,
     pub tickrate: f32,
     pub capture_directories: Vec<std::path::PathBuf>,
-    pub separate_hud: bool,
     /// How this batch records. The authority — `ffmpeg_capture` below is kept
     /// only so older settings files and payloads keep deserialising, and is
     /// reconciled into this by `PatcherConfig::normalise_capture_mode`.
@@ -477,21 +476,11 @@ impl PatcherConfig {
     ///   without every caller having to know the old field exists.
     /// - `ffmpeg_capture` is then written back from the enum, so the two can
     ///   never disagree for anything still reading it.
-    /// - **Separate HUD is forced off in OBS mode.** It is out of scope for
-    ///   that path by decision (`docs/obs_alternate_capture.md`): OBS captures
-    ///   one composited stream, so `mirv_movie_separate_hud 1` would only ask
-    ///   HLAE for a HUD pair nothing goes on to read. (This used to also keep
-    ///   the alpha launch flags away from an OBS run; it no longer does --
-    ///   `build_hlae_process` sends those unconditionally now, which costs an
-    ///   OBS capture nothing since it never reads an alpha channel.)
     pub fn normalise_capture_mode(&mut self) {
         if self.capture_mode == CaptureMode::FrameSequence && self.ffmpeg_capture {
             self.capture_mode = CaptureMode::DirectToVideo;
         }
         self.ffmpeg_capture = self.capture_mode == CaptureMode::DirectToVideo;
-        if self.capture_mode == CaptureMode::Obs {
-            self.separate_hud = false;
-        }
     }
 
     pub fn build_hlae_process(&self, extra_engine_args: &str) -> std::process::Command {
@@ -536,17 +525,20 @@ impl PatcherConfig {
         // it is a visibility optimisation unrelated to alpha, and would be one
         // more variable over the capture itself.
         //
-        // NOT gated on `separate_hud`. The gate used to live in
-        // `capture_engine`, which meant the two hand-driven launches --
-        // "Launch Game (HLAE)" and Launch Preview, both of which pass through
-        // here -- started a session with the alpha buffer off no matter what.
-        // A user typing `mirv_movie_separate_hud 1` in the console of such a
-        // session got a `hudalpha` stream that is pure white in every frame,
-        // an all-opaque matte that `alphamerge` can never turn into
-        // transparency, with nothing anywhere reporting a fault. Forcing the
-        // alpha bits costs nothing when no HUD stream is being written, and
-        // this app cannot know what the user will type mid-session, so the
-        // flags go on every launch. See `docs/direct_to_video_capture.md`.
+        // NOT gated on a "Separate HUD" setting. One used to exist and gated
+        // this from inside `capture_engine`, which meant the two hand-driven
+        // launches -- "Launch Game (HLAE)" and Launch Preview, both of which
+        // pass through here -- started a session with the alpha buffer off no
+        // matter what. A user typing `mirv_movie_separate_hud 1` in the
+        // console of such a session got a `hudalpha` stream that is pure
+        // white in every frame, an all-opaque matte that `alphamerge` can
+        // never turn into transparency, with nothing anywhere reporting a
+        // fault. Forcing the alpha bits costs nothing when no HUD stream is
+        // being written, and this app cannot know what the user will type
+        // mid-session, so the flags go on every launch regardless. The
+        // checkbox itself was removed later (there was no meaningful setting
+        // behind `mirv_movie_separate_hud` beyond typing it into Initial
+        // Commands anyway); see `docs/direct_to_video_capture.md`.
         let cmd_line_str = format!(
             "-game dod -insecure -windowed -w {} -h {} -gl -32bpp -afxRenderMode standard -afxForceAlpha8 1 {}",
             self.resolution_width, self.resolution_height, extra_engine_args
@@ -596,7 +588,6 @@ impl Default for PatcherConfig {
             fast_forward_speed: 0.05,
             tickrate: 100.0,
             capture_directories: Vec::new(),
-            separate_hud: false,
             capture_mode: CaptureMode::default(),
             obs: ObsConfig::default(),
             ffmpeg_capture: false,
@@ -760,18 +751,6 @@ mod build_hlae_process_tests {
                 "missing render mode for extra={extra:?}: {line}"
             );
         }
-    }
-
-    #[test]
-    fn test_alpha_flags_do_not_depend_on_separate_hud() {
-        // The gate this replaced. `separate_hud` drives the in-engine
-        // `mirv_movie_separate_hud` command, not the launch line.
-        let mut off = PatcherConfig::default();
-        off.separate_hud = false;
-        let mut on = PatcherConfig::default();
-        on.separate_hud = true;
-        assert_eq!(cmd_line(&off, ""), cmd_line(&on, ""));
-        assert!(cmd_line(&off, "").contains("-afxForceAlpha8 1"));
     }
 
     #[test]

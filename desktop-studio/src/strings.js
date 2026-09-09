@@ -310,7 +310,6 @@ export const STRINGS = {
     BROWSE_BUTTON: 'Browse',
     WIDTH_LABEL: 'Width:',
     HEIGHT_LABEL: 'Height:',
-    SEPARATE_HUD_LABEL: 'Separate HUD',
     DECAL_FLUSH_LABEL: 'Flush Decals Between Clips',
     DECAL_FLUSH_TITLE:
       'Clear bullet holes and blood off the walls between one clip and the next, so a later capture does not inherit the damage from an earlier one. Off captures the walls exactly as the engine leaves them. How many decals the engine keeps is a separate thing — set r_decals in Initial Commands.',
@@ -899,7 +898,6 @@ export const STRINGS = {
     // can name the control rather than leaving the user to hunt for it.
     SETTING_FOR_CVAR: {
       mirv_movie_fps: 'Output Format → Capture FPS',
-      mirv_movie_separate_hud: 'Output Format → Separate HUD',
       r_decals: 'Pipeline → Flush Decals Between Clips',
     },
     UNKNOWN_SETTING: 'its own setting',
@@ -925,7 +923,7 @@ export const STRINGS = {
     bannedRowDetailed: (command, reason) => (reason ? `${command} — not allowed: ${reason}` : `${command} — not allowed`),
     HAZARD_TITLE: 'These Scheduled Commands are redundant with a Configuration setting:',
     HAZARD_ADVICE:
-      "mirv_movie_fps and mirv_movie_separate_hud are already pinned every capture from Output Format's own Capture FPS / Separate HUD settings — a scheduled one here just fights the value the pipeline sets on its own. Not dangerous, just pointless.",
+      "mirv_movie_fps is already pinned every capture from Output Format's own Capture FPS setting — a scheduled one here just fights the value the pipeline sets on its own. Not dangerous, just pointless.",
     CUSTOM_TITLE: 'These Scheduled Commands override earlier values:',
     CUSTOM_ADVICE:
       'Scheduled commands run during playback, so they come after your configs and after the Initial Commands — they are the last word on whatever they set, and the only place a value changes partway through a capture.',
