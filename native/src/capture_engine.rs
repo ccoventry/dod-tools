@@ -19,12 +19,12 @@ pub enum EngineEvent {
     Cancelled,
     /// A demo in the batch has started playing, read from its `DEMO_START`
     /// console marker: (job_idx, total_jobs, clip_count), 1-based job_idx.
-    /// Requires `-condebug` (see the tailer spawn below) — silently never
-    /// fires otherwise. See issue #98.
+    /// Read from the engine console log, which `-condebug` produces on every
+    /// launch. See issue #98.
     DemoLoading(u32, u32, u32),
     /// Playback is about to fast-forward towards a specific clip, read from
     /// its `NEXT_CLIP` console marker: (job_idx, total_jobs, clip_idx,
-    /// clip_count), all 1-based. Same -condebug requirement as DemoLoading.
+    /// clip_count), all 1-based. Same console-log source as DemoLoading.
     /// See issue #98.
     FastForwardToClip(u32, u32, u32, u32),
 }
@@ -49,6 +49,29 @@ pub enum EngineEvent {
 /// Tripping this kills the game and loses the batch, so it is deliberately
 /// biased towards waiting too long over firing on a slow one.
 const MARKER_STALL_FLOOR: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// How long `hl.exe` may be up before a `qconsole.log` that has not grown is
+/// treated as the engine not writing it at all.
+///
+/// GoldSrc echoes startup output within a second or two of the process
+/// appearing, so this only has to clear a slow load. Deliberately generous:
+/// the check only logs, but a false positive would tell someone their capture
+/// is broken when it is fine.
+const CONDEBUG_WRITE_GRACE: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Size of the engine's console log, or 0 if it is not there.
+///
+/// Read through an *open handle* rather than `fs::metadata(path)`: on Windows a
+/// file's directory entry is not necessarily updated while a handle to it is
+/// open, and the engine holds this one open for the whole session. `LogTailer`
+/// reads its length the same way, for the same reason.
+#[cfg(not(target_arch = "wasm32"))]
+fn console_log_len(path: &std::path::Path) -> u64 {
+    std::fs::File::open(path)
+        .and_then(|f| f.metadata())
+        .map(|m| m.len())
+        .unwrap_or(0)
+}
 
 /// How long to wait for the next marker, given the longest gap this batch has
 /// already shown.
@@ -561,14 +584,6 @@ pub fn spawn_capture_engine(
             let tail_cancel = Arc::new(AtomicBool::new(false));
 
             if obs_mode {
-                if !config.add_condebug {
-                    log_crash_abort!(
-                        tx,
-                        "OBS capture needs the engine's console log, which requires -condebug. \
-                         Enable \"Add condebug\" in settings, or choose another capture mode."
-                    );
-                    return;
-                }
                 if obs_take_folders.is_empty() {
                     log_crash_abort!(tx, "OBS capture was requested but no blocks were planned");
                     return;
@@ -607,28 +622,40 @@ pub fn spawn_capture_engine(
 
             // The console-log marker stream isn't OBS-specific: OBS mode needs
             // it to drive recording, but `DEMO_START` (per-demo progress, see
-            // `EngineEvent::DemoLoading`) matters in every mode. So this reads
-            // whenever the engine will actually be writing the log, which
-            // needs only -condebug, not OBS. Without -condebug, no tailer runs
-            // and DemoLoading simply never fires — see its doc comment.
-            if config.add_condebug {
-                // The log is deleted at the end of a batch, not the start, so a
-                // file left by a previous run is normal and its markers are
-                // history. `LogTailer::at_end` is what stops a stale
-                // `START_RECORD` firing a recording the moment this begins.
-                let log_path = hl_exe_parent.join("qconsole.log");
-                let tailer = crate::obs::LogTailer::at_end(&log_path);
-                let cancel = Arc::clone(&tail_cancel);
-                if let Err(e) = std::thread::Builder::new()
-                    .name("obs_log_tail".into())
-                    .spawn(move || tailer.run(marker_tx, cancel))
-                {
-                    log_crash_abort!(tx, format!("could not start the console log reader: {}", e));
-                    return;
-                }
+            // `EngineEvent::DemoLoading`) matters in every mode. `-condebug` is
+            // now passed on every launch (`build_hlae_process`), so the log is
+            // always being written and this always runs.
+            //
+            // The log is deleted at the end of a batch, not the start, so a file
+            // left by a previous run is normal and its markers are history.
+            // `LogTailer::at_end` is what stops a stale `START_RECORD` firing a
+            // recording the moment this begins.
+            let log_path = hl_exe_parent.join("qconsole.log");
+            // Baseline for the write check in the poll loop. `-condebug` being on
+            // the command line is not proof the log is being written, and
+            // everything marker-driven degrades in silence when it is not — the
+            // one failure mode this path cannot afford.
+            //
+            // The engine *appends* across launches rather than starting a fresh
+            // log — measured, not assumed: one 1.5 MB `qconsole.log` here held
+            // 100 startup banners. `auto_clear_logs` deleting it at the end of a
+            // batch is the only thing that ever shortens it.
+            //
+            // So the test is "did the size change at all" rather than "did it
+            // grow". Under appending the two agree, but `<=` would also report a
+            // file that got deleted mid-run as a failure to write, which it is
+            // not.
+            let log_len_before_launch = console_log_len(&log_path);
+            let tailer = crate::obs::LogTailer::at_end(&log_path);
+            let cancel = Arc::clone(&tail_cancel);
+            if let Err(e) = std::thread::Builder::new()
+                .name("obs_log_tail".into())
+                .spawn(move || tailer.run(marker_tx, cancel))
+            {
+                log_crash_abort!(tx, format!("could not start the console log reader: {}", e));
+                return;
             }
 
-            let condebug_flag = if config.add_condebug { "-condebug " } else { "" };
             // `-afxForceAlpha8` is read by AfxHookGoldSrc.dll off the *game's*
             // command line, not by HLAE.exe. HLAE's own Launch GoldSrc dialog
             // appends it when its alpha box is ticked — but that dialog is the
@@ -677,8 +704,8 @@ pub fn spawn_capture_engine(
             // only text folded into this string reaches `hl.exe`, via the
             // single `-cmdLine` value `build_hlae_process` composes below.
             let extra_args = format!(
-                "{}{}+exec dodtools_helper.cfg +playdemo primer",
-                condebug_flag, alpha_flags
+                "{}+exec dodtools_helper.cfg +playdemo primer",
+                alpha_flags
             );
 
             let dummy_path = active_export_dir.join("DOD_BATCH_DONE");
@@ -738,6 +765,8 @@ pub fn spawn_capture_engine(
             // taskkilling right after it means hl.exe is dead before it ever
             // gets to process the command that would restart it. See #obs.
             let mut obs_batch_complete_seen = false;
+            // One-shot, so a batch cannot spam the log with it.
+            let mut condebug_write_checked = false;
             let mut sys = {
                 use sysinfo::SystemExt;
                 sysinfo::System::new_all()
@@ -798,6 +827,42 @@ pub fn spawn_capture_engine(
                     }
                     alive
                 };
+
+                // Is the engine actually writing the console log? Checked once,
+                // after the game has had long enough to produce startup output.
+                //
+                // Nothing else notices this. The tailer runs happily against a
+                // file that never grows, no marker ever arrives, and every
+                // feature that depends on one — per-demo progress, fast-forward
+                // notifications, crash detection, and all of OBS capture —
+                // simply never fires. The batch still finishes, so it looks like
+                // success. Say so loudly instead.
+                if !condebug_write_checked {
+                    if let Some(seen) = hl_first_seen {
+                        if seen.elapsed() >= CONDEBUG_WRITE_GRACE {
+                            condebug_write_checked = true;
+                            if console_log_len(&log_path) == log_len_before_launch {
+                                log_markdown(&format!(
+                                    "⚠️ **The engine is not writing its console log.** `{}` is unchanged \
+                                     {:.0}s after the game started, so dod-tools is getting no console \
+                                     markers from it.\n\n\
+                                     Per-demo progress, fast-forward-to-clip notifications, crash \
+                                     detection and OBS capture all read that log — without it they do \
+                                     not fail, they simply never fire, and this batch may finish looking \
+                                     like it worked.\n\n\
+                                     `-condebug` is passed on every launch and this is the folder the \
+                                     engine writes to, so the cause is on the writing side: the folder \
+                                     may not be writable (antivirus and Controlled Folder Access can \
+                                     block it as well as permissions), something else may be holding \
+                                     the file open, or HLAE may not be passing the flag through to the \
+                                     game.",
+                                    log_path.display(),
+                                    CONDEBUG_WRITE_GRACE.as_secs_f32(),
+                                ));
+                            }
+                        }
+                    }
+                }
 
                 if cancel_token.load(Ordering::Relaxed) {
                     log_markdown(&format!("[HLAE] Cancelled by user after {:.1}s", start_time.elapsed().as_secs_f32()));

@@ -420,7 +420,6 @@ pub struct PatcherConfig {
     pub primary_media_dir: Option<std::path::PathBuf>,
     pub movie_config: String,
     pub save_local_patched_copy: bool,
-    pub add_condebug: bool,
     pub session_id: String,
     pub hlae_path: String,
     pub game_path: String,
@@ -504,8 +503,16 @@ impl PatcherConfig {
         let hook_dll_str = dll_path.to_string_lossy().replace("/", "\\\\");
         let program_path_str = hl_exe.replace("/", "\\\\");
 
+        // `-condebug` is not optional. It is what makes GoldSrc mirror its
+        // console into `qconsole.log`, and the Studio reads that log for
+        // per-demo progress, fast-forward-to-clip progress, crash detection and
+        // the markers that drive OBS capture — so with it off, those features do
+        // not fail loudly, they silently never fire. It lives here rather than
+        // in any one caller's `extra_engine_args` so that *every* way the app
+        // starts the game gets it: a capture batch, a preview, and Launch Game
+        // (which used to ignore the setting altogether, #226).
         let cmd_line_str = format!(
-            "-game dod -insecure -windowed -w {} -h {} {}",
+            "-game dod -insecure -windowed -w {} -h {} -condebug {}",
             self.resolution_width, self.resolution_height, extra_engine_args
         );
 
@@ -563,7 +570,6 @@ impl Default for PatcherConfig {
             primary_media_dir: None,
             movie_config: String::new(),
             save_local_patched_copy: false,
-            add_condebug: true,
             session_id: String::new(),
             hlae_path: String::new(),
             game_path: String::new(),
@@ -677,5 +683,59 @@ mod capture_codec_tests {
     #[test]
     fn test_default_is_the_one_proven_in_a_real_capture() {
         assert_eq!(CaptureCodec::default(), CaptureCodec::UtVideo);
+    }
+}
+
+#[cfg(test)]
+mod launch_args_tests {
+    use super::PatcherConfig;
+
+    /// The `-cmdLine` string `build_hlae_process` hands to HLAE.
+    ///
+    /// Read back off the built `Command` rather than reconstructed, so the test
+    /// fails if the flag stops reaching the argument that actually carries it.
+    fn cmd_line_of(cfg: &PatcherConfig, extra: &str) -> String {
+        let cmd = cfg.build_hlae_process(extra);
+        let args: Vec<String> = cmd
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        let at = args
+            .iter()
+            .position(|a| a == "-cmdLine")
+            .expect("build_hlae_process must pass -cmdLine");
+        args[at + 1].clone()
+    }
+
+    #[test]
+    fn test_condebug_is_passed_on_every_launch() {
+        // The Studio reads the engine's console log for per-demo progress,
+        // fast-forward-to-clip progress, crash detection and OBS markers, and
+        // none of those fail loudly without it — they silently never fire. It
+        // used to be a checkbox; there is deliberately no longer any way to
+        // launch without it. See #226.
+        let cfg = PatcherConfig::default();
+        for extra in ["", "+viewdemo foo", "+exec dodtools_helper.cfg +playdemo primer"] {
+            let line = cmd_line_of(&cfg, extra);
+            assert!(
+                line.contains("-condebug"),
+                "launch args must carry -condebug, got: {line}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_condebug_precedes_the_callers_own_args() {
+        // `+exec`/`+playdemo` are commands the engine runs at startup, so a
+        // switch placed after them is parsed as their argument rather than as a
+        // switch. Keeping -condebug ahead of `extra_engine_args` is what stops
+        // that, and nothing else in the process would report it.
+        let line = cmd_line_of(&PatcherConfig::default(), "+playdemo primer");
+        let condebug = line.find("-condebug").expect("-condebug present");
+        let playdemo = line.find("+playdemo").expect("+playdemo present");
+        assert!(
+            condebug < playdemo,
+            "-condebug must come before the caller's own args, got: {line}"
+        );
     }
 }

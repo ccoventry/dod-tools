@@ -560,8 +560,8 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
         date_time
     ));
     // Marks exactly where this file execs relative to the engine's own
-    // config.cfg/movie.cfg chain, which lands in qconsole.log too (with
-    // Add Condebug on) — cheap enough to leave in permanently rather than
+    // config.cfg/movie.cfg chain, which lands in qconsole.log too (-condebug
+    // is passed on every launch) — cheap enough to leave in permanently rather than
     // re-add it every time this ordering question comes up again. See
     // docs/goldsrc_dod_quirks.md's Command Precedence entry.
     helper_cfg_content.push_str("echo dodtools_helper.cfg exec'd here\n\n");
