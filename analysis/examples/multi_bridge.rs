@@ -112,7 +112,7 @@ fn walk(bytes: &[u8], start: usize, end: usize, cap: usize) -> Run {
 /// parsing a bounded probe demo built from it -- entry 0 plus the run it starts
 /// -- in a child process, since malformed input can abort the parser (#225) and
 /// a crash should cost one candidate rather than the whole pass.
-fn next_resume(bytes: &[u8], path: &str, e0: usize, from: usize, end: usize, after_time: f32) -> Option<usize> {
+fn next_resume(bytes: &[u8], e0: usize, from: usize, end: usize, after_time: f32) -> Option<usize> {
     let exe = std::env::current_exe().expect("exe");
     let mut scan = from;
     let mut tried = 0usize;
@@ -127,12 +127,7 @@ fn next_resume(bytes: &[u8], path: &str, e0: usize, from: usize, end: usize, aft
         if !run.plausible() { scan += 1; continue }
 
         tried += 1;
-        let ok = std::process::Command::new(&exe)
-            .args(["--verify", path, &e0.to_string(), &scan.to_string(), &run.cut.to_string()])
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false);
-        if ok {
+        if verify(&exe, &probe_demo(bytes, e0, scan, run.cut)) {
             if tried > 1 { println!("    ({tried} candidates tried; the earlier ones did not parse)") }
             return Some(scan);
         }
@@ -141,22 +136,44 @@ fn next_resume(bytes: &[u8], path: &str, e0: usize, from: usize, end: usize, aft
     None
 }
 
-/// Child mode: parse one candidate's run on its own, so an abort is contained.
-fn verify_child(args: &[String]) -> ! {
-    let bytes = std::fs::read(&args[0]).expect("read");
-    let e0: usize = args[1].parse().unwrap();
-    let start: usize = args[2].parse().unwrap();
-    let stop: usize = args[3].parse().unwrap();
-    // The first segment already contains entry 0; every later one needs it
-    // prepended, or there are no delta descriptions to decode against.
-    let probe = if start == DEMO_HEADER_SIZE {
-        assemble(&bytes, e0, &[(start, stop)])
-    } else {
-        assemble(&bytes, e0, &[(DEMO_HEADER_SIZE, e0), (start, stop)])
-    };
+/// Child mode: parse a probe demo handed over on stdin, so an abort is
+/// contained. The probe arrives down the pipe rather than being rebuilt from the
+/// source file, because a search can spawn tens of thousands of these and having
+/// each one re-read an 84 MB demo is most of the runtime.
+fn verify_child() -> ! {
+    use std::io::Read;
+    let mut probe = Vec::new();
+    if std::io::stdin().read_to_end(&mut probe).is_err() { std::process::exit(2) }
     match dem::open_demo_from_bytes(&probe) {
         Ok(_) => std::process::exit(0),
         Err(_) => std::process::exit(1),
+    }
+}
+
+/// Parse `probe` in a child process. Returns false for a rejection *or* a crash.
+fn verify(exe: &std::path::Path, probe: &[u8]) -> bool {
+    use std::io::Write;
+    use std::process::Stdio;
+    let Ok(mut child) = std::process::Command::new(exe)
+        .arg("--verify")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn() else { return false };
+    if let Some(mut si) = child.stdin.take() {
+        if si.write_all(probe).is_err() { /* child died early; the wait below reports it */ }
+    }
+    child.wait().map(|s| s.success()).unwrap_or(false)
+}
+
+/// A probe demo for one segment: entry 0, then the run. The first segment
+/// already contains entry 0; every later one needs it prepended, or there are no
+/// delta descriptions to decode against.
+fn probe_demo(bytes: &[u8], e0: usize, start: usize, stop: usize) -> Vec<u8> {
+    if start == DEMO_HEADER_SIZE {
+        assemble(bytes, e0, &[(start, stop)])
+    } else {
+        assemble(bytes, e0, &[(DEMO_HEADER_SIZE, e0), (start, stop)])
     }
 }
 
@@ -180,18 +197,13 @@ fn walk_collect(bytes: &[u8], start: usize, end: usize) -> (Run, Vec<usize>) {
 /// before it are intact -- their headers survive while their message payloads do
 /// not, which is why a run of segments can walk perfectly and still fail to
 /// parse. Back off a frame at a time (doubling) until the parser accepts it.
-fn trim_to_parse(path: &str, e0: usize, seg: (usize, usize), starts: &[usize]) -> Option<(usize, usize)> {
+fn trim_to_parse(bytes: &[u8], e0: usize, seg: (usize, usize), starts: &[usize]) -> Option<(usize, usize)> {
     let exe = std::env::current_exe().expect("exe");
     let mut k = 0usize;
     loop {
         if k >= starts.len() { return None }
         let stop = if k == 0 { seg.1 } else { starts[starts.len() - k] };
-        let ok = std::process::Command::new(&exe)
-            .args(["--verify", path, &e0.to_string(), &seg.0.to_string(), &stop.to_string()])
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false);
-        if ok {
+        if verify(&exe, &probe_demo(bytes, e0, seg.0, stop)) {
             if k > 0 { println!("    trimmed {k} damaged frames off the end of this segment") }
             return Some((seg.0, stop));
         }
@@ -200,6 +212,11 @@ fn trim_to_parse(path: &str, e0: usize, seg: (usize, usize), starts: &[usize]) -
     }
 }
 
+/// End of the signon. Entry 0 finishes on a section-end frame, and some
+/// recordings write two back to back -- `m3_h1-1` does, `m3_h2` does not -- so
+/// consume the whole run. Stopping after the first leaves the second as entry
+/// 1's opening frame, which ends entry 1 immediately: the result parses, and
+/// yields 32 frames out of half a million.
 fn entry0_end(bytes: &[u8], end: usize) -> Option<usize> {
     let mut pos = DEMO_HEADER_SIZE;
     loop {
@@ -208,7 +225,14 @@ fn entry0_end(bytes: &[u8], end: usize) -> Option<usize> {
         let step = walk(bytes, pos, end, 1);
         if step.frames == 0 { return None }
         pos = step.cut;
-        if t == 5 { return Some(pos) }
+        if t == 5 {
+            while pos + FRAME_HEADER_SIZE <= end && bytes[pos] == 5 {
+                let s = walk(bytes, pos, end, 1);
+                if s.frames == 0 { break }
+                pos = s.cut;
+            }
+            return Some(pos);
+        }
     }
 }
 
@@ -247,7 +271,7 @@ fn assemble(bytes: &[u8], e0: usize, segments: &[(usize, usize)]) -> Vec<u8> {
 
 fn main() {
     let argv: Vec<String> = std::env::args().collect();
-    if argv.len() > 1 && argv[1] == "--verify" { verify_child(&argv[2..]) }
+    if argv.len() > 1 && argv[1] == "--verify" { verify_child() }
 
     let path = std::env::args().nth(1).expect("usage: multi_bridge <demo> <out.dem>");
     let out_path = std::env::args().nth(2).expect("out.dem");
@@ -269,7 +293,7 @@ fn main() {
     for hole in 0..=MAX_HOLES {
         let (run, starts) = walk_collect(&bytes, pos, end);
         if run.frames > 0 {
-            match trim_to_parse(&path, e0, (pos, run.cut), &starts) {
+            match trim_to_parse(&bytes, e0, (pos, run.cut), &starts) {
                 Some(seg) => {
                     let kept = starts.iter().filter(|s| **s < seg.1).count();
                     segments.push(seg);
@@ -290,7 +314,7 @@ fn main() {
             println!("  giving up after {MAX_HOLES} holes");
             break;
         }
-        match next_resume(&bytes, &path, e0, run.cut + 1, end, last_time) {
+        match next_resume(&bytes, e0, run.cut + 1, end, last_time) {
             Some(next) => {
                 dropped_bytes += next - run.cut;
                 println!("    resumes at byte {next} ({} bytes of rubble skipped)", next - run.cut);
@@ -313,6 +337,15 @@ fn main() {
         Ok(d) => {
             let total: usize = d.directory.entries.iter().map(|e| e.frames.len()).sum();
             println!("  parse OK: {total} frames across {} entries", d.directory.entries.len());
+            // Parsing is not the same as carrying the recording. A directory
+            // entry ends at the first section-end frame inside it, so a wrong
+            // entry 0 boundary yields a demo that parses perfectly and holds 32
+            // frames out of half a million. Say so rather than leave it to be
+            // noticed.
+            if total * 10 < frames_kept * 9 {
+                println!("  WRONG: the walk kept {frames_kept} frames but only {total} survive the directory");
+                println!("         -- an entry is ending early, most likely at a section-end frame");
+            }
         }
         Err(e) => println!("  parse FAILS: {e}"),
     }
