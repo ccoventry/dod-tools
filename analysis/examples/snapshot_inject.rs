@@ -47,6 +47,17 @@ struct EntAcc {
     custom: bool,
 }
 
+/// The local viewing player's own clientdata, accumulated the same way `acc`
+/// accumulates entity state -- merging every `SvcClientData` delta seen across
+/// the prefix, so the join can start from "what the player's weapon/ammo/health
+/// actually was" instead of nothing.
+#[derive(Clone, Default)]
+struct ClientAcc {
+    fields: Delta,
+    /// weapon_index -> accumulated per-weapon fields (ammo, clip, etc).
+    weapons: BTreeMap<u32, Delta>,
+}
+
 fn main() {
     let mut a = std::env::args().skip(1);
     let input = a.next().expect("usage: snapshot_inject <in.dem> <out.dem>");
@@ -138,6 +149,17 @@ fn main() {
     }
     let baseline_seeded = acc.len();
     let mut at_join: Vec<BTreeMap<u16, EntAcc>> = Vec::new();
+    // Mirrors `acc`/`at_join`, but for the local player's own clientdata rather
+    // than entity state -- the wrong-weapon-sound bug found live: for several
+    // seconds after a join, the game predicted gunfire for a weapon the player
+    // was no longer holding. The entity snapshot reconstructs the world; this
+    // reconstructs the ONE thing it does not cover, the viewing player's own
+    // weapon/ammo/health state, which the smoothing ramp otherwise leaves
+    // exactly where the prefix left it -- correct until the real weapon change
+    // that happened inside the skipped hole finally gets communicated by
+    // whatever real delta downstream happens to touch it.
+    let mut client_acc = ClientAcc::default();
+    let mut client_at_join: Vec<ClientAcc> = Vec::new();
     let mut next_join = 0usize;
     let mut updates = 0usize;
     let mut idx = 0usize;
@@ -147,6 +169,7 @@ fn main() {
             idx += 1;
             while next_join < joins.len() && here > joins[next_join].0 {
                 at_join.push(acc.clone());
+                client_at_join.push(client_acc.clone());
                 next_join += 1;
             }
             if next_join >= joins.len() { break 'replay }
@@ -155,6 +178,16 @@ fn main() {
             for m in msgs {
                 let NetMessage::EngineMessage(em) = m else { continue };
                 match &**em {
+                    EngineMessage::SvcClientData(cd) => {
+                        for (k, v) in cd.client_data.iter() { client_acc.fields.insert(k.clone(), v.clone()); }
+                        if let Some(weapons) = &cd.weapon_data {
+                            for w in weapons {
+                                let idx = w.weapon_index.to_u32();
+                                let slot = client_acc.weapons.entry(idx).or_default();
+                                for (k, v) in w.weapon_data.iter() { slot.insert(k.clone(), v.clone()); }
+                            }
+                        }
+                    }
                     EngineMessage::SvcPacketEntities(pe) => {
                         for es in &pe.entity_states {
                             let e = acc.entry(es.entity_index).or_default();
@@ -179,6 +212,7 @@ fn main() {
         }
     }
     while at_join.len() < joins.len() { at_join.push(acc.clone()) }
+    while client_at_join.len() < joins.len() { client_at_join.push(client_acc.clone()) }
     println!("baseline seeded {baseline_seeded} entities; replayed {updates} entity updates on top");
 
     // Encode each join's state as a full snapshot. Absolute indices throughout:
@@ -274,6 +308,7 @@ fn main() {
         template: &Frame,
         start_seq: i32, start_time: f32, start_delta_seq: u32,
         end_seq: i32, entity_count: u32,
+        client_state: &ClientAcc,
     ) -> Vec<Frame> {
         let FrameData::NetworkMessage(tbt) = &template.frame_data else { return Vec::new() };
         let seq_gap = (end_seq as i64 - start_seq as i64).max(0);
@@ -297,6 +332,24 @@ fn main() {
                     _ => None,
                 })
             } else { None };
+        // The no-op structure feeds the history ring, but empty content on
+        // *every* frame leaves the client predicting whatever weapon/ammo it
+        // had before the join, right through the ramp -- a live test caught
+        // wrong gunfire sounds for several seconds, self-correcting once real
+        // downstream content happened to touch weapon state. So the FIRST ramp
+        // frame carries the real, replayed client state as a full refresh
+        // (mirroring the one-time entity snapshot); every frame after it goes
+        // back to empty, since the state is now actually established rather
+        // than assumed.
+        let full_client_data = client_state.fields.clone();
+        let full_weapon_data: Option<Vec<dem::types::ClientDataWeaponData>> = if client_state.weapons.is_empty() {
+            None
+        } else {
+            Some(client_state.weapons.iter().map(|(idx, fields)| dem::types::ClientDataWeaponData {
+                weapon_index: dem::nbit_num!(*idx, 6),
+                weapon_data: fields.clone(),
+            }).collect())
+        };
         // NOT `tbt.1.info.timestamp` -- that field is 0.0 on every frame checked
         // in this capture (confirmed directly, not assumed), unrelated to demo
         // playback time. The real per-frame time is the outer `Frame.time`.
@@ -326,14 +379,20 @@ fn main() {
             ];
             if let Some(cd) = &clientdata_template {
                 // Structural fields (has_delta_update_mask/delta_update_mask)
-                // cloned as-is; content zeroed -- "no clientdata fields
-                // changed, no weapon-data update this frame", the same
-                // no-op convention used for the entity delta above.
+                // cloned as-is throughout. Content: the real accumulated state
+                // on the first step only (a one-time refresh, same shape as the
+                // entity snapshot), empty afterward -- "no further change from
+                // what step 1 just established".
+                let (client_data, weapon_data) = if i == 1 {
+                    (full_client_data.clone(), full_weapon_data.clone())
+                } else {
+                    (Delta::new(), None)
+                };
                 msgs.push(NetMessage::EngineMessage(Box::new(EngineMessage::SvcClientData(SvcClientData {
                     has_delta_update_mask: cd.has_delta_update_mask,
                     delta_update_mask: cd.delta_update_mask.clone(),
-                    client_data: Delta::new(),
-                    weapon_data: None,
+                    client_data,
+                    weapon_data,
                 }))));
             }
             msgs.push(NetMessage::EngineMessage(Box::new(EngineMessage::SvcDeltaPacketEntities(no_op))));
@@ -376,6 +435,7 @@ fn main() {
                     join_prev_seq[ramped], joins[ramped].1, join_prev_delta_seq[ramped],
                     if let FrameData::NetworkMessage(bt) = &f.frame_data { bt.1.sequence_info.incoming_sequence } else { join_prev_seq[ramped] },
                     live_counts[ramped],
+                    &client_at_join[ramped],
                 );
                 println!("  join {}: smoothed with {} synthetic no-op frames (gap was {})",
                     ramped + 1, ramp.len(), joins[ramped].2);
