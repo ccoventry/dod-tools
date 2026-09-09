@@ -102,18 +102,24 @@ fn main() {
         entity_states: states,
     };
 
-    // Put it in the first frame after the join, ahead of everything else there.
+    // *Replace* the first post-join delta packet rather than sitting in front of
+    // it. Both messages would share one frame, so they share one
+    // incoming_sequence and one slot in the client's frame ring -- whichever is
+    // parsed second is the state that survives. Prepending the snapshot means
+    // the delta still lands on top of it, resolved against a ring slot that
+    // holds a frame from the *prefix*, which is the state this whole probe
+    // exists to stop the client from using.
     let mut injected = false;
     for entry in demo.directory.entries.iter_mut().skip(1) {
         for f in entry.frames.iter_mut() {
             if injected || f.time <= join_time { continue }
             let FrameData::NetworkMessage(bt) = &mut f.frame_data else { continue };
             let MessageData::Parsed(msgs) = &mut bt.1.messages else { continue };
-            if !msgs.iter().any(|m| matches!(m, NetMessage::EngineMessage(em)
-                if matches!(**em, EngineMessage::SvcDeltaPacketEntities(_)))) { continue }
-            msgs.insert(0, NetMessage::EngineMessage(Box::new(
-                EngineMessage::SvcPacketEntities(snapshot.clone()))));
-            println!("injected the snapshot into the first post-join frame at t={:.2}s", f.time);
+            let Some(at) = msgs.iter().position(|m| matches!(m, NetMessage::EngineMessage(em)
+                if matches!(**em, EngineMessage::SvcDeltaPacketEntities(_)))) else { continue };
+            msgs[at] = NetMessage::EngineMessage(Box::new(
+                EngineMessage::SvcPacketEntities(snapshot.clone())));
+            println!("replaced the first post-join delta packet with the snapshot at t={:.2}s", f.time);
             injected = true;
         }
     }
