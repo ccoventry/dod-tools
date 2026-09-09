@@ -59,6 +59,20 @@ const MARKER_STALL_FLOOR: std::time::Duration = std::time::Duration::from_secs(3
 /// is broken when it is fine.
 const CONDEBUG_WRITE_GRACE: std::time::Duration = std::time::Duration::from_secs(60);
 
+/// Size of the engine's console log, or 0 if it is not there.
+///
+/// Read through an *open handle* rather than `fs::metadata(path)`: on Windows a
+/// file's directory entry is not necessarily updated while a handle to it is
+/// open, and the engine holds this one open for the whole session. `LogTailer`
+/// reads its length the same way, for the same reason.
+#[cfg(not(target_arch = "wasm32"))]
+fn console_log_len(path: &std::path::Path) -> u64 {
+    std::fs::File::open(path)
+        .and_then(|f| f.metadata())
+        .map(|m| m.len())
+        .unwrap_or(0)
+}
+
 /// How long to wait for the next marker, given the longest gap this batch has
 /// already shown.
 ///
@@ -618,12 +632,20 @@ pub fn spawn_capture_engine(
             // recording the moment this begins.
             let log_path = hl_exe_parent.join("qconsole.log");
             // Baseline for the write check in the poll loop. `-condebug` being on
-            // the command line is not proof the log is being written: the engine
-            // writes it beside `hl.exe`, which is usually under Program Files, so
-            // a folder the user cannot write to produces no log and no error.
-            // Everything marker-driven then degrades in silence, which is the one
-            // failure mode this whole path cannot afford.
-            let log_len_before_launch = std::fs::metadata(&log_path).map(|m| m.len()).unwrap_or(0);
+            // the command line is not proof the log is being written, and
+            // everything marker-driven degrades in silence when it is not — the
+            // one failure mode this path cannot afford.
+            //
+            // The engine *appends* across launches rather than starting a fresh
+            // log — measured, not assumed: one 1.5 MB `qconsole.log` here held
+            // 100 startup banners. `auto_clear_logs` deleting it at the end of a
+            // batch is the only thing that ever shortens it.
+            //
+            // So the test is "did the size change at all" rather than "did it
+            // grow". Under appending the two agree, but `<=` would also report a
+            // file that got deleted mid-run as a failure to write, which it is
+            // not.
+            let log_len_before_launch = console_log_len(&log_path);
             let tailer = crate::obs::LogTailer::at_end(&log_path);
             let cancel = Arc::clone(&tail_cancel);
             if let Err(e) = std::thread::Builder::new()
@@ -819,19 +841,19 @@ pub fn spawn_capture_engine(
                     if let Some(seen) = hl_first_seen {
                         if seen.elapsed() >= CONDEBUG_WRITE_GRACE {
                             condebug_write_checked = true;
-                            let len_now = std::fs::metadata(&log_path).map(|m| m.len()).unwrap_or(0);
-                            if len_now <= log_len_before_launch {
+                            if console_log_len(&log_path) == log_len_before_launch {
                                 log_markdown(&format!(
-                                    "⚠️ **The engine is not writing its console log.** `{}` has not grown \
-                                     in the {:.0}s since the game started, so dod-tools is getting no \
-                                     console markers from it.\n\n\
+                                    "⚠️ **The engine is not writing its console log.** `{}` is unchanged \
+                                     {:.0}s after the game started, so dod-tools is getting no console \
+                                     markers from it.\n\n\
                                      Per-demo progress, fast-forward-to-clip notifications, crash \
                                      detection and OBS capture all read that log — without it they do \
                                      not fail, they simply never fire, and this batch may finish looking \
                                      like it worked.\n\n\
-                                     `-condebug` is passed on every launch, so the usual cause is that \
-                                     the folder cannot be written to (it is normally under Program \
-                                     Files) or that something else is holding the file open.",
+                                     `-condebug` is passed on every launch, so the likely causes are \
+                                     that this is not the folder the engine actually ran from (it is \
+                                     derived from the configured game path), that the folder cannot be \
+                                     written to, or that something else is holding the file open.",
                                     log_path.display(),
                                     CONDEBUG_WRITE_GRACE.as_secs_f32(),
                                 ));
