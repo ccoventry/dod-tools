@@ -83,8 +83,6 @@ pub struct AppSettings {
     /// software, not ours to manage, so nothing here tracks its lifecycle.
     #[serde(default)]
     pub obs_exe_path: String,
-    #[serde(default = "default_add_condebug")]
-    pub add_condebug: bool,
     #[serde(default)]
     pub auto_clear_logs: bool,
     #[serde(default)]
@@ -149,7 +147,6 @@ pub struct AppSettings {
 fn default_resolution_width() -> i32 { 1280 }
 fn default_obs_capture_fps() -> i32 { 120 }
 fn default_resolution_height() -> i32 { 720 }
-fn default_add_condebug() -> bool { true }
 fn default_initial_delay() -> f32 { 3.0 }
 fn default_fast_forward_speed() -> f32 { 0.05 }
 fn default_render_codec() -> String { "prores".to_string() }
@@ -201,7 +198,6 @@ impl Default for AppSettings {
             obs_port: default_obs_port(),
             obs_password: String::new(),
             obs_exe_path: String::new(),
-            add_condebug: default_add_condebug(),
             auto_clear_logs: false,
             auto_clear_previews: false,
             auto_clear_temp_demos: false,
