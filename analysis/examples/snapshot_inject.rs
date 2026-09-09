@@ -24,9 +24,22 @@
 //! built for the measurements behind both.
 //!
 //!     cargo run --release -p analysis --example snapshot_inject -- <in.dem> <out.dem>
+use dem::bit::BitSliceCast;
 use dem::open_demo_from_bytes;
-use dem::types::{Delta, EngineMessage, EntityState, FrameData, MessageData, NetMessage, SvcPacketEntities};
+use dem::types::{
+    Delta, EngineMessage, EntityState, Frame, FrameData, MessageData, NetMessage,
+    SvcDeltaPacketEntities, SvcPacketEntities, SvcTime,
+};
 use std::collections::BTreeMap;
+
+/// A join's `incoming_sequence` gap is smoothed into at most this many synthetic
+/// no-op frames. Uncapped for `m3_h2` (gap 2000) and `m1_h1`/`m1_h2` (gaps
+/// 582-2658) -- their whole point-to-point gap becomes single-sequence steps.
+/// `m3_h1-1` carries two spurious back-to-back "joins" with gaps of 131,071 and
+/// 135,094 (adjacent-frame artefacts of `multi_bridge`, not real holes); this
+/// cap keeps those from turning into 100K+-frame files while still shrinking
+/// their jump by two orders of magnitude.
+const MAX_SMOOTH_FRAMES: usize = 3000;
 
 #[derive(Clone, Default)]
 struct EntAcc {
@@ -53,9 +66,15 @@ fn main() {
     // one of them leaves the others resolving deltas against entity state the
     // client never built.
     let mut joins: Vec<(usize, f32, i64)> = Vec::new();
+    // Parallel to `joins`: the last real (incoming_sequence, delta_sequence)
+    // seen strictly before each join, so the smoothing ramp can start exactly
+    // where the prefix's own numbering left off rather than guessing at it.
+    let mut join_prev_seq: Vec<i32> = Vec::new();
+    let mut join_prev_delta_seq: Vec<u32> = Vec::new();
     {
         let mut idx = 0usize;
         let mut prev: Option<(i32, f32)> = None;
+        let mut last_delta_seq = 0u32;
         for entry in demo.directory.entries.iter().skip(1) {
             for f in &entry.frames {
                 if let FrameData::NetworkMessage(bt) = &f.frame_data {
@@ -64,9 +83,22 @@ fn main() {
                         // A network frame advances the sequence by one; a splice
                         // moves it by thousands. Anything past a handful is a cut.
                         let jump = (seq as i64 - p as i64).abs();
-                        if jump > 100 { joins.push((idx, pt, jump)) }
+                        if jump > 100 {
+                            joins.push((idx, pt, jump));
+                            join_prev_seq.push(p);
+                            join_prev_delta_seq.push(last_delta_seq);
+                        }
                     }
                     prev = Some((seq, f.time));
+                    if let MessageData::Parsed(msgs) = &bt.1.messages {
+                        for m in msgs {
+                            if let NetMessage::EngineMessage(em) = m {
+                                if let EngineMessage::SvcDeltaPacketEntities(pe) = &**em {
+                                    last_delta_seq = pe.delta_sequence.to_u32();
+                                }
+                            }
+                        }
+                    }
                 }
                 idx += 1;
             }
@@ -214,6 +246,77 @@ fn main() {
             entity_states: states,
         }
     }).collect();
+    let live_counts: Vec<u32> = at_join.iter()
+        .map(|s| s.keys().filter(|i| **i != 0).count() as u32)
+        .collect();
+
+    // A live test found the snapshot lands cleanly but the client still pays a
+    // real cost right there: `SV_LinkEdict`'s "Tried to link edict %i without
+    // model" spammed ~1,657 times, and a ~30s stall, both at the join, and
+    // identically whether or not the injected packet even lists entity 0 --
+    // ruling out packet *content* as the cause. What every join has in common
+    // is an instantaneous jump in both `incoming_sequence` (thousands) and
+    // frame time (tens of real seconds), which nothing in a normal capture
+    // ever produces -- the working theory is the client's local
+    // physics/prediction system paying to catch up the elapsed time in one
+    // burst. This inserts a ramp of ordinary-looking no-op frames spanning the
+    // gap -- entity_count unchanged, zero entities listed, meaning "nothing
+    // changed" -- so `incoming_sequence`, `delta_sequence` and frame time all
+    // advance one ordinary step at a time instead of jumping, the same shape
+    // a real recording never interrupts.
+    //
+    // `delta_sequence` is stepped in lockstep with `incoming_sequence` (not by
+    // a fixed +1) so the gap `flush_predict`/CL_ParsePacketEntities checks
+    // stays at whatever it already was in the prefix, not growing across the
+    // ramp -- reopening the very flush condition this whole tool exists to
+    // avoid would be a strange way to fix a different bug.
+    fn build_ramp(
+        template: &Frame,
+        start_seq: i32, start_time: f32, start_delta_seq: u32,
+        end_seq: i32, entity_count: u32,
+    ) -> Vec<Frame> {
+        let FrameData::NetworkMessage(tbt) = &template.frame_data else { return Vec::new() };
+        let seq_gap = (end_seq as i64 - start_seq as i64).max(0);
+        let n_steps = (seq_gap.saturating_sub(1) as usize).min(MAX_SMOOTH_FRAMES);
+        if n_steps == 0 { return Vec::new() }
+        // NOT `tbt.1.info.timestamp` -- that field is 0.0 on every frame checked
+        // in this capture (confirmed directly, not assumed), unrelated to demo
+        // playback time. The real per-frame time is the outer `Frame.time`.
+        // Using the wrong one interpolated every ramp frame toward t=0 instead
+        // of toward the join's real end time -- caught by `bridge_ceiling`
+        // flagging exactly `n_steps` frames as stepping backwards in time.
+        let end_time = template.time;
+        (1..=n_steps).map(|i| {
+            let frac = i as f64 / (n_steps + 1) as f64;
+            let seq_i = start_seq as i64 + (frac * seq_gap as f64).round() as i64;
+            let time_i = start_time + (end_time - start_time) * frac as f32;
+            let delta_seq_i = (start_delta_seq as i64 + (frac * seq_gap as f64).round() as i64) as u32 & 0xff;
+            // `info.timestamp` is left as the template's own value (0.0 in
+            // every real frame checked) rather than set to `time_i` -- matching
+            // real captures exactly rather than inventing a value nothing else
+            // in the file has.
+            let info = tbt.1.info.clone();
+            let mut sequence_info = tbt.1.sequence_info.clone();
+            sequence_info.incoming_sequence = seq_i as i32;
+            let no_op = SvcDeltaPacketEntities {
+                entity_count: dem::nbit_num!(entity_count, 16),
+                delta_sequence: dem::nbit_num!(delta_seq_i, 8),
+                entity_states: Vec::new(),
+            };
+            let messages = MessageData::Parsed(vec![
+                NetMessage::EngineMessage(Box::new(EngineMessage::SvcTime(SvcTime { time: time_i }))),
+                NetMessage::EngineMessage(Box::new(EngineMessage::SvcDeltaPacketEntities(no_op))),
+            ]);
+            Frame {
+                time: time_i,
+                frame: template.frame,
+                frame_data: FrameData::NetworkMessage(Box::new((
+                    tbt.0.clone(),
+                    dem::types::NetworkMessage { info, sequence_info, message_length: 0, messages },
+                ))),
+            }
+        }).collect()
+    }
 
     // *Replace* the first post-join delta packet rather than sitting in front of
     // it. Both messages would share one frame, so they share one
@@ -223,22 +326,48 @@ fn main() {
     // holds a frame from the *prefix*, which is the state this whole probe
     // exists to stop the client from using.
     let mut injected = 0usize;
+    let mut ramped = 0usize;
     let mut idx = 0usize;
+    let mut ramp_frames_total = 0usize;
     for entry in demo.directory.entries.iter_mut().skip(1) {
-        for f in entry.frames.iter_mut() {
+        let mut new_frames: Vec<Frame> = Vec::with_capacity(entry.frames.len() + ramp_frames_total.max(64));
+        for mut f in entry.frames.drain(..) {
             let here = idx;
             idx += 1;
-            if injected >= joins.len() || here <= joins[injected].0 { continue }
-            let FrameData::NetworkMessage(bt) = &mut f.frame_data else { continue };
-            let MessageData::Parsed(msgs) = &mut bt.1.messages else { continue };
-            let Some(at) = msgs.iter().position(|m| matches!(m, NetMessage::EngineMessage(em)
-                if matches!(**em, EngineMessage::SvcDeltaPacketEntities(_)))) else { continue };
-            msgs[at] = NetMessage::EngineMessage(Box::new(
-                EngineMessage::SvcPacketEntities(snapshots[injected].clone())));
-            println!("replaced the first delta packet after join {} with its snapshot, at t={:.2}s",
-                injected + 1, f.time);
-            injected += 1;
+
+            if ramped < joins.len() && here == joins[ramped].0 {
+                let ramp = build_ramp(
+                    &f,
+                    join_prev_seq[ramped], joins[ramped].1, join_prev_delta_seq[ramped],
+                    if let FrameData::NetworkMessage(bt) = &f.frame_data { bt.1.sequence_info.incoming_sequence } else { join_prev_seq[ramped] },
+                    live_counts[ramped],
+                );
+                println!("  join {}: smoothed with {} synthetic no-op frames (gap was {})",
+                    ramped + 1, ramp.len(), joins[ramped].2);
+                ramp_frames_total += ramp.len();
+                new_frames.extend(ramp);
+                ramped += 1;
+            }
+
+            if injected < joins.len() && here > joins[injected].0 {
+                if let FrameData::NetworkMessage(bt) = &mut f.frame_data {
+                    if let MessageData::Parsed(msgs) = &mut bt.1.messages {
+                        if let Some(at) = msgs.iter().position(|m| matches!(m, NetMessage::EngineMessage(em)
+                            if matches!(**em, EngineMessage::SvcDeltaPacketEntities(_))))
+                        {
+                            msgs[at] = NetMessage::EngineMessage(Box::new(
+                                EngineMessage::SvcPacketEntities(snapshots[injected].clone())));
+                            println!("  join {}: replaced the first delta packet after it with its snapshot, at t={:.2}s",
+                                injected + 1, f.time);
+                            injected += 1;
+                        }
+                    }
+                }
+            }
+
+            new_frames.push(f);
         }
+        entry.frames = new_frames;
     }
     if injected < joins.len() {
         println!("only {injected} of {} joins got a snapshot -- no frame carrying entity data followed the rest",
