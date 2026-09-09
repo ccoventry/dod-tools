@@ -42,8 +42,26 @@ struct Quality {
     stop: usize,
     swallows: usize,
     backwards: usize,
+    /// Type 4 and type 9 frames, which a real recording emits in lockstep.
+    t4: usize,
+    t9: usize,
+    bytes: usize,
     first_time: f32,
     last_time: f32,
+}
+
+impl Quality {
+    /// Does this look like a recording, rather than a lucky path through rubble?
+    /// Every healthy demo measured pairs type 4 with type 9 exactly (197642 /
+    /// 197642, 191043 / 191043, 103747 / 103747) and runs 160-165 bytes per
+    /// frame, where the bad `m1_h1` bridge ran 946. Judging that here rather
+    /// than in the child saves an 82 MB re-read and a full parse per candidate,
+    /// which is what the search actually spends its time on.
+    fn plausible(&self) -> bool {
+        if self.frames < 5000 { return false }
+        let per = self.bytes as f64 / self.frames as f64;
+        (100.0..=400.0).contains(&per) && self.t4.abs_diff(self.t9) <= 2
+    }
 }
 
 /// Walks frames from `start`, judging the *shape* of what it finds rather than
@@ -53,6 +71,8 @@ fn walk(bytes: &[u8], start: usize, end: usize, cap: usize) -> Quality {
     let mut frames = 0usize;
     let mut swallows = 0usize;
     let mut backwards = 0usize;
+    let mut t4 = 0usize;
+    let mut t9 = 0usize;
     let mut prev_time = -1.0f32;
     let mut first_time = f32::NAN;
     let mut last_time = 0.0f32;
@@ -86,9 +106,11 @@ fn walk(bytes: &[u8], start: usize, end: usize, cap: usize) -> Quality {
         }
         if pos > end { break }
         frames += 1;
+        if t == 4 { t4 += 1 }
+        if t == 9 { t9 += 1 }
         if pos - frame_start > SWALLOW && t != 0 && t != 1 { swallows += 1 }
     }
-    Quality { frames, stop: pos, swallows, backwards, first_time, last_time }
+    Quality { frames, stop: pos, swallows, backwards, t4, t9, bytes: pos - start, first_time, last_time }
 }
 
 /// Where the intact prefix ends. The walk's break position sits *inside* the
@@ -235,11 +257,15 @@ fn main() {
         considered += 1;
 
         let full = walk(&bytes, scan, end, usize::MAX);
-        if full.stop < end.saturating_sub(64) || full.swallows > 0 || full.backwards > BACKWARDS_OK || full.frames <= best {
+        if full.stop < end.saturating_sub(64) || full.swallows > 0 || full.backwards > BACKWARDS_OK
+            || full.frames <= best || !full.plausible()
+        {
             scan += 1;
             continue;
         }
         deep += 1;
+        eprintln!("  verifying offset {scan}: {} frames, {:.0} bytes/frame, t4/t9 {}/{}",
+            full.frames, full.bytes as f64 / full.frames as f64, full.t4, full.t9);
 
         let child = std::process::Command::new(&exe)
             .args(["--verify", &path, &cut.to_string(), &scan.to_string(), &e0.to_string(), &end.to_string()])

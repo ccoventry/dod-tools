@@ -31,24 +31,44 @@ fn main() {
     let bytes = std::fs::read(&input).expect("read");
     let mut demo = open_demo_from_bytes(&bytes).expect("parse");
 
-    // The join is the largest forward jump in frame time.
+    // Find the join by the jump in `incoming_sequence`, not in frame time.
+    // Frame time is not monotonic across a whole recording -- `m1_h2` resets to
+    // 0.00s inside its intact prefix -- and the largest forward time jump then
+    // lands at the start of playback rather than at the cut, which replays no
+    // entities at all and injects an empty snapshot over a healthy packet.
+    // `incoming_sequence` advances by one per network frame and jumps by
+    // thousands at a splice, so it names the join whatever the clock does.
+    let mut join_idx = 0usize;
     let mut join_time = 0.0f32;
-    let mut best = 0.0f32;
-    for entry in demo.directory.entries.iter().skip(1) {
-        let mut prev: Option<f32> = None;
-        for f in &entry.frames {
-            if let Some(p) = prev { if f.time - p > best { best = f.time - p; join_time = p; } }
-            prev = Some(f.time);
+    let mut best = 0i64;
+    {
+        let mut idx = 0usize;
+        let mut prev: Option<(i32, f32)> = None;
+        for entry in demo.directory.entries.iter().skip(1) {
+            for f in &entry.frames {
+                if let FrameData::NetworkMessage(bt) = &f.frame_data {
+                    let seq = bt.1.sequence_info.incoming_sequence;
+                    if let Some((p, pt)) = prev {
+                        let jump = (seq as i64 - p as i64).abs();
+                        if jump > best { best = jump; join_idx = idx; join_time = pt; }
+                    }
+                    prev = Some((seq, f.time));
+                }
+                idx += 1;
+            }
         }
     }
-    println!("join after t={join_time:.2}s (jump {best:.2}s)");
+    println!("join at frame {join_idx} (t={join_time:.2}s), incoming_sequence jumps by {best}");
 
     // Replay the prefix, merging every entity's fields into one state.
     let mut acc: BTreeMap<u16, EntAcc> = BTreeMap::new();
     let mut updates = 0usize;
+    let mut idx = 0usize;
     for entry in demo.directory.entries.iter().skip(1) {
         for f in &entry.frames {
-            if f.time > join_time { continue }
+            let here = idx;
+            idx += 1;
+            if here > join_idx { continue }
             let FrameData::NetworkMessage(bt) = &f.frame_data else { continue };
             let MessageData::Parsed(msgs) = &bt.1.messages else { continue };
             for m in msgs {
@@ -110,9 +130,12 @@ fn main() {
     // holds a frame from the *prefix*, which is the state this whole probe
     // exists to stop the client from using.
     let mut injected = false;
+    let mut idx = 0usize;
     for entry in demo.directory.entries.iter_mut().skip(1) {
         for f in entry.frames.iter_mut() {
-            if injected || f.time <= join_time { continue }
+            let here = idx;
+            idx += 1;
+            if injected || here <= join_idx { continue }
             let FrameData::NetworkMessage(bt) = &mut f.frame_data else { continue };
             let MessageData::Parsed(msgs) = &mut bt.1.messages else { continue };
             let Some(at) = msgs.iter().position(|m| matches!(m, NetMessage::EngineMessage(em)
