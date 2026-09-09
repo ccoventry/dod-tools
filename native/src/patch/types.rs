@@ -478,10 +478,12 @@ impl PatcherConfig {
     /// - `ffmpeg_capture` is then written back from the enum, so the two can
     ///   never disagree for anything still reading it.
     /// - **Separate HUD is forced off in OBS mode.** It is out of scope for
-    ///   that path by decision (`docs/obs_alternate_capture.md`), and it is not
-    ///   merely unsupported: leaving it on would send `-afxForceAlpha8 1` and
-    ///   the rest of the alpha launch flags for a capture HLAE is not making,
-    ///   perturbing the render for no reason at all.
+    ///   that path by decision (`docs/obs_alternate_capture.md`): OBS captures
+    ///   one composited stream, so `mirv_movie_separate_hud 1` would only ask
+    ///   HLAE for a HUD pair nothing goes on to read. (This used to also keep
+    ///   the alpha launch flags away from an OBS run; it no longer does --
+    ///   `build_hlae_process` sends those unconditionally now, which costs an
+    ///   OBS capture nothing since it never reads an alpha channel.)
     pub fn normalise_capture_mode(&mut self) {
         if self.capture_mode == CaptureMode::FrameSequence && self.ffmpeg_capture {
             self.capture_mode = CaptureMode::DirectToVideo;
@@ -504,8 +506,49 @@ impl PatcherConfig {
         let hook_dll_str = dll_path.to_string_lossy().replace("/", "\\\\");
         let program_path_str = hl_exe.replace("/", "\\\\");
 
+        // HLAE's alpha flags, on every `-customLoader` launch without exception.
+        //
+        // `-afxForceAlpha8` is read by AfxHookGoldSrc.dll off the *game's*
+        // command line, not by HLAE.exe. HLAE's own Launch GoldSrc dialog
+        // appends it when its alpha box is ticked -- but that dialog is the
+        // path we do not use. Under `-customLoader` HLAE composes nothing for
+        // us (its `ProcessArgsCustomLoader`, in advancedfx/advancedfx's
+        // `hlae/Program.cs`, reads neither the flag nor the dialog's saved
+        // `<Launcher><ForceAlpha>`), so unless it is built here the hook never
+        // sees it. HLAE's own `-forceAlpha` is a Launcher-mode switch that
+        // `-customLoader` does not recognise at all, so passing it would be a
+        // silent no-op. Not passed for that reason.
+        //
+        // `-afxForceAlpha8` TAKES A VALUE. From HLAE's own Launcher.cs, the
+        // dialog builds it as:
+        //
+        //     " -afxForceAlpha8 " + (cfg.ForceAlpha ? 1 : 0).ToString()
+        //
+        // Passing it bare -- which is what two earlier attempts did -- makes
+        // the hook read the following token as its argument, find something
+        // that is not `1`, and leave the alpha channel off. That is exactly
+        // the observed behaviour: the flag parses, and the captured hudAlpha
+        // bitmaps come out byte-for-byte identical to a run without it.
+        //
+        // `-afxRenderMode` takes one of standard|fBO|memoryDC the same way.
+        // `-32bpp` because a framebuffer that is not 32-bit has no alpha bits
+        // to force in the first place. `-afxOptimizeCaptureVis` is left out:
+        // it is a visibility optimisation unrelated to alpha, and would be one
+        // more variable over the capture itself.
+        //
+        // NOT gated on `separate_hud`. The gate used to live in
+        // `capture_engine`, which meant the two hand-driven launches --
+        // "Launch Game (HLAE)" and Launch Preview, both of which pass through
+        // here -- started a session with the alpha buffer off no matter what.
+        // A user typing `mirv_movie_separate_hud 1` in the console of such a
+        // session got a `hudalpha` stream that is pure white in every frame,
+        // an all-opaque matte that `alphamerge` can never turn into
+        // transparency, with nothing anywhere reporting a fault. Forcing the
+        // alpha bits costs nothing when no HUD stream is being written, and
+        // this app cannot know what the user will type mid-session, so the
+        // flags go on every launch. See `docs/direct_to_video_capture.md`.
         let cmd_line_str = format!(
-            "-game dod -insecure -windowed -w {} -h {} {}",
+            "-game dod -insecure -windowed -w {} -h {} -gl -32bpp -afxRenderMode standard -afxForceAlpha8 1 {}",
             self.resolution_width, self.resolution_height, extra_engine_args
         );
 
@@ -677,5 +720,68 @@ mod capture_codec_tests {
     #[test]
     fn test_default_is_the_one_proven_in_a_real_capture() {
         assert_eq!(CaptureCodec::default(), CaptureCodec::UtVideo);
+    }
+}
+
+#[cfg(test)]
+mod build_hlae_process_tests {
+    use super::PatcherConfig;
+
+    /// The single `-cmdLine` value HLAE hands to `hl.exe`.
+    fn cmd_line(config: &PatcherConfig, extra: &str) -> String {
+        let cmd = config.build_hlae_process(extra);
+        let args: Vec<String> = cmd
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        let idx = args
+            .iter()
+            .position(|a| a == "-cmdLine")
+            .expect("-cmdLine is always composed");
+        args[idx + 1].clone()
+    }
+
+    #[test]
+    fn test_alpha_flags_are_sent_on_every_launch_shape() {
+        // The three call sites, by their `extra_engine_args`: a capture batch,
+        // Launch Preview, and the standalone "Launch Game (HLAE)" button. The
+        // last two used to get no alpha flags at all, so a hand-driven session
+        // that enabled separate HUD in the console wrote an all-white
+        // `hudalpha` — an opaque matte, silently unusable. Pin all three.
+        for extra in ["-condebug +exec dodtools_helper.cfg +playdemo primer", "+viewdemo stem", ""] {
+            let line = cmd_line(&PatcherConfig::default(), extra);
+            assert!(
+                line.contains("-afxForceAlpha8 1"),
+                "alpha flag missing for extra={extra:?}: {line}"
+            );
+            assert!(line.contains("-32bpp"), "missing -32bpp for extra={extra:?}: {line}");
+            assert!(
+                line.contains("-afxRenderMode standard"),
+                "missing render mode for extra={extra:?}: {line}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_alpha_flags_do_not_depend_on_separate_hud() {
+        // The gate this replaced. `separate_hud` drives the in-engine
+        // `mirv_movie_separate_hud` command, not the launch line.
+        let mut off = PatcherConfig::default();
+        off.separate_hud = false;
+        let mut on = PatcherConfig::default();
+        on.separate_hud = true;
+        assert_eq!(cmd_line(&off, ""), cmd_line(&on, ""));
+        assert!(cmd_line(&off, "").contains("-afxForceAlpha8 1"));
+    }
+
+    #[test]
+    fn test_engine_flags_precede_console_commands() {
+        // GoldSrc parses `-` switches off the command line and queues `+`
+        // commands after; an alpha flag landing after a `+` would be read as
+        // an argument to that command instead of a switch.
+        let line = cmd_line(&PatcherConfig::default(), "+playdemo primer");
+        let first_plus = line.find('+').expect("the console command is present");
+        let alpha = line.find("-afxForceAlpha8").expect("the alpha flag is present");
+        assert!(alpha < first_plus, "alpha flag must precede any +command: {line}");
     }
 }
