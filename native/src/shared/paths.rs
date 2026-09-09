@@ -60,6 +60,11 @@ pub fn take_key(take_folder: &Path) -> Option<String> {
 /// accumulated across every session indefinitely. (`condump` is the separate
 /// console command that drops a numbered `condump_NNN.txt`; nothing here
 /// issues it.)
+///
+/// Beside `hl.exe` specifically, not in the launching process's working
+/// directory: `build_hlae_process` runs HLAE with its CWD set to HLAE's own
+/// folder, and the log still appears next to `hl.exe` with nothing in HLAE's
+/// folder. So deriving the path from the game path is always right.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn remove_console_log(game_root: &Path) {
     let _ = std::fs::remove_file(game_root.join("qconsole.log"));

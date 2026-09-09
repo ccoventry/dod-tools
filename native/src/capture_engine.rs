@@ -850,10 +850,12 @@ pub fn spawn_capture_engine(
                                      detection and OBS capture all read that log — without it they do \
                                      not fail, they simply never fire, and this batch may finish looking \
                                      like it worked.\n\n\
-                                     `-condebug` is passed on every launch, so the likely causes are \
-                                     that this is not the folder the engine actually ran from (it is \
-                                     derived from the configured game path), that the folder cannot be \
-                                     written to, or that something else is holding the file open.",
+                                     `-condebug` is passed on every launch and this is the folder the \
+                                     engine writes to, so the cause is on the writing side: the folder \
+                                     may not be writable (antivirus and Controlled Folder Access can \
+                                     block it as well as permissions), something else may be holding \
+                                     the file open, or HLAE may not be passing the flag through to the \
+                                     game.",
                                     log_path.display(),
                                     CONDEBUG_WRITE_GRACE.as_secs_f32(),
                                 ));
