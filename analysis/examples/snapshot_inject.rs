@@ -68,7 +68,33 @@ fn main() {
     // Replay the whole demo once, merging every entity's fields into one state,
     // and take a copy of that state as each join goes past. Replaying up to each
     // join separately would be the same work over again per join.
+    //
+    // Seeded from entry 0's SvcSpawnBaseline first, not left empty. A field set
+    // only at spawn and genuinely never resent -- worldspawn's modelindex is the
+    // case that surfaced this: entity 0 moves and changes for nobody, so no
+    // delta in the whole recording ever touches it again -- would otherwise be
+    // absent from every injected snapshot. The client does not re-seed a full
+    // update from the baseline on its own; it instantiates the entity from
+    // exactly the fields the packet lists. Missing modelindex on entity 0 is
+    // `SV_LinkEdict`'s "Tried to link edict 0 without model", spammed once per
+    // tick from the join onward -- measured live: 1,658 occurrences, then the
+    // process gone with no crash dialog.
     let mut acc: BTreeMap<u16, EntAcc> = BTreeMap::new();
+    if let Some(entry0) = demo.directory.entries.first() {
+        for f in &entry0.frames {
+            let FrameData::NetworkMessage(bt) = &f.frame_data else { continue };
+            let MessageData::Parsed(msgs) = &bt.1.messages else { continue };
+            for m in msgs {
+                let NetMessage::EngineMessage(em) = m else { continue };
+                let EngineMessage::SvcSpawnBaseline(sb) = &**em else { continue };
+                for es in &sb.entities {
+                    let e = acc.entry(es.entity_index).or_default();
+                    for (k, v) in es.delta.iter() { e.fields.insert(k.clone(), v.clone()); }
+                }
+            }
+        }
+    }
+    let baseline_seeded = acc.len();
     let mut at_join: Vec<BTreeMap<u16, EntAcc>> = Vec::new();
     let mut next_join = 0usize;
     let mut updates = 0usize;
@@ -111,7 +137,7 @@ fn main() {
         }
     }
     while at_join.len() < joins.len() { at_join.push(acc.clone()) }
-    println!("replayed {updates} entity updates");
+    println!("baseline seeded {baseline_seeded} entities; replayed {updates} entity updates on top");
 
     // Encode each join's state as a full snapshot. Absolute indices throughout:
     // unambiguous, and it avoids depending on the incremental index arithmetic
