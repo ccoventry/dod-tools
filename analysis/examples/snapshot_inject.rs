@@ -28,7 +28,7 @@ use dem::bit::BitSliceCast;
 use dem::open_demo_from_bytes;
 use dem::types::{
     Delta, EngineMessage, EntityState, Frame, FrameData, MessageData, NetMessage,
-    SvcClientData, SvcDeltaPacketEntities, SvcPacketEntities, SvcTime,
+    SvcClientData, SvcDeltaPacketEntities, SvcPacketEntities, SvcTime, UserMessage,
 };
 use std::collections::BTreeMap;
 
@@ -56,6 +56,17 @@ struct ClientAcc {
     fields: Delta,
     /// weapon_index -> accumulated per-weapon fields (ammo, clip, etc).
     weapons: BTreeMap<u32, Delta>,
+    /// The most recent `CurWeapon` user message with `is_active=true` seen in
+    /// the prefix, as (id, raw 3-byte payload) -- `id` is resolved per-file
+    /// from this demo's own `SvcNewUserMsg` table, so it can't be hardcoded.
+    /// `SvcClientData`'s `weapon_data` map (accumulated above) says what ammo
+    /// each weapon the player has touched holds; it does not say which one is
+    /// currently in hand -- that is this message alone. Replaying only the
+    /// entity/clientdata state at a join left the engine using whatever
+    /// weapon `CurWeapon` last named *before* the gap, playing that weapon's
+    /// fire sound over the correct one until real gameplay happened to touch
+    /// it again.
+    cur_weapon: Option<(u8, Vec<u8>)>,
 }
 
 fn main() {
@@ -176,7 +187,17 @@ fn main() {
             let FrameData::NetworkMessage(bt) = &f.frame_data else { continue };
             let MessageData::Parsed(msgs) = &bt.1.messages else { continue };
             for m in msgs {
-                let NetMessage::EngineMessage(em) = m else { continue };
+                let NetMessage::EngineMessage(em) = m else {
+                    // `CurWeapon` payload is `[is_active: u8, weapon: u8, clip_ammo: u8]`
+                    // (dod::lib.rs `cur_weapon`). Only the is_active=true half of a
+                    // switch pair says what's actually in hand right now.
+                    if let NetMessage::UserMessage(um) = m {
+                        if um.name.starts_with(b"CurWeapon") && um.data.len() == 3 && um.data[0] != 0 {
+                            client_acc.cur_weapon = Some((um.id, um.data.clone()));
+                        }
+                    }
+                    continue;
+                };
                 match &**em {
                     EngineMessage::SvcClientData(cd) => {
                         for (k, v) in cd.client_data.iter() { client_acc.fields.insert(k.clone(), v.clone()); }
@@ -394,6 +415,20 @@ fn main() {
                     client_data,
                     weapon_data,
                 }))));
+            }
+            // Same one-time-refresh shape as the clientdata above: `CurWeapon`
+            // is what actually drives which weapon's fire sound the client
+            // predicts, and it is not part of `SvcClientData` at all -- a
+            // separate user message. Replaying the last real one here, once,
+            // stops the join from starting the client on a stale weapon.
+            if i == 1 {
+                if let Some((id, data)) = &client_state.cur_weapon {
+                    msgs.push(NetMessage::UserMessage(UserMessage {
+                        id: *id,
+                        name: b"CurWeapon".to_vec(),
+                        data: data.clone(),
+                    }));
+                }
             }
             msgs.push(NetMessage::EngineMessage(Box::new(EngineMessage::SvcDeltaPacketEntities(no_op))));
             Frame {
