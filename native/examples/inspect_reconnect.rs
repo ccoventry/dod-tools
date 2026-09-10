@@ -20,11 +20,11 @@ fn parse_userinfo(user_info: &dem::types::ByteString) -> std::collections::HashM
         .to_str()
         .map(|s| s.trim_matches(['\0', '\\']).split('\\').collect::<Vec<_>>())
         .unwrap_or_default()
-        .chunks_exact(2)
-        .fold(std::collections::HashMap::new(), |mut map, chunk| {
-            if let [key, value] = chunk {
-                map.insert(key.to_string(), value.to_string());
-            }
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .fold(std::collections::HashMap::new(), |mut map, [key, value]| {
+            map.insert(key.to_string(), value.to_string());
             map
         })
 }

@@ -71,7 +71,7 @@ fn main() {
                             let parts: Vec<&str> =
                                 raw.trim_matches(|c| c == '\0' || c == '\\').split('\\').collect();
                             let f: HashMap<&str, &str> =
-                                parts.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+                                parts.as_chunks::<2>().0.iter().map(|&[k, v]| (k, v)).collect();
                             if f.is_empty() || f.get("*hltv") == Some(&"1") {
                                 continue;
                             }

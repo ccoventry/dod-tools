@@ -735,11 +735,11 @@ pub fn parse_fingerprint(bytes: &[u8]) -> Result<(String, String, u64, Vec<Strin
                                                 .to_str()
                                                 .map(|s| s.trim_matches(['\0', '\\']).split('\\').collect::<Vec<_>>())
                                                 .unwrap_or_default()
-                                                .chunks_exact(2)
-                                                .fold(std::collections::HashMap::new(), |mut map, chunk| {
-                                                    if let [key, value] = chunk {
-                                                        map.insert(*key, *value);
-                                                    }
+                                                .as_chunks::<2>()
+                                                .0
+                                                .iter()
+                                                .fold(std::collections::HashMap::new(), |mut map, [key, value]| {
+                                                    map.insert(*key, *value);
                                                     map
                                                 });
 

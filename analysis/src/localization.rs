@@ -262,15 +262,19 @@ fn read_to_string_lossy_utf16_or_utf8(path: &std::path::Path) -> std::io::Result
         if bytes[0] == 0xFF && bytes[1] == 0xFE {
             // UTF-16 LE
             let u16_chars: Vec<u16> = bytes[2..]
-                .chunks_exact(2)
-                .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|chunk| u16::from_le_bytes(*chunk))
                 .collect();
             return Ok(String::from_utf16_lossy(&u16_chars));
         } else if bytes[0] == 0xFE && bytes[1] == 0xFF {
             // UTF-16 BE
             let u16_chars: Vec<u16> = bytes[2..]
-                .chunks_exact(2)
-                .map(|chunk| u16::from_be_bytes([chunk[0], chunk[1]]))
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|chunk| u16::from_be_bytes(*chunk))
                 .collect();
             return Ok(String::from_utf16_lossy(&u16_chars));
         }
@@ -282,8 +286,10 @@ fn read_to_string_lossy_utf16_or_utf8(path: &std::path::Path) -> std::io::Result
             let has_nulls = bytes.iter().enumerate().any(|(i, &b)| b == 0 && i % 2 == 1);
             if has_nulls && bytes.len() % 2 == 0 {
                 let u16_chars: Vec<u16> = bytes
-                    .chunks_exact(2)
-                    .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|chunk| u16::from_le_bytes(*chunk))
                     .collect();
                 Ok(String::from_utf16_lossy(&u16_chars))
             } else {

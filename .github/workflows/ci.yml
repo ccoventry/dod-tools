@@ -35,7 +35,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      # Pinned, unlike the test job above, which stays on `stable` on purpose --
+      # a new Rust breaking the build is something we want to hear about. A lint
+      # gate is different: every Rust release ships new clippy lints, so
+      # `@stable` + `-D warnings` means a PR that was green yesterday goes red
+      # today with nobody having touched the code. That happened on the first
+      # run of this job (PR #232): local clippy was 1.96.1, CI's stable had
+      # moved to 1.98.1, and `chunks_exact_to_as_chunks` -- new in 1.98 -- failed
+      # it in eleven places.
+      #
+      # Bumping this is a deliberate act: raise the version, run it, fix or
+      # allow what the new release found, in its own commit. To reproduce a
+      # failure locally without changing your default toolchain:
+      #
+      #   rustup toolchain install 1.98.1 --component clippy --profile minimal
+      #   rustup run 1.98.1 cargo clippy --workspace --all-targets -- -D warnings
+      - uses: dtolnay/rust-toolchain@1.98.1
         with:
           components: clippy
 
