@@ -201,10 +201,6 @@ pub fn final_init_commands(config: &PatcherConfig) -> Vec<String> {
     let mut out = config.init_commands.clone();
     out.push("sys_autodir".to_string());
     out.push(format!("mirv_movie_fps {}", config.capture_fps));
-    out.push(format!(
-        "mirv_movie_separate_hud {}",
-        if config.separate_hud { "1" } else { "0" }
-    ));
 
     // OBS mode is real time: HLAE issues no `mirv_movie_start` at all, so
     // `mirv_movie_fps` above is inert on this path — nothing reads it. What
@@ -560,8 +556,8 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
         date_time
     ));
     // Marks exactly where this file execs relative to the engine's own
-    // config.cfg/movie.cfg chain, which lands in qconsole.log too (with
-    // Add Condebug on) — cheap enough to leave in permanently rather than
+    // config.cfg/movie.cfg chain, which lands in qconsole.log too (-condebug
+    // is passed on every launch) — cheap enough to leave in permanently rather than
     // re-add it every time this ordering question comes up again. See
     // docs/goldsrc_dod_quirks.md's Command Precedence entry.
     helper_cfg_content.push_str("echo dodtools_helper.cfg exec'd here\n\n");
@@ -651,9 +647,6 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
         let first_source = sorted_groups[0].0.0.to_string();
         let mut primer_init = config.init_commands.clone();
         primer_init.push("sys_autodir".to_string());
-        
-        let separate_hud_str = if config.separate_hud { "1" } else { "0" };
-        primer_init.push(format!("mirv_movie_separate_hud {}", separate_hud_str));
 
         // Every patched demo lands directly in the game's own dod/ folder --
         // that's the only place GoldSrc's `playdemo` can find it. This used
@@ -1282,12 +1275,23 @@ impl Drop for WorkspaceGuard {
             }
             
             if self.auto_clear_temp_demos && !self.save_local_patched_copy {
-                let _ = std::fs::remove_file(dod_dir.join("primer.dem"));
+                // Retried, and logged loudly on final failure -- see
+                // `remove_file_retrying`'s doc comment and #198. Mirrors
+                // `CaptureCleanupGuard::drop` in `capture_engine.rs`.
+                if let Some(e) = crate::shared::paths::remove_file_retrying(&dod_dir.join("primer.dem")) {
+                    crate::log_markdown(&format!(
+                        "⚠️ **Cleanup** — could not remove primer.dem after retrying: {e} (auto_clear_temp_demos left it behind; hl.exe may still have had it open)"
+                    ));
+                }
                 if let Ok(entries) = std::fs::read_dir(&dod_dir) {
                     for entry in entries.flatten() {
                         let filename = entry.file_name().to_string_lossy().to_string();
                         if crate::shared::paths::is_chain_demo_filename(&filename) {
-                            let _ = std::fs::remove_file(entry.path());
+                            if let Some(e) = crate::shared::paths::remove_file_retrying(&entry.path()) {
+                                crate::log_markdown(&format!(
+                                    "⚠️ **Cleanup** — could not remove {filename} after retrying: {e} (auto_clear_temp_demos left it behind; hl.exe may still have had it open)"
+                                ));
+                            }
                         }
                     }
                 }
@@ -2617,6 +2621,39 @@ mod tests {
         );
 
         assert_eq!(result, Err(0));
+    }
+
+    /// A regression guard for #198's fix -- `workspace_guard_drop_actually_
+    /// removes_chain_demos_when_auto_clear_is_on` above already covers the
+    /// enabled case; this is the one combination it doesn't, and the reason
+    /// `remove_file_retrying` is called through `auto_clear_temp_demos &&
+    /// !save_local_patched_copy` rather than unconditionally.
+    #[test]
+    fn dropping_the_workspace_guard_keeps_demos_when_a_local_copy_was_requested() {
+        let root = std::env::temp_dir().join(format!("dod_workspace_guard_keep_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let dod = root.join("dod");
+        std::fs::create_dir_all(&dod).unwrap();
+        std::fs::write(dod.join("primer.dem"), b"x").unwrap();
+        std::fs::write(dod.join("chain_01.dem"), b"x").unwrap();
+
+        {
+            let _guard = WorkspaceGuard {
+                session_junction: root.join("session_junction"),
+                exit_trigger: root.join("exit_trigger"),
+                pool_junctions: vec![],
+                route_junctions: vec![],
+                auto_clear_logs: false,
+                auto_clear_temp_demos: true,
+                auto_clear_previews: false,
+                save_local_patched_copy: true,
+            };
+        }
+
+        assert!(dod.join("primer.dem").exists());
+        assert!(dod.join("chain_01.dem").exists());
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
 

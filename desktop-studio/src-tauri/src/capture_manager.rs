@@ -51,8 +51,6 @@ pub struct CapturePayload {
     #[serde(default = "default_resolution_height")]
     pub resolution_height: i32,
     #[serde(default)]
-    pub separate_hud: bool,
-    #[serde(default)]
     pub ffmpeg_capture: bool,
     /// Codec id for direct-to-video capture; unknown ids fall back to the
     /// default rather than failing the batch.
@@ -71,8 +69,6 @@ pub struct CapturePayload {
     pub obs_password: String,
     #[serde(default)]
     pub save_local_patched_copy: bool,
-    #[serde(default = "default_add_condebug")]
-    pub add_condebug: bool,
     /// Highlight streaks to capture.
     pub streaks: Vec<SerializedStreak>,
     /// Pre-roll added before each streak (seconds). Converted → ticks at 100 Hz.
@@ -128,7 +124,6 @@ fn default_fast_forward_speed() -> f32 { 0.05 }
 fn default_resolution_width() -> i32 { 1280 }
 fn default_obs_capture_fps_payload() -> i32 { 120 }
 fn default_resolution_height() -> i32 { 720 }
-fn default_add_condebug() -> bool { true }
 
 /// One custom command row — serialisable across the Tauri IPC boundary.
 /// `relation` is a plain string ("Before" | "After") rather than
@@ -248,7 +243,6 @@ fn config_from_payload(payload: &CapturePayload) -> PatcherConfig {
     cfg.goldsrc_hooks_dll_path = payload.goldsrc_hooks_dll_path.clone();
     cfg.resolution_width = payload.resolution_width;
     cfg.resolution_height = payload.resolution_height;
-    cfg.separate_hud = payload.separate_hud;
     cfg.ffmpeg_capture = payload.ffmpeg_capture;
     cfg.ffmpeg_capture_codec = native::patch::CaptureCodec::from_str_id(&payload.ffmpeg_capture_codec);
     if !payload.capture_mode.is_empty() {
@@ -260,7 +254,6 @@ fn config_from_payload(payload: &CapturePayload) -> PatcherConfig {
         password: payload.obs_password.clone(),
     };
     cfg.save_local_patched_copy = payload.save_local_patched_copy;
-    cfg.add_condebug = payload.add_condebug;
     cfg.auto_clear_logs = payload.auto_clear_logs;
     cfg.auto_clear_previews = payload.auto_clear_previews;
     cfg.auto_clear_temp_demos = payload.auto_clear_temp_demos;
@@ -1343,7 +1336,7 @@ fn write_hidden_sidecar(path: &Path) -> std::io::Result<()> {
 
 /// Validates the HLAE/hl.exe paths, ensures `<hl_parent>/dod` exists, and
 /// builds a minimal `PatcherConfig` carrying just the fields
-/// `build_hlae_process` reads (hlae_path/game_path/resolution/separate_hud/
+/// `build_hlae_process` reads (hlae_path/game_path/resolution/
 /// goldsrc_hooks_dll_path). `goldsrc_hooks_dll_path` matters only to callers
 /// that actually launch HLAE (`launch_demo_preview`) — `generate_all_previews`
 /// never spawns a process, so it passes `None` here and it's simply unused.
@@ -1575,7 +1568,6 @@ pub async fn launch_standalone_game(app: tauri::AppHandle) -> Result<(), String>
             game_path: settings.hl_path.clone(),
             resolution_width: settings.resolution_width,
             resolution_height: settings.resolution_height,
-            separate_hud: settings.separate_hud,
             ffmpeg_capture: settings.ffmpeg_capture,
             ffmpeg_capture_codec: native::patch::CaptureCodec::from_str_id(&settings.ffmpeg_capture_codec),
             goldsrc_hooks_dll_path: settings.goldsrc_hooks_dll_path.clone(),
@@ -1825,7 +1817,6 @@ mod tests {
             goldsrc_hooks_dll_path: None,
             resolution_width: 1920,
             resolution_height: 1080,
-            separate_hud: true,
             ffmpeg_capture: false,
             ffmpeg_capture_codec: String::new(),
             capture_mode: String::new(),
@@ -1833,7 +1824,6 @@ mod tests {
             obs_port: 0,
             obs_password: String::new(),
             save_local_patched_copy: false,
-            add_condebug: true,
             streaks: Vec::new(),
             pre_roll_seconds: 2.0,
             post_roll_seconds: 0.6,
@@ -1872,23 +1862,6 @@ mod tests {
         assert_eq!(payload.fast_forward_speed, 0.05);
     }
 
-    /// Separate HUD and direct-to-video are both carried through to the patcher
-    /// config, and the two together are a supported combination. They were
-    /// briefly refused as a pair while the HUD streams captured blank; that
-    /// turned out to be the alpha buffer, not the FFmpeg path, and is fixed in
-    /// capture_engine's launch flags. This asserts the pairing survives the
-    /// mapping so the block cannot creep back in unnoticed.
-    #[test]
-    fn test_separate_hud_and_video_capture_survive_together() {
-        let mut payload = sample_payload();
-        payload.separate_hud = true;
-        payload.ffmpeg_capture = true;
-
-        let cfg = config_from_payload(&payload);
-        assert!(cfg.separate_hud);
-        assert!(cfg.ffmpeg_capture);
-    }
-
     #[test]
     fn test_config_from_payload_maps_scalar_fields() {
         let payload = sample_payload();
@@ -1898,7 +1871,6 @@ mod tests {
         assert_eq!(cfg.game_path, payload.game_path);
         assert_eq!(cfg.resolution_width, 1920);
         assert_eq!(cfg.resolution_height, 1080);
-        assert_eq!(cfg.separate_hud, true);
         assert_eq!(cfg.capture_fps, 300);
         assert_eq!(cfg.session_id, "session_test");
         assert_eq!(cfg.init_commands, vec!["exec autoexec".to_string()]);

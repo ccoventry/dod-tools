@@ -267,7 +267,6 @@ pub async fn scan_game_configs(
     init_commands: Vec<String>,
     custom_commands: Vec<CustomCommandPayload>,
     capture_fps: Option<i32>,
-    separate_hud: Option<bool>,
     decal_flush: Option<bool>,
 ) -> Result<CfgReport, String> {
     let exe = PathBuf::from(&game_path);
@@ -294,9 +293,6 @@ pub async fn scan_game_configs(
         };
         if let Some(v) = capture_fps {
             cfg.capture_fps = v;
-        }
-        if let Some(v) = separate_hud {
-            cfg.separate_hud = v;
         }
         if let Some(v) = decal_flush {
             cfg.decal_flush = v;
@@ -770,7 +766,6 @@ mod tests {
             Vec::new(),
             custom,
             Some(120),
-            Some(false),
             Some(true),
         ))
         .unwrap()
@@ -849,7 +844,6 @@ mod tests {
             init.iter().map(|s| s.to_string()).collect(),
             custom.iter().map(|s| scheduled(s, "Before", 2.0)).collect(),
             Some(fps),
-            Some(false),
             Some(true),
         ))
         .unwrap()
@@ -868,7 +862,6 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
                 Some(120),
-                Some(false),
                 Some(false),
             ))
             .unwrap();
@@ -944,7 +937,6 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
                 Some(120),
-                Some(false),
                 Some(false),
             ))
             .unwrap();
@@ -1031,7 +1023,6 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
                 Some(120),
-                Some(false),
                 Some(true),
             ))
             .unwrap();
@@ -1090,7 +1081,6 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
                 Some(120),
-                Some(false),
                 Some(true),
             ))
             .unwrap();
@@ -1106,7 +1096,6 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
                 Some(120),
-                Some(false),
                 Some(true),
             ))
             .unwrap();
@@ -1124,7 +1113,6 @@ mod tests {
                 Vec::new(),
                 Some(120),
                 Some(false),
-                Some(false),
             ))
             .unwrap();
         assert!(!r.decal_flush_is_noop, "{:?}", r);
@@ -1139,7 +1127,6 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
                 Some(120),
-                Some(false),
                 Some(false),
             ))
             .unwrap();
