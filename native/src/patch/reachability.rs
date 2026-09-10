@@ -87,21 +87,38 @@ fn quantize(p: [f32; 3]) -> (i32, i32, i32) {
 /// this tracks the last full origin per entity and only stops trusting an
 /// axis if the entity itself is removed.
 ///
-/// `want_checksum` is the target map's own checksum (`bsp::map_checksum`),
-/// checked against the demo header's recorded `map_checksum` before reading
-/// a single frame -- a directory of demos is rarely all one map, and a
-/// position from an unrelated map's coordinate space would silently corrupt
-/// the cloud rather than fail loudly. `None` skips the check, for callers
-/// that already know every input is the right map.
-pub fn harvest_player_positions(bytes: &[u8], want_checksum: Option<u32>) -> Result<HashSet<(i32, i32, i32)>, String> {
+/// `want_checksum`/`want_map_name` identify the target map, checked against
+/// the demo header before reading a single frame -- a directory of demos is
+/// rarely all one map, and a position from an unrelated map's coordinate
+/// space would silently corrupt the cloud rather than fail loudly.
+///
+/// Checksum is the primary check (it also catches a same-named but
+/// different-build map, which name matching alone would miss). But an HLTV
+/// recording's header carries `map_checksum: 0` -- confirmed directly against
+/// a real one, not assumed -- rather than the map's real value, so a demo
+/// reporting exactly zero falls back to matching the map name instead of
+/// being rejected outright. That is weaker (it cannot catch a wrong build),
+/// but it is the only signal an HLTV header actually gives, and rejecting
+/// every HLTV recording wastes precisely the demos this feature cares most
+/// about -- HLTV sees every player, not just whoever a POV recorder was.
+pub fn harvest_player_positions(bytes: &[u8], want_checksum: u32, want_map_name: &str) -> Result<HashSet<(i32, i32, i32)>, String> {
     let demo = open_demo_from_bytes(bytes).map_err(|e| format!("parse: {e}"))?;
-    if let Some(want) = want_checksum {
-        if demo.header.map_checksum != want {
+    if demo.header.map_checksum == 0 {
+        let name = String::from_utf8_lossy(
+            &demo.header.map_name.0.iter().copied().take_while(|b| *b != 0).collect::<Vec<u8>>(),
+        )
+        .trim()
+        .to_lowercase();
+        if name != want_map_name.to_lowercase() {
             return Err(format!(
-                "map checksum 0x{:08X} does not match 0x{want:08X} -- different map or build, skipping",
-                demo.header.map_checksum
+                "no map checksum in this header (an HLTV recording) and map name {name:?} does not match {want_map_name:?}, skipping"
             ));
         }
+    } else if demo.header.map_checksum != want_checksum {
+        return Err(format!(
+            "map checksum 0x{:08X} does not match 0x{want_checksum:08X} -- different map or build, skipping",
+            demo.header.map_checksum
+        ));
     }
     let mut cells: HashSet<(i32, i32, i32)> = HashSet::new();
     // Last known origin per player-slot entity, so a delta that only touches
@@ -139,11 +156,13 @@ pub fn harvest_player_positions(bytes: &[u8], want_checksum: Option<u32>) -> Res
 /// grids, so a stronger claim -- "no player has ever been near this, across
 /// every recording we have" -- is only as good as how many demos were fed in.
 ///
-/// `want_checksum` is required, not optional: a folder of demos is rarely
-/// curated to one map, and there is no other cheap way to reject a demo of a
-/// different map (or a different build of the same map, whose coordinates
-/// are not guaranteed to line up) before it silently corrupts the cloud.
-pub fn harvest_directory(dir: &Path, want_checksum: u32) -> Result<HashSet<(i32, i32, i32)>, String> {
+/// `want_checksum`/`want_map_name` are both required: a folder of demos is
+/// rarely curated to one map, and there is no other cheap way to reject a
+/// demo of a different map (or a different build of the same map, whose
+/// coordinates are not guaranteed to line up) before it silently corrupts
+/// the cloud. `want_map_name` only matters for an HLTV recording, whose
+/// header carries no usable checksum -- see `harvest_player_positions`.
+pub fn harvest_directory(dir: &Path, want_checksum: u32, want_map_name: &str) -> Result<HashSet<(i32, i32, i32)>, String> {
     let mut merged: HashSet<(i32, i32, i32)> = HashSet::new();
     let entries = std::fs::read_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     for entry in entries {
@@ -153,7 +172,7 @@ pub fn harvest_directory(dir: &Path, want_checksum: u32) -> Result<HashSet<(i32,
             continue;
         }
         let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-        match harvest_player_positions(&bytes, Some(want_checksum)) {
+        match harvest_player_positions(&bytes, want_checksum, want_map_name) {
             Ok(cells) => merged.extend(cells),
             // One unusable demo (wrong map, wrong build, corrupt file) should
             // not sink the whole harvest -- report and move on.

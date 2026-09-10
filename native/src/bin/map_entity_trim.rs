@@ -184,8 +184,13 @@ fn main() {
     // a tier-C candidate far from every one of these points is safe to remove
     // with much more confidence than face area alone can offer. Optional: with
     // no directory given, tier C falls back to its original area-only ranking.
+    let map_name = std::path::Path::new(&map_path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or_else(|| fail("map path has no usable file name"))
+        .to_string();
     let reach = demos_dir.as_deref().map(|dir| {
-        native::patch::reachability::harvest_directory(std::path::Path::new(dir), checksum)
+        native::patch::reachability::harvest_directory(std::path::Path::new(dir), checksum, &map_name)
             .unwrap_or_else(|e| fail(&e))
     });
     if let Some(cloud) = &reach {
