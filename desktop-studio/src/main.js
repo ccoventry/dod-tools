@@ -141,7 +141,7 @@ async function checkObsOrphanOnStartup() {
     });
 }
 
-export function currentCaptureMode() {
+function currentCaptureMode() {
   return document.querySelector('#config-capture-mode')?.value || 'frame_sequence';
 }
 

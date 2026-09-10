@@ -1289,16 +1289,6 @@ pub async fn scan_directory_impl(
     result
 }
 
-pub fn simulate_aot_capacity(streaks: Vec<f32>, fps: u32, bytes_per_frame: u64, available_bytes: u64) -> (u64, bool) {
-    let mut total_projected_bytes: u64 = 0;
-    for duration in streaks {
-        let frames = (duration * fps as f32).ceil() as u64;
-        total_projected_bytes += frames * bytes_per_frame;
-    }
-    let has_enough_space = total_projected_bytes <= available_bytes;
-    (total_projected_bytes, has_enough_space)
-}
-
 // ── Bookmark Previews (.dodtools_preview) ─────────────────────────────────────
 //
 // `build_preview_patch_jobs` (native/src/patch/builder.rs) groups a flat list

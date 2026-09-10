@@ -23,6 +23,9 @@ opt-level = 3
 lto = true
 codegen-units = 1
 panic = "abort"
+# Moved up from desktop-studio/src-tauri/Cargo.toml, where Cargo ignored it and
+# warned about it on every workspace command.
+strip = true
 
 [patch.crates-io]
 dem = { path = "./dem-patch" }

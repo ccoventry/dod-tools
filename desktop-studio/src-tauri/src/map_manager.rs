@@ -622,13 +622,6 @@ pub fn roll_floors(
     }
 }
 
-/// The URL a map would be fetched from, so a prompt can show it before anything
-/// reaches the network.
-#[tauri::command]
-pub fn map_download_url(map_name: String) -> Result<String, String> {
-    map_fetch::map_url(map_fetch::DEFAULT_MIRROR, &map_name)
-}
-
 /// Download one map and install it, verified against the build the demo wants.
 ///
 /// This writes into the user's game folder and talks to the network, so it is

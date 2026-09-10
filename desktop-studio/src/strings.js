@@ -1061,7 +1061,6 @@ export const STRINGS = {
     launchFailed: (err) => `Launch failed: ${err}`,
     killEngineFailed: (err) => `Failed to close running engine processes: ${err}`,
     batchPreviewFailed: (err) => `Batch preview generation failed: ${err}`,
-    simulationError: (err) => `Simulation error: ${err}`,
     cancelScanError: (err) => `Cancel scan error: ${err}`,
     settingsLoadFailed: (err) => `Failed to load settings: ${err}`,
     settingsSaveFailed: (err) => `Failed to save settings: ${err}`,
