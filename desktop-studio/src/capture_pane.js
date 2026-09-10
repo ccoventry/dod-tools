@@ -949,7 +949,7 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
   // Checkboxes read by persistAppSettings/buildCapturePayload but with no
   // change listener of their own — same missing-wiring bug as the Timing
   // Options fields above, just on Path Routing / Capture Output checkboxes.
-  ['#config-add-condebug', '#config-auto-clear-logs', '#config-auto-clear-previews',
+  ['#config-auto-clear-logs', '#config-auto-clear-previews',
    '#config-auto-clear-temp-demos', '#config-save-local-patched',
    '#config-notify-patching', '#config-notify-demo-loading', '#config-notify-between-clips',
    '#config-notify-captures-done', '#config-notify-renders-done', '#config-notify-error',
@@ -1012,10 +1012,10 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
     });
   }
 
-  // Per-demo progress, from the engine's own DEMO_START console marker —
-  // requires "Add condebug" on, silently never fires otherwise. clips_so_far
-  // is computed server-side (capture_manager.rs), so this listener does no
-  // running-total bookkeeping of its own.
+  // Per-demo progress, from the engine's own DEMO_START console marker, which
+  // -condebug produces on every launch. clips_so_far is computed server-side
+  // (capture_manager.rs), so this listener does no running-total bookkeeping
+  // of its own.
   if (!unlistenDemoLoading) {
     listen('capture_demo_loading', (event) => {
       const payload = event.payload || {};
@@ -1036,7 +1036,7 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
   }
 
   // Fast-forward-to-clip progress, from the engine's own NEXT_CLIP console
-  // marker — same -condebug requirement as demo-loading above. Fires for
+  // marker — same console-log source as demo-loading above. Fires for
   // clip 1 too (see the demo-loading listener's own suppression above).
   if (!unlistenFastForwardToClip) {
     listen('capture_fast_forward_to_clip', (event) => {
@@ -1206,7 +1206,6 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
     const obsPortVal = parseInt(document.querySelector("#config-obs-port")?.value, 10) || 4455;
     const obsPasswordVal = document.querySelector("#config-obs-password")?.value || "";
     const saveLocalPatchedCopyVal = document.querySelector("#config-save-local-patched")?.checked || false;
-    const addCondebugVal = document.querySelector("#config-add-condebug")?.checked || false;
 
     const autoClearLogsVal = document.querySelector("#config-auto-clear-logs")?.checked || false;
     const autoClearPreviewsVal = document.querySelector("#config-auto-clear-previews")?.checked || false;
@@ -1256,7 +1255,6 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
       obs_port: obsPortVal,
       obs_password: obsPasswordVal,
       save_local_patched_copy: saveLocalPatchedCopyVal,
-      add_condebug: addCondebugVal,
       streaks: selectedStreaks,
       pre_roll_seconds: preRollVal,
       post_roll_seconds: postRollVal,

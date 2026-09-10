@@ -314,7 +314,6 @@ export const STRINGS = {
     DECAL_FLUSH_TITLE:
       'Clear bullet holes and blood off the walls between one clip and the next, so a later capture does not inherit the damage from an earlier one. Off captures the walls exactly as the engine leaves them. How many decals the engine keeps is a separate thing — set r_decals in Initial Commands.',
     SAVE_LOCAL_PATCHED_LABEL: 'Save Local Patched Copy',
-    ADD_CONDEBUG_LABEL: 'Add Condebug',
     PRE_ROLL_LABEL: 'Pre-roll (s):',
     PRE_ROLL_HINT: 'Time between fast-forward stopping and capture starting.',
     POST_ROLL_LABEL: 'Post-roll (s):',
@@ -359,9 +358,9 @@ export const STRINGS = {
     NOTIFY_PATCHING_LABEL: 'Patching Started/Complete',
     NOTIFY_PATCHING_TITLE: 'One notification when patching begins, one when your demos are ready and capture is about to start. Not per-demo — decal clearing makes patching take real time now, but a toast per demo patched would be noise.',
     NOTIFY_DEMO_LOADING_LABEL: 'Demo Loading',
-    NOTIFY_DEMO_LOADING_TITLE: 'Fires each time a new demo starts playing during capture, showing which demo and how many clips are on it. Requires "Add Condebug" to be on — silently never fires otherwise. Automatically skipped when Fast-Forward to Clip is also on, since that notification covers the same ground with more detail.',
+    NOTIFY_DEMO_LOADING_TITLE: 'Fires each time a new demo starts playing during capture, showing which demo and how many clips are on it. Automatically skipped when Fast-Forward to Clip is also on, since that notification covers the same ground with more detail.',
     NOTIFY_BETWEEN_CLIPS_LABEL: 'Fast-Forward to Clip',
-    NOTIFY_BETWEEN_CLIPS_TITLE: 'Fires as playback starts fast-forwarding toward each clip, including the first one in a demo. Requires "Add Condebug" to be on — silently never fires otherwise.',
+    NOTIFY_BETWEEN_CLIPS_TITLE: 'Fires as playback starts fast-forwarding toward each clip, including the first one in a demo.',
     NOTIFY_CAPTURES_DONE_LABEL: 'Captures Done',
     NOTIFY_CAPTURES_DONE_TITLE: 'Fires once when the whole capture batch finishes.',
     NOTIFY_RENDERS_DONE_LABEL: 'Renders Done',
@@ -777,6 +776,8 @@ export const STRINGS = {
     BRITISH_LABEL: 'British',
 
     TEAM_SCORE_TIMELINE_TITLE: 'Team Score Timeline',
+    TIMELINE_TOOLTIP_ELAPSED_LABEL: 'Time Elapsed:',
+    TIMELINE_TOOLTIP_TIMESTAMP_LABEL: 'Demo Timestamp:',
 
     ROUNDS_TITLE: 'Rounds',
     COL_ROUND_NUM: '#',

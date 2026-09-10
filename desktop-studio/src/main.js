@@ -426,7 +426,6 @@ window.addEventListener("DOMContentLoaded", async () => {
     const obsPort = parseInt(document.querySelector('#config-obs-port')?.value, 10) || 4455;
     const obsPassword = document.querySelector('#config-obs-password')?.value || '';
     const obsExePath = document.querySelector('#config-obs-exe-path')?.value?.trim() || '';
-    const addCondebug = document.querySelector('#config-add-condebug')?.checked || false;
 
     const autoClearLogs = document.querySelector('#config-auto-clear-logs')?.checked || false;
     const autoClearPreviews = document.querySelector('#config-auto-clear-previews')?.checked || false;
@@ -481,7 +480,6 @@ window.addEventListener("DOMContentLoaded", async () => {
       obs_port: obsPort,
       obs_password: obsPassword,
       obs_exe_path: obsExePath,
-      add_condebug: addCondebug,
       auto_clear_logs: autoClearLogs,
       auto_clear_previews: autoClearPreviews,
       auto_clear_temp_demos: autoClearTempDemos,
@@ -607,8 +605,6 @@ window.addEventListener("DOMContentLoaded", async () => {
       // switching into OBS mode below, and again as Start Capture Batch's
       // own pre-flight (capture_pane.js) — both are moments the user is
       // actually about to use it, unlike app launch.
-      const addCondebugEl = document.querySelector('#config-add-condebug');
-      if (addCondebugEl) addCondebugEl.checked = !!settings.add_condebug;
       const autoClearLogsEl = document.querySelector('#config-auto-clear-logs');
       if (autoClearLogsEl) autoClearLogsEl.checked = !!settings.auto_clear_logs;
       const autoClearPreviewsEl = document.querySelector('#config-auto-clear-previews');

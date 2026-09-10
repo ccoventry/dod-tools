@@ -203,34 +203,10 @@ impl From<Demo> for DemoInfo {
     }
 }
 
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub enum GameEvent {
-    Kill(String, String, String), // Killer, Victim, Weapon
-    ScoreUpdate(String, i32, i32), // Player, Kills, Deaths
-    ServerReset,
-    GameCommencing,
-    /// Emitted when SvcServerInfo carries a different map name than the current one,
-    /// signalling a level change within a continuous `playdemo` recording.
-    MapChange,
-}
-
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub struct TimelineEvent {
-    pub tick: u32,
-    pub event: GameEvent,
-}
-
-#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
-pub struct PlayerStats {
-    pub kills: i32,
-    pub deaths: i32,
-}
-
 #[derive(Default, serde::Serialize, serde::Deserialize)]
 pub struct Analysis {
     pub demo_info: DemoInfo,
     pub state: AnalyzerState,
-    pub events: Vec<TimelineEvent>,
 }
 
 fn is_relevant_message(name_bytes: &[u8]) -> bool {
@@ -577,39 +553,8 @@ fn check_and_promote_british(state: &mut AnalyzerState) {
 }
 
 impl Analysis {
-    fn new(demo_info: DemoInfo, state: AnalyzerState, events: Vec<TimelineEvent>) -> Self {
-        Self { demo_info, state, events }
-    }
-
-    pub fn build_scoreboard(&self) -> std::collections::HashMap<String, PlayerStats> {
-        let mut scoreboard = std::collections::HashMap::new();
-        for timeline_event in &self.events {
-            match &timeline_event.event {
-                GameEvent::ServerReset | GameEvent::GameCommencing | GameEvent::MapChange => {
-                    scoreboard.clear();
-                }
-                GameEvent::Kill(killer, victim, _weapon) => {
-                    if !killer.is_empty() {
-                        let stats = scoreboard.entry(killer.clone()).or_insert(PlayerStats::default());
-                        stats.kills += 1;
-                    }
-                    if !victim.is_empty() {
-                        let stats = scoreboard.entry(victim.clone()).or_insert(PlayerStats::default());
-                        stats.deaths += 1;
-                    }
-                }
-                GameEvent::ScoreUpdate(player, kills, deaths) => {
-                    let stats = scoreboard.entry(player.clone()).or_insert(PlayerStats::default());
-                    if *kills > stats.kills {
-                        stats.kills = *kills;
-                    }
-                    if *deaths > stats.deaths {
-                        stats.deaths = *deaths;
-                    }
-                }
-            }
-        }
-        scoreboard
+    fn new(demo_info: DemoInfo, state: AnalyzerState) -> Self {
+        Self { demo_info, state }
     }
 
     pub fn try_from_bytes(value: &[u8]) -> Result<Self, String> {
@@ -629,8 +574,6 @@ impl Analysis {
         };
 
         let mut state = AnalyzerState::default();
-        let mut events = Vec::new();
-        let mut client_id_to_name = std::collections::HashMap::new();
 
         let process_event = |state: &mut AnalyzerState, event: &AnalyzerEvent| {
             if state.map_changed && !matches!(event, AnalyzerEvent::Finalization) {
@@ -673,107 +616,12 @@ impl Analysis {
                                         &mut state,
                                         &AnalyzerEvent::EngineMessage(engine_msg),
                                     );
-
-                                    // Emit MapChange when SvcServerInfo carries a new map name.
-                                    if let EngineMessage::SvcServerInfo(svc) = &**engine_msg {
-                                        let map_name = String::from_utf8_lossy(&svc.map_file_name)
-                                            .trim_end_matches('\0')
-                                            .trim_start_matches("maps/")
-                                            .trim_end_matches(".bsp")
-                                            .to_string();
-                                        let is_new_map = state
-                                            .initial_map_name
-                                            .as_ref()
-                                            .map_or(false, |m| m != &map_name);
-                                        if is_new_map {
-                                            events.push(TimelineEvent {
-                                                tick: processed_frames as u32,
-                                                event: GameEvent::MapChange,
-                                            });
-                                        }
-                                    }
-
-                                    if let EngineMessage::SvcUpdateUserInfo(user_info) = &**engine_msg {
-                                        let fields = user_info.user_info.to_str()
-                                            .map(|s| s.trim_matches(['\0', '\\']).split('\\').collect::<Vec<_>>())
-                                            .unwrap_or_default()
-                                            .chunks_exact(2)
-                                            .fold(std::collections::HashMap::new(), |mut map, chunk| {
-                                                if let [key, value] = chunk {
-                                                    map.insert(*key, *value);
-                                                }
-                                                map
-                                            });
-                                        if let Some(name) = fields.get("name") {
-                                            client_id_to_name.insert(user_info.index, name.to_string());
-                                        }
-                                    }
                                 }
                                 NetMessage::UserMessage(user_msg) => {
                                     if is_relevant_message(user_msg.name.as_ref()) {
                                         if let Ok(msg) =
                                             UserMessage::new(&user_msg.name, &user_msg.data)
                                         {
-                                            match &msg {
-                                                UserMessage::DeathMsg(death_msg) => {
-                                                    let killer_name = if death_msg.killer_client_index > 0 {
-                                                        client_id_to_name.get(&(death_msg.killer_client_index - 1)).cloned().unwrap_or_default()
-                                                    } else {
-                                                        String::new()
-                                                    };
-                                                    let victim_name = client_id_to_name.get(&(death_msg.victim_client_index - 1)).cloned().unwrap_or_default();
-                                                    let weapon_name = format!("{:?}", death_msg.weapon);
-                                                    events.push(TimelineEvent {
-                                                        tick: processed_frames as u32,
-                                                        event: GameEvent::Kill(killer_name, victim_name, weapon_name),
-                                                    });
-                                                }
-                                                UserMessage::ScoreInfo(score_info) => {
-                                                    if let Some(player_name) = client_id_to_name.get(&(score_info.client_index - 1)).cloned() {
-                                                        events.push(TimelineEvent {
-                                                            tick: processed_frames as u32,
-                                                            event: GameEvent::ScoreUpdate(player_name, score_info.kills as i32, score_info.deaths as i32),
-                                                        });
-                                                    }
-                                                }
-                                                UserMessage::ScoreInfoLong(score_info_long) => {
-                                                    if let Some(player_name) = client_id_to_name.get(&(score_info_long.client_index - 1)).cloned() {
-                                                        events.push(TimelineEvent {
-                                                            tick: processed_frames as u32,
-                                                            event: GameEvent::ScoreUpdate(player_name, score_info_long.frags as i32, score_info_long.deaths as i32),
-                                                        });
-                                                    }
-                                                }
-                                                UserMessage::ScoreShort(score_short) => {
-                                                    if let Some(player_name) = client_id_to_name.get(&(score_short.client_index - 1)).cloned() {
-                                                        events.push(TimelineEvent {
-                                                            tick: processed_frames as u32,
-                                                            event: GameEvent::ScoreUpdate(player_name, score_short.kills as i32, score_short.deaths as i32),
-                                                        });
-                                                    }
-                                                }
-                                                UserMessage::RoundState(dod::RoundState::Reset) => {
-                                                    events.push(TimelineEvent {
-                                                        tick: processed_frames as u32,
-                                                        event: GameEvent::ServerReset,
-                                                    });
-                                                }
-                                                UserMessage::TextMsg(text_msg) => {
-                                                    let is_commencing = text_msg.text.contains("#Game_Commencing")
-                                                        || text_msg.arg1.as_ref().map_or(false, |s| s.contains("#Game_Commencing"))
-                                                        || text_msg.arg2.as_ref().map_or(false, |s| s.contains("#Game_Commencing"))
-                                                        || text_msg.arg3.as_ref().map_or(false, |s| s.contains("#Game_Commencing"))
-                                                        || text_msg.arg4.as_ref().map_or(false, |s| s.contains("#Game_Commencing"));
-                                                    if is_commencing {
-                                                        events.push(TimelineEvent {
-                                                            tick: processed_frames as u32,
-                                                            event: GameEvent::GameCommencing,
-                                                        });
-                                                    }
-                                                }
-                                                _ => {}
-                                            }
-
                                             process_event(
                                                 &mut state,
                                                 &AnalyzerEvent::UserMessage(msg),
@@ -795,17 +643,7 @@ impl Analysis {
 
         process_event(&mut state, &AnalyzerEvent::Finalization);
 
-        let analysis = Analysis::new(demo.into(), state, events);
-        let scoreboard = analysis.build_scoreboard();
-        let mut final_analysis = analysis;
-        for player in &mut final_analysis.state.players {
-            if let Some(stats) = scoreboard.get(&player.name) {
-                player.stats.1 = stats.kills;
-                player.stats.2 = stats.deaths;
-            }
-        }
-
-        Ok(final_analysis)
+        Ok(Analysis::new(demo.into(), state))
     }
 }
 
