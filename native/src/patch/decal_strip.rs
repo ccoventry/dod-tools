@@ -1771,17 +1771,7 @@ pub fn clean_demo_decals(
                 // and reached into an earlier clip on 10 of 85 demos.
                 .filter(|&(_, _, ordinal)| !in_window(ordinal, keep_windows))
                 .filter(|&(entry_idx, frame_idx, _)| {
-                    demo.directory.entries[entry_idx]
-                        .frames
-                        .get(frame_idx)
-                        .map(|frame| match &frame.frame_data {
-                            FrameData::NetworkMessage(b) => {
-                                matches!(b.1.messages, MessageData::Parsed(_))
-                                    && b.1.message_length < 1024
-                            }
-                            _ => false,
-                        })
-                        .unwrap_or(false)
+                    crate::patch::is_injectable_frame(&demo, entry_idx, frame_idx)
                 })
                 .collect();
 

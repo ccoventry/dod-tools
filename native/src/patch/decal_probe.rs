@@ -1595,18 +1595,7 @@ pub fn probe_decal_offsets(
     let eligible: Vec<(usize, usize, i32)> = frame_ordinals(&demo)
         .into_iter()
         .filter(|&(entry_idx, frame_idx, ordinal)| {
-            ordinal > floor
-                && demo.directory.entries[entry_idx]
-                    .frames
-                    .get(frame_idx)
-                    .map(|frame| match &frame.frame_data {
-                        FrameData::NetworkMessage(b) => {
-                            matches!(b.1.messages, MessageData::Parsed(_))
-                                && b.1.message_length < 1024
-                        }
-                        _ => false,
-                    })
-                    .unwrap_or(false)
+            ordinal > floor && crate::patch::is_injectable_frame(&demo, entry_idx, frame_idx)
         })
         .collect();
 

@@ -1,6 +1,20 @@
 [workspace]
 resolver = "3"
-members = ["analysis", "dod", "native", "hl-demo-auditor", "benchmark", "desktop-studio/src-tauri", "web-analyzer"]
+members = [
+    "analysis",
+    "dod",
+    "native",
+    "hl-demo-auditor",
+    "benchmark",
+    "desktop-studio/src-tauri",
+    "web-analyzer",
+    # Vendored fork of the `dem` crate, wired in below via [patch.crates-io].
+    # Membership and patching are independent: being a member is what puts it
+    # under `cargo test --workspace` and `cargo clippy --workspace`, which it
+    # was outside of entirely until 2026-09-10. It is the bit-level demo
+    # reader/writer, so it is the last thing that should be unlinted.
+    "dem-patch",
+]
 
 [workspace.package]
 edition = "2024"

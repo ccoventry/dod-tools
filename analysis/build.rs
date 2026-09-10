@@ -9,9 +9,19 @@ fn main() {
     let out_dir = env::var_os("OUT_DIR").unwrap();
     let dest_path = Path::new(&out_dir).join("embedded_localizations.rs");
 
+    // Only wasm32 has a consumer. `localization.rs` gates both the `include!`
+    // and `load_pass_embedded` behind `#[cfg(target_arch = "wasm32")]`, because
+    // native builds read `localizations/` off disk instead (the Tauri bundle
+    // ships it as a resource, and the CLI resolves it via EXTRA_SEARCH_PATHS).
+    //
+    // Generating it anyway meant every native build read 852KB of .txt and
+    // wrote a 728KB Rust source file that nothing then included. The stub keeps
+    // the symbol defined, so un-gating the `include!` still compiles.
+    let wants_embed = env::var("CARGO_CFG_TARGET_ARCH").as_deref() == Ok("wasm32");
+
     let mut entries = Vec::new();
     let localizations_dir = Path::new("../localizations");
-    if localizations_dir.exists() {
+    if wants_embed && localizations_dir.exists() {
         scan_dir_recursive(localizations_dir, localizations_dir, &mut entries);
     }
 

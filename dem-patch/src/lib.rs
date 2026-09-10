@@ -3,6 +3,9 @@
 //! # Example
 //!
 //! ```no_run
+//! use dem::open_demo;
+//! use dem::types::{EngineMessage, FrameData, MessageData, NetMessage};
+//!
 //! let mut demo = open_demo("./src/tests/demotest.dem").unwrap();
 //!
 //! for entry in &mut demo.directory.entries {
@@ -70,6 +73,8 @@ pub fn write_netmsg(i: &Vec<NetMessage>, aux: AuxRefCell) -> ByteVec {
 ///
 /// # Example
 /// ```no_run
+/// use dem::open_demo;
+///
 /// let demo = open_demo("./tests/demotest.dem").unwrap();
 /// ```
 pub fn open_demo(demo_path: impl AsRef<Path> + AsRef<OsStr>) -> eyre::Result<Demo> {
