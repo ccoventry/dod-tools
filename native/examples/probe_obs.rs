@@ -928,8 +928,8 @@ fn dump_scenes(client: &mut ObsClient) {
             // For a capture source, which window it is pointed at is the whole
             // question — a Game Capture aimed at something else is exactly the
             // misconfiguration a picker should be able to report.
-            if matches!(kind, "game_capture" | "window_capture") {
-                if let Ok(s) = client
+            if matches!(kind, "game_capture" | "window_capture")
+                && let Ok(s) = client
                     .request("GetInputSettings", serde_json::json!({ "inputName": source }))
                 {
                     let settings = &s["inputSettings"];
@@ -939,7 +939,6 @@ fn dump_scenes(client: &mut ObsClient) {
                         println!("      {:<28} -> POINTED AT THE GAME", "");
                     }
                 }
-            }
         }
     }
 

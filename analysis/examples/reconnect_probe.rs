@@ -98,11 +98,9 @@ fn main() {
                             UserMessage::DeathMsg(d) => {
                                 if d.killer_client_index > 0
                                     && d.killer_client_index != d.victim_client_index
-                                {
-                                    if let Some(sid) = slot_sid.get(&(d.killer_client_index - 1)) {
+                                    && let Some(sid) = slot_sid.get(&(d.killer_client_index - 1)) {
                                         players.entry(sid.clone()).or_default().derived_kills += 1;
                                     }
-                                }
                             }
                             _ => {}
                         }

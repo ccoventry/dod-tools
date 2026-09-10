@@ -89,3 +89,6 @@ path = "src/bin/check_cfgs.rs"
 [[bin]]
 name = "strip_decals"
 path = "src/bin/strip_decals.rs"
+
+[lints]
+workspace = true

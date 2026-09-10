@@ -102,8 +102,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 let mut i = 0;
                 while i < payload.len() {
-                    if payload[i] == 51 {
-                        if i + 1 < payload.len() {
+                    if payload[i] == 51
+                        && i + 1 < payload.len() {
                             let len = payload[i + 1] as usize;
                             if len > 0 && len < 20 && i + 1 + len < payload.len() {
                                 let director_payload = &payload[i..=i + 1 + len];
@@ -113,7 +113,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                             }
                         }
-                    }
                     i += 1;
                 }
             }

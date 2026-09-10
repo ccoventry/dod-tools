@@ -122,13 +122,12 @@ pub fn clear_capture_scratch(
         if let Ok(entries) = std::fs::read_dir(&dod_dir) {
             for entry in entries.flatten() {
                 let filename = entry.file_name().to_string_lossy().to_string();
-                if is_chain_demo_filename(&filename) {
-                    if let Some(e) = remove_file_retrying(&entry.path()) {
+                if is_chain_demo_filename(&filename)
+                    && let Some(e) = remove_file_retrying(&entry.path()) {
                         crate::log_markdown(&format!(
                             "⚠️ **Cleanup** — could not remove {filename} after retrying: {e} (auto_clear_temp_demos left it behind; hl.exe may still have had it open)"
                         ));
                     }
-                }
             }
         }
     }

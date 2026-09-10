@@ -376,7 +376,7 @@ pub async fn scan_game_configs(
         // still counts as seeing it, so that is not reported as unseen.
         let named: std::collections::HashSet<String> = effective_commands
             .iter()
-            .filter_map(|c| c.trim().split_whitespace().next().map(str::to_lowercase))
+            .filter_map(|c| c.split_whitespace().next().map(str::to_lowercase))
             .collect();
         // mirv_fov/default_fov are read directly from an executed config
         // whenever neither is stated in Initial Commands
@@ -680,10 +680,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         let dod = root.join("dod");
         std::fs::create_dir_all(&dod).unwrap();
-        std::fs::write(&dod.join("config.cfg"), "bind \"F7\" \"r_decals 4000\"\nexec movie.cfg\n")
+        std::fs::write(dod.join("config.cfg"), "bind \"F7\" \"r_decals 4000\"\nexec movie.cfg\n")
             .unwrap();
         std::fs::write(
-            &dod.join("movie.cfg"),
+            dod.join("movie.cfg"),
             // hud_deathnotice_time is here because it is the cvar people
             // genuinely pair around a clip — raised before, restored after.
             "r_decals \"0\"\nmirv_movie_fps \"300\"\nhud_deathnotice_time \"10\"\nmirv_fov \"105\"\n",
@@ -704,8 +704,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         let dod = root.join("dod");
         std::fs::create_dir_all(&dod).unwrap();
-        std::fs::write(&dod.join("config.cfg"), "exec movie.cfg\n").unwrap();
-        std::fs::write(&dod.join("movie.cfg"), "mirv_movie_fps \"300\"\n").unwrap();
+        std::fs::write(dod.join("config.cfg"), "exec movie.cfg\n").unwrap();
+        std::fs::write(dod.join("movie.cfg"), "mirv_movie_fps \"300\"\n").unwrap();
         let exe = root.join("hl.exe");
         std::fs::write(&exe, b"").unwrap();
         exe.to_string_lossy().to_string()
@@ -719,8 +719,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         let dod = root.join("dod");
         std::fs::create_dir_all(&dod).unwrap();
-        std::fs::write(&dod.join("config.cfg"), "exec movie.cfg\n").unwrap();
-        std::fs::write(&dod.join("movie.cfg"), format!("r_decals \"{}\"\n", value)).unwrap();
+        std::fs::write(dod.join("config.cfg"), "exec movie.cfg\n").unwrap();
+        std::fs::write(dod.join("movie.cfg"), format!("r_decals \"{}\"\n", value)).unwrap();
         let exe = root.join("hl.exe");
         std::fs::write(&exe, b"").unwrap();
         exe.to_string_lossy().to_string()
@@ -734,8 +734,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         let dod = root.join("dod");
         std::fs::create_dir_all(&dod).unwrap();
-        std::fs::write(&dod.join("config.cfg"), "exec movie.cfg\n").unwrap();
-        std::fs::write(&dod.join("movie.cfg"), "mirv_movie_filename \"clip\"\n").unwrap();
+        std::fs::write(dod.join("config.cfg"), "exec movie.cfg\n").unwrap();
+        std::fs::write(dod.join("movie.cfg"), "mirv_movie_filename \"clip\"\n").unwrap();
         let exe = root.join("hl.exe");
         std::fs::write(&exe, b"").unwrap();
         exe.to_string_lossy().to_string()

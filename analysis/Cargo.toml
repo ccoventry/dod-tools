@@ -9,3 +9,5 @@ dem = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 indexmap = { workspace = true }
 
+[lints]
+workspace = true

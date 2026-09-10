@@ -196,7 +196,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 reader.read_exact(&mut payload)?;
 
                 // Prepend our override to the start of the packet so it executes before any early-termination markers
-                if file_tick >= 1000 && file_tick <= 1200 {
+                if (1000..=1200).contains(&file_tick) {
                     let mut new_payload = vec![0x33, 0x02, 0x03, 0x04, 0x33, 0x02, 0x04, 0x08];
                     new_payload.extend_from_slice(&payload);
                     payload = new_payload;

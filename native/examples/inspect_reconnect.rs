@@ -59,8 +59,8 @@ fn main() {
         for frame in &entry.frames {
             frame_idx += 1;
 
-            if let FrameData::NetworkMessage(net_msg_box) = &frame.frame_data {
-                if let MessageData::Parsed(msgs) = &net_msg_box.1.messages {
+            if let FrameData::NetworkMessage(net_msg_box) = &frame.frame_data
+                && let MessageData::Parsed(msgs) = &net_msg_box.1.messages {
                     for msg in msgs {
                         match msg {
                             NetMessage::EngineMessage(eng) => {
@@ -134,7 +134,6 @@ fn main() {
                         }
                     }
                 }
-            }
         }
     }
 

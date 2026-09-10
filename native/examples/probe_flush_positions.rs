@@ -48,7 +48,7 @@ fn main() {
     let job = jobs
         .iter()
         .filter(|j| !j.blocks.is_empty())
-        .find(|j| want.as_deref().map_or(true, |w| j.target_player.as_deref() == Some(w)))
+        .find(|j| want.as_deref().is_none_or(|w| j.target_player.as_deref() == Some(w)))
         .expect("blocks");
     println!("
 using job for player {:?}", job.target_player);

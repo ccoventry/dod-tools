@@ -90,11 +90,10 @@ fn main() {
                                 parts.chunks_exact(2).map(|c| (c[0], c[1])).collect();
                             if f.is_empty() {
                                 // Empty userinfo = the slot emptied out.
-                                if let Some(sid) = slot_sid.remove(&ui.index) {
-                                    if let Some(p) = players.get_mut(&sid) {
+                                if let Some(sid) = slot_sid.remove(&ui.index)
+                                    && let Some(p) = players.get_mut(&sid) {
                                         p.reconnects += 1;
                                     }
-                                }
                                 continue;
                             }
                             if f.get("*hltv") == Some(&"1") {

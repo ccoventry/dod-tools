@@ -52,3 +52,6 @@ sysinfo = { workspace = true }
 # when one is present. The root Cargo.toml already sets codegen-units = 1,
 # lto = true, opt-level = 3 and panic = "abort"; `strip` is the only thing
 # that was here and not there, and it is set at the workspace root now.
+
+[lints]
+workspace = true

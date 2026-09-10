@@ -81,9 +81,7 @@ impl CfgScan {
     /// configs it actually executes. Last one wins, as the console does.
     pub fn effective(&self, cvar: &str) -> Option<&CvarSetting> {
         self.settings
-            .iter()
-            .filter(|s| s.auto_executed && s.cvar.eq_ignore_ascii_case(cvar))
-            .next_back()
+            .iter().rfind(|s| s.auto_executed && s.cvar.eq_ignore_ascii_case(cvar))
     }
 
     /// Every watched cvar that an executed config sets.
@@ -501,11 +499,10 @@ pub fn scan_cached(game_dir: &Path) -> std::sync::Arc<CfgScan> {
     let cache = CACHE.get_or_init(Default::default);
     let key = normalise(game_dir);
 
-    if let Ok(read) = cache.read() {
-        if let Some(hit) = read.get(&key) {
+    if let Ok(read) = cache.read()
+        && let Some(hit) = read.get(&key) {
             return std::sync::Arc::clone(hit);
         }
-    }
 
     let scanned = std::sync::Arc::new(scan(game_dir));
     if let Ok(mut write) = cache.write() {

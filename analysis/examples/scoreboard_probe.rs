@@ -180,11 +180,10 @@ fn main() {
                                     let prev = area.and_then(|a| flag_owner.get(&a).cloned()).flatten();
                                     let is_break =
                                         prev.is_some() && prev.as_ref() != Some(&c.team);
-                                    if is_break {
-                                        if let Some(s) = slots.get_mut(&idx) {
+                                    if is_break
+                                        && let Some(s) = slots.get_mut(&idx) {
                                             s.cap_breaks += 1;
                                         }
-                                    }
                                     cap_events.push((
                                         frame_no,
                                         c.point_name.clone(),

@@ -161,6 +161,6 @@ mod test {
                     )
                 })
             })
-            .unwrap_or_else(|_| assert!(false));
+            .unwrap_or_else(|e| panic!("could not read the test fixture directory: {e}"));
     }
 }

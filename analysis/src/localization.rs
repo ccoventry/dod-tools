@@ -154,15 +154,14 @@ fn parse_localization_content(content: &str, map: &mut HashMap<String, String>, 
         if let Some((key, val)) = parse_kv_line(trimmed) {
             let key_clean = normalize_key(&key);
             map.insert(key_clean, val);
-        } else if current_lang == target_lang {
-            if let Some(pos) = trimmed.find('=') {
+        } else if current_lang == target_lang
+            && let Some(pos) = trimmed.find('=') {
                 let key = normalize_key(&trimmed[..pos]);
                 let val = trimmed[pos + 1..].trim().to_string();
                 if !key.is_empty() {
                     map.insert(key, val);
                 }
             }
-        }
     }
 }
 
@@ -206,11 +205,10 @@ fn scan_dir_recursive(
                     true
                 };
 
-                if should_load {
-                    if let Ok(content) = read_to_string_lossy_utf16_or_utf8(&path) {
+                if should_load
+                    && let Ok(content) = read_to_string_lossy_utf16_or_utf8(&path) {
                         parse_localization_content(&content, map, amxx_code);
                     }
-                }
             }
         }
     }

@@ -14,13 +14,12 @@ fn main() {
     let mut all_events = vec![];
     for (entry_idx, entry) in demo.directory.entries.iter().enumerate() {
         for (frame_idx, frame) in entry.frames.iter().enumerate() {
-            if let FrameData::NetworkMessage(net_msg_box) = &frame.frame_data {
-                if let MessageData::Parsed(msgs) = &net_msg_box.1.messages {
+            if let FrameData::NetworkMessage(net_msg_box) = &frame.frame_data
+                && let MessageData::Parsed(msgs) = &net_msg_box.1.messages {
                     for msg in msgs {
                         all_events.push(format!("Entry {} Frame {} msg: {:?}", entry_idx, frame_idx, msg));
                     }
                 }
-            }
         }
     }
     

@@ -41,3 +41,6 @@ eyre = "0.6.12"
 # pass. Until then this compiles a second copy of nom, which is the cheaper of
 # the two costs.
 nom = "7.1.3"
+
+[lints]
+workspace = true

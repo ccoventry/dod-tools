@@ -15,8 +15,8 @@ fn inspect_demo(path: &str) {
     let mut events = vec![];
     for entry in &demo.directory.entries {
         for frame in &entry.frames {
-            if let FrameData::NetworkMessage(net_msg_box) = &frame.frame_data {
-                if let MessageData::Parsed(msgs) = &net_msg_box.1.messages {
+            if let FrameData::NetworkMessage(net_msg_box) = &frame.frame_data
+                && let MessageData::Parsed(msgs) = &net_msg_box.1.messages {
                     for msg in msgs {
                         if let dem::types::NetMessage::UserMessage(user_msg) = msg {
                             let name = String::from_utf8_lossy(&user_msg.name)
@@ -28,7 +28,6 @@ fn inspect_demo(path: &str) {
                         }
                     }
                 }
-            }
         }
     }
     println!("Early allied demo events (Time <= 45.0):");

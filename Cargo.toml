@@ -61,6 +61,43 @@ panic = "abort"
 # warned about it on every workspace command.
 strip = true
 
+# Workspace lint policy. CI runs `cargo clippy --workspace --all-targets --
+# -D warnings`, so anything not allowed here fails the build — the point is that
+# new noise cannot accumulate the way the ~200 warnings this list was written
+# against did.
+#
+# Every entry is a judgement that clippy is wrong for this codebase, not a
+# backlog. Anything merely tedious got fixed instead.
+[workspace.lints.clippy]
+# Constants asserted against each other in tests, on purpose. These are
+# regression guards -- `OBS_TAKE_SEPARATION_SECONDS > 1.065` exists so that
+# lowering the constant fails the suite loudly rather than silently losing
+# takes. Clippy sees both sides are `const` and calls the assertion pointless,
+# which is exactly backwards.
+assertions_on_constants = "allow"
+# `Default::default()` then assign, in test fixture and config builders. The
+# incremental form reads as "the default, except these three fields", which is
+# the intent; folding it into a struct literal means restating every field.
+field_reassign_with_default = "allow"
+# The demo pipeline genuinely passes tuples of (entry index, frame index,
+# ordinal) and maps keyed on PathBuf to Arc<Vec<f32>>. A type alias would name
+# the shape without explaining it.
+type_complexity = "allow"
+# `spawn_capture_engine` (8) and the CLI entry point (12). Both are one-call
+# seams where every argument is independent; a params struct would exist only
+# to satisfy the lint.
+too_many_arguments = "allow"
+# Indexing by axis (`for axis in 0..3 { out[axis] = ... }`) reads better than an
+# iterator when the index *is* the meaning -- x, y, z.
+needless_range_loop = "allow"
+# `!(hi > lo)` in patch/bsp.rs is deliberate NaN handling: with a NaN bound it is
+# true and the surface is skipped, where `hi <= lo` is false and the walk
+# proceeds on garbage. Clippy's suggested rewrite inverts the safe case.
+neg_cmp_op_on_partial_ord = "allow"
+# One site, in the vendored dem-patch parser. Correct as written, and that
+# crate's bit-level code is not somewhere to make cosmetic edits.
+unnecessary_unwrap = "allow"
+
 [patch.crates-io]
 dem = { path = "./dem-patch" }
 

@@ -490,7 +490,6 @@ fn obs_config(host: String, port: u16, password: String) -> native::patch::ObsCo
         host: if host.is_empty() { "127.0.0.1".to_string() } else { host },
         port: if port == 0 { 4455 } else { port },
         password,
-        ..Default::default()
     }
 }
 
@@ -1160,7 +1159,7 @@ pub async fn scan_directory_impl(
                     .binary_search_by(|p: &PathBuf| {
                         p.file_name()
                             .unwrap_or_default()
-                            .cmp(&path_buf.file_name().unwrap_or_default())
+                            .cmp(path_buf.file_name().unwrap_or_default())
                     })
                     .unwrap_or_else(|pos| pos);
                 list.insert(insert_idx, path_buf);
@@ -1180,7 +1179,7 @@ pub async fn scan_directory_impl(
                             .binary_search_by(|p: &PathBuf| {
                                 p.file_name()
                                     .unwrap_or_default()
-                                    .cmp(&path.file_name().unwrap_or_default())
+                                    .cmp(path.file_name().unwrap_or_default())
                             })
                             .unwrap_or_else(|pos| pos);
                         list.insert(insert_idx, path);
@@ -1639,11 +1638,10 @@ pub fn kill_engine_processes() -> Result<(), String> {
     use sysinfo::{ProcessExt, SystemExt};
     let sys = sysinfo::System::new_all();
     for process in sys.processes().values() {
-        if is_engine_process_name(process.name()) {
-            if !process.kill() {
+        if is_engine_process_name(process.name())
+            && !process.kill() {
                 log::warn!("Failed to kill engine process pid={}", process.pid());
             }
-        }
     }
     Ok(())
 }

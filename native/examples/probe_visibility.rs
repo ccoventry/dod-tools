@@ -32,7 +32,7 @@ fn main() {
         .split("],[")
         .filter_map(|chunk| {
             let nums: Vec<f32> = chunk
-                .trim_end_matches(|c| c == ']' || c == '}')
+                .trim_end_matches([']', '}'])
                 .split(',')
                 .filter_map(|n| n.trim().parse::<f32>().ok())
                 .collect();

@@ -819,8 +819,7 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
             &mut drive_free,
             &mut active_drive_idx,
             FAILOVER_THRESHOLD,
-        ).map_err(|_| std::io::Error::new(
-            std::io::ErrorKind::Other,
+        ).map_err(|_| std::io::Error::other(
             "Insufficient space across all mapped drives to allocate a block"
         ))?;
 
@@ -1185,7 +1184,7 @@ pub fn build_batch_queue(raw_streaks: Vec<CaptureStreak>, config: &PatcherConfig
             
             if !junction_str.is_empty() && !target_str.is_empty() {
                 let _ = std::process::Command::new("cmd")
-                    .args(&["/C", "mklink", "/J", junction_str, target_str])
+                    .args(["/C", "mklink", "/J", junction_str, target_str])
                     .output();
             }
         }
@@ -1234,28 +1233,25 @@ pub struct WorkspaceGuard {
 impl Drop for WorkspaceGuard {
     fn drop(&mut self) {
         // Junction link: remove_dir unlinks without touching the junction target.
-        if let Err(e) = std::fs::remove_dir(&self.session_junction) {
-            if e.kind() != std::io::ErrorKind::NotFound {
+        if let Err(e) = std::fs::remove_dir(&self.session_junction)
+            && e.kind() != std::io::ErrorKind::NotFound {
                 log::warn!("[WorkspaceGuard::drop] Failed to remove session_junction {:?}: {}", self.session_junction, e);
             }
-        }
         // Unlink every dod_pool_N and _route_N junction. `remove_dir` unlinks a
         // junction without touching what it points at, and NotFound is expected
         // for any index this batch did not route to.
         for junction in self.pool_junctions.iter().chain(self.route_junctions.iter()) {
-            if let Err(e) = std::fs::remove_dir(junction) {
-                if e.kind() != std::io::ErrorKind::NotFound {
+            if let Err(e) = std::fs::remove_dir(junction)
+                && e.kind() != std::io::ErrorKind::NotFound {
                     log::warn!("[WorkspaceGuard::drop] Failed to remove pool junction {:?}: {}", junction, e);
                 }
-            }
         }
         // Signal dirs (DOD_TOOLS_EXIT_TRIGGER) are directories, not files.
         // Use remove_dir_all; silently ignore NotFound, log anything else.
-        if let Err(e) = std::fs::remove_dir_all(&self.exit_trigger) {
-            if e.kind() != std::io::ErrorKind::NotFound {
+        if let Err(e) = std::fs::remove_dir_all(&self.exit_trigger)
+            && e.kind() != std::io::ErrorKind::NotFound {
                 log::warn!("[WorkspaceGuard::drop] Failed to remove exit_trigger {:?}: {}", self.exit_trigger, e);
             }
-        }
         if let Some(game_root) = self.exit_trigger.parent() {
             crate::shared::paths::clear_capture_scratch(
                 game_root,

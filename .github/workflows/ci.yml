@@ -29,6 +29,34 @@ jobs:
       - name: cargo test --workspace
         run: cargo test --workspace
 
+  clippy:
+    name: Clippy
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      # --all-targets so examples and test code are linted too: native/examples/
+      # is where the R&D probes live, and letting them rot silently is how the
+      # ~200 warnings this gate was introduced against accumulated.
+      #
+      # The allow-list lives in the root Cargo.toml under
+      # [workspace.lints.clippy], one commented entry per judgement that clippy
+      # is wrong for this codebase. Add there, with a reason, rather than
+      # loosening this step.
+      #
+      # No `cargo fmt --check` alongside it, deliberately: this tree has never
+      # been rustfmt-formatted (847 files differ), so gating on it would mean a
+      # whole-repo reformat that conflicts with every open branch. That is a
+      # separate decision, not a side effect of adding a lint gate.
+      - name: cargo clippy -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
   frontend-tests:
     name: Frontend e2e tests
     runs-on: windows-latest

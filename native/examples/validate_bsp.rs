@@ -95,8 +95,8 @@ fn main() {
             worst_miss += 1;
         }
 
-        if let Some((face, _)) = bsp.nearest_face(p, 2.0) {
-            if let Some(n) = bsp.face_normal(face) {
+        if let Some((face, _)) = bsp.nearest_face(p, 2.0)
+            && let Some(n) = bsp.face_normal(face) {
                 normal_known += 1;
                 let out = [p[0] + n[0] * 4.0, p[1] + n[1] * 4.0, p[2] + n[2] * 4.0];
                 let inn = [p[0] - n[0] * 4.0, p[1] - n[1] * 4.0, p[2] - n[2] * 4.0];
@@ -107,7 +107,6 @@ fn main() {
                     solid_side += 1;
                 }
             }
-        }
     }
 
     let pct = |n: usize| (n as f32 / pts.len() as f32) * 100.0;
