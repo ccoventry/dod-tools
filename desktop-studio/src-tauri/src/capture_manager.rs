@@ -1615,6 +1615,7 @@ fn is_engine_process_name(name: &str) -> bool {
 /// deterministic answer instead of asking the user to interpret a raw OS
 /// socket error themselves.
 fn is_obs_process_running() -> bool {
+    use sysinfo::{ProcessExt, SystemExt};
     let sys = sysinfo::System::new_all();
     sys.processes().values().any(|p| {
         let lower = p.name().to_lowercase();
@@ -1625,6 +1626,7 @@ fn is_obs_process_running() -> bool {
 /// True if any `hl.exe` or `hlae.exe` process is currently running.
 #[tauri::command]
 pub fn check_engine_processes() -> bool {
+    use sysinfo::{ProcessExt, SystemExt};
     let sys = sysinfo::System::new_all();
     sys.processes()
         .values()
@@ -1634,6 +1636,7 @@ pub fn check_engine_processes() -> bool {
 /// Aggressively terminates every running `hl.exe`/`hlae.exe` instance.
 #[tauri::command]
 pub fn kill_engine_processes() -> Result<(), String> {
+    use sysinfo::{ProcessExt, SystemExt};
     let sys = sysinfo::System::new_all();
     for process in sys.processes().values() {
         if is_engine_process_name(process.name()) {

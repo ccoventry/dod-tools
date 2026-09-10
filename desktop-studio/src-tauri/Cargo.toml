@@ -25,7 +25,7 @@ crate-type = ["rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
-indexmap = { version = "1.9.3", features = ["std"] }
+indexmap = { workspace = true }
 
 [dependencies]
 tauri = { version = "2", features = [] }
@@ -34,18 +34,18 @@ tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-updater = "2"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde = { workspace = true }
+serde_json = { workspace = true }
 url = "2"
 native = { path = "../../native" }
-tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
-log = "0.4"
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }
+log = { workspace = true }
 dod = { path = "../../dod" }
 analysis = { path = "../../analysis" }
 hl-demo-auditor = { path = "../../hl-demo-auditor" }
-indexmap = { version = "1.9.3", features = ["std"] }
-dirs = "5"
-sysinfo = "0.30"
+indexmap = { workspace = true }
+dirs = { workspace = true }
+sysinfo = { workspace = true }
 
 # No [profile.release] here on purpose. Cargo ignores profiles on non-root
 # workspace packages and prints a warning for every command in the workspace
