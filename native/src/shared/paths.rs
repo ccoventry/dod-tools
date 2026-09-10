@@ -84,6 +84,10 @@ pub fn remove_console_log(game_root: &Path) {
 /// files; adding a scratch file to one and forgetting the other left it in the
 /// user's game folder with no error and no log line. Add new scratch filenames
 /// here and both paths get them.
+///
+/// Gated like the helpers it calls: this is all `std::fs`, and per CLAUDE.md's
+/// WASM guardrail direct file I/O stays off the wasm32 build.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn clear_capture_scratch(
     game_root: &Path,
     auto_clear_logs: bool,
