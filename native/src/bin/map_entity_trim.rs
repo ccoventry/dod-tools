@@ -247,7 +247,10 @@ fn emit_proposal(
     }
     for i in on_wire {
         let e = &entities[*i];
-        if e.classname() == "env_sprite" {
+        // Already counted in tier A: a fog sprite dim enough to be invisible
+        // is a free win either way, but listing it twice would inflate the
+        // "reaches N" estimate and print its lump index twice in the strip list.
+        if e.classname() == "env_sprite" && !invisible(e) {
             candidates.push(Candidate {
                 lump_index: *i,
                 classname: e.classname().to_string(),
