@@ -63,17 +63,16 @@ function notifySettingsChange() {
 
 /**
  * Settings the pipeline turns into init commands of its own, appended after
- * the user's own list. Capture FPS becomes `mirv_movie_fps <n>`, Separate HUD
- * becomes `mirv_movie_separate_hud <n>`, and the decal flush contributes the
- * `r_decals` pin — so each can displace a value from a config file, and the
- * warning banner is stale until it is told one changed.
+ * the user's own list. Capture FPS becomes `mirv_movie_fps <n>`, and the
+ * decal flush contributes the `r_decals` pin — so each can displace a value
+ * from a config file, and the warning banner is stale until it is told one
+ * changed.
  *
  * Keyed by element id rather than by tab, deliberately: what makes these
  * special is that they become commands, not where they happen to sit.
  */
 const FIELDS_THAT_BECOME_COMMANDS = [
   '#config-capture-fps',
-  '#config-separate-hud',
   '#config-decal-flush',
 ];
 
@@ -123,8 +122,8 @@ export function renderTimingDiagram() {
  * Re-check the game's config files against the commands a capture would apply.
  *
  * Passes the settings that decide what the pipeline appends for itself — the
- * movie fps, the HUD split, the decal pin — so the overrides reported are the
- * ones a real capture would really perform, not just the ones typed by hand.
+ * movie fps, the decal pin — so the overrides reported are the ones a real
+ * capture would really perform, not just the ones typed by hand.
  * `movie.cfg` setting `mirv_movie_fps 300` against a capture configured for 120
  * is a collision nobody typed and nobody would otherwise see.
  *
@@ -149,7 +148,6 @@ export async function refreshInitCommandWarnings() {
       })),
     {
       captureFps: parseInt(document.querySelector('#config-capture-fps')?.value, 10) || null,
-      separateHud: document.querySelector('#config-separate-hud')?.checked ?? null,
       decalFlush: document.querySelector('#config-decal-flush')?.checked ?? true,
     }
   );
@@ -175,14 +173,18 @@ function generateSessionId() {
  * overlapping (or touching) pre/post-roll windows *within each source demo*
  * before billing them for disk space — two highlights that share footage
  * must not be double-counted, since the engine records that overlap once.
- * Base cost is `w * h * 3` bytes/frame at the configured capture FPS;
- * `separate_hud` triples the total (HUD pass recorded as its own stream).
+ * Base cost is `w * h * 3` bytes/frame at the configured capture FPS.
+ *
+ * Does not account for `mirv_movie_separate_hud 1` typed into Initial
+ * Commands — that triples the real cost (HUD pass recorded as its own
+ * stream), but there is no longer a dedicated setting to read it from, and
+ * this does not parse Initial Commands text to find it.
  */
 function computeRequiredCaptureBytes(currentScannedDemos, opts) {
   const {
     preRollSeconds, postRollSeconds,
     recordStartLead, recordStopTrail,
-    captureFps, resWidth, resHeight, separateHud,
+    captureFps, resWidth, resHeight,
   } = opts;
   let totalSeconds = 0;
 
@@ -233,9 +235,7 @@ function computeRequiredCaptureBytes(currentScannedDemos, opts) {
 
   const frames = Math.ceil(Math.max(0, totalSeconds) * captureFps);
   const bytesPerFrame = resWidth * resHeight * 3;
-  let requiredBytes = frames * bytesPerFrame;
-  if (separateHud) requiredBytes *= 3;
-  return requiredBytes;
+  return frames * bytesPerFrame;
 }
 
 const PATH_PROBLEM_REASONS = {
@@ -420,7 +420,6 @@ export async function refreshLaunchGuard(state) {
   const captureFpsVal = parseInt(document.querySelector("#config-capture-fps")?.value, 10) || 300;
   const resWidthVal = parseInt(document.querySelector("#config-res-width")?.value, 10) || 1280;
   const resHeightVal = parseInt(document.querySelector("#config-res-height")?.value, 10) || 720;
-  const separateHudVal = document.querySelector("#config-separate-hud")?.checked || false;
   const requiredBytes = computeRequiredCaptureBytes(resolvedState.currentScannedDemos, {
     preRollSeconds: preRollVal,
     postRollSeconds: postRollVal,
@@ -429,7 +428,6 @@ export async function refreshLaunchGuard(state) {
     captureFps: captureFpsVal,
     resWidth: resWidthVal,
     resHeight: resHeightVal,
-    separateHud: separateHudVal,
   });
 
   // Mirrors buildCapturePayload's outputDrivePool — Capture Output is the
@@ -927,7 +925,7 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
   // action (e.g. browsing for hlae.exe) happened to save afterward.
   // Start-lead/stop-trail belong in this list too: they define the recorded
   // window, so they change the disk estimate the guard is built on.
-  ['#config-res-width', '#config-res-height', '#config-separate-hud', '#config-ffmpeg-capture',
+  ['#config-res-width', '#config-res-height', '#config-ffmpeg-capture',
    '#config-pre-roll', '#config-post-roll', '#config-capture-fps',
    '#config-record-start-lead', '#config-record-stop-trail'].forEach(selector => {
     const el = document.querySelector(selector);
@@ -1194,7 +1192,6 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
 
     const resWidthVal = parseInt(document.querySelector("#config-res-width")?.value, 10) || 1280;
     const resHeightVal = parseInt(document.querySelector("#config-res-height")?.value, 10) || 720;
-    const separateHudVal = document.querySelector("#config-separate-hud")?.checked || false;
     // `?? true` not `|| false`: a missing element must not silently disable
     // the flush, since nothing in the captured video would show that it had.
     const decalFlushVal = document.querySelector("#config-decal-flush")?.checked ?? true;
@@ -1250,7 +1247,6 @@ export function initCaptureUI(getState, onSettingsChange, onStatusChange, getTak
       ffmpeg_override_path: ffmpegOverridePathVal,
       resolution_width: resWidthVal,
       resolution_height: resHeightVal,
-      separate_hud: separateHudVal,
       decal_flush: decalFlushVal,
       ffmpeg_capture: ffmpegCaptureVal,
       ffmpeg_capture_codec: ffmpegCaptureCodecVal,

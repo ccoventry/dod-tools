@@ -395,7 +395,6 @@ pub struct PatcherConfig {
     pub fast_forward_speed: f32,
     pub tickrate: f32,
     pub capture_directories: Vec<std::path::PathBuf>,
-    pub separate_hud: bool,
     /// How this batch records. The authority — `ffmpeg_capture` below is kept
     /// only so older settings files and payloads keep deserialising, and is
     /// reconciled into this by `PatcherConfig::normalise_capture_mode`.
@@ -476,19 +475,11 @@ impl PatcherConfig {
     ///   without every caller having to know the old field exists.
     /// - `ffmpeg_capture` is then written back from the enum, so the two can
     ///   never disagree for anything still reading it.
-    /// - **Separate HUD is forced off in OBS mode.** It is out of scope for
-    ///   that path by decision (`docs/obs_alternate_capture.md`), and it is not
-    ///   merely unsupported: leaving it on would send `-afxForceAlpha8 1` and
-    ///   the rest of the alpha launch flags for a capture HLAE is not making,
-    ///   perturbing the render for no reason at all.
     pub fn normalise_capture_mode(&mut self) {
         if self.capture_mode == CaptureMode::FrameSequence && self.ffmpeg_capture {
             self.capture_mode = CaptureMode::DirectToVideo;
         }
         self.ffmpeg_capture = self.capture_mode == CaptureMode::DirectToVideo;
-        if self.capture_mode == CaptureMode::Obs {
-            self.separate_hud = false;
-        }
     }
 
     pub fn build_hlae_process(&self, extra_engine_args: &str) -> std::process::Command {
@@ -503,16 +494,61 @@ impl PatcherConfig {
         let hook_dll_str = dll_path.to_string_lossy().replace("/", "\\\\");
         let program_path_str = hl_exe.replace("/", "\\\\");
 
-        // `-condebug` is not optional. It is what makes GoldSrc mirror its
-        // console into `qconsole.log`, and the Studio reads that log for
+        // HLAE's alpha flags, on every `-customLoader` launch without exception.
+        //
+        // `-afxForceAlpha8` is read by AfxHookGoldSrc.dll off the *game's*
+        // command line, not by HLAE.exe. HLAE's own Launch GoldSrc dialog
+        // appends it when its alpha box is ticked -- but that dialog is the
+        // path we do not use. Under `-customLoader` HLAE composes nothing for
+        // us (its `ProcessArgsCustomLoader`, in advancedfx/advancedfx's
+        // `hlae/Program.cs`, reads neither the flag nor the dialog's saved
+        // `<Launcher><ForceAlpha>`), so unless it is built here the hook never
+        // sees it. HLAE's own `-forceAlpha` is a Launcher-mode switch that
+        // `-customLoader` does not recognise at all, so passing it would be a
+        // silent no-op. Not passed for that reason.
+        //
+        // `-afxForceAlpha8` TAKES A VALUE. From HLAE's own Launcher.cs, the
+        // dialog builds it as:
+        //
+        //     " -afxForceAlpha8 " + (cfg.ForceAlpha ? 1 : 0).ToString()
+        //
+        // Passing it bare -- which is what two earlier attempts did -- makes
+        // the hook read the following token as its argument, find something
+        // that is not `1`, and leave the alpha channel off. That is exactly
+        // the observed behaviour: the flag parses, and the captured hudAlpha
+        // bitmaps come out byte-for-byte identical to a run without it.
+        //
+        // `-afxRenderMode` takes one of standard|fBO|memoryDC the same way.
+        // `-32bpp` because a framebuffer that is not 32-bit has no alpha bits
+        // to force in the first place. `-afxOptimizeCaptureVis` is left out:
+        // it is a visibility optimisation unrelated to alpha, and would be one
+        // more variable over the capture itself.
+        //
+        // NOT gated on a "Separate HUD" setting. One used to exist and gated
+        // this from inside `capture_engine`, which meant the two hand-driven
+        // launches -- "Launch Game (HLAE)" and Launch Preview, both of which
+        // pass through here -- started a session with the alpha buffer off no
+        // matter what. A user typing `mirv_movie_separate_hud 1` in the
+        // console of such a session got a `hudalpha` stream that is pure
+        // white in every frame, an all-opaque matte that `alphamerge` can
+        // never turn into transparency, with nothing anywhere reporting a
+        // fault. Forcing the alpha bits costs nothing when no HUD stream is
+        // being written, and this app cannot know what the user will type
+        // mid-session, so the flags go on every launch regardless. The
+        // checkbox itself was removed later (there was no meaningful setting
+        // behind `mirv_movie_separate_hud` beyond typing it into Initial
+        // Commands anyway); see `docs/direct_to_video_capture.md`.
+        //
+        // `-condebug` is not optional either. It is what makes GoldSrc mirror
+        // its console into `qconsole.log`, and the Studio reads that log for
         // per-demo progress, fast-forward-to-clip progress, crash detection and
-        // the markers that drive OBS capture — so with it off, those features do
-        // not fail loudly, they silently never fire. It lives here rather than
-        // in any one caller's `extra_engine_args` so that *every* way the app
-        // starts the game gets it: a capture batch, a preview, and Launch Game
-        // (which used to ignore the setting altogether, #226).
+        // the markers that drive OBS capture — so with it off, those features
+        // do not fail loudly, they silently never fire. It lives here rather
+        // than in any one caller's `extra_engine_args` so that *every* way the
+        // app starts the game gets it: a capture batch, a preview, and Launch
+        // Game (which used to ignore the setting altogether, #226).
         let cmd_line_str = format!(
-            "-game dod -insecure -windowed -w {} -h {} -condebug {}",
+            "-game dod -insecure -windowed -w {} -h {} -gl -32bpp -afxRenderMode standard -afxForceAlpha8 1 -condebug {}",
             self.resolution_width, self.resolution_height, extra_engine_args
         );
 
@@ -560,7 +596,6 @@ impl Default for PatcherConfig {
             fast_forward_speed: 0.05,
             tickrate: 100.0,
             capture_directories: Vec::new(),
-            separate_hud: false,
             capture_mode: CaptureMode::default(),
             obs: ObsConfig::default(),
             ffmpeg_capture: false,
@@ -708,6 +743,27 @@ mod launch_args_tests {
     }
 
     #[test]
+    fn test_alpha_flags_are_sent_on_every_launch_shape() {
+        // The three call sites, by their `extra_engine_args`: a capture batch,
+        // Launch Preview, and the standalone "Launch Game (HLAE)" button. The
+        // last two used to get no alpha flags at all, so a hand-driven session
+        // that enabled separate HUD in the console wrote an all-white
+        // `hudalpha` — an opaque matte, silently unusable. Pin all three.
+        for extra in ["-condebug +exec dodtools_helper.cfg +playdemo primer", "+viewdemo stem", ""] {
+            let line = cmd_line_of(&PatcherConfig::default(), extra);
+            assert!(
+                line.contains("-afxForceAlpha8 1"),
+                "alpha flag missing for extra={extra:?}: {line}"
+            );
+            assert!(line.contains("-32bpp"), "missing -32bpp for extra={extra:?}: {line}");
+            assert!(
+                line.contains("-afxRenderMode standard"),
+                "missing render mode for extra={extra:?}: {line}"
+            );
+        }
+    }
+
+    #[test]
     fn test_condebug_is_passed_on_every_launch() {
         // The Studio reads the engine's console log for per-demo progress,
         // fast-forward-to-clip progress, crash detection and OBS markers, and
@@ -722,6 +778,17 @@ mod launch_args_tests {
                 "launch args must carry -condebug, got: {line}"
             );
         }
+    }
+
+    #[test]
+    fn test_engine_flags_precede_console_commands() {
+        // GoldSrc parses `-` switches off the command line and queues `+`
+        // commands after; an alpha flag landing after a `+` would be read as
+        // an argument to that command instead of a switch.
+        let line = cmd_line_of(&PatcherConfig::default(), "+playdemo primer");
+        let first_plus = line.find('+').expect("the console command is present");
+        let alpha = line.find("-afxForceAlpha8").expect("the alpha flag is present");
+        assert!(alpha < first_plus, "alpha flag must precede any +command: {line}");
     }
 
     #[test]

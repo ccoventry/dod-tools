@@ -87,7 +87,6 @@ export async function scanGameConfigs(
     initCommands,
     customCommands,
     captureFps: context.captureFps ?? null,
-    separateHud: context.separateHud ?? null,
     decalFlush: context.decalFlush ?? null,
   })
     .catch((err) => {
