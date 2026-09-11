@@ -490,7 +490,6 @@ fn obs_config(host: String, port: u16, password: String) -> native::patch::ObsCo
         host: if host.is_empty() { "127.0.0.1".to_string() } else { host },
         port: if port == 0 { 4455 } else { port },
         password,
-        ..Default::default()
     }
 }
 
@@ -1160,7 +1159,7 @@ pub async fn scan_directory_impl(
                     .binary_search_by(|p: &PathBuf| {
                         p.file_name()
                             .unwrap_or_default()
-                            .cmp(&path_buf.file_name().unwrap_or_default())
+                            .cmp(path_buf.file_name().unwrap_or_default())
                     })
                     .unwrap_or_else(|pos| pos);
                 list.insert(insert_idx, path_buf);
@@ -1180,7 +1179,7 @@ pub async fn scan_directory_impl(
                             .binary_search_by(|p: &PathBuf| {
                                 p.file_name()
                                     .unwrap_or_default()
-                                    .cmp(&path.file_name().unwrap_or_default())
+                                    .cmp(path.file_name().unwrap_or_default())
                             })
                             .unwrap_or_else(|pos| pos);
                         list.insert(insert_idx, path);
@@ -1287,16 +1286,6 @@ pub async fn scan_directory_impl(
 
     is_scanning_end.store(false, std::sync::atomic::Ordering::SeqCst);
     result
-}
-
-pub fn simulate_aot_capacity(streaks: Vec<f32>, fps: u32, bytes_per_frame: u64, available_bytes: u64) -> (u64, bool) {
-    let mut total_projected_bytes: u64 = 0;
-    for duration in streaks {
-        let frames = (duration * fps as f32).ceil() as u64;
-        total_projected_bytes += frames * bytes_per_frame;
-    }
-    let has_enough_space = total_projected_bytes <= available_bytes;
-    (total_projected_bytes, has_enough_space)
 }
 
 // ── Bookmark Previews (.dodtools_preview) ─────────────────────────────────────
@@ -1625,6 +1614,7 @@ fn is_engine_process_name(name: &str) -> bool {
 /// deterministic answer instead of asking the user to interpret a raw OS
 /// socket error themselves.
 fn is_obs_process_running() -> bool {
+    use sysinfo::{ProcessExt, SystemExt};
     let sys = sysinfo::System::new_all();
     sys.processes().values().any(|p| {
         let lower = p.name().to_lowercase();
@@ -1635,6 +1625,7 @@ fn is_obs_process_running() -> bool {
 /// True if any `hl.exe` or `hlae.exe` process is currently running.
 #[tauri::command]
 pub fn check_engine_processes() -> bool {
+    use sysinfo::{ProcessExt, SystemExt};
     let sys = sysinfo::System::new_all();
     sys.processes()
         .values()
@@ -1644,13 +1635,13 @@ pub fn check_engine_processes() -> bool {
 /// Aggressively terminates every running `hl.exe`/`hlae.exe` instance.
 #[tauri::command]
 pub fn kill_engine_processes() -> Result<(), String> {
+    use sysinfo::{ProcessExt, SystemExt};
     let sys = sysinfo::System::new_all();
     for process in sys.processes().values() {
-        if is_engine_process_name(process.name()) {
-            if !process.kill() {
+        if is_engine_process_name(process.name())
+            && !process.kill() {
                 log::warn!("Failed to kill engine process pid={}", process.pid());
             }
-        }
     }
     Ok(())
 }
