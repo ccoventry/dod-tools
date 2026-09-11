@@ -788,8 +788,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         let dod = root.join("dod");
         std::fs::create_dir_all(&dod).unwrap();
-        std::fs::write(&dod.join("config.cfg"), "exec movie.cfg\n").unwrap();
-        std::fs::write(&dod.join("movie.cfg"), format!("r_drawentities \"{}\"\n", value)).unwrap();
+        std::fs::write(dod.join("config.cfg"), "exec movie.cfg\n").unwrap();
+        std::fs::write(dod.join("movie.cfg"), format!("r_drawentities \"{}\"\n", value)).unwrap();
         let exe = root.join("hl.exe");
         std::fs::write(&exe, b"").unwrap();
         exe.to_string_lossy().to_string()
@@ -988,7 +988,6 @@ mod tests {
                 vec![],
                 vec![],
                 Some(120),
-                Some(false),
                 Some(true),
             ))
             .unwrap();
@@ -1009,7 +1008,6 @@ mod tests {
                 vec![],
                 vec![],
                 Some(120),
-                Some(false),
                 Some(true),
             ))
             .unwrap();
