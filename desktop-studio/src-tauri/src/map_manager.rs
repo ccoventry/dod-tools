@@ -291,7 +291,6 @@ pub async fn scan_game_configs(
     init_commands: Vec<String>,
     custom_commands: Vec<CustomCommandPayload>,
     capture_fps: Option<i32>,
-    separate_hud: Option<bool>,
     decal_flush: Option<bool>,
 ) -> Result<CfgReport, String> {
     let exe = PathBuf::from(&game_path);
@@ -318,9 +317,6 @@ pub async fn scan_game_configs(
         };
         if let Some(v) = capture_fps {
             cfg.capture_fps = v;
-        }
-        if let Some(v) = separate_hud {
-            cfg.separate_hud = v;
         }
         if let Some(v) = decal_flush {
             cfg.decal_flush = v;
@@ -404,7 +400,7 @@ pub async fn scan_game_configs(
         // still counts as seeing it, so that is not reported as unseen.
         let named: std::collections::HashSet<String> = effective_commands
             .iter()
-            .filter_map(|c| c.trim().split_whitespace().next().map(str::to_lowercase))
+            .filter_map(|c| c.split_whitespace().next().map(str::to_lowercase))
             .collect();
         // mirv_fov/default_fov are read directly from an executed config
         // whenever neither is stated in Initial Commands
@@ -665,13 +661,6 @@ pub fn roll_floors(
     }
 }
 
-/// The URL a map would be fetched from, so a prompt can show it before anything
-/// reaches the network.
-#[tauri::command]
-pub fn map_download_url(map_name: String) -> Result<String, String> {
-    map_fetch::map_url(map_fetch::DEFAULT_MIRROR, &map_name)
-}
-
 /// Download one map and install it, verified against the build the demo wants.
 ///
 /// This writes into the user's game folder and talks to the network, so it is
@@ -730,10 +719,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         let dod = root.join("dod");
         std::fs::create_dir_all(&dod).unwrap();
-        std::fs::write(&dod.join("config.cfg"), "bind \"F7\" \"r_decals 4000\"\nexec movie.cfg\n")
+        std::fs::write(dod.join("config.cfg"), "bind \"F7\" \"r_decals 4000\"\nexec movie.cfg\n")
             .unwrap();
         std::fs::write(
-            &dod.join("movie.cfg"),
+            dod.join("movie.cfg"),
             // hud_deathnotice_time is here because it is the cvar people
             // genuinely pair around a clip — raised before, restored after.
             "r_decals \"0\"\nmirv_movie_fps \"300\"\nhud_deathnotice_time \"10\"\nmirv_fov \"105\"\n",
@@ -754,8 +743,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         let dod = root.join("dod");
         std::fs::create_dir_all(&dod).unwrap();
-        std::fs::write(&dod.join("config.cfg"), "exec movie.cfg\n").unwrap();
-        std::fs::write(&dod.join("movie.cfg"), "mirv_movie_fps \"300\"\n").unwrap();
+        std::fs::write(dod.join("config.cfg"), "exec movie.cfg\n").unwrap();
+        std::fs::write(dod.join("movie.cfg"), "mirv_movie_fps \"300\"\n").unwrap();
         let exe = root.join("hl.exe");
         std::fs::write(&exe, b"").unwrap();
         exe.to_string_lossy().to_string()
@@ -769,8 +758,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         let dod = root.join("dod");
         std::fs::create_dir_all(&dod).unwrap();
-        std::fs::write(&dod.join("config.cfg"), "exec movie.cfg\n").unwrap();
-        std::fs::write(&dod.join("movie.cfg"), format!("r_decals \"{}\"\n", value)).unwrap();
+        std::fs::write(dod.join("config.cfg"), "exec movie.cfg\n").unwrap();
+        std::fs::write(dod.join("movie.cfg"), format!("r_decals \"{}\"\n", value)).unwrap();
         let exe = root.join("hl.exe");
         std::fs::write(&exe, b"").unwrap();
         exe.to_string_lossy().to_string()
@@ -784,8 +773,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         let dod = root.join("dod");
         std::fs::create_dir_all(&dod).unwrap();
-        std::fs::write(&dod.join("config.cfg"), "exec movie.cfg\n").unwrap();
-        std::fs::write(&dod.join("movie.cfg"), "mirv_movie_filename \"clip\"\n").unwrap();
+        std::fs::write(dod.join("config.cfg"), "exec movie.cfg\n").unwrap();
+        std::fs::write(dod.join("movie.cfg"), "mirv_movie_filename \"clip\"\n").unwrap();
         let exe = root.join("hl.exe");
         std::fs::write(&exe, b"").unwrap();
         exe.to_string_lossy().to_string()
@@ -824,7 +813,6 @@ mod tests {
             Vec::new(),
             custom,
             Some(120),
-            Some(false),
             Some(true),
         ))
         .unwrap()
@@ -903,7 +891,6 @@ mod tests {
             init.iter().map(|s| s.to_string()).collect(),
             custom.iter().map(|s| scheduled(s, "Before", 2.0)).collect(),
             Some(fps),
-            Some(false),
             Some(true),
         ))
         .unwrap()
@@ -922,7 +909,6 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
                 Some(120),
-                Some(false),
                 Some(false),
             ))
             .unwrap();
@@ -1053,7 +1039,6 @@ mod tests {
                 Vec::new(),
                 Some(120),
                 Some(false),
-                Some(false),
             ))
             .unwrap();
 
@@ -1139,7 +1124,6 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
                 Some(120),
-                Some(false),
                 Some(true),
             ))
             .unwrap();
@@ -1198,7 +1182,6 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
                 Some(120),
-                Some(false),
                 Some(true),
             ))
             .unwrap();
@@ -1214,7 +1197,6 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
                 Some(120),
-                Some(false),
                 Some(true),
             ))
             .unwrap();
@@ -1232,7 +1214,6 @@ mod tests {
                 Vec::new(),
                 Some(120),
                 Some(false),
-                Some(false),
             ))
             .unwrap();
         assert!(!r.decal_flush_is_noop, "{:?}", r);
@@ -1247,7 +1228,6 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
                 Some(120),
-                Some(false),
                 Some(false),
             ))
             .unwrap();

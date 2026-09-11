@@ -81,9 +81,7 @@ impl CfgScan {
     /// configs it actually executes. Last one wins, as the console does.
     pub fn effective(&self, cvar: &str) -> Option<&CvarSetting> {
         self.settings
-            .iter()
-            .filter(|s| s.auto_executed && s.cvar.eq_ignore_ascii_case(cvar))
-            .next_back()
+            .iter().rfind(|s| s.auto_executed && s.cvar.eq_ignore_ascii_case(cvar))
     }
 
     /// Every watched cvar that an executed config sets.
@@ -189,11 +187,22 @@ pub struct CommandShadow {
 /// have diverged. `mirv_recordmovie_start`/`_stop` are what `sys_record_start`/
 /// `sys_record_stop` schedule at the block's own record bounds — a stray one
 /// races that and can start or end a take at the wrong tick. `mirv_movie_fps`
-/// and `mirv_movie_separate_hud` are pinned once at load (see
-/// `builder::final_init_commands`) and everything downstream — the fps
-/// stamped into take metadata, Render Studio's own expectation — assumes that
-/// never changes mid-batch. `mirv_movie_ffmpeg` configures the direct-to-video
-/// encoder pipe the same way, once, before anything records into it.
+/// is pinned once at load (see `builder::final_init_commands`) and everything
+/// downstream — the fps stamped into take metadata, Render Studio's own
+/// expectation — assumes that never changes mid-batch. `mirv_movie_ffmpeg`
+/// configures the direct-to-video encoder pipe the same way, once, before
+/// anything records into it.
+///
+/// `mirv_movie_separate_hud` deliberately is NOT here. It used to be, but the
+/// only reason was that the pipeline always re-appended its own value to
+/// Initial Commands after the user's, making anything the user set — Initial
+/// or Scheduled — moot. That checkbox is gone (removed 2026-09-08; typing the
+/// command into Initial Commands directly is the only way to use it now), and
+/// with it the one confirmed reason to flag this cvar at all. Nothing in this
+/// codebase has actually tested what a mid-demo toggle does — unlike
+/// `r_decals`/`mirv_fov`, which are measured, this would be a guess by
+/// analogy, so it stays untracked rather than asserting a mechanism nobody
+/// has verified.
 /// `host_framerate` is `sys_fast_forward`/`sys_normal_speed`'s own mechanism
 /// for the real-time run-up before recording (`docs/goldsrc_dod_quirks.md`'s
 /// audio-resync entry) — a scheduled one races that timing, not the record
@@ -209,7 +218,6 @@ pub const MID_DEMO_HAZARDS: &[&str] = &[
     "mirv_recordmovie_start",
     "mirv_recordmovie_stop",
     "mirv_movie_fps",
-    "mirv_movie_separate_hud",
     "mirv_movie_ffmpeg",
     "host_framerate",
 ];
@@ -226,11 +234,15 @@ pub const MID_DEMO_HAZARDS: &[&str] = &[
 ///   * **DoD's own client has no legitimate non-default value for it at
 ///     all** — `r_drawentities`, `cl_lw`.
 ///
-/// Distinct from `mirv_movie_fps`/`mirv_movie_separate_hud`, which the
-/// pipeline also always pins but which correspond to a real setting
-/// (Output Format → Capture FPS / Separate HUD) — typing those is redundant,
-/// not dangerous, so they stay shadowed-with-a-warning rather than refused.
-/// Also distinct from `mirv_movie_filename`, which used to be here too — see
+/// Distinct from `mirv_movie_fps`, which the pipeline also always pins but
+/// which corresponds to a real setting (Output Format → Capture FPS) —
+/// typing that is redundant, not dangerous, so it stays shadowed-with-a-
+/// warning rather than refused. `mirv_movie_separate_hud` is not here either,
+/// and not in `MID_DEMO_HAZARDS`: no setting exists behind it any more
+/// (removed 2026-09-08), Initial Commands is simply the intended way to use
+/// it, and typing it in Scheduled Commands instead is untracked rather than
+/// flagged — see `MID_DEMO_HAZARDS`'s own doc comment for why. Also distinct
+/// from `mirv_movie_filename`, which used to be here too — see
 /// `SCHEDULED_BANNED_COMMANDS` for why it moved. User-confirmed tier list,
 /// 2026-09-02 (`mirv_movie_filename` re-tiered 2026-09-05, `r_drawentities`/
 /// `cl_lw` added 2026-09-08).
@@ -561,11 +573,10 @@ pub fn scan_cached(game_dir: &Path) -> std::sync::Arc<CfgScan> {
     let cache = CACHE.get_or_init(Default::default);
     let key = normalise(game_dir);
 
-    if let Ok(read) = cache.read() {
-        if let Some(hit) = read.get(&key) {
+    if let Ok(read) = cache.read()
+        && let Some(hit) = read.get(&key) {
             return std::sync::Arc::clone(hit);
         }
-    }
 
     let scanned = std::sync::Arc::new(scan(game_dir));
     if let Ok(mut write) = cache.write() {
@@ -875,19 +886,19 @@ mod tests {
         // mirv_movie_filename races the block-routing aliases and can
         // misroute frames to the wrong take folder; mirv_recordmovie_start/
         // stop race the pipeline's own record-bounds scheduling;
-        // mirv_movie_fps/mirv_movie_separate_hud are pinned once at load and
-        // everything downstream assumes they never change; mirv_movie_ffmpeg
-        // configures the direct-to-video pipe before anything records into
-        // it; host_framerate races sys_fast_forward/sys_normal_speed's own
+        // mirv_movie_fps is pinned once at load and everything downstream
+        // assumes it never changes; mirv_movie_ffmpeg configures the
+        // direct-to-video pipe before anything records into it;
+        // host_framerate races sys_fast_forward/sys_normal_speed's own
         // timing. All of them dangerous scheduled mid-demo — whether typing
         // them anywhere at all is banned outright is `banned_commands`'
-        // narrower list, tested separately below.
+        // narrower list, tested separately below. mirv_movie_separate_hud is
+        // deliberately absent — see `MID_DEMO_HAZARDS`'s own doc comment.
         let hits = mid_demo_hazards(&[
             "mirv_movie_filename foo".to_string(),
             "mirv_recordmovie_start".to_string(),
             "mirv_recordmovie_stop".to_string(),
             "mirv_movie_fps 500".to_string(),
-            "mirv_movie_separate_hud 1".to_string(),
             "mirv_movie_ffmpeg all enabled 1".to_string(),
             "host_framerate 0.05".to_string(),
         ]);
@@ -900,7 +911,6 @@ mod tests {
                 "mirv_recordmovie_start",
                 "mirv_recordmovie_stop",
                 "mirv_movie_fps",
-                "mirv_movie_separate_hud",
                 "mirv_movie_ffmpeg",
                 "host_framerate",
             ]
@@ -908,12 +918,25 @@ mod tests {
     }
 
     #[test]
+    fn mirv_movie_separate_hud_is_untracked_everywhere() {
+        // No setting exists behind it any more (removed 2026-09-08), and
+        // nothing in this codebase has verified what a mid-demo toggle does
+        // — unlike r_decals/mirv_fov, which are measured. Rather than assert
+        // a mechanism nobody has checked, it gets no special treatment at
+        // all: not banned, not a mid-demo hazard, not shadowed.
+        let commands = vec!["mirv_movie_separate_hud 1".to_string()];
+        assert!(banned_commands(&commands).is_empty());
+        assert!(mid_demo_hazards(&commands).is_empty());
+        assert!(scheduled_banned_commands(&commands).is_empty());
+    }
+
+    #[test]
     fn banned_commands_covers_exactly_the_tier_1_set() {
         // No dedicated setting corresponds to any of these, and no scenario
         // has been found where typing one is anything but a misunderstanding
-        // — banned outright, unlike mirv_movie_fps/mirv_movie_separate_hud
-        // (redundant with a real setting, so shadowed-with-a-warning instead)
-        // or r_decals/mirv_fov (the user's own stated value wins). Does NOT
+        // — banned outright, unlike mirv_movie_fps (redundant with a real
+        // setting, so shadowed-with-a-warning instead) or r_decals/mirv_fov
+        // (the user's own stated value wins). Does NOT
         // include mirv_movie_filename any more — see
         // `scheduled_banned_commands_flags_the_decal_flush_cvars_and_mirv_movie_filename`.
         // r_drawentities/cl_lw are here for a different reason (no legitimate
@@ -1056,10 +1079,11 @@ mod tests {
 
     #[test]
     fn banned_commands_does_not_catch_tier_2_or_tier_3_cvars() {
-        // mirv_movie_fps/mirv_movie_separate_hud are redundant-with-a-setting
-        // (shadowed, not banned); r_decals/mirv_fov/gl_widescreenfov are
-        // either respected (Tier 3) or only a Scheduled-Commands hazard, not
-        // an everywhere-ban.
+        // mirv_movie_fps is redundant-with-a-setting (shadowed, not banned);
+        // mirv_movie_separate_hud is untracked entirely (see
+        // `mirv_movie_separate_hud_is_untracked_everywhere`); r_decals/
+        // mirv_fov/gl_widescreenfov are either respected (Tier 3) or only a
+        // Scheduled-Commands hazard, not an everywhere-ban.
         let hits = banned_commands(&[
             "mirv_movie_fps 500".to_string(),
             "mirv_movie_separate_hud 1".to_string(),
