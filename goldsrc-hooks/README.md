@@ -15,7 +15,7 @@ Two independent fixes, each off by default and toggled by its own env var:
 
 Plus one control surface, always available and doing nothing until used:
 
-- **Death notices** (`dodtools_deathmsg`): raises DoD's hard-coded four-line
+- **Death notices** (`dodstudio_deathmsg`): raises DoD's hard-coded four-line
   cap on the kill feed, moves it down the screen, hides frags involving chosen
   players, or injects one by hand. HLAE's `mirv_deathmsg` supports only
   `cstrike` and `tfc`, so none of it works for DoD -- see
@@ -47,12 +47,12 @@ Produces `target/i686-pc-windows-msvc/release/dodstudio_goldsrc_hooks.dll` and
    `inject.exe` only delivers the DLL, it doesn't set environment variables
    for a process that's already running.
 4. `inject.exe <pid> path\to\dodstudio_goldsrc_hooks.dll`
-5. Check `%APPDATA%\dod-tools\logs\dodstudio_goldsrc_hooks.log` for its own diagnostics (never pops a
+5. Check `%APPDATA%\dod-studio\logs\dodstudio_goldsrc_hooks.log` for its own diagnostics (never pops a
    dialog -- this is meant to run inside an unattended capture pipeline).
 
 ## Status
 
-The animation fix and all four `dodtools_deathmsg` subcommands are live-proven
+The animation fix and all four `dodstudio_deathmsg` subcommands are live-proven
 against a running game. The sound fix is confirmed by static analysis only --
 see the module docs in `src/engine.rs` and `src/sound_fix.rs` for what is
 established from the DoD 1.3 game files vs. what still needs a live check.
