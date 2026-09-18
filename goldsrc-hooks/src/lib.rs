@@ -61,6 +61,7 @@ mod ex_interp;
 mod hand_signals;
 mod hudelement;
 mod names;
+mod overview_map;
 mod patch;
 mod pe;
 mod scan;
