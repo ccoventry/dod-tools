@@ -52,6 +52,7 @@ mod anim_fix;
 mod commands;
 mod crash;
 mod crosshair;
+mod decals;
 mod deathmsg;
 mod detour;
 mod debug;
