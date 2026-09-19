@@ -11,7 +11,7 @@
 //! client interface through a single `F` export instead. See `engine.rs`'s
 //! module docs and `docs/goldsrc_client_dll_internals.md`.
 //!
-//! Implements two fixes and one control surface, each independent of the
+//! Implements two fixes and five control surfaces, each independent of the
 //! others and each safe to inject without them:
 //! - `sound_fix`: force full-volume weapon-fire audio while spectating.
 //! - `anim_fix`: drive the first-person viewmodel's animations -- shoot,
@@ -33,6 +33,11 @@
 //!   `CHud::Redraw` forces the value back every frame.
 //!
 //! The last three are all in `docs/goldsrc_hud_suppression.md`.
+//!
+//! - `hide_sprite`: the `dodtools_hide_sprite <model-path>...` command --
+//!   suppress specific map-placed `env_sprite` entities by model path, an
+//!   allow-list rather than a blanket toggle. Full design write-up in the
+//!   module doc itself (issue #315).
 //!
 //! See each module's docs for the full R&D reasoning.
 //!
@@ -56,6 +61,7 @@ mod deathmsg;
 mod detour;
 mod debug;
 mod engine;
+mod hide_sprite;
 mod names;
 mod patch;
 mod pe;
