@@ -1,4 +1,4 @@
-//! The `dodtools_*` console surface: seven cvars and two commands.
+//! The `dodtools_*` console surface: seven cvars and three commands.
 //!
 //! ## Why cvars rather than commands
 //!
@@ -350,6 +350,12 @@ fn status_text() -> String {
         ));
     }
     lines.push(crate::deathmsg::status().trim_end().to_string());
+    // Gated like the two fixes above rather than always shown like the
+    // suppression cvars: hiding is off by default and a permanent "hiding
+    // nothing" line would be noise in the overwhelmingly common case.
+    if let Some(hide_sprite) = crate::hide_sprite::status_line() {
+        lines.push(hide_sprite);
+    }
     format!("{}\n", lines.join("\n"))
 }
 
@@ -665,6 +671,7 @@ pub fn install() {
     // Always a command, never a cvar: it has subcommands and a variable number
     // of arguments, which a cvar's single value cannot carry.
     add_commands(crate::deathmsg::COMMAND_NAMES, crate::deathmsg::command);
+    add_commands(crate::hide_sprite::COMMAND_NAMES, crate::hide_sprite::command);
 
     let bit = |flag: bool| if flag { "1" } else { "0" };
     let gunshots = register(GUNSHOTS_FIX_NAME, bit(sound_fix::ENABLED.load(Ordering::Relaxed)));
