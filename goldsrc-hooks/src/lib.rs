@@ -56,6 +56,7 @@ mod deathmsg;
 mod detour;
 mod debug;
 mod engine;
+mod hudelement;
 mod names;
 mod patch;
 mod pe;
