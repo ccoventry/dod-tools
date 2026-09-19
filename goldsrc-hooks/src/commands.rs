@@ -1,4 +1,4 @@
-//! The `dodtools_*` console surface: seven cvars and two commands.
+//! The `dodtools_*` console surface: eight cvars and three commands.
 //!
 //! ## Why cvars rather than commands
 //!
@@ -662,9 +662,10 @@ pub fn install() {
     // there is nothing for a cvar to hold.
     add_command(STATUS_NAME, cmd_status);
 
-    // Always a command, never a cvar: it has subcommands and a variable number
-    // of arguments, which a cvar's single value cannot carry.
+    // Always commands, never cvars: both have subcommands and a variable
+    // number of arguments, which a cvar's single value cannot carry.
     add_commands(crate::deathmsg::COMMAND_NAMES, crate::deathmsg::command);
+    add_commands(crate::objicons::COMMAND_NAMES, crate::objicons::command);
 
     let bit = |flag: bool| if flag { "1" } else { "0" };
     let gunshots = register(GUNSHOTS_FIX_NAME, bit(sound_fix::ENABLED.load(Ordering::Relaxed)));

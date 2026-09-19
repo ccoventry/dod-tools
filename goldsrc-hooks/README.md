@@ -13,13 +13,18 @@ Two independent fixes, each off by default and toggled by its own env var:
 - **Animation fix** (`GOLDSRC_HOOKS_ANIM_FIX=1`): corrects MG42/MG34/BAR/Bren
   viewmodel deploy (bipod up/down) animations while spectating in-eye.
 
-Plus four control surfaces, always available and doing nothing until used:
+Plus six control surfaces, always available and doing nothing until used:
 
 - **Death notices** (`dodtools_deathmsg`): raises DoD's hard-coded four-line
   cap on the kill feed, moves it down the screen, hides frags involving chosen
   players, or injects one by hand. HLAE's `mirv_deathmsg` supports only
   `cstrike` and `tfc`, so none of it works for DoD -- see
   `docs/goldsrc_death_notices.md`.
+- **Objective icons** (`dodtools_objectives`): places the territory-flag icon
+  row in the top-left corner, and the objective timer beside it. The game draws
+  both ~117 pixels lower at 1080p while spectating than it does in a POV demo,
+  which is why the same map captured both ways does not line up -- see
+  `docs/goldsrc_objective_icons.md`.
 - **Scoreboard** (`dodtools_hide_scoreboard 1`): stops a POV demo's recorded TAB
   presses from putting the scoreboard over the shot. The demo replays
   `+showscores` exactly as the player typed it; this blocks the command rather
@@ -70,14 +75,15 @@ Produces `target/i686-pc-windows-msvc/release/dodstudio_goldsrc_hooks.dll` and
 ## Status
 
 The animation fix and all four `dodtools_deathmsg` subcommands are live-proven
-against a running game. The sound fix, `dodtools_hide_scoreboard`,
-`dodtools_mute_voice_commands`, `dodtools_hide_crosshair` and
-`dodtools_match_pov_crosshair` are confirmed by static
-analysis only -- see the module docs in `src/engine.rs`, `src/sound_fix.rs`,
-`src/scoreboard.rs`, `src/voice.rs`, `src/crosshair.rs` and
-`src/spectator_crosshair.rs` for what is
-established from the DoD 1.3 game files vs. what still needs a live check. `tools/` holds a verifier per
-patched site, which checks the Rust constants against a real `client.dll`.
+against a running game. The sound fix, `dodtools_objectives`,
+`dodtools_hide_scoreboard`, `dodtools_mute_voice_commands`,
+`dodtools_hide_crosshair` and `dodtools_match_pov_crosshair` are confirmed by
+static analysis only -- see the module docs in `src/engine.rs`,
+`src/sound_fix.rs`, `src/objicons.rs`, `src/scoreboard.rs`, `src/voice.rs`,
+`src/crosshair.rs` and `src/spectator_crosshair.rs` for what is established
+from the DoD 1.3 game files vs. what still needs a live check. `tools/` holds
+a verifier per patched site, which checks the Rust constants against a real
+`client.dll` (`dodtools_objectives`'s two detours: `tools/verify_objicons_offsets.py`).
 
 A crash inside the game leaves no dump, WER record or event-log entry, because
 GoldSrc installs its own unhandled-exception filter. `src/crash.rs` logs the
