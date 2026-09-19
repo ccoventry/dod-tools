@@ -145,7 +145,7 @@ string, rather than trusting that the signature found the right function.
 dodtools_hide_scoreboard 1     block +showscores
 dodtools_hide_scoreboard 0     back to the game's own behaviour (the default)
 dodtools_hide_scoreboard       report the current state
-dodtools_status                report it alongside every other setting
+dodtools_debug_status                report it alongside every other setting
 ```
 
 It is a cvar, so it also takes `+dodtools_hide_scoreboard 1` on the launch line or
@@ -153,10 +153,14 @@ a line in any `.cfg` the session execs — which is the useful form for an
 unattended capture, since it is then set before the first demo loads.
 
 The setting is re-applied every frame from the byte itself rather than from a
-cached flag. That is not belt-and-braces: the engine unloads and reloads
-`client.dll` between demos, and a reloaded module comes back with the stock
-byte. A cached "already suppressed" belief would leave the scoreboard working
-again from the second demo of a session onward, silently.
+cached flag. That is not belt-and-braces: if `client.dll` is ever unloaded and
+reloaded, a reloaded module comes back with the stock byte, and a cached
+"already suppressed" belief would leave the scoreboard working again from
+that point onward, silently. Measured 2026-09-18
+(`docs/goldsrc_dod_quirks.md`): a plain demo-to-demo transition does **not**
+reload `client.dll` — five game sessions, five load lines, none mid-session —
+so this guards against a mod change or returning to the menu, not against
+loading a new demo.
 
 ---
 
